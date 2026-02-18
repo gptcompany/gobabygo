@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-02-18)
 ## Current Position
 
 Phase: 1 of 6 (Router Core)
-Plan: 01-02 COMPLETED
-Status: Ready for plan 01-03
-Last activity: 2026-02-18 — Plan 01-02 completed (FSM transition guard + dead-letter stream)
+Plan: 01-03 COMPLETED
+Status: Ready for plan 01-04
+Last activity: 2026-02-18 — Plan 01-03 completed (Crash recovery + dependency resolution)
 
-Progress: ██░░░░░░░░ ~15%
+Progress: ███░░░░░░░ ~22%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: ~12 min
-- Total execution time: ~0.4 hours
+- Total plans completed: 3
+- Average duration: ~11 min
+- Total execution time: ~0.55 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-router-core | 2/? | ~25m | ~12m |
+| 01-router-core | 3/? | ~33m | ~11m |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (15m), 01-02 (10m)
-- Trend: Improving
+- Last 5 plans: 01-01 (15m), 01-02 (10m), 01-03 (8m)
+- Trend: Improving (parallel execution)
 
 ## Accumulated Context
 
@@ -44,11 +44,13 @@ Recent decisions affecting current work:
 - Router/DB as single source of truth (not GSD/tmux state)
 - SQLite over Postgres for v1
 - Stale threshold 35s (WireGuard keepalive-aware)
+- Recovery uses direct CAS (not FSM) for recovery-only transitions (running->queued, assigned->queued) that are outside the FSM transition table
 
 ### Completed Plans
 
 - **01-01**: SQLite persistence layer — 12 tests, 3 commits, ~400 LOC production + 206 LOC tests
 - **01-02**: FSM transition guard + dead-letter stream — 9 tests, 3 commits, 269 LOC production + 310 LOC tests
+- **01-03**: Crash recovery + dependency resolution — 12 tests, 2 commits, 404 LOC production + 421 LOC tests
 
 ### Pending Todos
 
@@ -61,5 +63,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Plan 01-02 completed, ready for plan 01-03
-Resume file: .planning/phases/01-router-core/01-02-SUMMARY.md
+Stopped at: Plan 01-03 completed, ready for plan 01-04
+Resume file: .planning/phases/01-router-core/01-03-SUMMARY.md
