@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-02-18)
 ## Current Position
 
 Phase: 1 of 6 (Router Core)
-Plan: 01-01 COMPLETED
-Status: Ready for plan 01-02
-Last activity: 2026-02-18 — Plan 01-01 completed (SQLite persistence layer)
+Plan: 01-02 COMPLETED
+Status: Ready for plan 01-03
+Last activity: 2026-02-18 — Plan 01-02 completed (FSM transition guard + dead-letter stream)
 
-Progress: █░░░░░░░░░ ~8%
+Progress: ██░░░░░░░░ ~15%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: ~15 min
-- Total execution time: ~0.25 hours
+- Total plans completed: 2
+- Average duration: ~12 min
+- Total execution time: ~0.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-router-core | 1/? | ~15m | ~15m |
+| 01-router-core | 2/? | ~25m | ~12m |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (15m)
-- Trend: Baseline established
+- Last 5 plans: 01-01 (15m), 01-02 (10m)
+- Trend: Improving
 
 ## Accumulated Context
 
@@ -48,6 +48,7 @@ Recent decisions affecting current work:
 ### Completed Plans
 
 - **01-01**: SQLite persistence layer — 12 tests, 3 commits, ~400 LOC production + 206 LOC tests
+- **01-02**: FSM transition guard + dead-letter stream — 9 tests, 3 commits, 269 LOC production + 310 LOC tests
 
 ### Pending Todos
 
@@ -60,5 +61,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Plan 01-01 completed, ready for plan 01-02
-Resume file: .planning/phases/01-router-core/01-01-SUMMARY.md
+Stopped at: Plan 01-02 completed, ready for plan 01-03
+Resume file: .planning/phases/01-router-core/01-02-SUMMARY.md
