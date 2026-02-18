@@ -1,0 +1,102 @@
+# Requirements: AI Mesh Network
+
+**Defined:** 2026-02-18
+**Core Value:** Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth, not terminal state.
+
+## v1 Requirements
+
+Requirements for initial release. Each maps to roadmap phases.
+
+### Router
+
+- [ ] **ROUTER-01**: Router persists tasks, events, workers, leases in SQLite with crash recovery (expired leases requeued on restart)
+- [ ] **ROUTER-02**: FSM transition guard enforces canonical state machine with dead-letter + alert on invalid transitions
+- [ ] **ROUTER-03**: Task finalization is idempotent (no double completion via compare-and-set)
+- [ ] **ROUTER-04**: Append-only event log with idempotency key deduplication
+
+### Worker
+
+- [ ] **WORKER-01**: Worker registry with heartbeat (5s), stale detection (35s WireGuard-aware), automatic lease requeue
+- [ ] **WORKER-02**: One active Claude account profile per concurrent worker (CCS isolation, reject duplicate registration)
+
+### Scheduling
+
+- [ ] **SCHED-01**: Deterministic scheduler routes by target_cli -> target_account -> oldest idle worker
+- [ ] **SCHED-02**: Bounded retry: max 3 attempts, backoff 15s/60s/180s, escalation to BOSS on exhaust
+
+### Communication
+
+- [ ] **COMMS-01**: Hierarchical communication enforced: BOSS->PRESIDENT->WORKERS->PRESIDENT, no worker-to-worker (temporary peer channel with TTL as exception)
+
+### Verification
+
+- [ ] **VERIFY-01**: Mandatory VERIFIER gate before terminal completion on critical changes (review state in FSM)
+
+### Event Bridge
+
+- [ ] **BRIDGE-01**: Auto-emitter for GSD commands -> router events (CloudEvent envelope, NDJSON transport, JSON Schema validation)
+- [ ] **BRIDGE-02**: Rule-based semantic mapping (YAML config) for GSD command -> router state transitions
+- [ ] **BRIDGE-03**: Fallback buffer (.mesh/tasks-buffer.jsonl) when router unreachable, with replay on reconnect
+
+### Deployment
+
+- [ ] **DEPLOY-01**: systemd units for router (VPS) and workers (Workstation) with Restart=always
+
+### Monitoring
+
+- [ ] **MONITOR-01**: Mesh-specific alert rules: MeshRouterDown, MeshWorkerStale, MeshQueueDepthHigh + Grafana Cloud "no data" alert
+
+## v2 Requirements
+
+Deferred to future release. Tracked but not in current roadmap.
+
+### Operations
+
+- **OPS-01**: iTerm2 automation profile with preconfigured panes (router logs, queue status, worker logs)
+- **OPS-02**: Operator commands: list/reassign/cancel/retry tasks from CLI
+- **OPS-03**: Richer Grafana dashboards (queue depth, task duration p95, success rate, retry rate)
+
+### Advanced
+
+- **ADV-01**: OpenClaw-inspired lane queues for priority/routing optimization
+- **ADV-02**: Cross-machine health probes (VPS -> WS ping via WireGuard)
+- **ADV-03**: Chaos test script (kill router, kill worker, VPN down scenarios)
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| GUI/dashboard (v1) | CLI-first, operator uses iTerm2 panes |
+| Multi-VPS / multi-region | Single VPS accepted SPOF for MVP |
+| Auto-scaling workers | Fixed worker pool, manual provisioning |
+| Worker-to-worker direct communication | Strict hierarchy enforced by design |
+| Postgres | SQLite sufficient for single-VPS topology |
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| ROUTER-01 | Phase 1 | Pending |
+| ROUTER-02 | Phase 1 | Pending |
+| ROUTER-03 | Phase 1 | Pending |
+| ROUTER-04 | Phase 1 | Pending |
+| WORKER-01 | Phase 2 | Pending |
+| WORKER-02 | Phase 2 | Pending |
+| SCHED-01 | Phase 2 | Pending |
+| SCHED-02 | Phase 2 | Pending |
+| COMMS-01 | Phase 3 | Pending |
+| VERIFY-01 | Phase 3 | Pending |
+| BRIDGE-01 | Phase 4 | Pending |
+| BRIDGE-02 | Phase 4 | Pending |
+| BRIDGE-03 | Phase 4 | Pending |
+| DEPLOY-01 | Phase 5 | Pending |
+| MONITOR-01 | Phase 6 | Pending |
+
+**Coverage:**
+- v1 requirements: 15 total
+- Mapped to phases: 15
+- Unmapped: 0
+
+---
+*Requirements defined: 2026-02-18*
+*Last updated: 2026-02-18 after initialization*
