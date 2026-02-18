@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-02-18)
 ## Current Position
 
 Phase: 1 of 6 (Router Core)
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-02-18 — Project initialized, roadmap created
+Plan: 01-01 COMPLETED
+Status: Ready for plan 01-02
+Last activity: 2026-02-18 — Plan 01-01 completed (SQLite persistence layer)
 
-Progress: ░░░░░░░░░░ 0%
+Progress: █░░░░░░░░░ ~8%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: 0 hours
+- Total plans completed: 1
+- Average duration: ~15 min
+- Total execution time: ~0.25 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| — | — | — | — |
+| 01-router-core | 1/? | ~15m | ~15m |
 
 **Recent Trend:**
-- Last 5 plans: —
-- Trend: —
+- Last 5 plans: 01-01 (15m)
+- Trend: Baseline established
 
 ## Accumulated Context
 
@@ -45,6 +45,10 @@ Recent decisions affecting current work:
 - SQLite over Postgres for v1
 - Stale threshold 35s (WireGuard keepalive-aware)
 
+### Completed Plans
+
+- **01-01**: SQLite persistence layer — 12 tests, 3 commits, ~400 LOC production + 206 LOC tests
+
 ### Pending Todos
 
 None yet.
@@ -56,5 +60,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-18
-Stopped at: Project initialization complete, roadmap created
-Resume file: None
+Stopped at: Plan 01-01 completed, ready for plan 01-02
+Resume file: .planning/phases/01-router-core/01-01-SUMMARY.md
