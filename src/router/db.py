@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS leases (
 );
 
 CREATE INDEX IF NOT EXISTS idx_leases_expires ON leases(expires_at);
+
+CREATE TABLE IF NOT EXISTS dead_letter_events (
+    dl_id           TEXT PRIMARY KEY,
+    task_id         TEXT NOT NULL,
+    attempted_from  TEXT NOT NULL,
+    attempted_to    TEXT NOT NULL,
+    reason          TEXT NOT NULL DEFAULT '',
+    original_payload TEXT NOT NULL DEFAULT '{}',
+    ts              TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_letter_task_id ON dead_letter_events(task_id);
 """
 
 
