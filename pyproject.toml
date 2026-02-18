@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "ai-mesh-router"
+version = "0.1.0"
+description = "Distributed multi-agent task orchestration router with SQLite persistence"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "aiosqlite>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
