@@ -64,6 +64,7 @@ class Task(BaseModel):
     assigned_worker: str | None = None
     lease_expires_at: str | None = None
     attempt: int = 1
+    not_before: str | None = None
     idempotency_key: str = Field(default_factory=_uuid4)
     created_at: str = Field(default_factory=_utc_now)
     updated_at: str = Field(default_factory=_utc_now)
@@ -86,6 +87,8 @@ class Worker(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     status: str = "idle"
     last_heartbeat: str = Field(default_factory=_utc_now)
+    idle_since: str = Field(default_factory=_utc_now)
+    stale_since: str | None = None
     concurrency: int = 1
 
 

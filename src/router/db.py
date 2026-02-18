@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     assigned_worker TEXT,
     lease_expires_at TEXT,
     attempt         INTEGER NOT NULL DEFAULT 1,
+    not_before      TEXT,
     idempotency_key TEXT NOT NULL,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
@@ -66,6 +67,8 @@ CREATE TABLE IF NOT EXISTS workers (
     capabilities    TEXT NOT NULL DEFAULT '[]',
     status          TEXT NOT NULL DEFAULT 'idle',
     last_heartbeat  TEXT NOT NULL,
+    idle_since      TEXT,
+    stale_since     TEXT,
     concurrency     INTEGER NOT NULL DEFAULT 1
 );
 
@@ -168,6 +171,7 @@ class RouterDB:
             assigned_worker=row["assigned_worker"],
             lease_expires_at=row["lease_expires_at"],
             attempt=row["attempt"],
+            not_before=row["not_before"],
             idempotency_key=row["idempotency_key"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -181,9 +185,9 @@ class RouterDB:
             """INSERT INTO tasks (
                 task_id, parent_task_id, phase, title, payload, target_cli,
                 target_account, priority, deadline_ts, depends_on, status,
-                assigned_worker, lease_expires_at, attempt, idempotency_key,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                assigned_worker, lease_expires_at, attempt, not_before,
+                idempotency_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.task_id,
                 task.parent_task_id,
@@ -199,6 +203,7 @@ class RouterDB:
                 task.assigned_worker,
                 task.lease_expires_at,
                 task.attempt,
+                task.not_before,
                 task.idempotency_key,
                 task.created_at,
                 task.updated_at,
@@ -295,6 +300,8 @@ class RouterDB:
             capabilities=json.loads(row["capabilities"]),
             status=row["status"],
             last_heartbeat=row["last_heartbeat"],
+            idle_since=row["idle_since"],
+            stale_since=row["stale_since"],
             concurrency=row["concurrency"],
         )
 
@@ -305,8 +312,9 @@ class RouterDB:
         c.execute(
             """INSERT INTO workers (
                 worker_id, machine, cli_type, account_profile,
-                capabilities, status, last_heartbeat, concurrency
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                capabilities, status, last_heartbeat, idle_since,
+                stale_since, concurrency
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 worker.worker_id,
                 worker.machine,
@@ -315,6 +323,8 @@ class RouterDB:
                 json.dumps(worker.capabilities),
                 worker.status,
                 worker.last_heartbeat,
+                worker.idle_since,
+                worker.stale_since,
                 worker.concurrency,
             ),
         )
@@ -339,6 +349,95 @@ class RouterDB:
         else:
             cur = self._conn.execute("SELECT * FROM workers")
         return [self._worker_from_row(row) for row in cur.fetchall()]
+
+    @_retry_on_busy
+    def update_worker(
+        self,
+        worker_id: str,
+        updates: dict[str, str | int | None],
+        conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        """Update worker fields by worker_id. Returns True if row was updated."""
+        if not updates:
+            return False
+        c = conn or self._conn
+        set_clauses = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [worker_id]
+        cur = c.execute(
+            f"UPDATE workers SET {set_clauses} WHERE worker_id = ?",
+            values,
+        )
+        if conn is None:
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def list_stale_candidates(self, threshold_iso: str) -> list[Worker]:
+        """Find workers whose last_heartbeat is older than threshold."""
+        cur = self._conn.execute(
+            "SELECT * FROM workers WHERE status IN ('idle', 'busy') AND last_heartbeat < ?",
+            (threshold_iso,),
+        )
+        return [self._worker_from_row(row) for row in cur.fetchall()]
+
+    def find_worker_by_account(
+        self,
+        account_profile: str,
+        exclude_statuses: list[str] | None = None,
+    ) -> Worker | None:
+        """Find an active worker with the given account_profile."""
+        excluded = exclude_statuses or ["offline"]
+        placeholders = ", ".join("?" for _ in excluded)
+        cur = self._conn.execute(
+            f"SELECT * FROM workers WHERE account_profile = ? AND status NOT IN ({placeholders}) LIMIT 1",
+            [account_profile] + excluded,
+        )
+        row = cur.fetchone()
+        return self._worker_from_row(row) if row else None
+
+    def list_worker_leases(self, worker_id: str) -> list[Lease]:
+        """Get all active leases for a worker."""
+        cur = self._conn.execute(
+            "SELECT * FROM leases WHERE worker_id = ?", (worker_id,)
+        )
+        return [self._lease_from_row(row) for row in cur.fetchall()]
+
+    @_retry_on_busy
+    def update_task_fields(
+        self,
+        task_id: str,
+        updates: dict[str, str | int | None],
+        conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        """Update arbitrary task fields by task_id. Returns True if row was updated."""
+        if not updates:
+            return False
+        c = conn or self._conn
+        updates["updated_at"] = _utc_now()
+        set_clauses = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [task_id]
+        cur = c.execute(
+            f"UPDATE tasks SET {set_clauses} WHERE task_id = ?",
+            values,
+        )
+        if conn is None:
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def list_queued_tasks(
+        self,
+        before_iso: str | None = None,
+    ) -> list[Task]:
+        """List queued tasks, optionally only those created before a timestamp."""
+        if before_iso:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE status = 'queued' AND created_at < ? ORDER BY priority DESC, created_at ASC",
+                (before_iso,),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority DESC, created_at ASC"
+            )
+        return [self._task_from_row(row) for row in cur.fetchall()]
 
     # -- Leases --
 
