@@ -6,6 +6,7 @@ and worker status FSM transitions.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -87,7 +88,7 @@ class WorkerManager:
                         "stale_since": None,
                         "machine": worker.machine,
                         "cli_type": worker.cli_type.value,
-                        "capabilities": __import__("json").dumps(
+                        "capabilities": json.dumps(
                             worker.capabilities
                         ),
                     },
