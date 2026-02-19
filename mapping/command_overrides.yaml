@@ -1,0 +1,11 @@
+version: 1
+overrides:
+  - command: "pipeline:gsd"
+    emit_parent_run: true
+    open_phase_task: true
+    description: "Pipeline orchestrator - creates parent run and phase task"
+  - command: "gsd:execute-phase-sync"
+    emit_parent_run: false
+    open_phase_task: false
+    requires_plan: true
+    description: "Phase execution with state sync"

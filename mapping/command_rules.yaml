@@ -1,0 +1,20 @@
+version: 1
+rules:
+  - match: "^gsd:research-.*|^research$"
+    step: research
+    description: "Research phase commands"
+  - match: "^gsd:discuss-.*"
+    step: discuss
+    description: "Discussion/context gathering"
+  - match: "^gsd:plan-fix$|^speckit\\.autofix.*"
+    step: remediation
+    description: "Fix and remediation commands (before plan rule — more specific)"
+  - match: "^gsd:plan-.*|^gsd:list-phase-.*"
+    step: plan
+    description: "Planning phase commands"
+  - match: "^gsd:execute-.*|^pipeline:gsd$|^speckit\\.implement.*"
+    step: implement
+    description: "Execution/implementation commands"
+  - match: "^validate$|^gsd:verify-.*|^confidence-gate$"
+    step: review
+    description: "Validation and verification"

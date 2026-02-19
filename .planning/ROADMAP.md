@@ -16,8 +16,8 @@ None (custom distributed systems architecture — informed by project research d
 
 - [x] **Phase 1: Router Core** — SQLite persistence, FSM guard, event log, crash recovery
 - [x] **Phase 2: Worker Lifecycle** — Registry, heartbeat, stale detection, scheduler, retry
-- [ ] **Phase 3: Communication & Verification** — Hierarchical comms, verifier gate, review transitions
-- [ ] **Phase 4: Event Bridge** — GSD->Router emitter, semantic mapping, fallback buffer
+- [x] **Phase 3: Communication & Verification** — Hierarchical comms, verifier gate, review transitions
+- [x] **Phase 4: Event Bridge** — GSD->Router emitter, semantic mapping, fallback buffer
 - [ ] **Phase 5: Deployment** — systemd units, UFW rules, boot order, infra prep
 - [ ] **Phase 6: Monitoring & Hardening** — Mesh alerts, Grafana Cloud integration, health probes
 
@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Router Core | 3/3 | Done | 2026-02-18 |
 | 2. Worker Lifecycle | 3/3 | Done | 2026-02-18 |
-| 3. Communication & Verification | 0/2 | Not started | - |
-| 4. Event Bridge | 0/3 | Not started | - |
+| 3. Communication & Verification | 2/2 | Done | 2026-02-19 |
+| 4. Event Bridge | 3/3 | Done | 2026-02-19 |
 | 5. Deployment | 0/2 | Not started | - |
 | 6. Monitoring & Hardening | 0/2 | Not started | - |

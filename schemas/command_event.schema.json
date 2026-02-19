@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mesh Command Event Data",
+  "description": "Schema for the data payload of a CloudEvent emitted by the GSD-Router bridge.",
+  "type": "object",
+  "required": ["run_id", "gsd_command", "event", "idempotency_key", "ts"],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "task_id": {
+      "type": ["string", "null"]
+    },
+    "phase": {
+      "type": ["string", "null"]
+    },
+    "gsd_command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "step": {
+      "type": ["string", "null"],
+      "enum": [null, "research", "discuss", "plan", "implement", "review", "remediation"]
+    },
+    "event": {
+      "type": "string",
+      "enum": ["started", "completed", "failed"]
+    },
+    "target_cli": {
+      "type": ["string", "null"],
+      "enum": [null, "claude", "codex", "gemini"]
+    },
+    "target_account": {
+      "type": ["string", "null"]
+    },
+    "status": {
+      "type": ["string", "null"]
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ts": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "sender_role": {
+      "type": "string",
+      "enum": ["boss", "president", "worker"]
+    }
+  },
+  "additionalProperties": false
+}
