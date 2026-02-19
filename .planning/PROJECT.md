@@ -8,64 +8,68 @@ A distributed multi-agent orchestration system that coordinates AI CLI workers (
 
 Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth, not terminal state.
 
+## Current State
+
+**Shipped:** v1.0 MVP (2026-02-19)
+**Codebase:** 3,829 LOC production + 4,313 LOC tests (Python)
+**Test suite:** 291 tests, all passing
+**Tech stack:** Python 3.11+, SQLite (WAL), Pydantic, CloudEvents, prometheus-client
+
 ## Requirements
 
 ### Validated
 
-(None yet — ship to validate)
+- Router with SQLite persistence + crash recovery — v1.0
+- FSM transition guard with dead-letter stream — v1.0
+- Worker registry with heartbeat (5s), stale detection (35s) — v1.0
+- Deterministic scheduler (target_cli -> target_account -> oldest idle) — v1.0
+- Bounded retry (3 attempts, 15s/60s/180s backoff, BOSS escalation) — v1.0
+- Idempotent task finalization via CAS — v1.0
+- Mandatory VERIFIER gate for critical changes — v1.0
+- Hierarchical communication (BOSS->PRESIDENT->WORKERS->PRESIDENT) — v1.0
+- Event bridge: CloudEvent emitter, NDJSON, JSON Schema — v1.0
+- Rule-based YAML semantic mapping — v1.0
+- systemd units for router and workers — v1.0
+- Mesh monitoring alerts (RouterDown, WorkerStale, QueueDepthHigh, NoData, FailureRate) — v1.0
+- One active account per worker (CCS isolation) — v1.0
+- Append-only event log with idempotency key dedup — v1.0
+- Fallback buffer with replay on reconnect — v1.0
 
 ### Active
 
-- [ ] Router with SQLite persistence: `tasks`, `task_events`, `workers`, `leases` tables with crash recovery
-- [ ] FSM transition guard enforcing canonical state machine (queued -> assigned -> blocked -> running -> review -> completed/failed/timeout/canceled)
-- [ ] Worker registry with heartbeat (5s), stale detection (35s WireGuard-aware), automatic lease requeue
-- [ ] Deterministic scheduler: route by `target_cli` -> `target_account` -> oldest idle worker
-- [ ] Bounded retry policy: max 3 attempts, backoff 15s/60s/180s, escalation to BOSS on exhaust
-- [ ] Idempotent task finalization (no double completion)
-- [ ] Mandatory VERIFIER gate before terminal completion on critical changes
-- [ ] Hierarchical communication policy: BOSS->PRESIDENT->WORKERS->PRESIDENT, no worker-to-worker (except temporary peer channel with TTL)
-- [ ] Event bridge: auto-emitter for GSD commands -> router events (CloudEvent envelope, NDJSON, JSON Schema validation)
-- [ ] Rule-based semantic mapping (YAML) for GSD command -> router state transitions
-- [ ] systemd units for router (VPS) and workers (Workstation)
-- [ ] Mesh-specific monitoring alerts: RouterDown, WorkerStale, QueueDepthHigh
-- [ ] One active Claude account profile per worker (CCS isolation)
-- [ ] Append-only event log with idempotency key deduplication
-- [ ] Fallback buffer (.mesh/tasks-buffer.jsonl) when router unreachable, with replay on reconnect
+(No active requirements — define with `/gsd:new-milestone`)
 
 ### Out of Scope
 
-- GUI/dashboard (v1) — CLI-first, operator uses iTerm2 panes for visibility
+- GUI/dashboard — CLI-first, operator uses iTerm2 panes for visibility
 - Multi-VPS / multi-region — single VPS is accepted SPOF for MVP
-- OpenClaw lane queues — deferred to Phase C if needed
-- Worker-to-worker direct communication by default — strict hierarchy enforced
+- OpenClaw lane queues — deferred unless performance requires it
+- Worker-to-worker direct communication — strict hierarchy enforced by design
 - Auto-scaling workers — fixed worker pool, manual provisioning
+- Offline mode — VPN-connected design assumes network availability
 
 ## Context
 
-### Infrastructure (already operational)
+### Infrastructure (operational)
 - **VPS**: WireGuard VPN tunnel to Workstation (keepalive 25s)
 - **Workstation**: Docker with DOCKER-USER iptables hardening, VictoriaMetrics + Netdata + Grafana monitoring
 - **MacBook**: iTerm2 operator terminal (not source of truth)
-- **Networking**: autossh tunnel VPS, UFW firewall, verify-network.sh checks
-- **Alerting**: 7 base alert rules (CPU/Memory/Disk/NodeDown/ProcessDown), Grafana Cloud -> Discord
+- **Networking**: autossh tunnel VPS, UFW firewall, verify-network.sh + mesh checks
+- **Alerting**: 7 base rules + 5 mesh-specific rules, Grafana Cloud -> Discord
 
-### Research completed
-- 10+ analysis documents cross-validated across 3 sessions
-- 21 architecture issues tracked: 15 CLOSED, 4 ACCEPTED, 2 OPEN (monitoring gaps)
-- PoC code archived (not production base): router_poc.py, agent_poc.py
-- Claude Agent Teams reverse-engineered, OpenClaw patterns adapted
-- Multi-account model via CCS documented
-
-### Rollout plan (from KISS spec)
-- **Phase A**: Task + worker schema, routing, heartbeat, leases, retries, idempotent finalize
-- **Phase B**: Verifier gate, operator commands (list/reassign/cancel/retry), basic metrics
-- **Phase C**: iTerm2 automation profile, dashboards/alerts, optional OpenClaw lane queues
+### Known Issues / Tech Debt
+- `/tasks/ack` HTTP endpoint missing — scheduler logic exists, HTTP wiring absent
+- `server._handle_register()` bypasses WorkerManager validation (uses global bearer token only)
+- YAML mapping incomplete for `gsd:implement-*` commands
+- `heartbeat.py` Worker type annotation not imported (safe at runtime, fails mypy)
+- Worker short-polling (2s) — long-polling deferred
+- Buffer replay trigger mechanism TBD (on-next-emit or periodic)
 
 ## Constraints
 
 - **Transport**: VPN-only between VPS and Workstation (WireGuard)
-- **Persistence**: SQLite v1 (no Postgres dependency for MVP)
-- **Security**: Worker registration token (rotatable), per-worker isolated state dirs (~/.mesh/agents/<worker_id>/)
+- **Persistence**: SQLite v1 (no Postgres dependency)
+- **Security**: Worker registration token (rotatable), per-worker state dirs (~/.mesh/agents/<worker_id>/)
 - **Account isolation**: One active Claude account profile per concurrent worker
 - **Heartbeat timing**: 5s interval, 35s stale threshold (WireGuard keepalive-aware)
 - **Dispatch latency SLO**: p95 < 3s
@@ -75,13 +79,21 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Hybrid model: Agent Teams (strategic) + External router (execution) | Agent Teams strongest for BOSS/PRESIDENT coordination; external router needed for cross-CLI + VPN reliability | -- Pending |
-| Router/DB as single source of truth (not GSD/tmux state) | Avoids split-brain; deterministic recovery after crash | -- Pending |
-| SQLite over Postgres for v1 | Minimal dependency, sufficient for single-VPS topology | -- Pending |
-| GSD as tracking layer, not orchestrator | GSD provides workflow UX; router FSM is transition authority | -- Pending |
-| Auto-instrumentation + YAML mapping (not per-command hardcoding) | High coverage with low maintenance; new commands auto-tracked | -- Pending |
-| Stale threshold 35s (not 20s) | Must exceed WireGuard keepalive 25s to avoid false stale detection | -- Pending |
-| PoC code archived, fresh implementation | PoC had syntax errors, in-memory only, fragile framing — not suitable as base | -- Pending |
+| Hybrid model: Agent Teams (strategic) + External router (execution) | Agent Teams strongest for BOSS/PRESIDENT coordination; external router needed for cross-CLI + VPN reliability | Good |
+| Router/DB as single source of truth (not GSD/tmux state) | Avoids split-brain; deterministic recovery after crash | Good |
+| SQLite over Postgres for v1 | Minimal dependency, sufficient for single-VPS topology | Good |
+| GSD as tracking layer, not orchestrator | GSD provides workflow UX; router FSM is transition authority | Good |
+| Auto-instrumentation + YAML mapping (not per-command hardcoding) | High coverage with low maintenance; new commands auto-tracked | Good |
+| Stale threshold 35s (not 20s) | Must exceed WireGuard keepalive 25s to avoid false stale detection | Good |
+| PoC code archived, fresh implementation | PoC had syntax errors, in-memory only — not suitable as base | Good |
+| stdlib ThreadingHTTPServer (no Flask/uvicorn) | Zero external deps for HTTP serving, sufficient for MVP | Good |
+| prometheus-client for metrics (not manual text format) | OpenMetrics compliant, standard | Good |
+| Summary for task duration (not SQLite percentile) | Efficient, standard approach | Good |
+| Transport adapter pattern: InProcess + HTTP | Clean separation for test vs production | Good |
+| SHA-256 idempotency keys (not built-in hash()) | Stable across Python sessions | Good |
+| Recovery uses direct CAS (not FSM) | Recovery transitions outside FSM table, needs atomic compound ops | Good |
+| Worker short-polling 2s (not long-polling) | Simple, deferred long-polling to v2 | Revisit |
+| No /metrics auth | WireGuard-only network, same as /health | Revisit |
 
 ---
-*Last updated: 2026-02-18 after initialization*
+*Last updated: 2026-02-19 after v1.0 milestone*
