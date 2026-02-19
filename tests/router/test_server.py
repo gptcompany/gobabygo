@@ -13,6 +13,7 @@ import requests
 
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
+from src.router.metrics import MeshMetrics
 from src.router.models import Task, TaskStatus, Worker
 from src.router.scheduler import Scheduler
 from src.router.server import MeshRouterHandler
@@ -37,6 +38,7 @@ def server_url(db):
     heartbeat = HeartbeatManager(db)
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
+    metrics = MeshMetrics()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
     server.router_state = {
@@ -44,6 +46,7 @@ def server_url(db):
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
+        "metrics": metrics,
         "auth_token": None,
         "start_time": datetime.now(timezone.utc),
     }

@@ -19,7 +19,7 @@ None (custom distributed systems architecture — informed by project research d
 - [x] **Phase 3: Communication & Verification** — Hierarchical comms, verifier gate, review transitions
 - [x] **Phase 4: Event Bridge** — GSD->Router emitter, semantic mapping, fallback buffer
 - [ ] **Phase 5: Deployment** — systemd units, UFW rules, boot order, infra prep
-- [ ] **Phase 6: Monitoring & Hardening** — Mesh alerts, Grafana Cloud integration, health probes
+- [x] **Phase 6: Monitoring & Hardening** — Mesh alerts, Grafana Cloud integration, health probes
 
 ## Phase Details
 
@@ -106,4 +106,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Communication & Verification | 2/2 | Done | 2026-02-19 |
 | 4. Event Bridge | 3/3 | Done | 2026-02-19 |
 | 5. Deployment | 2/2 | Done | 2026-02-19 |
-| 6. Monitoring & Hardening | 0/2 | Not started | - |
+| 6. Monitoring & Hardening | 2/2 | Done | 2026-02-19 |

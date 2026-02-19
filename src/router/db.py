@@ -514,6 +514,18 @@ class RouterDB:
         )
         return cur.fetchone()[0]
 
+    def count_all_task_statuses(self) -> dict[str, int]:
+        """Count tasks grouped by status in a single query."""
+        cur = self._conn.execute(
+            "SELECT status, COUNT(*) FROM tasks GROUP BY status"
+        )
+        return {row[0]: row[1] for row in cur.fetchall()}
+
+    def count_dead_letters(self) -> int:
+        """Count dead letter events."""
+        cur = self._conn.execute("SELECT COUNT(*) FROM dead_letter_events")
+        return cur.fetchone()[0]
+
     # -- Leases --
 
     def _lease_from_row(self, row: sqlite3.Row) -> Lease:

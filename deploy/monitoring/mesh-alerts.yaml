@@ -1,0 +1,221 @@
+# Grafana Cloud alert rules for AI Mesh Network
+# Import via Grafana UI: Alerting > Alert rules > Import
+# Or provision via Grafana provisioning directory
+#
+# Prerequisites:
+#   - VictoriaMetrics datasource configured in Grafana
+#   - Replace <VICTORIAMETRICS_UID> with actual datasource UID
+#   - Discord contact point configured for notifications
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: mesh-network
+    folder: Mesh
+    interval: 1m
+    rules:
+      # --- CRITICAL ---
+
+      - uid: mesh-router-down
+        title: MeshRouterDown
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: <VICTORIAMETRICS_UID>
+            model:
+              expr: mesh_router_up
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator:
+                    type: lt
+                    params:
+                      - 1
+        for: 1m
+        labels:
+          severity: critical
+          team: mesh
+        annotations:
+          summary: "Mesh router is down"
+          description: "mesh_router_up < 1 for more than 1 minute. Router may have crashed or become unreachable."
+
+      - uid: mesh-no-data
+        title: MeshNoData
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: <VICTORIAMETRICS_UID>
+            model:
+              expr: absent(mesh_router_up)
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0
+        for: 5m
+        labels:
+          severity: critical
+          team: mesh
+        annotations:
+          summary: "No data from mesh router"
+          description: "No metrics received from mesh router for more than 5 minutes. Scrape target may be unreachable or down."
+
+      # --- WARNING ---
+
+      - uid: mesh-worker-stale
+        title: MeshWorkerStale
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: <VICTORIAMETRICS_UID>
+            model:
+              expr: mesh_workers_stale
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0
+        for: 2m
+        labels:
+          severity: warning
+          team: mesh
+        annotations:
+          summary: "Stale mesh workers detected"
+          description: "{{ $value }} worker(s) have not sent a heartbeat within the stale threshold (35s). Check WireGuard tunnel and worker processes."
+
+      - uid: mesh-queue-depth-high
+        title: MeshQueueDepthHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: <VICTORIAMETRICS_UID>
+            model:
+              expr: mesh_queue_depth
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 50
+        for: 5m
+        labels:
+          severity: warning
+          team: mesh
+        annotations:
+          summary: "Mesh queue depth is high"
+          description: "Queue depth is {{ $value }} (threshold: 50). Tasks are accumulating faster than workers can process them."
+
+      - uid: mesh-failure-rate-high
+        title: MeshTaskFailureRateHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: <VICTORIAMETRICS_UID>
+            model:
+              expr: >-
+                clamp_min(
+                  increase(mesh_tasks_failed_total[5m])
+                  / clamp_min(
+                    increase(mesh_tasks_completed_total[5m]) + increase(mesh_tasks_failed_total[5m]),
+                    1
+                  ),
+                  0
+                )
+              instant: true
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              refId: C
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0.05
+        for: 10m
+        labels:
+          severity: warning
+          team: mesh
+        annotations:
+          summary: "Task failure rate exceeds 5%"
+          description: "Task success rate is below 95% SLO over the last 5 minutes. Failure rate: {{ $value | humanizePercentage }}"

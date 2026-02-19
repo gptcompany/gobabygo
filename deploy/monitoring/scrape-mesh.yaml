@@ -1,0 +1,25 @@
+# VictoriaMetrics / Prometheus scrape configuration for mesh router
+#
+# Add this job to your existing scrape_configs in:
+#   - prometheus.yml (Prometheus)
+#   - vmagent config (VictoriaMetrics vmagent)
+#   - Or VictoriaMetrics -promscrape.config flag
+#
+# Prerequisites:
+#   - Replace <VPS_WG_IP> with the VPS WireGuard IP (e.g., 10.x.x.1)
+#   - Ensure WireGuard tunnel is active between Workstation and VPS
+#   - Mesh router must be running on port 8780
+
+scrape_configs:
+  - job_name: mesh-router
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - "<VPS_WG_IP>:8780"
+        labels:
+          instance: mesh-router
+          environment: production
+          service: ai-mesh

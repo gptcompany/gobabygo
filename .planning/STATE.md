@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-18)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth.
-**Current focus:** Phase 5 — Deployment (COMPLETE)
+**Current focus:** All 6 phases COMPLETE — v1 milestone done
 
 ## Current Position
 
-Phase: 5 of 6 (Deployment)
-Plan: 05-02 COMPLETED (all 2 plans done)
-Status: Phase 05 execution complete, verified, confidence gate passed (90/100)
-Last activity: 2026-02-19 — Plans 05-01, 05-02 completed
+Phase: 6 of 6 (Monitoring & Hardening)
+Plan: 06-02 COMPLETED (all 2 plans done)
+Status: Phase 06 execution complete, verified, confidence gate passed (92/100)
+Last activity: 2026-02-19 — Plans 06-01, 06-02 completed
 
-Progress: ████████████████░░ ~83%
+Progress: ██████████████████ 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 13
+- Total plans completed: 15
 - Average duration: ~10 min
-- Total execution time: ~2.5 hours
+- Total execution time: ~3 hours
 
 **By Phase:**
 
@@ -32,6 +32,7 @@ Progress: ████████████████░░ ~83%
 | 03-communication-verification | 2/2 | ~21m | ~10m |
 | 04-event-bridge | 3/3 | ~20m | ~7m |
 | 05-deployment | 2/2 | ~15m | ~7m |
+| 06-monitoring-hardening | 2/2 | ~15m | ~7m |
 
 ## Accumulated Context
 
@@ -68,6 +69,11 @@ Recent decisions affecting current work:
 - **uv for Python venv management (both VPS and Workstation)**
 - **Data paths: /var/lib/mesh-router/ (DB), /etc/mesh-router/ (config), ~/.mesh/ (worker state)**
 - **Dedicated service users: mesh (router), mesh-worker (workers)**
+- **prometheus-client for metrics (not manual text format)**
+- **Summary for task duration quantiles (not SQLite on-the-fly percentile)**
+- **No pre-calculated success_rate Gauge (use PromQL increase() in Grafana)**
+- **Single GROUP BY query for task status counts (efficient scrape)**
+- **Grafana Cloud alerting with Discord notifications (consistent with existing 7 rules)**
 
 ### Completed Plans
 
@@ -84,6 +90,8 @@ Recent decisions affecting current work:
 - **04-03**: Fallback buffer + integration — 18 tests, included in 557 LOC
 - **05-01**: HTTP server + worker client + systemd units — 32 tests, ~400 LOC production + 420 LOC tests
 - **05-02**: Infrastructure scripts + deploy config — 19 tests, 4 shell scripts + systemd units + env templates
+- **06-01**: Prometheus metrics export — 14 tests, ~130 LOC production (metrics.py) + ~15 LOC DB helpers
+- **06-02**: Alert rules + scrape config — 13 tests, 5 alert rules + scrape config + notification policy
 
 ### Test Summary
 
@@ -94,22 +102,25 @@ Recent decisions affecting current work:
 | Phase 3 | 49 |
 | Phase 4 | 72 |
 | Phase 5 | 51 |
-| **Total** | **264** |
+| Phase 6 | 27 |
+| **Total** | **291** |
 
 ### Pending Todos
 
-- check_review_timeout integration into periodic event loop (Phase 6 or v2)
+- check_review_timeout integration into periodic event loop (v2)
 - Buffer replay trigger mechanism (on-next-emit or periodic) (v2)
 - Smart watchdog: health check DB in watchdog thread (v2)
 - Worker auto-reregister on heartbeat "unknown_worker" response (v2)
+- Summary → Histogram migration for multi-router support (v2)
+- /metrics auth option for non-WireGuard deployments (v2)
 
 ### Blockers/Concerns
 
-- HIGH: Mesh monitoring/alerts assenti (from cross-validated report) — addressed in Phase 6
+- ~~HIGH: Mesh monitoring/alerts assenti~~ → RESOLVED in Phase 6
 - NOTE: Duration_ms tracking requires caller-side state management (optional field)
 
 ## Session Continuity
 
 Last session: 2026-02-19
-Stopped at: Phase 05 complete, ready for Phase 06
-Resume file: .planning/phases/05-deployment/CONTEXT.md
+Stopped at: All 6 phases complete — v1 milestone ready
+Resume file: .planning/phases/06-monitoring-hardening/CONTEXT.md

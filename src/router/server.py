@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
+from src.router.metrics import MeshMetrics
 from src.router.models import Worker
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
@@ -33,6 +34,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             self._handle_health()
+        elif path == "/metrics":
+            self._handle_metrics()
         elif path == "/tasks/next":
             self._handle_task_poll()
         else:
@@ -69,6 +72,20 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 (datetime.now(timezone.utc) - state["start_time"]).total_seconds(), 1
             ),
         })
+
+    def _handle_metrics(self) -> None:
+        """GET /metrics — Prometheus metrics endpoint. No auth (internal wg0 network only)."""
+        state = self.server.router_state  # type: ignore[attr-defined]
+        db: RouterDB = state["db"]
+        metrics: MeshMetrics = state["metrics"]
+        uptime_s = (datetime.now(timezone.utc) - state["start_time"]).total_seconds()
+        metrics.collect_from_db(db, uptime_s)
+        body = metrics.generate()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _handle_task_poll(self) -> None:
         """GET /tasks/next?worker_id=X — short-poll for next assigned task.
@@ -163,9 +180,22 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             data = json.loads(body)
             task_id = data["task_id"]
             worker_id = data["worker_id"]
-            scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
+            state = self.server.router_state  # type: ignore[attr-defined]
+            db: RouterDB = state["db"]
+            scheduler: Scheduler = state["scheduler"]
+            # Get task before completion to calculate duration
+            task = db.get_task(task_id)
             ok = scheduler.complete_task(task_id, worker_id)
             if ok:
+                # Observe task duration for Prometheus Summary
+                if task and task.created_at:
+                    try:
+                        created = datetime.fromisoformat(task.created_at)
+                        duration_s = (datetime.now(timezone.utc) - created).total_seconds()
+                        metrics: MeshMetrics = state["metrics"]
+                        metrics.observe_task_duration(duration_s)
+                    except (ValueError, TypeError):
+                        pass  # Skip duration if timestamp parse fails
                 self._send_json(200, {"status": "completed"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
@@ -266,6 +296,7 @@ def run_server(
     heartbeat = HeartbeatManager(db)
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
+    metrics = MeshMetrics()
     start_time = datetime.now(timezone.utc)
 
     server = ThreadingHTTPServer((host, port), MeshRouterHandler)
@@ -274,6 +305,7 @@ def run_server(
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
+        "metrics": metrics,
         "auth_token": auth_token,
         "start_time": start_time,
     }
