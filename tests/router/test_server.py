@@ -289,6 +289,60 @@ class TestTaskCompleteEndpoint:
         assert resp.status_code == 400
 
 
+class TestTaskAckEndpoint:
+    def test_ack_valid_task(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="busy")
+        db.insert_worker(worker)
+
+        task = Task(
+            task_id="t1",
+            title="test",
+            phase="implement",
+            status=TaskStatus.assigned,
+            assigned_worker="w1",
+            idempotency_key="k1",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/ack",
+            json={"task_id": "t1", "worker_id": "w1"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "acknowledged"
+
+        # Verify task is now running
+        updated = db.get_task("t1")
+        assert updated.status == TaskStatus.running
+
+    def test_ack_wrong_worker_returns_409(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="busy")
+        db.insert_worker(worker)
+
+        task = Task(
+            task_id="t1",
+            title="test",
+            phase="implement",
+            status=TaskStatus.assigned,
+            assigned_worker="w1",
+            idempotency_key="k1",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/ack",
+            json={"task_id": "t1", "worker_id": "w-wrong"},
+        )
+        assert resp.status_code == 409
+
+    def test_ack_missing_fields_returns_400(self, server_url):
+        resp = requests.post(
+            f"{server_url}/tasks/ack",
+            json={"task_id": "t1"},
+        )
+        assert resp.status_code == 400
+
+
 class TestTaskFailEndpoint:
     def test_fail_valid_task(self, server_url, db):
         worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="busy")

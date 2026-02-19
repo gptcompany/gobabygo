@@ -20,6 +20,7 @@ class MockRouterHandler(BaseHTTPRequestHandler):
     # Class-level tracking
     register_calls = []
     heartbeat_calls = []
+    ack_calls = []
     poll_count = 0
     complete_calls = []
     fail_calls = []
@@ -35,6 +36,9 @@ class MockRouterHandler(BaseHTTPRequestHandler):
         elif self.path == "/heartbeat":
             MockRouterHandler.heartbeat_calls.append(body)
             self._respond(200, {"status": "ok"})
+        elif self.path == "/tasks/ack":
+            MockRouterHandler.ack_calls.append(body)
+            self._respond(200, {"status": "acknowledged"})
         elif self.path == "/tasks/complete":
             MockRouterHandler.complete_calls.append(body)
             self._respond(200, {"status": "completed"})
@@ -75,6 +79,7 @@ def reset_mock():
     """Reset mock state before each test."""
     MockRouterHandler.register_calls = []
     MockRouterHandler.heartbeat_calls = []
+    MockRouterHandler.ack_calls = []
     MockRouterHandler.poll_count = 0
     MockRouterHandler.complete_calls = []
     MockRouterHandler.fail_calls = []
@@ -207,6 +212,9 @@ class TestMeshWorkerPolling:
         worker._running = False
         thread.join(timeout=2)
 
+        # Worker should ack before completing
+        assert len(MockRouterHandler.ack_calls) == 1
+        assert MockRouterHandler.ack_calls[0]["task_id"] == "task-1"
         assert len(MockRouterHandler.complete_calls) == 1
         assert MockRouterHandler.complete_calls[0]["task_id"] == "task-1"
 

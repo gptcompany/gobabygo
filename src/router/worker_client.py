@@ -140,6 +140,20 @@ class MeshWorker:
         task_id = task["task_id"]
         logger.info("Executing task %s: %s", task_id, task.get("title", "untitled"))
 
+        # Ack task: assigned -> running
+        try:
+            ack_resp = self._session.post(
+                f"{self.config.router_url}/tasks/ack",
+                json={"task_id": task_id, "worker_id": self.config.worker_id},
+                timeout=5,
+            )
+            if ack_resp.status_code != 200:
+                logger.warning("Task %s ack failed (%d), skipping", task_id, ack_resp.status_code)
+                return
+        except requests.RequestException as e:
+            logger.warning("Task %s ack error: %s, skipping", task_id, e)
+            return
+
         try:
             # TODO: Wire CLI invocation (CCS profile + command dispatch)
             result = {"output": f"Task {task_id} executed by {self.config.worker_id}"}

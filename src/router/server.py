@@ -49,6 +49,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_heartbeat()
         elif path == "/register":
             self._handle_register()
+        elif path == "/tasks/ack":
+            self._handle_task_ack()
         elif path == "/tasks/complete":
             self._handle_task_complete()
         elif path == "/tasks/fail":
@@ -168,6 +170,28 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
         except (ValueError, TypeError, KeyError) as e:
             self._send_json(400, {"error": f"invalid_worker_data: {type(e).__name__}"})
+
+    def _handle_task_ack(self) -> None:
+        """POST /tasks/ack — worker acknowledges assigned task (assigned -> running)."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+            task_id = data["task_id"]
+            worker_id = data["worker_id"]
+            scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
+            ok = scheduler.ack_task(task_id, worker_id)
+            if ok:
+                self._send_json(200, {"status": "acknowledged"})
+            else:
+                self._send_json(409, {"error": "transition_failed"})
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+        except KeyError as e:
+            self._send_json(400, {"error": f"missing_field: {e}"})
 
     def _handle_task_complete(self) -> None:
         """POST /tasks/complete — worker reports task completion."""
