@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-18)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth.
-**Current focus:** Phase 2 — Worker Lifecycle
+**Current focus:** Phase 3 — Communication & Verification (COMPLETE)
 
 ## Current Position
 
-Phase: 2 of 6 (Worker Lifecycle)
-Plan: 02-03 COMPLETED (all 3 plans done)
-Status: Phase 02 execution complete, pending verification
-Last activity: 2026-02-18 — Plans 02-02, 02-03 completed (Scheduler + Retry)
+Phase: 3 of 6 (Communication & Verification)
+Plan: 03-02 COMPLETED (all 2 plans done)
+Status: Phase 03 execution complete, verified, confidence gate passed
+Last activity: 2026-02-19 — Plans 03-01, 03-02 completed + bug fixes from confidence gate
 
-Progress: ████████░░ ~40%
+Progress: ██████████░░ ~50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
+- Total plans completed: 8
 - Average duration: ~10 min
-- Total execution time: ~1 hour
+- Total execution time: ~1.5 hours
 
 **By Phase:**
 
@@ -29,10 +29,7 @@ Progress: ████████░░ ~40%
 |-------|-------|-------|----------|
 | 01-router-core | 3/3 | ~33m | ~11m |
 | 02-worker-lifecycle | 3/3 | ~27m | ~9m |
-
-**Recent Trend:**
-- Last 5 plans: 01-02 (10m), 01-03 (8m), 02-01 (12m), 02-02 (8m), 02-03 (7m)
-- Trend: Stable, Wave 2 parallel execution effective
+| 03-communication-verification | 2/2 | ~21m | ~10m |
 
 ## Accumulated Context
 
@@ -51,6 +48,11 @@ Recent decisions affecting current work:
 - Worker auth: Token-based with expiry and rotation support
 - Shared requeue_task() helper in heartbeat.py (used by heartbeat, worker_manager, retry)
 - Scheduler compound ops use direct CAS (not apply_transition) to avoid nested transaction issues
+- **Communication hierarchy: BOSS→PRESIDENT→WORKERS→PRESIDENT enforced via CommunicationPolicy**
+- **Task criticality: explicit flag from BOSS/PRESIDENT (not phase-based)**
+- **Rejection workflow: creates fix task with parent_task_id linkage, 3 max rejections → escalation → failed**
+- **Peer channel: deferred to v2 (strict hierarchy sufficient for MVP)**
+- **CommunicationPolicy integration: internal modules trust each other, enforcement at API boundary (Phase 4)**
 
 ### Completed Plans
 
@@ -60,6 +62,8 @@ Recent decisions affecting current work:
 - **02-01**: Worker registry + heartbeat + stale detection — 28 tests, 1 commit, 467 LOC production + 365 LOC tests
 - **02-02**: Deterministic scheduler — 17 tests, 1 commit, 249 LOC production + 201 LOC tests
 - **02-03**: Bounded retry policy + escalation — 14 tests, 1 commit, 194 LOC production + 177 LOC tests
+- **03-01**: Communication policy enforcement — 20 tests, 3 commits, 74 LOC production + 170 LOC tests
+- **03-02**: Verifier gate + rejection workflow — 24+5 tests, 4 commits, 200 LOC production + 314 LOC tests
 
 ### Test Summary
 
@@ -67,18 +71,21 @@ Recent decisions affecting current work:
 |-------|-------|
 | Phase 1 | 33 |
 | Phase 2 | 59 |
-| **Total** | **92** |
+| Phase 3 | 49 |
+| **Total** | **141** |
 
 ### Pending Todos
 
-None yet.
+- CommunicationPolicy integration at API boundary (Phase 4)
+- check_review_timeout integration into periodic event loop (Phase 5)
 
 ### Blockers/Concerns
 
 - HIGH: Mesh monitoring/alerts assenti (from cross-validated report) — addressed in Phase 6
+- NOTE: CommunicationPolicy is implemented but enforcement deferred to Phase 4 API layer
 
 ## Session Continuity
 
-Last session: 2026-02-18
-Stopped at: Phase 02 plans complete, pending verification steps
-Resume file: .planning/phases/02-worker-lifecycle/02-03-SUMMARY.md
+Last session: 2026-02-19
+Stopped at: Phase 03 complete, ready for Phase 04
+Resume file: .planning/phases/03-communication-verification/03-02-SUMMARY.md
