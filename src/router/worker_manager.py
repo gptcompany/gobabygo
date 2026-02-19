@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 
 from src.router.db import RouterDB
+from src.router.heartbeat import requeue_task
 from src.router.models import TaskEvent, TaskStatus, Worker
 
 logger = logging.getLogger(__name__)
@@ -138,55 +139,13 @@ class WorkerManager:
                     task = self._db.get_task(lease.task_id)
                     if task and task.status.value in ("assigned", "running"):
                         self._db.expire_lease(lease.lease_id, conn=conn)
-                        # Requeue with attempt increment (recovery-style CAS)
-                        new_attempt = task.attempt + 1
-                        if new_attempt <= self._max_attempts:
-                            self._db.update_task_status(
-                                task.task_id,
-                                task.status,
-                                TaskStatus.queued,
-                                conn=conn,
-                            )
-                            self._db.update_task_fields(
-                                task.task_id,
-                                {
-                                    "attempt": new_attempt,
-                                    "assigned_worker": None,
-                                    "lease_expires_at": None,
-                                },
-                                conn=conn,
-                            )
-                            self._db.insert_event(
-                                TaskEvent(
-                                    task_id=task.task_id,
-                                    event_type="deregister_requeue",
-                                    payload={
-                                        "worker_id": worker_id,
-                                        "new_attempt": new_attempt,
-                                    },
-                                    idempotency_key=f"dereg-requeue-{task.task_id}-{new_attempt}",
-                                ),
-                                conn=conn,
-                            )
-                        else:
-                            self._db.update_task_status(
-                                task.task_id,
-                                task.status,
-                                TaskStatus.failed,
-                                conn=conn,
-                            )
-                            self._db.insert_event(
-                                TaskEvent(
-                                    task_id=task.task_id,
-                                    event_type="deregister_max_attempts",
-                                    payload={
-                                        "worker_id": worker_id,
-                                        "attempt": task.attempt,
-                                    },
-                                    idempotency_key=f"dereg-failed-{task.task_id}-{task.attempt}",
-                                ),
-                                conn=conn,
-                            )
+                        requeue_task(
+                            self._db,
+                            task.task_id,
+                            "deregister",
+                            self._max_attempts,
+                            conn=conn,
+                        )
 
             # Set worker offline
             self._db.update_worker(

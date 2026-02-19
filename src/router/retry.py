@@ -112,15 +112,18 @@ class RetryPolicy:
 
         if self.should_retry(task):
             not_before = self.calculate_not_before(task)
-            # Use shared requeue logic
-            requeued, _ = requeue_task(
-                self._db, task_id, reason, self._max_attempts
-            )
-            if requeued:
-                # Set not_before for backoff
-                self._db.update_task_fields(
-                    task_id, {"not_before": not_before}
+            # Atomic: requeue + set not_before in single transaction
+            with self._db.transaction() as conn:
+                requeued, _ = requeue_task(
+                    self._db, task_id, reason, self._max_attempts,
+                    conn=conn,
                 )
+                if requeued:
+                    self._db.update_task_fields(
+                        task_id, {"not_before": not_before},
+                        conn=conn,
+                    )
+            if requeued:
                 return RetryResult(
                     retried=True,
                     new_attempt=task.attempt + 1,
@@ -128,25 +131,28 @@ class RetryPolicy:
                 )
             return RetryResult(retried=False, error="requeue_failed")
         else:
-            # Max attempts exhausted — fail and escalate
-            _, failed = requeue_task(
-                self._db, task_id, reason, self._max_attempts
-            )
-            if failed:
-                # Emit escalation event
-                self._db.insert_event(
-                    TaskEvent(
-                        task_id=task_id,
-                        event_type="escalation_to_boss",
-                        payload={
-                            "attempt": task.attempt,
-                            "reason": reason,
-                            "last_worker": task.assigned_worker,
-                        },
-                        idempotency_key=f"escalate-{task_id}-{task.attempt}",
-                    )
+            # Max attempts exhausted — fail and escalate (atomic)
+            with self._db.transaction() as conn:
+                _, failed = requeue_task(
+                    self._db, task_id, reason, self._max_attempts,
+                    conn=conn,
                 )
-                # Invoke all escalation callbacks
+                if failed:
+                    self._db.insert_event(
+                        TaskEvent(
+                            task_id=task_id,
+                            event_type="escalation_to_boss",
+                            payload={
+                                "attempt": task.attempt,
+                                "reason": reason,
+                                "last_worker": task.assigned_worker,
+                            },
+                            idempotency_key=f"escalate-{task_id}-{task.attempt}",
+                        ),
+                        conn=conn,
+                    )
+            if failed:
+                # Invoke escalation callbacks (outside transaction)
                 for cb in self._callbacks:
                     try:
                         cb.on_escalation(
