@@ -14,8 +14,8 @@ None (custom distributed systems architecture — informed by project research d
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Router Core** — SQLite persistence, FSM guard, event log, crash recovery
-- [ ] **Phase 2: Worker Lifecycle** — Registry, heartbeat, stale detection, scheduler, retry
+- [x] **Phase 1: Router Core** — SQLite persistence, FSM guard, event log, crash recovery
+- [x] **Phase 2: Worker Lifecycle** — Registry, heartbeat, stale detection, scheduler, retry
 - [ ] **Phase 3: Communication & Verification** — Hierarchical comms, verifier gate, review transitions
 - [ ] **Phase 4: Event Bridge** — GSD->Router emitter, semantic mapping, fallback buffer
 - [ ] **Phase 5: Deployment** — systemd units, UFW rules, boot order, infra prep
@@ -101,8 +101,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Router Core | 0/3 | Not started | - |
-| 2. Worker Lifecycle | 0/3 | Not started | - |
+| 1. Router Core | 3/3 | Done | 2026-02-18 |
+| 2. Worker Lifecycle | 3/3 | Done | 2026-02-18 |
 | 3. Communication & Verification | 0/2 | Not started | - |
 | 4. Event Bridge | 0/3 | Not started | - |
 | 5. Deployment | 0/2 | Not started | - |
