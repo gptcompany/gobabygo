@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Generator
 
-from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
+from src.router.models import CommunicationRole, Lease, Task, TaskEvent, TaskStatus, Worker
 
 _BUSY_RETRIES = 3
 _BUSY_BACKOFFS_MS = [50, 100, 200]
@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     lease_expires_at TEXT,
     attempt         INTEGER NOT NULL DEFAULT 1,
     not_before      TEXT,
+    created_by      TEXT,
     idempotency_key TEXT NOT NULL,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS workers (
     cli_type        TEXT NOT NULL DEFAULT 'claude',
     account_profile TEXT NOT NULL DEFAULT 'default',
     capabilities    TEXT NOT NULL DEFAULT '[]',
+    role            TEXT NOT NULL DEFAULT 'worker',
     status          TEXT NOT NULL DEFAULT 'idle',
     last_heartbeat  TEXT NOT NULL,
     idle_since      TEXT,
@@ -172,6 +174,7 @@ class RouterDB:
             lease_expires_at=row["lease_expires_at"],
             attempt=row["attempt"],
             not_before=row["not_before"],
+            created_by=row["created_by"],
             idempotency_key=row["idempotency_key"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -186,8 +189,8 @@ class RouterDB:
                 task_id, parent_task_id, phase, title, payload, target_cli,
                 target_account, priority, deadline_ts, depends_on, status,
                 assigned_worker, lease_expires_at, attempt, not_before,
-                idempotency_key, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_by, idempotency_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.task_id,
                 task.parent_task_id,
@@ -204,6 +207,7 @@ class RouterDB:
                 task.lease_expires_at,
                 task.attempt,
                 task.not_before,
+                task.created_by,
                 task.idempotency_key,
                 task.created_at,
                 task.updated_at,
@@ -298,6 +302,7 @@ class RouterDB:
             cli_type=row["cli_type"],
             account_profile=row["account_profile"],
             capabilities=json.loads(row["capabilities"]),
+            role=row["role"],
             status=row["status"],
             last_heartbeat=row["last_heartbeat"],
             idle_since=row["idle_since"],
@@ -312,15 +317,16 @@ class RouterDB:
         c.execute(
             """INSERT INTO workers (
                 worker_id, machine, cli_type, account_profile,
-                capabilities, status, last_heartbeat, idle_since,
+                capabilities, role, status, last_heartbeat, idle_since,
                 stale_since, concurrency
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 worker.worker_id,
                 worker.machine,
                 worker.cli_type.value,
                 worker.account_profile,
                 json.dumps(worker.capabilities),
+                worker.role,
                 worker.status,
                 worker.last_heartbeat,
                 worker.idle_since,

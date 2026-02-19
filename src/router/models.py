@@ -43,6 +43,12 @@ class TaskPhase(str, Enum):
     release = "release"
 
 
+class CommunicationRole(str, Enum):
+    boss = "boss"
+    president = "president"
+    worker = "worker"
+
+
 class CLIType(str, Enum):
     claude = "claude"
     codex = "codex"
@@ -65,6 +71,7 @@ class Task(BaseModel):
     lease_expires_at: str | None = None
     attempt: int = 1
     not_before: str | None = None
+    created_by: str | None = None
     idempotency_key: str = Field(default_factory=_uuid4)
     created_at: str = Field(default_factory=_utc_now)
     updated_at: str = Field(default_factory=_utc_now)
@@ -85,6 +92,7 @@ class Worker(BaseModel):
     cli_type: CLIType = CLIType.claude
     account_profile: str = "default"
     capabilities: list[str] = Field(default_factory=list)
+    role: str = CommunicationRole.worker.value
     status: str = "idle"
     last_heartbeat: str = Field(default_factory=_utc_now)
     idle_since: str = Field(default_factory=_utc_now)
