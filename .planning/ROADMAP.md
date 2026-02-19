@@ -105,5 +105,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. Worker Lifecycle | 3/3 | Done | 2026-02-18 |
 | 3. Communication & Verification | 2/2 | Done | 2026-02-19 |
 | 4. Event Bridge | 3/3 | Done | 2026-02-19 |
-| 5. Deployment | 0/2 | Not started | - |
+| 5. Deployment | 2/2 | Done | 2026-02-19 |
 | 6. Monitoring & Hardening | 0/2 | Not started | - |

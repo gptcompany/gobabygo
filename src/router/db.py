@@ -129,8 +129,8 @@ def _retry_on_busy(func):
 class RouterDB:
     """SQLite-backed persistence for the mesh router."""
 
-    def __init__(self, db_path: str) -> None:
-        self._conn = sqlite3.connect(db_path)
+    def __init__(self, db_path: str, check_same_thread: bool = True) -> None:
+        self._conn = sqlite3.connect(db_path, check_same_thread=check_same_thread)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -348,6 +348,44 @@ class RouterDB:
             self._conn.commit()
         return worker
 
+    @_retry_on_busy
+    def upsert_worker(self, worker: Worker, conn: sqlite3.Connection | None = None) -> Worker:
+        """Insert or update a worker. Used for registration/re-registration."""
+        c = conn or self._conn
+        c.execute(
+            """INSERT INTO workers (
+                worker_id, machine, cli_type, account_profile,
+                capabilities, role, status, last_heartbeat, idle_since,
+                stale_since, concurrency
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(worker_id) DO UPDATE SET
+                machine=excluded.machine,
+                cli_type=excluded.cli_type,
+                account_profile=excluded.account_profile,
+                capabilities=excluded.capabilities,
+                status=excluded.status,
+                last_heartbeat=excluded.last_heartbeat,
+                idle_since=excluded.idle_since,
+                stale_since=NULL,
+                concurrency=excluded.concurrency""",
+            (
+                worker.worker_id,
+                worker.machine,
+                worker.cli_type.value,
+                worker.account_profile,
+                json.dumps(worker.capabilities),
+                worker.role,
+                worker.status,
+                worker.last_heartbeat,
+                worker.idle_since,
+                worker.stale_since,
+                worker.concurrency,
+            ),
+        )
+        if conn is None:
+            self._conn.commit()
+        return worker
+
     def get_worker(self, worker_id: str) -> Worker | None:
         """Get a worker by ID, or None if not found."""
         cur = self._conn.execute(
@@ -454,6 +492,27 @@ class RouterDB:
                 "SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority DESC, created_at ASC"
             )
         return [self._task_from_row(row) for row in cur.fetchall()]
+
+    def get_tasks_by_worker(self, worker_id: str, status: str | None = None) -> list[Task]:
+        """Get tasks assigned to a worker, optionally filtered by status."""
+        if status is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE assigned_worker = ? AND status = ? ORDER BY created_at ASC",
+                (worker_id, status),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE assigned_worker = ? ORDER BY created_at ASC",
+                (worker_id,),
+            )
+        return [self._task_from_row(row) for row in cur.fetchall()]
+
+    def count_tasks_by_status(self, status: str) -> int:
+        """Count tasks with a given status."""
+        cur = self._conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = ?", (status,)
+        )
+        return cur.fetchone()[0]
 
     # -- Leases --
 

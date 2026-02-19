@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-02-18)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth.
-**Current focus:** Phase 4 — Event Bridge (COMPLETE)
+**Current focus:** Phase 5 — Deployment (COMPLETE)
 
 ## Current Position
 
-Phase: 4 of 6 (Event Bridge)
-Plan: 04-03 COMPLETED (all 3 plans done)
-Status: Phase 04 execution complete, verified, confidence gate passed
-Last activity: 2026-02-19 — Plans 04-01, 04-02, 04-03 completed
+Phase: 5 of 6 (Deployment)
+Plan: 05-02 COMPLETED (all 2 plans done)
+Status: Phase 05 execution complete, verified, confidence gate passed (90/100)
+Last activity: 2026-02-19 — Plans 05-01, 05-02 completed
 
-Progress: █████████████░░ ~67%
+Progress: ████████████████░░ ~83%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
+- Total plans completed: 13
 - Average duration: ~10 min
-- Total execution time: ~2 hours
+- Total execution time: ~2.5 hours
 
 **By Phase:**
 
@@ -31,6 +31,7 @@ Progress: █████████████░░ ~67%
 | 02-worker-lifecycle | 3/3 | ~27m | ~9m |
 | 03-communication-verification | 2/2 | ~21m | ~10m |
 | 04-event-bridge | 3/3 | ~20m | ~7m |
+| 05-deployment | 2/2 | ~15m | ~7m |
 
 ## Accumulated Context
 
@@ -53,12 +54,20 @@ Recent decisions affecting current work:
 - Task criticality: explicit flag from BOSS/PRESIDENT (not phase-based)
 - Rejection workflow: creates fix task with parent_task_id linkage, 3 max rejections → escalation → failed
 - Peer channel: deferred to v2 (strict hierarchy sufficient for MVP)
-- **CommunicationPolicy integration: enforced at event bridge boundary (emitter validates sender_role)**
-- **Transport adapter pattern: InProcessTransport (dev/test) + HttpTransport (VPN production)**
-- **SHA-256 idempotency keys: stable across Python sessions (not built-in hash())**
-- **fcntl file locking: FallbackBuffer uses LOCK_EX for concurrency safety**
-- **FK disabled in InProcessTransport: bridge events may arrive before tasks exist**
-- **YAML rule ordering: more specific rules (remediation) before generic ones (plan)**
+- CommunicationPolicy integration: enforced at event bridge boundary (emitter validates sender_role)
+- Transport adapter pattern: InProcessTransport (dev/test) + HttpTransport (VPN production)
+- SHA-256 idempotency keys: stable across Python sessions (not built-in hash())
+- fcntl file locking: FallbackBuffer uses LOCK_EX for concurrency safety
+- FK disabled in InProcessTransport: bridge events may arrive before tasks exist
+- YAML rule ordering: more specific rules (remediation) before generic ones (plan)
+- **HTTP server: stdlib ThreadingHTTPServer (no Flask/uvicorn for MVP simplicity)**
+- **Mesh router port: 8780 (configurable via MESH_ROUTER_PORT env)**
+- **SQLite check_same_thread=False for HTTP server threading**
+- **systemd Type=notify with sd_notify READY=1 + WATCHDOG=1 (10s interval, 30s timeout)**
+- **Worker short-polling (2s interval): long-polling deferred to v2**
+- **uv for Python venv management (both VPS and Workstation)**
+- **Data paths: /var/lib/mesh-router/ (DB), /etc/mesh-router/ (config), ~/.mesh/ (worker state)**
+- **Dedicated service users: mesh (router), mesh-worker (workers)**
 
 ### Completed Plans
 
@@ -73,6 +82,8 @@ Recent decisions affecting current work:
 - **04-01**: Event emitter + transport + schema — 31 tests, 557 LOC production (bridge total)
 - **04-02**: YAML mapping engine — 23 tests, included in 557 LOC
 - **04-03**: Fallback buffer + integration — 18 tests, included in 557 LOC
+- **05-01**: HTTP server + worker client + systemd units — 32 tests, ~400 LOC production + 420 LOC tests
+- **05-02**: Infrastructure scripts + deploy config — 19 tests, 4 shell scripts + systemd units + env templates
 
 ### Test Summary
 
@@ -82,13 +93,15 @@ Recent decisions affecting current work:
 | Phase 2 | 59 |
 | Phase 3 | 49 |
 | Phase 4 | 72 |
-| **Total** | **213** |
+| Phase 5 | 51 |
+| **Total** | **264** |
 
 ### Pending Todos
 
-- HTTP server endpoint POST /events on router (Phase 5)
-- check_review_timeout integration into periodic event loop (Phase 5)
-- Buffer replay trigger mechanism (on-next-emit or periodic) (Phase 5)
+- check_review_timeout integration into periodic event loop (Phase 6 or v2)
+- Buffer replay trigger mechanism (on-next-emit or periodic) (v2)
+- Smart watchdog: health check DB in watchdog thread (v2)
+- Worker auto-reregister on heartbeat "unknown_worker" response (v2)
 
 ### Blockers/Concerns
 
@@ -98,5 +111,5 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-02-19
-Stopped at: Phase 04 complete, ready for Phase 05
-Resume file: .planning/phases/04-event-bridge/04-SUMMARY.md
+Stopped at: Phase 05 complete, ready for Phase 06
+Resume file: .planning/phases/05-deployment/CONTEXT.md

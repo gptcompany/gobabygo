@@ -1,0 +1,31 @@
+[Unit]
+Description=AI Mesh Router
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=notify
+User=mesh
+Group=mesh
+WorkingDirectory=/opt/mesh-router
+EnvironmentFile=/etc/mesh-router/mesh-router.env
+ExecStart=/opt/mesh-router/venv/bin/python -m src.router.server
+Restart=always
+RestartSec=5
+WatchdogSec=30
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mesh-router
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mesh-router
+
+[Install]
+WantedBy=multi-user.target
