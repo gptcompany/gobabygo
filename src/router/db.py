@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     attempt         INTEGER NOT NULL DEFAULT 1,
     not_before      TEXT,
     created_by      TEXT,
+    critical        INTEGER NOT NULL DEFAULT 0,
+    rejection_count INTEGER NOT NULL DEFAULT 0,
+    review_timeout_at TEXT,
     idempotency_key TEXT NOT NULL,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
@@ -175,6 +178,9 @@ class RouterDB:
             attempt=row["attempt"],
             not_before=row["not_before"],
             created_by=row["created_by"],
+            critical=bool(row["critical"]),
+            rejection_count=row["rejection_count"],
+            review_timeout_at=row["review_timeout_at"],
             idempotency_key=row["idempotency_key"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -189,8 +195,9 @@ class RouterDB:
                 task_id, parent_task_id, phase, title, payload, target_cli,
                 target_account, priority, deadline_ts, depends_on, status,
                 assigned_worker, lease_expires_at, attempt, not_before,
-                created_by, idempotency_key, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                created_by, critical, rejection_count, review_timeout_at,
+                idempotency_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.task_id,
                 task.parent_task_id,
@@ -208,6 +215,9 @@ class RouterDB:
                 task.attempt,
                 task.not_before,
                 task.created_by,
+                int(task.critical),
+                task.rejection_count,
+                task.review_timeout_at,
                 task.idempotency_key,
                 task.created_at,
                 task.updated_at,

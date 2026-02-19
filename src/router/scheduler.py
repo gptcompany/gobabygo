@@ -19,6 +19,7 @@ from src.router.db import RouterDB
 from src.router.dependency import check_dependencies
 from src.router.fsm import TransitionRequest, apply_transition, validate_transition
 from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
+from src.router.verifier import VerifierGate
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,12 @@ class Scheduler:
         self,
         db: RouterDB,
         lease_duration_s: int = 300,
+        review_timeout_s: int = 3600,
     ) -> None:
         self._db = db
         self._lease_duration_s = lease_duration_s
+        self._review_timeout_s = review_timeout_s
+        self._verifier = VerifierGate()
 
     def find_all_eligible_workers(self, task: Task) -> list[Worker]:
         """Find all eligible workers for a task, sorted by idle_since ASC."""
@@ -175,28 +179,84 @@ class Scheduler:
         return result.success
 
     def complete_task(self, task_id: str, worker_id: str) -> bool:
-        """Worker reports task completion: running -> completed + cleanup."""
+        """Worker reports task completion.
+
+        Critical tasks: running -> review (with review_timeout_at set).
+        Non-critical tasks: running -> completed + cleanup.
+        """
         task = self._db.get_task(task_id)
         if task is None or task.assigned_worker != worker_id:
             return False
 
+        if self._verifier.should_review(task):
+            return self._route_to_review(task, worker_id)
+
+        return self._route_to_completed(task, worker_id)
+
+    def _route_to_review(self, task: Task, worker_id: str) -> bool:
+        """Route a critical task to review state."""
+        review_timeout = (
+            datetime.now(timezone.utc)
+            + timedelta(seconds=self._review_timeout_s)
+        ).isoformat()
+
         with self._db.transaction() as conn:
             cas_ok = self._db.update_task_status(
-                task_id, TaskStatus.running, TaskStatus.completed, conn=conn
+                task.task_id, TaskStatus.running, TaskStatus.review, conn=conn
             )
             if not cas_ok:
                 return False
 
             self._db.insert_event(
                 TaskEvent(
-                    task_id=task_id,
+                    task_id=task.task_id,
+                    event_type="state_transition",
+                    payload={
+                        "from": "running",
+                        "to": "review",
+                        "reason": "critical_task_review",
+                    },
+                ),
+                conn=conn,
+            )
+
+            self._db.update_task_fields(
+                task.task_id,
+                {"review_timeout_at": review_timeout},
+                conn=conn,
+            )
+
+            lease = self._db.get_active_lease(task.task_id)
+            if lease:
+                self._db.expire_lease(lease.lease_id, conn=conn)
+
+            self._db.update_worker(
+                worker_id,
+                {"status": "idle", "idle_since": _utc_now()},
+                conn=conn,
+            )
+
+        return True
+
+    def _route_to_completed(self, task: Task, worker_id: str) -> bool:
+        """Route a non-critical task directly to completed."""
+        with self._db.transaction() as conn:
+            cas_ok = self._db.update_task_status(
+                task.task_id, TaskStatus.running, TaskStatus.completed, conn=conn
+            )
+            if not cas_ok:
+                return False
+
+            self._db.insert_event(
+                TaskEvent(
+                    task_id=task.task_id,
                     event_type="state_transition",
                     payload={"from": "running", "to": "completed", "reason": "worker_complete"},
                 ),
                 conn=conn,
             )
 
-            lease = self._db.get_active_lease(task_id)
+            lease = self._db.get_active_lease(task.task_id)
             if lease:
                 self._db.expire_lease(lease.lease_id, conn=conn)
 
@@ -207,7 +267,7 @@ class Scheduler:
             )
 
         from src.router.dependency import on_task_terminal
-        on_task_terminal(self._db, task_id)
+        on_task_terminal(self._db, task.task_id)
         return True
 
     def report_failure(

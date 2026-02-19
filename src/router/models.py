@@ -72,6 +72,9 @@ class Task(BaseModel):
     attempt: int = 1
     not_before: str | None = None
     created_by: str | None = None
+    critical: bool = False
+    rejection_count: int = 0
+    review_timeout_at: str | None = None
     idempotency_key: str = Field(default_factory=_uuid4)
     created_at: str = Field(default_factory=_utc_now)
     updated_at: str = Field(default_factory=_utc_now)
