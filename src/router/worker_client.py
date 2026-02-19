@@ -116,7 +116,11 @@ class MeshWorker:
             try:
                 resp = self._session.get(url, timeout=10)
                 if resp.status_code == 200:
-                    task = resp.json()
+                    try:
+                        task = resp.json()
+                    except ValueError:
+                        logger.warning("Poll returned non-JSON response")
+                        continue
                     self._execute_task(task)
                 elif resp.status_code == 204:
                     pass  # No tasks available

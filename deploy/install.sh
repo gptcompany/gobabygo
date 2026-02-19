@@ -68,7 +68,7 @@ case "$MODE" in
     sudo mkdir -p /etc/mesh-worker
     sudo mkdir -p /opt/mesh-worker
     sudo mkdir -p /home/mesh-worker/.mesh/agents
-    sudo chown -R mesh-worker:mesh /opt/mesh-worker 2>/dev/null || sudo chown -R mesh-worker /opt/mesh-worker
+    sudo chown -R mesh-worker:mesh-worker /opt/mesh-worker
     sudo chown -R mesh-worker /home/mesh-worker/.mesh
 
     # 3. Install project (minimal: only production files)
