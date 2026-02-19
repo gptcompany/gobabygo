@@ -30,7 +30,7 @@ ALLOWED_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.timeout,
         TaskStatus.canceled,
     },
-    TaskStatus.review: {TaskStatus.completed, TaskStatus.failed, TaskStatus.canceled},
+    TaskStatus.review: {TaskStatus.completed, TaskStatus.failed, TaskStatus.timeout, TaskStatus.canceled},
     # Terminal states: no outgoing transitions
     TaskStatus.completed: set(),
     TaskStatus.failed: set(),

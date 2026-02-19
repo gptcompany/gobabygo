@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from src.router.db import RouterDB
+from src.router.dependency import on_task_terminal
 from src.router.fsm import TERMINAL_STATES, TransitionRequest, TransitionResult, apply_transition
 from src.router.models import Task, TaskEvent, TaskStatus
 
@@ -153,6 +154,18 @@ class VerifierGate:
                     )
                 except Exception as e:
                     logger.error("Escalation callback error: %s", e)
+
+            # Transition task to failed so it doesn't stay in review forever
+            fail_request = TransitionRequest(
+                task_id=task_id,
+                from_status=TaskStatus.review,
+                to_status=TaskStatus.failed,
+                reason=f"escalation_after_{new_count}_rejections",
+            )
+            result = apply_transition(db, fail_request)
+            if result.success:
+                on_task_terminal(db, task_id)
+
             return None
 
         # Create fix task
@@ -185,16 +198,15 @@ class VerifierGate:
         timed_out: list[str] = []
         for row in rows:
             task_id = row["task_id"]
-            # review -> failed (timeout is not a valid target from review in FSM)
-            # FSM allows review -> completed, failed, canceled
             request = TransitionRequest(
                 task_id=task_id,
                 from_status=TaskStatus.review,
-                to_status=TaskStatus.failed,
+                to_status=TaskStatus.timeout,
                 reason="review_timeout",
             )
             result = apply_transition(db, request)
             if result.success:
                 timed_out.append(task_id)
+                on_task_terminal(db, task_id)
 
         return timed_out

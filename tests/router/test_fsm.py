@@ -57,6 +57,32 @@ def test_valid_transitions() -> None:
             )
 
 
+def test_review_to_timeout_valid() -> None:
+    """review -> timeout is a valid FSM transition (used for review deadline expiry)."""
+    assert validate_transition(TaskStatus.review, TaskStatus.timeout), (
+        "Expected review -> timeout to be valid"
+    )
+
+
+def test_review_to_timeout_apply(db: RouterDB) -> None:
+    """apply_transition succeeds for review -> timeout."""
+    task = _make_task(TaskStatus.review)
+    db.insert_task(task)
+
+    request = TransitionRequest(
+        task_id=task.task_id,
+        from_status=TaskStatus.review,
+        to_status=TaskStatus.timeout,
+        reason="review_timeout",
+    )
+    result = apply_transition(db, request)
+
+    assert result.success is True
+    updated = db.get_task(task.task_id)
+    assert updated is not None
+    assert updated.status == TaskStatus.timeout
+
+
 def test_invalid_transitions() -> None:
     """Known invalid transitions are rejected."""
     invalid_pairs = [

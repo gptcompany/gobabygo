@@ -22,6 +22,7 @@ from src.router.models import TaskEvent, TaskStatus
 TERMINAL_STATES = frozenset({
     TaskStatus.completed.value,
     TaskStatus.failed.value,
+    TaskStatus.timeout.value,
     TaskStatus.canceled.value,
 })
 

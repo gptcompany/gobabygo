@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+import json
+
 from src.router.db import RouterDB
 from src.router.fsm import TransitionRequest, apply_transition
 from src.router.models import CLIType, Task, TaskEvent, TaskStatus, Worker
@@ -237,7 +239,7 @@ class TestReviewTimeout:
         timed_out = gate.check_review_timeout(db)
         assert "t1" in timed_out
         task = db.get_task("t1")
-        assert task.status == TaskStatus.failed
+        assert task.status == TaskStatus.timeout
 
     def test_not_expired_no_change(self, gate, db):
         _add_task(db, "t1", critical=True)
@@ -256,6 +258,72 @@ class TestReviewTimeout:
         # No review_timeout_at set (None)
         timed_out = gate.check_review_timeout(db)
         assert timed_out == []
+
+    def test_timeout_unblocks_dependent_tasks(self, gate, db):
+        """check_review_timeout calls on_task_terminal so blocked dependents get unblocked."""
+        # t1 is in review and will time out
+        _add_task(db, "t1", critical=True)
+        _make_task_review(db, "t1")
+        db.update_task_fields("t1", {"review_timeout_at": _past(60)})
+
+        # t2 depends on t1, is blocked
+        _add_task(db, "t2", critical=False, status=TaskStatus.blocked,
+                  depends_on=["t1"])
+        # Persist depends_on to DB via update_task_fields
+        db.update_task_fields("t2", {"depends_on": json.dumps(["t1"])})
+
+        # Trigger timeout
+        timed_out = gate.check_review_timeout(db)
+        assert "t1" in timed_out
+
+        # t1 should be in timeout state
+        t1 = db.get_task("t1")
+        assert t1.status == TaskStatus.timeout
+
+        # t2 should have been unblocked (blocked -> queued)
+        t2 = db.get_task("t2")
+        assert t2.status == TaskStatus.queued
+
+
+class TestEscalationLifecycle:
+    """Tests that escalation properly closes the task lifecycle."""
+
+    def test_escalation_transitions_to_failed(self, gate, db):
+        """After max rejections, the escalated task transitions to failed."""
+        _add_task(db, "t1", critical=True)
+        _make_task_review(db, "t1")
+        # Set rejection_count to MAX-1 so next rejection triggers escalation
+        db.update_task_fields("t1", {"rejection_count": _MAX_REJECTIONS - 1})
+
+        result = gate.reject_task(db, "t1", verifier_id="v1", reason="final issue")
+        assert result is None  # escalation returns None
+
+        # Task should now be failed, NOT still in review
+        task = db.get_task("t1")
+        assert task.status == TaskStatus.failed
+
+    def test_escalation_unblocks_dependent_tasks(self, gate, db):
+        """After escalation, on_task_terminal is called so dependents get unblocked."""
+        _add_task(db, "t1", critical=True)
+        _make_task_review(db, "t1")
+        db.update_task_fields("t1", {"rejection_count": _MAX_REJECTIONS - 1})
+
+        # t2 depends on t1, is blocked
+        _add_task(db, "t2", critical=False, status=TaskStatus.blocked,
+                  depends_on=["t1"])
+        db.update_task_fields("t2", {"depends_on": json.dumps(["t1"])})
+
+        # Trigger escalation
+        result = gate.reject_task(db, "t1", verifier_id="v1", reason="escalate")
+        assert result is None
+
+        # t1 should be failed
+        t1 = db.get_task("t1")
+        assert t1.status == TaskStatus.failed
+
+        # t2 should have been unblocked
+        t2 = db.get_task("t2")
+        assert t2.status == TaskStatus.queued
 
 
 class TestSchedulerVerifierIntegration:
