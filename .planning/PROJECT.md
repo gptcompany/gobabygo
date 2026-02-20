@@ -8,11 +8,23 @@ A distributed multi-agent orchestration system that coordinates AI CLI workers (
 
 Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth, not terminal state.
 
+## Current Milestone: v1.1 Production Readiness
+
+**Goal:** Make the mesh reliable enough for daily unattended production operation and provide operator CLI tooling.
+
+**Target features:**
+- Long-polling transport (replace 2s short-polling)
+- Self-healing workers (auto-reregister on unknown_worker)
+- Deterministic event replay triggers (periodic + on-next-emit)
+- Smart watchdog (DB health check in watchdog thread)
+- Operator CLI (`meshctl status`, `meshctl drain`)
+- Critical tech debt fixes (register validation, YAML mapping, mypy)
+
 ## Current State
 
 **Shipped:** v1.0 MVP (2026-02-19)
 **Codebase:** 3,829 LOC production + 4,313 LOC tests (Python)
-**Test suite:** 291 tests, all passing
+**Test suite:** 294 tests, all passing
 **Tech stack:** Python 3.11+, SQLite (WAL), Pydantic, CloudEvents, prometheus-client
 
 ## Requirements
@@ -37,7 +49,15 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 
 ### Active
 
-(No active requirements — define with `/gsd:new-milestone`)
+- Long-polling transport for worker task dispatch
+- Worker auto-reregister on unknown_worker heartbeat response
+- Buffer replay trigger mechanism (periodic + on-next-emit)
+- Smart watchdog with DB health check
+- check_review_timeout integration into periodic event loop
+- Operator CLI (meshctl) for status inspection and worker drain
+- Fix server._handle_register() to use WorkerManager validation
+- Complete YAML semantic mapping for gsd:implement-* commands
+- Fix heartbeat.py Worker type annotation for mypy
 
 ### Out of Scope
 
@@ -58,12 +78,12 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 - **Alerting**: 7 base rules + 5 mesh-specific rules, Grafana Cloud -> Discord
 
 ### Known Issues / Tech Debt
-- `/tasks/ack` HTTP endpoint missing — scheduler logic exists, HTTP wiring absent
-- `server._handle_register()` bypasses WorkerManager validation (uses global bearer token only)
-- YAML mapping incomplete for `gsd:implement-*` commands
-- `heartbeat.py` Worker type annotation not imported (safe at runtime, fails mypy)
-- Worker short-polling (2s) — long-polling deferred
-- Buffer replay trigger mechanism TBD (on-next-emit or periodic)
+- `/tasks/ack` HTTP endpoint — FIXED in v1.0 post-release (commit 7e9d605)
+- `server._handle_register()` bypasses WorkerManager validation — targeted for v1.1
+- YAML mapping incomplete for `gsd:implement-*` — targeted for v1.1
+- `heartbeat.py` Worker type annotation — targeted for v1.1
+- Worker short-polling (2s) — long-polling targeted for v1.1
+- Buffer replay trigger mechanism — targeted for v1.1
 
 ## Constraints
 
@@ -96,4 +116,4 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 | No /metrics auth | WireGuard-only network, same as /health | Revisit |
 
 ---
-*Last updated: 2026-02-19 after v1.0 milestone*
+*Last updated: 2026-02-20 after v1.1 milestone started*
