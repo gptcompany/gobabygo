@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
+from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
 from src.router.models import Worker
 from src.router.recovery import recover_on_startup
@@ -93,10 +94,10 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _handle_task_poll(self) -> None:
-        """GET /tasks/next?worker_id=X — short-poll for next assigned task.
+        """GET /tasks/next?worker_id=X -- long-poll for next assigned task.
 
-        Returns 200 + task JSON if a task is assigned, or 204 if none.
-        MVP uses short-polling (worker polls every 2s).
+        Blocks until a task is dispatched to this worker or timeout expires.
+        Returns 200 + task JSON on task, 204 on timeout, 409 on duplicate poll.
         """
         if not self._check_auth():
             return
@@ -108,12 +109,39 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
         state = self.server.router_state  # type: ignore[attr-defined]
         db: RouterDB = state["db"]
+        registry: LongPollRegistry = state["longpoll_registry"]
+        timeout_s: float = state["longpoll_timeout"]
+        metrics: MeshMetrics = state["metrics"]
 
-        tasks = db.get_tasks_by_worker(worker_id, status="assigned")
-        if tasks:
-            task = tasks[0]
-            self._send_json(200, task.model_dump(mode="json"))
+        logger.info("poll_start worker_id=%s", worker_id)
+        start = time.monotonic()
+
+        result = registry.wait_for_task(worker_id, timeout_s, db)
+        duration = time.monotonic() - start
+
+        metrics.longpoll_wait_seconds.observe(duration)
+        metrics.longpoll_waiting_workers.set(registry.waiting_count())
+
+        if result.conflict:
+            metrics.longpoll_total.labels(result="conflict").inc()
+            logger.info(
+                "poll_complete worker_id=%s result=conflict duration=%.1fs",
+                worker_id, duration,
+            )
+            self._send_json(409, {"error": "duplicate_poll"})
+        elif result.task is not None:
+            metrics.longpoll_total.labels(result="task").inc()
+            logger.info(
+                "poll_complete worker_id=%s result=task duration=%.1fs",
+                worker_id, duration,
+            )
+            self._send_json(200, result.task.model_dump(mode="json"))
         else:
+            metrics.longpoll_total.labels(result="timeout").inc()
+            logger.info(
+                "poll_complete worker_id=%s result=timeout duration=%.1fs",
+                worker_id, duration,
+            )
             self._send_json(204, None)
 
     def _handle_events(self) -> None:
@@ -350,6 +378,8 @@ def run_server(
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
     metrics = MeshMetrics()
+    longpoll_registry = LongPollRegistry()
+    longpoll_timeout = float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25"))
     start_time = datetime.now(timezone.utc)
 
     server = ThreadingHTTPServer((host, port), MeshRouterHandler)
@@ -360,6 +390,8 @@ def run_server(
         "scheduler": scheduler,
         "transport": transport,
         "metrics": metrics,
+        "longpoll_registry": longpoll_registry,
+        "longpoll_timeout": longpoll_timeout,
         "auth_token": auth_token,
         "start_time": start_time,
     }

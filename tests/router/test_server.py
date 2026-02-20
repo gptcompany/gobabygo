@@ -13,6 +13,7 @@ import requests
 
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
+from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
 from src.router.models import Task, TaskStatus, Worker
 from src.router.scheduler import Scheduler
@@ -41,6 +42,7 @@ def server_url(db):
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
     metrics = MeshMetrics()
+    longpoll_registry = LongPollRegistry()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
     server.router_state = {
@@ -50,6 +52,8 @@ def server_url(db):
         "scheduler": scheduler,
         "transport": transport,
         "metrics": metrics,
+        "longpoll_registry": longpoll_registry,
+        "longpoll_timeout": 0.1,
         "auth_token": None,
         "start_time": datetime.now(timezone.utc),
     }
@@ -77,6 +81,8 @@ def authed_server_url(db):
     heartbeat = HeartbeatManager(db)
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
+    metrics = MeshMetrics()
+    longpoll_registry = LongPollRegistry()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
     server.router_state = {
@@ -85,6 +91,9 @@ def authed_server_url(db):
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
+        "metrics": metrics,
+        "longpoll_registry": longpoll_registry,
+        "longpoll_timeout": 0.1,
         "auth_token": "test-token-123",
         "start_time": datetime.now(timezone.utc),
     }
@@ -350,6 +359,67 @@ class TestTaskPollEndpoint:
         data = resp.json()
         assert data["task_id"] == "t1"
         assert data["title"] == "test task"
+
+
+class TestTaskPollLongPoll:
+    """Tests for long-poll specific behavior through the server."""
+
+    def test_poll_duplicate_returns_409(self, db, tmp_path):
+        """Start first poll in thread (1s timeout), immediately send second poll, verify 409."""
+        from datetime import datetime, timezone
+
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True)
+        heartbeat = HeartbeatManager(db)
+        scheduler = Scheduler(db)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+        longpoll_registry = LongPollRegistry()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 1.0,  # 1s for this test
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work")
+        db.insert_worker(worker)
+
+        first_result: list[requests.Response] = []
+
+        def first_poll():
+            resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=5)
+            first_result.append(resp)
+
+        t = threading.Thread(target=first_poll)
+        t.start()
+        time.sleep(0.1)  # let first poll enter wait
+
+        # Second poll should get 409
+        second_resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=5)
+        assert second_resp.status_code == 409
+        assert second_resp.json()["error"] == "duplicate_poll"
+
+        t.join(timeout=5)
+        server.shutdown()
+
+        # First poll should have completed with 204 (timeout, no task)
+        assert len(first_result) == 1
+        assert first_result[0].status_code == 204
 
 
 class TestTaskCompleteEndpoint:
