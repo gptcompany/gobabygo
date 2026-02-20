@@ -372,13 +372,14 @@ def run_server(
     if auth_token:
         wm_tokens.append({"token": auth_token, "expires_at": None})
     dev_mode = os.environ.get("MESH_DEV_MODE", "").strip() == "1"
-    worker_manager = WorkerManager(db, tokens=wm_tokens, dev_mode=dev_mode)
+    longpoll_registry = LongPollRegistry()
 
-    heartbeat = HeartbeatManager(db)
-    scheduler = Scheduler(db)
+    worker_manager = WorkerManager(db, tokens=wm_tokens, dev_mode=dev_mode, longpoll_registry=longpoll_registry)
+
+    heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+    scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
     transport = InProcessTransport(db)
     metrics = MeshMetrics()
-    longpoll_registry = LongPollRegistry()
     longpoll_timeout = float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25"))
     start_time = datetime.now(timezone.utc)
 

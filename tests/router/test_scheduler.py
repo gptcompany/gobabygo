@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.router.db import RouterDB
+from src.router.longpoll import LongPollRegistry
 from src.router.models import CLIType, Lease, Task, TaskStatus, Worker
 from src.router.scheduler import DispatchResult, Scheduler
 
@@ -199,3 +200,64 @@ class TestReportFailure:
         assert db.get_active_lease("t1") is None
         w = db.get_worker("w1")
         assert w.status == "idle"
+
+
+class TestDispatchLongPollWakeup:
+    """Tests for scheduler wakeup integration with LongPollRegistry."""
+
+    def test_dispatch_notifies_longpoll_registry(self, db):
+        """Dispatch notifies the correct worker's slot via LongPollRegistry."""
+        registry = LongPollRegistry()
+        sched = Scheduler(db=db, lease_duration_s=300, longpoll_registry=registry)
+
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+
+        # Register worker in registry so it has a slot
+        registry.register("w1")
+
+        # Dispatch should notify the registry
+        result = sched.dispatch()
+        assert result is not None
+        assert result.worker.worker_id == "w1"
+
+        # Verify the slot was notified (task_available should have been set)
+        # Access internal slot to verify (white-box test)
+        slot = registry._slots.get("w1")
+        assert slot is not None
+        # task_available may already be consumed if wait_for_task ran,
+        # but since no one is waiting, it should remain True
+        assert slot.task_available is True
+
+    def test_dispatch_without_registry_no_error(self, db):
+        """Dispatch with longpoll_registry=None does not error."""
+        sched = Scheduler(db=db, lease_duration_s=300, longpoll_registry=None)
+
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+
+        result = sched.dispatch()
+        assert result is not None
+        assert result.task.task_id == "t1"
+
+    def test_dispatch_notifies_correct_worker(self, db):
+        """Two workers registered; dispatch notifies only the dispatched worker."""
+        registry = LongPollRegistry()
+        sched = Scheduler(db=db, lease_duration_s=300, longpoll_registry=registry)
+
+        _add_worker(db, "w1", "work", idle_since=_past(60))
+        _add_worker(db, "w2", "work", idle_since=_past(30))
+        _add_task(db, "t1")
+
+        registry.register("w1")
+        registry.register("w2")
+
+        result = sched.dispatch()
+        assert result is not None
+        # w1 has been idle longer, should be dispatched first
+        assert result.worker.worker_id == "w1"
+
+        # w1's slot should be notified
+        assert registry._slots["w1"].task_available is True
+        # w2's slot should NOT be notified
+        assert registry._slots["w2"].task_available is False

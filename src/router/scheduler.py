@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from src.router.db import RouterDB
 from src.router.dependency import check_dependencies
 from src.router.fsm import TransitionRequest, apply_transition, validate_transition
+from src.router.longpoll import LongPollRegistry
 from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
 from src.router.verifier import VerifierGate
 
@@ -49,11 +50,13 @@ class Scheduler:
         db: RouterDB,
         lease_duration_s: int = 300,
         review_timeout_s: int = 3600,
+        longpoll_registry: LongPollRegistry | None = None,
     ) -> None:
         self._db = db
         self._lease_duration_s = lease_duration_s
         self._review_timeout_s = review_timeout_s
         self._verifier = VerifierGate()
+        self._longpoll_registry = longpoll_registry
 
     def find_all_eligible_workers(self, task: Task) -> list[Worker]:
         """Find all eligible workers for a task, sorted by idle_since ASC."""
@@ -158,10 +161,15 @@ class Scheduler:
                     conn=conn,
                 )
 
-                return DispatchResult(task=task, worker=worker, lease=lease)
+                result = DispatchResult(task=task, worker=worker, lease=lease)
 
         except _CASFailure:
             return None
+
+        # Notify AFTER transaction commits so DB state is visible to the worker
+        if result is not None and self._longpoll_registry is not None:
+            self._longpoll_registry.notify_task_available(worker.worker_id)
+        return result
 
     def ack_task(self, task_id: str, worker_id: str) -> bool:
         """Worker acknowledges task: assigned -> running."""
