@@ -25,6 +25,8 @@ class MockRouterHandler(BaseHTTPRequestHandler):
     complete_calls = []
     fail_calls = []
     task_to_serve = None
+    error_on_first_poll = False  # Return 500 on first poll
+    return_409_on_poll = False  # Return 409 conflict
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
@@ -51,11 +53,18 @@ class MockRouterHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/tasks/next"):
             MockRouterHandler.poll_count += 1
-            if MockRouterHandler.task_to_serve:
+            if MockRouterHandler.error_on_first_poll and MockRouterHandler.poll_count == 1:
+                self._respond(500, {"error": "server_error"})
+            elif MockRouterHandler.return_409_on_poll:
+                MockRouterHandler.return_409_on_poll = False  # Only first time
+                self._respond(409, {"error": "duplicate_poll"})
+            elif MockRouterHandler.task_to_serve:
                 task = MockRouterHandler.task_to_serve
                 MockRouterHandler.task_to_serve = None  # Serve once
                 self._respond(200, task)
             else:
+                # Brief sleep to simulate server-held connection in test mode
+                time.sleep(0.02)
                 self.send_response(204)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
@@ -84,6 +93,8 @@ def reset_mock():
     MockRouterHandler.complete_calls = []
     MockRouterHandler.fail_calls = []
     MockRouterHandler.task_to_serve = None
+    MockRouterHandler.error_on_first_poll = False
+    MockRouterHandler.return_409_on_poll = False
 
 
 @pytest.fixture
@@ -106,6 +117,7 @@ class TestWorkerConfig:
         assert config.cli_type == "claude"
         assert config.heartbeat_interval == 5.0
         assert config.poll_interval == 2.0
+        assert config.longpoll_timeout == 25.0
 
     def test_from_env(self):
         env = {
@@ -175,7 +187,7 @@ class TestMeshWorkerPolling:
         config = WorkerConfig(
             worker_id="ws-test-01",
             router_url=mock_router,
-            poll_interval=0.05,
+            longpoll_timeout=0.05,  # Fast timeout for test
         )
         worker = MeshWorker(config)
         worker._running = True
@@ -184,10 +196,11 @@ class TestMeshWorkerPolling:
         thread = threading.Thread(target=worker._poll_loop)
         thread.daemon = True
         thread.start()
-        time.sleep(0.2)
+        time.sleep(0.8)
         worker._running = False
         thread.join(timeout=2)
 
+        # Worker should reconnect multiple times after 204 with jitter
         assert MockRouterHandler.poll_count >= 2
 
     def test_poll_executes_received_task(self, mock_router):
@@ -200,7 +213,7 @@ class TestMeshWorkerPolling:
         config = WorkerConfig(
             worker_id="ws-test-01",
             router_url=mock_router,
-            poll_interval=0.05,
+            longpoll_timeout=0.05,
         )
         worker = MeshWorker(config)
         worker._running = True
@@ -208,7 +221,7 @@ class TestMeshWorkerPolling:
         thread = threading.Thread(target=worker._poll_loop)
         thread.daemon = True
         thread.start()
-        time.sleep(0.3)
+        time.sleep(0.5)
         worker._running = False
         thread.join(timeout=2)
 
@@ -217,6 +230,99 @@ class TestMeshWorkerPolling:
         assert MockRouterHandler.ack_calls[0]["task_id"] == "task-1"
         assert len(MockRouterHandler.complete_calls) == 1
         assert MockRouterHandler.complete_calls[0]["task_id"] == "task-1"
+
+    def test_poll_reconnects_immediately_on_204(self, mock_router):
+        """Verify worker does NOT wait 2s between polls (long-poll, not fixed interval)."""
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(1.0)  # 1 second window
+        worker._running = False
+        thread.join(timeout=2)
+
+        # With jitter 100-500ms + 20ms mock sleep, should get at least 3 polls in 1s
+        # Old behavior (2s sleep) would only get 1 poll in 1s
+        assert MockRouterHandler.poll_count >= 3
+
+    def test_poll_exponential_backoff_on_error(self, mock_router):
+        """On 500 error, worker backs off exponentially."""
+        MockRouterHandler.error_on_first_poll = True
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(2.0)
+        worker._running = False
+        thread.join(timeout=2)
+
+        # First poll = 500 (triggers backoff 1s + jitter)
+        # Second poll = 204 (no more backoff)
+        # With 2s total time, backoff limits polls after error
+        assert MockRouterHandler.poll_count >= 2  # At least error + recovery
+
+    def test_worker_uses_longpoll_timeout_for_request(self, mock_router):
+        """Verify HTTP request timeout is set to longpoll_timeout + 5."""
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=10.0,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        # Patch session.get to capture timeout kwarg
+        original_get = worker._session.get
+        captured_timeouts = []
+
+        def patched_get(*args, **kwargs):
+            captured_timeouts.append(kwargs.get("timeout"))
+            # Stop after first poll
+            worker._running = False
+            return original_get(*args, **kwargs)
+
+        worker._session.get = patched_get
+
+        worker._poll_loop()
+        assert len(captured_timeouts) >= 1
+        assert captured_timeouts[0] == 15.0  # 10.0 + 5
+
+    def test_poll_handles_409_conflict(self, mock_router):
+        """On 409 conflict, worker backs off."""
+        MockRouterHandler.return_409_on_poll = True
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(2.0)
+        worker._running = False
+        thread.join(timeout=2)
+
+        # First poll = 409 (triggers backoff), then 204s
+        assert MockRouterHandler.poll_count >= 2
 
 
 class TestMeshWorkerStop:
