@@ -1,7 +1,7 @@
 # Requirements: AI Mesh Network
 
 **Defined:** 2026-02-20
-**Core Value:** Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth.
+**Core Value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
 
 ## v1.1 Requirements
 
@@ -63,26 +63,26 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRNS-01 | — | Pending |
-| TRNS-02 | — | Pending |
-| TRNS-03 | — | Pending |
-| RESL-01 | — | Pending |
-| RESL-02 | — | Pending |
-| RESL-03 | — | Pending |
-| RESL-04 | — | Pending |
-| RESL-05 | — | Pending |
-| OPSC-01 | — | Pending |
-| OPSC-02 | — | Pending |
-| OPSC-03 | — | Pending |
-| DEBT-01 | — | Pending |
-| DEBT-02 | — | Pending |
-| DEBT-03 | — | Pending |
+| TRNS-01 | Phase 8 | Pending |
+| TRNS-02 | Phase 8 | Pending |
+| TRNS-03 | Phase 8 | Pending |
+| RESL-01 | Phase 9 | Pending |
+| RESL-02 | Phase 9 | Pending |
+| RESL-03 | Phase 9 | Pending |
+| RESL-04 | Phase 9 | Pending |
+| RESL-05 | Phase 9 | Pending |
+| OPSC-01 | Phase 10 | Pending |
+| OPSC-02 | Phase 10 | Pending |
+| OPSC-03 | Phase 10 | Pending |
+| DEBT-01 | Phase 7 | Pending |
+| DEBT-02 | Phase 7 | Pending |
+| DEBT-03 | Phase 7 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 14 total
-- Mapped to phases: 0
-- Unmapped: 14 (pending roadmap creation)
+- Mapped to phases: 14
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-20*
-*Last updated: 2026-02-20 after initial definition*
+*Last updated: 2026-02-20 -- traceability updated with phase mappings*
