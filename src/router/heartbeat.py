@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from src.router.db import RouterDB
-from src.router.models import TaskEvent, TaskStatus
+from src.router.models import TaskEvent, TaskStatus, Worker
 
 logger = logging.getLogger(__name__)
 

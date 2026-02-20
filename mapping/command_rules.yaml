@@ -12,7 +12,7 @@ rules:
   - match: "^gsd:plan-.*|^gsd:list-phase-.*"
     step: plan
     description: "Planning phase commands"
-  - match: "^gsd:execute-.*|^pipeline:gsd$|^speckit\\.implement.*"
+  - match: "^gsd:execute-.*|^gsd:implement-.*|^pipeline:gsd$|^speckit\\.implement.*"
     step: implement
     description: "Execution/implementation commands"
   - match: "^validate$|^gsd:verify-.*|^confidence-gate$"

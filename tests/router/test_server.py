@@ -17,6 +17,7 @@ from src.router.metrics import MeshMetrics
 from src.router.models import Task, TaskStatus, Worker
 from src.router.scheduler import Scheduler
 from src.router.server import MeshRouterHandler
+from src.router.worker_manager import WorkerManager
 from src.router.bridge.transport import InProcessTransport
 
 
@@ -32,9 +33,10 @@ def db(tmp_path):
 
 @pytest.fixture
 def server_url(db):
-    """Start a test HTTP server and return its URL."""
+    """Start a test HTTP server in dev mode (no auth required for register)."""
     from datetime import datetime, timezone
 
+    worker_manager = WorkerManager(db, tokens=[], dev_mode=True)
     heartbeat = HeartbeatManager(db)
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
@@ -43,6 +45,7 @@ def server_url(db):
     server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
     server.router_state = {
         "db": db,
+        "worker_manager": worker_manager,
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
@@ -65,9 +68,12 @@ def server_url(db):
 
 @pytest.fixture
 def authed_server_url(db):
-    """Start a test server with auth enabled."""
+    """Start a test server with auth enabled (token required for register)."""
     from datetime import datetime, timezone
 
+    worker_manager = WorkerManager(
+        db, tokens=[{"token": "test-token-123", "expires_at": None}],
+    )
     heartbeat = HeartbeatManager(db)
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
@@ -75,6 +81,7 @@ def authed_server_url(db):
     server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
     server.router_state = {
         "db": db,
+        "worker_manager": worker_manager,
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
@@ -118,7 +125,8 @@ class TestHealthEndpoint:
 
 
 class TestRegisterEndpoint:
-    def test_register_worker(self, server_url):
+    def test_register_worker_dev_mode(self, server_url):
+        """In dev mode (no tokens), registration works without auth."""
         resp = requests.post(
             f"{server_url}/register",
             json={
@@ -135,6 +143,7 @@ class TestRegisterEndpoint:
         assert resp.json()["worker_id"] == "ws-claude-work-01"
 
     def test_register_reregisters_existing(self, server_url, db):
+        """Re-registration of same worker_id returns 200."""
         worker = Worker(worker_id="w1", cli_type="claude", account_profile="work")
         db.insert_worker(worker)
 
@@ -150,7 +159,73 @@ class TestRegisterEndpoint:
                 "concurrency": 1,
             },
         )
+        assert resp.status_code == 200
+
+    def test_register_with_valid_token(self, authed_server_url):
+        """Registration with valid token returns 201."""
+        resp = requests.post(
+            f"{authed_server_url}/register",
+            json={
+                "worker_id": "w1",
+                "machine": "test",
+                "cli_type": "claude",
+                "account_profile": "work",
+                "capabilities": ["code"],
+                "status": "idle",
+                "concurrency": 1,
+            },
+            headers={"Authorization": "Bearer test-token-123"},
+        )
         assert resp.status_code == 201
+
+    def test_register_with_invalid_token(self, authed_server_url):
+        """Registration with invalid token returns 401."""
+        resp = requests.post(
+            f"{authed_server_url}/register",
+            json={
+                "worker_id": "w1",
+                "machine": "test",
+                "cli_type": "claude",
+                "account_profile": "work",
+            },
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["error"] == "invalid_token"
+
+    def test_register_without_token_when_required(self, authed_server_url):
+        """Registration without token when tokens are configured returns 401."""
+        resp = requests.post(
+            f"{authed_server_url}/register",
+            json={
+                "worker_id": "w1",
+                "machine": "test",
+                "cli_type": "claude",
+                "account_profile": "work",
+            },
+        )
+        assert resp.status_code == 401
+        assert resp.json()["error"] == "invalid_token"
+
+    def test_register_account_in_use(self, authed_server_url, db):
+        """Different worker_id with same account_profile returns 409."""
+        worker = Worker(
+            worker_id="w1", cli_type="claude", account_profile="work", status="idle",
+        )
+        db.insert_worker(worker)
+
+        resp = requests.post(
+            f"{authed_server_url}/register",
+            json={
+                "worker_id": "w2",
+                "machine": "test",
+                "cli_type": "claude",
+                "account_profile": "work",
+            },
+            headers={"Authorization": "Bearer test-token-123"},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "account_in_use"
 
     def test_register_invalid_json(self, server_url):
         resp = requests.post(
@@ -159,6 +234,23 @@ class TestRegisterEndpoint:
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 400
+
+    def test_register_case_insensitive_bearer(self, authed_server_url):
+        """Bearer scheme is case-insensitive per RFC 7235."""
+        resp = requests.post(
+            f"{authed_server_url}/register",
+            json={
+                "worker_id": "w1",
+                "machine": "test",
+                "cli_type": "claude",
+                "account_profile": "work",
+                "capabilities": ["code"],
+                "status": "idle",
+                "concurrency": 1,
+            },
+            headers={"Authorization": "bearer test-token-123"},
+        )
+        assert resp.status_code == 201
 
 
 class TestHeartbeatEndpoint:
@@ -371,28 +463,24 @@ class TestAuth:
         resp = requests.get(f"{authed_server_url}/health")
         assert resp.status_code == 200
 
-    def test_auth_required_on_register(self, authed_server_url):
+    def test_auth_required_on_heartbeat(self, authed_server_url):
+        """Heartbeat requires _check_auth (global bearer token)."""
         resp = requests.post(
-            f"{authed_server_url}/register",
-            json={"worker_id": "w1", "cli_type": "claude", "account_profile": "work"},
+            f"{authed_server_url}/heartbeat",
+            json={"worker_id": "w1"},
         )
         assert resp.status_code == 401
 
-    def test_auth_with_valid_token(self, authed_server_url):
+    def test_auth_with_valid_token_on_heartbeat(self, authed_server_url, db):
+        """Valid global token passes _check_auth."""
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work")
+        db.insert_worker(worker)
         resp = requests.post(
-            f"{authed_server_url}/register",
-            json={
-                "worker_id": "w1",
-                "machine": "test",
-                "cli_type": "claude",
-                "account_profile": "work",
-                "capabilities": ["code"],
-                "status": "idle",
-                "concurrency": 1,
-            },
+            f"{authed_server_url}/heartbeat",
+            json={"worker_id": "w1"},
             headers={"Authorization": "Bearer test-token-123"},
         )
-        assert resp.status_code == 201
+        assert resp.status_code == 200
 
     def test_auth_with_invalid_token(self, authed_server_url):
         resp = requests.post(

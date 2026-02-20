@@ -41,10 +41,12 @@ class WorkerManager:
         db: RouterDB,
         tokens: list[dict[str, str | None]],
         max_attempts: int = 3,
+        dev_mode: bool = False,
     ) -> None:
         self._db = db
         self._tokens = tokens  # [{"token": str, "expires_at": str | None}]
         self._max_attempts = max_attempts
+        self._dev_mode = dev_mode
 
     def validate_token(self, token: str) -> bool:
         """Check if token is valid and not expired."""
@@ -63,8 +65,10 @@ class WorkerManager:
 
         Returns (success, message).
         """
-        if not self.validate_token(token):
-            return False, "invalid_token"
+        # Dev mode: skip token validation if no tokens configured
+        if not self._dev_mode or self._tokens:
+            if not self.validate_token(token):
+                return False, "invalid_token"
 
         with self._db.transaction() as conn:
             # Check account uniqueness (atomic within transaction)
@@ -95,6 +99,7 @@ class WorkerManager:
                     },
                     conn=conn,
                 )
+                is_reregister = True
             else:
                 # New registration
                 worker.status = "idle"
@@ -102,6 +107,7 @@ class WorkerManager:
                 worker.idle_since = now
                 worker.stale_since = None
                 self._db.insert_worker(worker, conn=conn)
+                is_reregister = False
 
             # Emit registration event
             self._db.insert_event(
@@ -118,7 +124,7 @@ class WorkerManager:
                 conn=conn,
             )
 
-        return True, "registered"
+        return True, "re-registered" if is_reregister else "registered"
 
     def deregister_worker(
         self, worker_id: str

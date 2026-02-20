@@ -23,7 +23,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 ### v1.1 Production Readiness
 
-- [ ] **Phase 7: Tech Debt Cleanup** - Fix register validation bypass, complete YAML mapping, resolve mypy annotation
+- [x] **Phase 7: Tech Debt Cleanup** - Fix register validation bypass, complete YAML mapping, resolve mypy annotation
 - [ ] **Phase 8: Long-Polling Transport** - Replace 2s short-polling with server-held long-poll for worker task dispatch
 - [ ] **Phase 9: Self-Healing Resilience** - Auto-reregister, buffer replay triggers, smart watchdog, review timeout detection
 - [ ] **Phase 10: Operator CLI** - meshctl tool for status inspection and worker drain operations
@@ -41,8 +41,8 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 **Plans**: TBD
 
 Plans:
-- [ ] 07-01: TBD
-- [ ] 07-02: TBD
+- [x] 07-01: Register validation via WorkerManager
+- [x] 07-02: YAML mapping + mypy fix
 
 ### Phase 8: Long-Polling Transport
 **Goal**: Workers receive task assignments with minimal latency via server-held connections, eliminating wasteful 2s polling
@@ -103,7 +103,7 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 4. Event Bridge | v1.0 | 3/3 | Done | 2026-02-19 |
 | 5. Deployment | v1.0 | 2/2 | Done | 2026-02-19 |
 | 6. Monitoring & Hardening | v1.0 | 2/2 | Done | 2026-02-19 |
-| 7. Tech Debt Cleanup | v1.1 | 0/? | Not started | - |
+| 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 0/? | Not started | - |
 | 9. Self-Healing Resilience | v1.1 | 0/? | Not started | - |
 | 10. Operator CLI | v1.1 | 0/? | Not started | - |

@@ -17,12 +17,15 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from pydantic import ValidationError
+
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
 from src.router.metrics import MeshMetrics
 from src.router.models import Worker
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
+from src.router.worker_manager import WorkerManager
 
 logger = logging.getLogger("mesh.server")
 
@@ -154,22 +157,41 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
 
     def _handle_register(self) -> None:
-        """POST /register — worker registration."""
-        if not self._check_auth():
-            return
+        """POST /register — worker registration via WorkerManager."""
         body = self._read_body()
         if body is None:
             return
         try:
             data = json.loads(body)
-            db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
-            worker = Worker(**data)
-            db.upsert_worker(worker)
-            self._send_json(201, {"status": "registered", "worker_id": worker.worker_id})
         except json.JSONDecodeError:
             self._send_json(400, {"error": "invalid_json"})
-        except (ValueError, TypeError, KeyError) as e:
+            return
+        try:
+            worker = Worker(**data)
+        except (ValidationError, ValueError, TypeError, KeyError) as e:
             self._send_json(400, {"error": f"invalid_worker_data: {type(e).__name__}"})
+            return
+
+        # Extract bearer token (case-insensitive scheme)
+        auth_header = self.headers.get("Authorization", "")
+        token = ""
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+
+        wm: WorkerManager = self.server.router_state["worker_manager"]  # type: ignore[attr-defined]
+        success, message = wm.register_worker(worker, token)
+
+        if not success:
+            if message == "invalid_token":
+                self._send_json(401, {"error": "invalid_token"})
+            elif message == "account_in_use":
+                self._send_json(409, {"error": "account_in_use"})
+            else:
+                self._send_json(400, {"error": message})
+            return
+
+        status_code = 200 if message == "re-registered" else 201
+        self._send_json(status_code, {"status": "registered", "worker_id": worker.worker_id})
 
     def _handle_task_ack(self) -> None:
         """POST /tasks/ack — worker acknowledges assigned task (assigned -> running)."""
@@ -317,6 +339,13 @@ def run_server(
             recovery_result.leases_expired,
         )
 
+    # Build WorkerManager token list from auth_token
+    wm_tokens: list[dict[str, str | None]] = []
+    if auth_token:
+        wm_tokens.append({"token": auth_token, "expires_at": None})
+    dev_mode = os.environ.get("MESH_DEV_MODE", "").strip() == "1"
+    worker_manager = WorkerManager(db, tokens=wm_tokens, dev_mode=dev_mode)
+
     heartbeat = HeartbeatManager(db)
     scheduler = Scheduler(db)
     transport = InProcessTransport(db)
@@ -326,6 +355,7 @@ def run_server(
     server = ThreadingHTTPServer((host, port), MeshRouterHandler)
     server.router_state = {  # type: ignore[attr-defined]
         "db": db,
+        "worker_manager": worker_manager,
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,

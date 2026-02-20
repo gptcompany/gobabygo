@@ -29,9 +29,9 @@ Requirements for v1.1 Production Readiness. Each maps to roadmap phases.
 
 ### Tech Debt
 
-- [ ] **DEBT-01**: server._handle_register() validates through WorkerManager (not just global bearer token)
-- [ ] **DEBT-02**: YAML semantic mapping includes rules for gsd:implement-* commands
-- [ ] **DEBT-03**: heartbeat.py Worker type annotation properly imported (mypy clean)
+- [x] **DEBT-01**: server._handle_register() validates through WorkerManager (not just global bearer token)
+- [x] **DEBT-02**: YAML semantic mapping includes rules for gsd:implement-* commands
+- [x] **DEBT-03**: heartbeat.py Worker type annotation properly imported (mypy clean)
 
 ## v2 Requirements
 
@@ -74,9 +74,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPSC-01 | Phase 10 | Pending |
 | OPSC-02 | Phase 10 | Pending |
 | OPSC-03 | Phase 10 | Pending |
-| DEBT-01 | Phase 7 | Pending |
-| DEBT-02 | Phase 7 | Pending |
-| DEBT-03 | Phase 7 | Pending |
+| DEBT-01 | Phase 7 | Done |
+| DEBT-02 | Phase 7 | Done |
+| DEBT-03 | Phase 7 | Done |
 
 **Coverage:**
 - v1.1 requirements: 14 total

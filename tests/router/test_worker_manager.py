@@ -79,7 +79,7 @@ class TestRegisterWorker:
         w2 = _make_worker()
         ok, msg = wm.register_worker(w2, "valid-token-1")
         assert ok is True
-        assert msg == "registered"
+        assert msg == "re-registered"
         fetched = db.get_worker("w1")
         assert fetched.status == "idle"
 

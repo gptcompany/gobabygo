@@ -77,6 +77,18 @@ class TestMappingEngineResolve:
         result = engine.resolve("speckit.autofix")
         assert result.step == "remediation"
 
+    def test_implement_plan_command(self, engine):
+        result = engine.resolve("gsd:implement-plan")
+        assert result.step == "implement"
+
+    def test_implement_fix_command(self, engine):
+        result = engine.resolve("gsd:implement-fix")
+        assert result.step == "implement"
+
+    def test_implement_phase_sync_command(self, engine):
+        result = engine.resolve("gsd:implement-phase-sync")
+        assert result.step == "implement"
+
     def test_unknown_command_returns_none(self, engine):
         result = engine.resolve("gsd:some-unknown-command")
         assert result.step is None
