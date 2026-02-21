@@ -69,10 +69,10 @@ Plans:
   3. When the next event emits successfully after a buffered period, all previously buffered events are replayed immediately (on-next-emit trigger)
   4. Watchdog thread checks DB health (WAL size, integrity_check, disk space) on each cycle and escalates via alerting if any check fails
   5. Stale task reviews (tasks stuck in review state beyond timeout) are detected and escalated by the periodic event loop
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 09-01: TBD
+- [ ] 09-01-PLAN.md — Auto-reregister on unknown_worker heartbeat + stale review timeout scheduling
 - [ ] 09-02: TBD
 - [ ] 09-03: TBD
 
@@ -105,5 +105,5 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 6. Monitoring & Hardening | v1.0 | 2/2 | Done | 2026-02-19 |
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
-| 9. Self-Healing Resilience | v1.1 | 0/? | Not started | - |
+| 9. Self-Healing Resilience | v1.1 | 0/3 | In progress | - |
 | 10. Operator CLI | v1.1 | 0/? | Not started | - |
