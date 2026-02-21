@@ -25,7 +25,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 - [x] **Phase 7: Tech Debt Cleanup** - Fix register validation bypass, complete YAML mapping, resolve mypy annotation
 - [ ] **Phase 8: Long-Polling Transport** - Replace 2s short-polling with server-held long-poll for worker task dispatch
-- [ ] **Phase 9: Self-Healing Resilience** - Auto-reregister, buffer replay triggers, smart watchdog, review timeout detection
+- [x] **Phase 9: Self-Healing Resilience** - Auto-reregister, buffer replay triggers, smart watchdog, review timeout detection
 - [ ] **Phase 10: Operator CLI** - meshctl tool for status inspection and worker drain operations
 
 ## Phase Details
@@ -72,9 +72,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — Auto-reregister on unknown_worker heartbeat + stale review timeout scheduling
-- [ ] 09-02-PLAN.md — Buffer replay timer with exponential backoff + on-next-emit drain trigger
-- [ ] 09-03-PLAN.md — Watchdog DB health checks (WAL size, integrity, disk space) with Prometheus metrics
+- [x] 09-01-PLAN.md — Auto-reregister on unknown_worker heartbeat + stale review timeout scheduling
+- [x] 09-02-PLAN.md — Buffer replay timer with exponential backoff + on-next-emit drain trigger
+- [x] 09-03-PLAN.md — Watchdog DB health checks (WAL size, integrity, disk space) with Prometheus metrics
 
 ### Phase 10: Operator CLI
 **Goal**: Operator can inspect mesh state and perform graceful worker management from the terminal without directly hitting HTTP endpoints
@@ -105,5 +105,5 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 6. Monitoring & Hardening | v1.0 | 2/2 | Done | 2026-02-19 |
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
-| 9. Self-Healing Resilience | v1.1 | 0/3 | In progress | - |
+| 9. Self-Healing Resilience | v1.1 | 3/3 | Done | 2026-02-21 |
 | 10. Operator CLI | v1.1 | 0/? | Not started | - |
