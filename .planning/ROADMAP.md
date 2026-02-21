@@ -84,11 +84,11 @@ Plans:
   1. `meshctl status` displays a table of all workers (id, state: idle/busy/stale), current queue depth, and running tasks with their age in human-readable format
   2. `meshctl drain <worker_id>` marks a worker as draining (no new tasks assigned), waits for current task to finish, then retires the worker cleanly
   3. meshctl communicates exclusively via the existing router HTTP API (no new transport, no direct DB access, no new ports)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 10-01: TBD
-- [ ] 10-02: TBD
+- [ ] 10-01-PLAN.md — Server-side endpoints (GET /workers, POST /drain) + draining FSM state
+- [ ] 10-02-PLAN.md — meshctl CLI (argparse, status/drain commands, auth, error handling)
 
 ## Progress
 
@@ -106,4 +106,4 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
 | 9. Self-Healing Resilience | v1.1 | 3/3 | Done | 2026-02-21 |
-| 10. Operator CLI | v1.1 | 0/? | Not started | - |
+| 10. Operator CLI | v1.1 | 0/2 | Planning | - |
