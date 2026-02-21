@@ -26,6 +26,7 @@ from src.router.metrics import MeshMetrics
 from src.router.models import Worker
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
+from src.router.verifier import VerifierGate
 from src.router.worker_manager import WorkerManager
 
 logger = logging.getLogger("mesh.server")
@@ -380,6 +381,8 @@ def run_server(
     scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
     transport = InProcessTransport(db)
     metrics = MeshMetrics()
+    review_check_interval = float(os.environ.get("MESH_REVIEW_CHECK_INTERVAL_S", "60"))
+    verifier_gate = VerifierGate()
     longpoll_timeout = float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25"))
     start_time = datetime.now(timezone.utc)
 
@@ -395,6 +398,8 @@ def run_server(
         "longpoll_timeout": longpoll_timeout,
         "auth_token": auth_token,
         "start_time": start_time,
+        "verifier_gate": verifier_gate,
+        "review_check_interval": review_check_interval,
     }
 
     def handle_shutdown(signum: int, frame: object) -> None:
@@ -403,6 +408,21 @@ def run_server(
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
+
+    # Start periodic review timeout check thread
+    def review_check_loop() -> None:
+        """Periodically check for stale reviews and transition them to timeout."""
+        while True:
+            time.sleep(review_check_interval)
+            try:
+                timed_out = verifier_gate.check_review_timeout(db)
+                if timed_out:
+                    logger.info("Review timeout: %d tasks timed out: %s", len(timed_out), timed_out)
+            except Exception as e:
+                logger.error("Review timeout check failed: %s", e)
+
+    review_thread = threading.Thread(target=review_check_loop, daemon=True, name="review-check")
+    review_thread.start()
 
     # Notify systemd we're ready + start watchdog thread
     try:

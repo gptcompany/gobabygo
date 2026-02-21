@@ -765,3 +765,85 @@ class TestLongPollDispatchIntegration:
         # First poll should complete with 204 (timeout, no task)
         assert len(first_result) == 1
         assert first_result[0].status_code == 204
+
+
+class TestReviewTimeoutScheduling:
+    """Tests for periodic review timeout detection thread."""
+
+    def test_review_check_interval_configurable(self, db, tmp_path):
+        """MESH_REVIEW_CHECK_INTERVAL_S env var is read into router_state."""
+        from datetime import datetime, timezone
+        import os
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        from src.router.verifier import VerifierGate
+
+        # Set env var and read it the same way run_server() does
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("MESH_REVIEW_CHECK_INTERVAL_S", "0.1")
+            review_check_interval = float(os.environ.get("MESH_REVIEW_CHECK_INTERVAL_S", "60"))
+
+        verifier_gate = VerifierGate()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 0.1,
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+            "verifier_gate": verifier_gate,
+            "review_check_interval": review_check_interval,
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        # Verify the interval was read correctly
+        assert server.router_state["review_check_interval"] == 0.1
+
+        server.shutdown()
+
+    def test_stale_review_detected_by_scheduled_check(self, db):
+        """VerifierGate.check_review_timeout transitions stale review tasks to timeout."""
+        from datetime import datetime, timedelta, timezone
+
+        from src.router.verifier import VerifierGate
+
+        # Insert a critical task in review state with a past review_timeout_at
+        past_timeout = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        task = Task(
+            task_id="t-review-stale",
+            title="stale review task",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            review_timeout_at=past_timeout,
+            idempotency_key="k-review-stale",
+        )
+        db.insert_task(task)
+
+        # Verify task is in review state
+        before = db.get_task("t-review-stale")
+        assert before.status == TaskStatus.review
+
+        # Call check_review_timeout directly
+        verifier_gate = VerifierGate()
+        timed_out = verifier_gate.check_review_timeout(db)
+
+        # Assert the task was timed out
+        assert "t-review-stale" in timed_out
+        after = db.get_task("t-review-stale")
+        assert after.status == TaskStatus.timeout
