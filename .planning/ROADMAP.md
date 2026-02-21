@@ -26,7 +26,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 - [x] **Phase 7: Tech Debt Cleanup** - Fix register validation bypass, complete YAML mapping, resolve mypy annotation
 - [ ] **Phase 8: Long-Polling Transport** - Replace 2s short-polling with server-held long-poll for worker task dispatch
 - [x] **Phase 9: Self-Healing Resilience** - Auto-reregister, buffer replay triggers, smart watchdog, review timeout detection
-- [ ] **Phase 10: Operator CLI** - meshctl tool for status inspection and worker drain operations
+- [x] **Phase 10: Operator CLI** - meshctl tool for status inspection and worker drain operations (completed 2026-02-21)
 
 ## Phase Details
 
@@ -106,4 +106,4 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
 | 9. Self-Healing Resilience | v1.1 | 3/3 | Done | 2026-02-21 |
-| 10. Operator CLI | 1/2 | In Progress|  | - |
+| 10. Operator CLI | 2/2 | Complete   | 2026-02-21 | - |
