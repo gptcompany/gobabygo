@@ -74,7 +74,7 @@ Plans:
 Plans:
 - [ ] 09-01-PLAN.md — Auto-reregister on unknown_worker heartbeat + stale review timeout scheduling
 - [ ] 09-02-PLAN.md — Buffer replay timer with exponential backoff + on-next-emit drain trigger
-- [ ] 09-03: TBD
+- [ ] 09-03-PLAN.md — Watchdog DB health checks (WAL size, integrity, disk space) with Prometheus metrics
 
 ### Phase 10: Operator CLI
 **Goal**: Operator can inspect mesh state and perform graceful worker management from the terminal without directly hitting HTTP endpoints
