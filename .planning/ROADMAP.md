@@ -25,7 +25,7 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 - [x] **Phase 7: Tech Debt Cleanup** - Fix register validation bypass, complete YAML mapping, resolve mypy annotation
 - [ ] **Phase 8: Long-Polling Transport** - Replace 2s short-polling with server-held long-poll for worker task dispatch
-- [ ] **Phase 9: Self-Healing Resilience** - Auto-reregister, buffer replay triggers, smart watchdog, review timeout detection
+- [x] **Phase 9: Self-Healing Resilience** - Auto-reregister, buffer replay triggers, smart watchdog, review timeout detection
 - [ ] **Phase 10: Operator CLI** - meshctl tool for status inspection and worker drain operations
 
 ## Phase Details
@@ -69,12 +69,12 @@ Plans:
   3. When the next event emits successfully after a buffered period, all previously buffered events are replayed immediately (on-next-emit trigger)
   4. Watchdog thread checks DB health (WAL size, integrity_check, disk space) on each cycle and escalates via alerting if any check fails
   5. Stale task reviews (tasks stuck in review state beyond timeout) are detected and escalated by the periodic event loop
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
-- [ ] 09-03: TBD
+- [x] 09-01-PLAN.md — Auto-reregister on unknown_worker heartbeat + stale review timeout scheduling
+- [x] 09-02-PLAN.md — Buffer replay timer with exponential backoff + on-next-emit drain trigger
+- [x] 09-03-PLAN.md — Watchdog DB health checks (WAL size, integrity, disk space) with Prometheus metrics
 
 ### Phase 10: Operator CLI
 **Goal**: Operator can inspect mesh state and perform graceful worker management from the terminal without directly hitting HTTP endpoints
@@ -84,11 +84,11 @@ Plans:
   1. `meshctl status` displays a table of all workers (id, state: idle/busy/stale), current queue depth, and running tasks with their age in human-readable format
   2. `meshctl drain <worker_id>` marks a worker as draining (no new tasks assigned), waits for current task to finish, then retires the worker cleanly
   3. meshctl communicates exclusively via the existing router HTTP API (no new transport, no direct DB access, no new ports)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 10-01: TBD
-- [ ] 10-02: TBD
+- [ ] 10-01-PLAN.md — Server-side endpoints (GET /workers, POST /drain) + draining FSM state
+- [ ] 10-02-PLAN.md — meshctl CLI (argparse, status/drain commands, auth, error handling)
 
 ## Progress
 
@@ -105,5 +105,5 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 6. Monitoring & Hardening | v1.0 | 2/2 | Done | 2026-02-19 |
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
-| 9. Self-Healing Resilience | v1.1 | 0/? | Not started | - |
-| 10. Operator CLI | v1.1 | 0/? | Not started | - |
+| 9. Self-Healing Resilience | v1.1 | 3/3 | Done | 2026-02-21 |
+| 10. Operator CLI | v1.1 | 0/2 | Planning | - |

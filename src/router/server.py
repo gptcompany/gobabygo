@@ -26,6 +26,7 @@ from src.router.metrics import MeshMetrics
 from src.router.models import Worker
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
+from src.router.verifier import VerifierGate
 from src.router.worker_manager import WorkerManager
 
 logger = logging.getLogger("mesh.server")
@@ -354,6 +355,8 @@ def run_server(
     Initializes DB, recovery, scheduler, and heartbeat manager,
     then serves HTTP requests. Sends sd_notify for systemd integration.
     """
+    from src.router.bridge.buffer import FallbackBuffer
+    from src.router.bridge.emitter import EventEmitter
     from src.router.bridge.transport import InProcessTransport
 
     db = RouterDB(db_path, check_same_thread=False)
@@ -379,8 +382,21 @@ def run_server(
     heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
     scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
     transport = InProcessTransport(db)
+    buffer = FallbackBuffer()  # default path: ~/.mesh/events-buffer.jsonl
+    replay_interval = float(os.environ.get("MESH_BUFFER_REPLAY_INTERVAL_S", "60"))
+    emitter = EventEmitter(
+        transport=transport,
+        source_machine=os.environ.get("MESH_SOURCE_MACHINE", "router"),
+        buffer=buffer,
+        replay_interval_s=replay_interval,
+    )
     metrics = MeshMetrics()
+    review_check_interval = float(os.environ.get("MESH_REVIEW_CHECK_INTERVAL_S", "60"))
+    verifier_gate = VerifierGate()
     longpoll_timeout = float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25"))
+    wal_size_threshold = int(os.environ.get("MESH_DB_WAL_SIZE_THRESHOLD_BYTES", str(50 * 1024 * 1024)))  # 50MB
+    disk_free_threshold = int(os.environ.get("MESH_DB_DISK_FREE_THRESHOLD_BYTES", str(100 * 1024 * 1024)))  # 100MB
+    integrity_check_interval = int(os.environ.get("MESH_DB_INTEGRITY_CHECK_INTERVAL", "10"))  # every 10 cycles
     start_time = datetime.now(timezone.utc)
 
     server = ThreadingHTTPServer((host, port), MeshRouterHandler)
@@ -390,11 +406,20 @@ def run_server(
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
+        "emitter": emitter,
+        "buffer": buffer,
         "metrics": metrics,
         "longpoll_registry": longpoll_registry,
         "longpoll_timeout": longpoll_timeout,
         "auth_token": auth_token,
         "start_time": start_time,
+        "verifier_gate": verifier_gate,
+        "review_check_interval": review_check_interval,
+        "db_health_config": {
+            "wal_size_threshold": wal_size_threshold,
+            "disk_free_threshold": disk_free_threshold,
+            "integrity_check_interval": integrity_check_interval,
+        },
     }
 
     def handle_shutdown(signum: int, frame: object) -> None:
@@ -403,6 +428,24 @@ def run_server(
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
+
+    # Start periodic review timeout check thread
+    def review_check_loop() -> None:
+        """Periodically check for stale reviews and transition them to timeout."""
+        while True:
+            time.sleep(review_check_interval)
+            try:
+                timed_out = verifier_gate.check_review_timeout(db)
+                if timed_out:
+                    logger.info("Review timeout: %d tasks timed out: %s", len(timed_out), timed_out)
+            except Exception as e:
+                logger.error("Review timeout check failed: %s", e)
+
+    review_thread = threading.Thread(target=review_check_loop, daemon=True, name="review-check")
+    review_thread.start()
+
+    # Start buffer replay timer
+    emitter.start_replay_timer()
 
     # Notify systemd we're ready + start watchdog thread
     try:
@@ -413,8 +456,44 @@ def run_server(
         logger.info("sd_notify: READY=1")
 
         def watchdog_loop() -> None:
+            cycle = 0
             while True:
                 n.notify("WATCHDOG=1")
+
+                # DB health checks
+                try:
+                    # WAL size check (every cycle)
+                    wal_size = db.check_wal_size()
+                    metrics.db_wal_size_bytes.set(wal_size)
+                    if wal_size > wal_size_threshold:
+                        logger.warning(
+                            "WAL size %.1fMB exceeds threshold %.1fMB",
+                            wal_size / (1024 * 1024),
+                            wal_size_threshold / (1024 * 1024),
+                        )
+
+                    # Disk space check (every cycle)
+                    disk_free = db.check_disk_space()
+                    metrics.db_disk_free_bytes.set(disk_free)
+                    if disk_free < disk_free_threshold:
+                        logger.error(
+                            "Low disk space: %.1fMB free (threshold %.1fMB)",
+                            disk_free / (1024 * 1024),
+                            disk_free_threshold / (1024 * 1024),
+                        )
+
+                    # Integrity check (every N cycles -- expensive)
+                    if cycle > 0 and cycle % integrity_check_interval == 0:
+                        integrity_ok = db.check_integrity()
+                        metrics.db_integrity_ok.set(1 if integrity_ok else 0)
+                        if not integrity_ok:
+                            logger.error("PRAGMA integrity_check FAILED")
+
+                except Exception as e:
+                    logger.error("DB health check error: %s", e)
+                    metrics.db_health_check_errors_total.inc()
+
+                cycle += 1
                 time.sleep(10)
 
         wd_thread = threading.Thread(target=watchdog_loop, daemon=True)

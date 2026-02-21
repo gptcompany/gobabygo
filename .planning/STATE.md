@@ -5,18 +5,18 @@
 See: .planning/PROJECT.md (updated 2026-02-20)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.1 Production Readiness -- Phase 9 (Graceful Shutdown)
+**Current focus:** v1.1 Production Readiness -- Phase 9 complete, ready for Phase 10
 
 ## Current Position
 
 Milestone: v1.1 Production Readiness
-Phase: 9 of 10 (Graceful Shutdown)
-Plan: 1 of N in current phase
-Status: Ready
-Last activity: 2026-02-20 -- Plan 08-02 Scheduler Wakeup Integration completed (3 tasks, 10 new tests, 327 total)
+Phase: 9 of 10 (Self-Healing & Resilience) -- COMPLETE
+Plan: 3 of 3 in current phase (all complete)
+Status: Phase Complete
+Last activity: 2026-02-21 -- Plan 09-03 Watchdog DB Health Checks completed (2 tasks, 13 new tests, 357 total)
 
-Progress: [====================......] 76% overall (19/~25 plans)
-v1.1:    [============..............] 40% (2/4 phases complete, starting phase 9)
+Progress: [=======================...] 88% overall (22/~25 plans)
+v1.1:    [==================........] 75% (3/4 phases complete, phase 9 done)
 
 ## Performance Metrics
 
@@ -28,13 +28,16 @@ v1.1:    [============..............] 40% (2/4 phases complete, starting phase 9
 - Timeline: ~22 hours (2026-02-18 -> 2026-02-19)
 
 **v1.1 Velocity:**
-- Total plans completed: 4
+- Total plans completed: 7
 - Started: 2026-02-20
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 08    | 01   | 9min     | 2     | 5     |
 | 08    | 02   | 15min    | 3     | 8     |
+| 09    | 01   | 7min     | 2     | 4     |
+| 09    | 02   | 9min     | 2     | 7     |
+| 09    | 03   | 8min     | 2     | 4     |
 
 ## Accumulated Context
 
@@ -52,6 +55,12 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - LP-02: Notify after transaction commit so DB state is visible when worker reads
 - LP-02: Worker client HTTP timeout = longpoll_timeout + 5s to avoid premature client timeout
 - LP-02: Exponential backoff 1s-30s with jitter on server errors; immediate reconnect on 204
+- RESL-01: Re-registration call wrapped in nested try/except to prevent heartbeat thread death
+- RESL-01: Review check thread uses sleep-first pattern (same as watchdog_loop)
+- RESL-02: Drain uses threading.Event to wake timer thread, not synchronous replay in emit()
+- RESL-03: Exponential backoff doubles on failure, caps at 600s, resets on full success
+- RESL-04: sd_notify always first in watchdog cycle; integrity_check gated to every N cycles (default 10)
+- RESL-04: Cycle 0 skips integrity check to avoid delaying startup; escalation = log.error + Prometheus counter
 
 ### Completed Milestones
 
@@ -61,6 +70,7 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 
 - **Phase 7: Tech Debt Cleanup** (2026-02-20): 2 plans, 11 new tests (302 total), confidence 92%
 - **Phase 8: Long-Polling Transport** (2026-02-20): 2 plans, 25 new tests (327 total), confidence 95%
+- **Phase 9: Self-Healing & Resilience** (2026-02-21): 3 plans, 30 new tests (357 total), confidence 95%
 
 ### Pending Todos
 
@@ -72,6 +82,6 @@ None
 
 ## Session Continuity
 
-Last session: 2026-02-20
-Stopped at: Completed 08-02-PLAN.md (Phase 8 complete)
-Resume with: Plan phase 09 (Graceful Shutdown)
+Last session: 2026-02-21
+Stopped at: Completed 09-03-PLAN.md (Phase 9 complete)
+Resume with: Phase 10 planning or milestone completion

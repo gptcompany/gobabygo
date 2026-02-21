@@ -8,6 +8,8 @@ dispatches via a pluggable transport. Falls back to buffer on failure.
 from __future__ import annotations
 
 import hashlib
+import logging
+import threading
 from datetime import datetime, timezone
 
 from cloudevents.http import CloudEvent
@@ -22,6 +24,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.router.bridge.buffer import FallbackBuffer
+
+logger = logging.getLogger(__name__)
 
 
 class EventEmitter:
@@ -40,11 +44,80 @@ class EventEmitter:
         source_machine: str = "unknown",
         comm_policy: CommunicationPolicy | None = None,
         buffer: FallbackBuffer | None = None,
+        replay_interval_s: float = 60.0,
     ) -> None:
         self.transport = transport
         self.source_machine = source_machine
         self.comm_policy = comm_policy
         self.buffer = buffer
+
+        # Replay timer state
+        self._replay_lock = threading.Lock()
+        self._drain_event = threading.Event()
+        self._replay_thread: threading.Thread | None = None
+        self._replay_interval_s = replay_interval_s
+        self._replay_backoff_s = replay_interval_s  # current interval, increases on failure
+        self._replay_max_backoff_s = 600.0  # cap at 10 minutes
+
+    def start_replay_timer(self) -> None:
+        """Start a daemon thread that periodically replays buffered events.
+
+        The timer sleeps for the current backoff interval but can be woken
+        early by _drain_event (set by emit() on transport recovery).
+        Uses exponential backoff when replays keep failing (all events fail).
+        Resets to base interval after a successful replay.
+        """
+        if self.buffer is None:
+            logger.debug("No buffer configured, skipping replay timer")
+            return
+        if self._replay_thread is not None:
+            logger.warning("Replay timer already started")
+            return
+
+        def _replay_loop() -> None:
+            assert self.buffer is not None  # guaranteed by check above
+            while True:
+                # Wait for interval OR early wake from drain event
+                self._drain_event.wait(timeout=self._replay_backoff_s)
+                self._drain_event.clear()
+
+                if not self.buffer.has_events():
+                    continue
+
+                with self._replay_lock:
+                    try:
+                        sent, failed = self.replay_buffer()
+                        if sent > 0:
+                            logger.info(
+                                "Buffer replay: sent=%d failed=%d", sent, failed
+                            )
+                        if failed == 0 and sent > 0:
+                            # Full success -- reset backoff
+                            self._replay_backoff_s = self._replay_interval_s
+                        elif failed > 0:
+                            # Partial or full failure -- exponential backoff
+                            self._replay_backoff_s = min(
+                                self._replay_backoff_s * 2,
+                                self._replay_max_backoff_s,
+                            )
+                            logger.warning(
+                                "Buffer replay partial failure, backoff=%.0fs",
+                                self._replay_backoff_s,
+                            )
+                    except Exception as e:
+                        logger.error("Buffer replay error: %s", e)
+                        self._replay_backoff_s = min(
+                            self._replay_backoff_s * 2,
+                            self._replay_max_backoff_s,
+                        )
+
+        self._replay_thread = threading.Thread(
+            target=_replay_loop, daemon=True, name="buffer-replay"
+        )
+        self._replay_thread.start()
+        logger.info(
+            "Buffer replay timer started (interval=%.0fs)", self._replay_interval_s
+        )
 
     @staticmethod
     def _make_idempotency_key(
@@ -137,6 +210,10 @@ class EventEmitter:
         # 7. Buffer on failure
         if not success and self.buffer is not None:
             self.buffer.append(cloud_event_json)
+
+        # 8. Trigger buffer drain on successful emit (transport recovered)
+        if success and self.buffer is not None and self.buffer.has_events():
+            self._drain_event.set()
 
         return success
 

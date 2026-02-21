@@ -15,11 +15,11 @@ Requirements for v1.1 Production Readiness. Each maps to roadmap phases.
 
 ### Resilience
 
-- [ ] **RESL-01**: Worker auto-reregisters when heartbeat receives "unknown_worker" response from router
-- [ ] **RESL-02**: Event buffer replays buffered events on periodic tick (configurable interval, default 60s)
-- [ ] **RESL-03**: Event buffer replays buffered events on next successful emit (on-next-emit trigger)
-- [ ] **RESL-04**: Smart watchdog performs periodic DB health check (WAL size, integrity, disk space) and escalates on failure
-- [ ] **RESL-05**: check_review_timeout runs in periodic event loop to detect stale task reviews
+- [x] **RESL-01**: Worker auto-reregisters when heartbeat receives "unknown_worker" response from router
+- [x] **RESL-02**: Event buffer replays buffered events on periodic tick (configurable interval, default 60s)
+- [x] **RESL-03**: Event buffer replays buffered events on next successful emit (on-next-emit trigger)
+- [x] **RESL-04**: Smart watchdog performs periodic DB health check (WAL size, integrity, disk space) and escalates on failure
+- [x] **RESL-05**: check_review_timeout runs in periodic event loop to detect stale task reviews
 
 ### Operator CLI
 
@@ -66,11 +66,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TRNS-01 | Phase 8 | Complete |
 | TRNS-02 | Phase 8 | Complete |
 | TRNS-03 | Phase 8 | Complete |
-| RESL-01 | Phase 9 | Pending |
-| RESL-02 | Phase 9 | Pending |
-| RESL-03 | Phase 9 | Pending |
-| RESL-04 | Phase 9 | Pending |
-| RESL-05 | Phase 9 | Pending |
+| RESL-01 | Phase 9 | Complete |
+| RESL-02 | Phase 9 | Complete |
+| RESL-03 | Phase 9 | Complete |
+| RESL-04 | Phase 9 | Complete |
+| RESL-05 | Phase 9 | Complete |
 | OPSC-01 | Phase 10 | Pending |
 | OPSC-02 | Phase 10 | Pending |
 | OPSC-03 | Phase 10 | Pending |
