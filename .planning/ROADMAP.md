@@ -87,8 +87,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 10-01-PLAN.md — Server-side endpoints (GET /workers, POST /drain) + draining FSM state
-- [ ] 10-02-PLAN.md — meshctl CLI (argparse, status/drain commands, auth, error handling)
+- [x] 10-01-PLAN.md — Server-side endpoints (GET /workers, POST /drain) + draining FSM state
+- [x] 10-02-PLAN.md — meshctl CLI (argparse, status/drain commands, auth, error handling)
 
 ## Progress
 
@@ -106,4 +106,4 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
 | 9. Self-Healing Resilience | v1.1 | 3/3 | Done | 2026-02-21 |
-| 10. Operator CLI | 2/2 | Complete   | 2026-02-21 | - |
+| 10. Operator CLI | v1.1 | 2/2 | Done | 2026-02-21 |
