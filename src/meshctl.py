@@ -177,21 +177,27 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Drain command (stub -- implemented in Task 2)
+# Drain command
 # ---------------------------------------------------------------------------
 
 
 def cmd_drain(args: argparse.Namespace) -> None:
     """Drain a worker: POST /workers/<id>/drain, then poll until offline."""
-    # Full implementation in Task 2
     base = _base_url()
     headers = _headers()
     worker_id = args.worker_id
+    timeout = args.timeout  # default 300s
 
+    # Initiate drain
     try:
-        resp = requests.post(f"{base}/workers/{worker_id}/drain", headers=headers, timeout=10)
+        resp = requests.post(
+            f"{base}/workers/{worker_id}/drain", headers=headers, timeout=10
+        )
     except requests.ConnectionError as e:
-        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        print(
+            f"Error: Cannot connect to mesh router at {base} -- {e}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if resp.status_code == 404:
@@ -199,16 +205,84 @@ def cmd_drain(args: argparse.Namespace) -> None:
         sys.exit(1)
     elif resp.status_code == 409:
         detail = resp.json().get("detail", resp.json().get("error", "conflict"))
-        print(f"Error: Cannot drain worker '{worker_id}': {detail}", file=sys.stderr)
+        print(
+            f"Error: Cannot drain worker '{worker_id}': {detail}", file=sys.stderr
+        )
         sys.exit(1)
     elif resp.status_code == 401:
         print("Error: Authentication failed. Set MESH_AUTH_TOKEN.", file=sys.stderr)
         sys.exit(1)
     elif resp.status_code != 202:
-        print(f"Error: Unexpected response {resp.status_code}: {resp.text}", file=sys.stderr)
+        print(
+            f"Error: Unexpected response {resp.status_code}: {resp.text}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    print(f"Drain initiated for worker {worker_id}.")
+    data = resp.json()
+    status = data.get("status", "")
+
+    # If worker drained immediately (was idle, no tasks)
+    if status == "drained_immediately":
+        print(
+            f"Worker {worker_id} drained and retired. (was idle, no tasks)"
+        )
+        return
+
+    # Poll GET /workers/<id> every 2s until status == "offline" or timeout
+    print(f"Draining worker {worker_id}...")
+    start = time.monotonic()
+    poll_interval = 2
+
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed >= timeout:
+            print(
+                f"Warning: Drain timed out after {timeout}s. "
+                "Worker may still be draining on server.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        time.sleep(poll_interval)
+
+        try:
+            resp = requests.get(
+                f"{base}/workers/{worker_id}", headers=headers, timeout=10
+            )
+        except requests.ConnectionError:
+            print(
+                "Warning: Lost connection to router during drain polling.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if resp.status_code == 404:
+            # Worker already gone (deregistered)
+            print(f"Worker {worker_id} drained and retired.")
+            return
+
+        if resp.status_code != 200:
+            print(
+                f"Warning: Poll returned {resp.status_code}, retrying...",
+                file=sys.stderr,
+            )
+            continue
+
+        worker = resp.json()
+        worker_status = worker.get("status", "")
+        running = worker.get("running_tasks", [])
+
+        if worker_status == "offline":
+            print(f"Worker {worker_id} drained and retired.")
+            return
+
+        # Show progress
+        task_count = len(running)
+        if task_count > 0:
+            print(f"  Waiting for {task_count} task(s)...")
+        else:
+            print(f"  Status: {worker_status}, waiting...")
 
 
 # ---------------------------------------------------------------------------
