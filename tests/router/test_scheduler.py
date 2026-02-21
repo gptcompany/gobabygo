@@ -202,6 +202,90 @@ class TestReportFailure:
         assert w.status == "idle"
 
 
+class TestDrainingAutoRetire:
+    """Tests for draining worker auto-retire on task complete/fail."""
+
+    def test_draining_worker_auto_retires_on_complete(self, sched, db):
+        """Draining worker goes offline when last task completes."""
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+        result = sched.dispatch()
+        assert result is not None
+        sched.ack_task("t1", "w1")
+        # Transition worker to draining
+        db.update_worker("w1", {"status": "draining"})
+        # Complete the task
+        assert sched.complete_task("t1", "w1") is True
+        w = db.get_worker("w1")
+        assert w.status == "offline"
+
+    def test_draining_worker_auto_retires_on_fail(self, sched, db):
+        """Draining worker goes offline when last task fails."""
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+        result = sched.dispatch()
+        assert result is not None
+        sched.ack_task("t1", "w1")
+        db.update_worker("w1", {"status": "draining"})
+        assert sched.report_failure("t1", "w1", "test error") is True
+        w = db.get_worker("w1")
+        assert w.status == "offline"
+
+    def test_draining_worker_stays_draining_with_remaining_tasks(self, sched, db):
+        """Draining worker stays draining until all tasks done."""
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+        r1 = sched.dispatch()
+        assert r1 is not None
+        sched.ack_task("t1", "w1")
+
+        # Worker is now busy. Insert second task manually as running.
+        task2 = Task(
+            task_id="t2",
+            title="test2",
+            target_cli=CLIType.claude,
+            target_account="work",
+            status=TaskStatus.running,
+            assigned_worker="w1",
+        )
+        db.insert_task(task2)
+
+        # Transition to draining
+        db.update_worker("w1", {"status": "draining"})
+
+        # Complete first task -- worker should stay draining (t2 still running)
+        assert sched.complete_task("t1", "w1") is True
+        w = db.get_worker("w1")
+        assert w.status == "draining"
+
+        # Complete second task -- worker should now be offline
+        assert sched.complete_task("t2", "w1") is True
+        w = db.get_worker("w1")
+        assert w.status == "offline"
+
+    def test_scheduler_skips_draining_worker(self, sched, db):
+        """Draining workers are not eligible for new task dispatch."""
+        _add_worker(db, "w1", "work", idle_since=_past(60))
+        _add_worker(db, "w2", "work", idle_since=_past(30))
+        # Set w1 to draining
+        db.update_worker("w1", {"status": "draining"})
+        _add_task(db, "t1")
+        result = sched.dispatch()
+        assert result is not None
+        # Task should go to w2 (w1 is draining, not idle)
+        assert result.worker.worker_id == "w2"
+
+    def test_non_draining_worker_goes_idle_on_complete(self, sched, db):
+        """Normal (non-draining) worker goes idle after task complete (regression check)."""
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+        assert sched.complete_task("t1", "w1") is True
+        w = db.get_worker("w1")
+        assert w.status == "idle"
+
+
 class TestDispatchLongPollWakeup:
     """Tests for scheduler wakeup integration with LongPollRegistry."""
 
