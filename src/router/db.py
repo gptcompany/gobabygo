@@ -464,7 +464,7 @@ class RouterDB:
     def list_stale_candidates(self, threshold_iso: str) -> list[Worker]:
         """Find workers whose last_heartbeat is older than threshold."""
         cur = self._conn.execute(
-            "SELECT * FROM workers WHERE status IN ('idle', 'busy') AND last_heartbeat < ?",
+            "SELECT * FROM workers WHERE status IN ('idle', 'busy', 'draining') AND last_heartbeat < ?",
             (threshold_iso,),
         )
         return [self._worker_from_row(row) for row in cur.fetchall()]

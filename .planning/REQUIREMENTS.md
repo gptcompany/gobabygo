@@ -23,9 +23,9 @@ Requirements for v1.1 Production Readiness. Each maps to roadmap phases.
 
 ### Operator CLI
 
-- [ ] **OPSC-01**: `meshctl status` shows worker states (idle/busy/stale), queue depth, and running tasks with age
-- [ ] **OPSC-02**: `meshctl drain <worker_id>` stops new task assignment to a worker, lets current task finish, then retires
-- [ ] **OPSC-03**: `meshctl` communicates with router via existing HTTP API (no new transport)
+- [x] **OPSC-01**: `meshctl status` shows worker states (idle/busy/stale), queue depth, and running tasks with age
+- [x] **OPSC-02**: `meshctl drain <worker_id>` stops new task assignment to a worker, lets current task finish, then retires
+- [x] **OPSC-03**: `meshctl` communicates with router via existing HTTP API (no new transport)
 
 ### Tech Debt
 
@@ -71,9 +71,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RESL-03 | Phase 9 | Complete |
 | RESL-04 | Phase 9 | Complete |
 | RESL-05 | Phase 9 | Complete |
-| OPSC-01 | Phase 10 | Pending |
-| OPSC-02 | Phase 10 | Pending |
-| OPSC-03 | Phase 10 | Pending |
+| OPSC-01 | Phase 10 | Complete |
+| OPSC-02 | Phase 10 | Complete |
+| OPSC-03 | Phase 10 | Complete |
 | DEBT-01 | Phase 7 | Done |
 | DEBT-02 | Phase 7 | Done |
 | DEBT-03 | Phase 7 | Done |

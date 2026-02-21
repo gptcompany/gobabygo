@@ -43,6 +43,14 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_metrics()
         elif path == "/tasks/next":
             self._handle_task_poll()
+        elif path == "/workers":
+            self._handle_list_workers()
+        elif path.startswith("/workers/"):
+            worker_id = path[len("/workers/"):]
+            if worker_id:
+                self._handle_get_worker(worker_id)
+            else:
+                self._send_json(404, {"error": "not_found"})
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -60,6 +68,13 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_task_complete()
         elif path == "/tasks/fail":
             self._handle_task_fail()
+        elif path.endswith("/drain") and path.startswith("/workers/"):
+            # Extract worker_id from /workers/<id>/drain
+            worker_id = path[len("/workers/"):-len("/drain")]
+            if worker_id:
+                self._handle_drain_worker(worker_id)
+            else:
+                self._send_json(404, {"error": "not_found"})
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -301,6 +316,112 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
         except KeyError as e:
             self._send_json(400, {"error": f"missing_field: {e}"})
+
+    # --- Worker management endpoints ---
+
+    def _handle_list_workers(self) -> None:
+        """GET /workers -- list all workers with embedded running tasks."""
+        if not self._check_auth():
+            return
+        state = self.server.router_state  # type: ignore[attr-defined]
+        db: RouterDB = state["db"]
+        now = datetime.now(timezone.utc)
+
+        workers = db.list_workers()
+        result = []
+        for w in workers:
+            running = db.get_tasks_by_worker(w.worker_id, status="running")
+            assigned = db.get_tasks_by_worker(w.worker_id, status="assigned")
+            tasks = running + assigned
+            task_list = []
+            for t in tasks:
+                age_s = 0.0
+                if t.created_at:
+                    try:
+                        created = datetime.fromisoformat(t.created_at)
+                        age_s = round((now - created).total_seconds(), 1)
+                    except (ValueError, TypeError):
+                        pass
+                task_list.append({
+                    "task_id": t.task_id,
+                    "status": t.status.value,
+                    "created_at": t.created_at,
+                    "age_s": age_s,
+                })
+            result.append({
+                "worker_id": w.worker_id,
+                "machine": w.machine,
+                "cli_type": w.cli_type.value if hasattr(w.cli_type, "value") else w.cli_type,
+                "status": w.status,
+                "last_heartbeat": w.last_heartbeat,
+                "idle_since": w.idle_since,
+                "stale_since": w.stale_since,
+                "running_tasks": task_list,
+            })
+        self._send_json(200, {"workers": result})
+
+    def _handle_get_worker(self, worker_id: str) -> None:
+        """GET /workers/<id> -- single worker detail with running tasks."""
+        if not self._check_auth():
+            return
+        state = self.server.router_state  # type: ignore[attr-defined]
+        db: RouterDB = state["db"]
+        now = datetime.now(timezone.utc)
+
+        w = db.get_worker(worker_id)
+        if w is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+
+        running = db.get_tasks_by_worker(worker_id, status="running")
+        assigned = db.get_tasks_by_worker(worker_id, status="assigned")
+        tasks = running + assigned
+        task_list = []
+        for t in tasks:
+            age_s = 0.0
+            if t.created_at:
+                try:
+                    created = datetime.fromisoformat(t.created_at)
+                    age_s = round((now - created).total_seconds(), 1)
+                except (ValueError, TypeError):
+                    pass
+            task_list.append({
+                "task_id": t.task_id,
+                "status": t.status.value,
+                "created_at": t.created_at,
+                "age_s": age_s,
+            })
+        result = {
+            "worker_id": w.worker_id,
+            "machine": w.machine,
+            "cli_type": w.cli_type.value if hasattr(w.cli_type, "value") else w.cli_type,
+            "status": w.status,
+            "last_heartbeat": w.last_heartbeat,
+            "idle_since": w.idle_since,
+            "stale_since": w.stale_since,
+            "running_tasks": task_list,
+        }
+        self._send_json(200, result)
+
+    def _handle_drain_worker(self, worker_id: str) -> None:
+        """POST /workers/<id>/drain -- initiate graceful drain."""
+        if not self._check_auth():
+            return
+        state = self.server.router_state  # type: ignore[attr-defined]
+        wm: WorkerManager = state["worker_manager"]
+
+        ok, message = wm.drain_worker(worker_id)
+        if not ok:
+            if message == "not_found":
+                self._send_json(404, {"error": "not_found"})
+            elif message == "invalid_state":
+                self._send_json(409, {"error": "invalid_state", "detail": "Worker is stale or offline, cannot drain"})
+            else:
+                self._send_json(409, {"error": message})
+            return
+
+        # 202 Accepted: drain initiated (or completed immediately for idle workers)
+        self._send_json(202, {"status": message, "worker_id": worker_id})
 
     # --- Helpers ---
 

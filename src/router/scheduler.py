@@ -185,6 +185,35 @@ class Scheduler:
         result = apply_transition(self._db, request)
         return result.success
 
+    def _update_worker_post_task(
+        self, worker_id: str, completed_task_id: str, conn, reason: str
+    ) -> None:
+        """After task finalization, either idle the worker or auto-retire if draining."""
+        worker = self._db.get_worker(worker_id)
+        if worker and worker.status == "draining":
+            remaining_running = self._db.get_tasks_by_worker(worker_id, status="running")
+            remaining_assigned = self._db.get_tasks_by_worker(worker_id, status="assigned")
+            remaining = [
+                t for t in remaining_running + remaining_assigned
+                if t.task_id != completed_task_id
+            ]
+            if not remaining:
+                self._db.update_worker(worker_id, {"status": "offline"}, conn=conn)
+                if self._longpoll_registry is not None:
+                    self._longpoll_registry.unregister(worker_id)
+                logger.info("Draining worker %s auto-retired (%s)", worker_id, reason)
+            else:
+                logger.info(
+                    "Draining worker %s has %d remaining tasks",
+                    worker_id, len(remaining),
+                )
+        else:
+            self._db.update_worker(
+                worker_id,
+                {"status": "idle", "idle_since": _utc_now()},
+                conn=conn,
+            )
+
     def complete_task(self, task_id: str, worker_id: str) -> bool:
         """Worker reports task completion.
 
@@ -237,11 +266,7 @@ class Scheduler:
             if lease:
                 self._db.expire_lease(lease.lease_id, conn=conn)
 
-            self._db.update_worker(
-                worker_id,
-                {"status": "idle", "idle_since": _utc_now()},
-                conn=conn,
-            )
+            self._update_worker_post_task(worker_id, task.task_id, conn, "last task to review")
 
         return True
 
@@ -267,11 +292,7 @@ class Scheduler:
             if lease:
                 self._db.expire_lease(lease.lease_id, conn=conn)
 
-            self._db.update_worker(
-                worker_id,
-                {"status": "idle", "idle_since": _utc_now()},
-                conn=conn,
-            )
+            self._update_worker_post_task(worker_id, task.task_id, conn, "last task completed")
 
         from src.router.dependency import on_task_terminal
         on_task_terminal(self._db, task.task_id)
@@ -305,11 +326,7 @@ class Scheduler:
             if lease:
                 self._db.expire_lease(lease.lease_id, conn=conn)
 
-            self._db.update_worker(
-                worker_id,
-                {"status": "idle", "idle_since": _utc_now()},
-                conn=conn,
-            )
+            self._update_worker_post_task(worker_id, task_id, conn, "last task failed")
 
         from src.router.dependency import on_task_terminal
         on_task_terminal(self._db, task_id)
