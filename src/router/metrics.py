@@ -123,6 +123,28 @@ class MeshMetrics:
             registry=self.registry,
         )
 
+        # --- DB health metrics ---
+        self.db_wal_size_bytes = Gauge(
+            "mesh_db_wal_size_bytes",
+            "SQLite WAL file size in bytes",
+            registry=self.registry,
+        )
+        self.db_integrity_ok = Gauge(
+            "mesh_db_integrity_ok",
+            "1 if last integrity_check passed, 0 if failed",
+            registry=self.registry,
+        )
+        self.db_disk_free_bytes = Gauge(
+            "mesh_db_disk_free_bytes",
+            "Free disk space on DB partition in bytes",
+            registry=self.registry,
+        )
+        self.db_health_check_errors_total = Counter(
+            "mesh_db_health_check_errors_total",
+            "Total DB health check errors",
+            registry=self.registry,
+        )
+
         # --- Buffer replay metrics ---
         self.buffer_replay_total = Counter(
             "mesh_buffer_replay_total",

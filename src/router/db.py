@@ -10,10 +10,13 @@ All write operations use BEGIN IMMEDIATE for correctness.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Generator
 
 from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
@@ -131,12 +134,45 @@ class RouterDB:
 
     def __init__(self, db_path: str, check_same_thread: bool = True) -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=check_same_thread)
+        self._db_path = db_path
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
 
+    @property
+    def db_path(self) -> str:
+        return self._db_path
+
     def close(self) -> None:
         self._conn.close()
+
+    # -- DB Health Checks --
+
+    def check_wal_size(self) -> int:
+        """Return WAL file size in bytes. Returns 0 if WAL file does not exist."""
+        wal_path = Path(self._db_path + "-wal")
+        if not wal_path.exists():
+            return 0
+        return wal_path.stat().st_size
+
+    def check_integrity(self) -> bool:
+        """Run PRAGMA integrity_check. Returns True if database is intact.
+
+        WARNING: This is expensive on large databases. Do NOT call every cycle.
+        Recommended: every 10 cycles (~100s).
+        """
+        try:
+            cur = self._conn.execute("PRAGMA integrity_check")
+            result = cur.fetchone()
+            return result is not None and result[0] == "ok"
+        except sqlite3.Error:
+            return False
+
+    def check_disk_space(self) -> int:
+        """Return free disk space in bytes on the partition containing the DB file."""
+        db_dir = os.path.dirname(os.path.abspath(self._db_path))
+        usage = shutil.disk_usage(db_dir)
+        return usage.free
 
     def init_schema(self) -> None:
         """Create all tables and indexes if they don't exist."""
