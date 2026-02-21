@@ -1,0 +1,23 @@
+{
+  "$schema": "https://claude.ai/validation/config.schema.json",
+  "project_name": "gobabygo",
+  "domain": "general",
+  "smoke_tests": {
+    "critical_imports": [],
+    "config_files": [],
+    "external_services": []
+  },
+  "k8s": {
+    "enabled": false,
+    "namespace": "default",
+    "rollout_strategy": "canary"
+  },
+  "rollback_triggers": [
+      {"metric": "error_rate", "threshold": 0.05, "operator": ">"}
+    ],
+  "ci": {
+    "smoke_timeout_minutes": 5,
+    "test_timeout_minutes": 10,
+    "python_version": "3.12"
+  }
+}

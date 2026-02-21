@@ -24,6 +24,7 @@ def _get_validator() -> Draft202012Validator:
     if _validator is None:
         with open(_SCHEMA_PATH) as f:
             _schema = json.load(f)
+        assert _schema is not None
         _validator = Draft202012Validator(_schema)
     return _validator
 
