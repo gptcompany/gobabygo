@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 
 WORKER_TRANSITIONS: dict[str, set[str]] = {
     "offline": {"idle"},
-    "idle": {"busy", "stale", "offline"},
-    "busy": {"idle", "stale", "offline"},
+    "idle": {"busy", "stale", "offline", "draining"},
+    "busy": {"idle", "stale", "offline", "draining"},
     "stale": {"idle", "offline"},
+    "draining": {"offline", "stale"},
 }
 
 
@@ -181,6 +182,42 @@ class WorkerManager:
             )
 
         return True, "deregistered"
+
+    def drain_worker(self, worker_id: str) -> tuple[bool, str]:
+        """Initiate graceful drain: mark worker as draining, no new tasks assigned.
+
+        Returns (success, message). Possible messages:
+        - "draining" -- successfully initiated
+        - "already_draining" -- worker already in draining state
+        - "not_found" -- worker_id not in DB
+        - "invalid_state" -- worker is stale or offline (can't drain)
+        - "drained_immediately" -- worker was idle with no tasks, set offline
+        """
+        worker = self._db.get_worker(worker_id)
+        if worker is None:
+            return False, "not_found"
+
+        if worker.status == "draining":
+            return True, "already_draining"
+
+        if worker.status in ("stale", "offline"):
+            return False, "invalid_state"
+
+        # Use FSM transition (idle -> draining or busy -> draining)
+        ok = self.transition_worker_status(
+            worker_id, worker.status, "draining"
+        )
+        if not ok:
+            return False, "transition_failed"
+
+        # If worker is idle (no running tasks), auto-retire immediately
+        running_tasks = self._db.get_tasks_by_worker(worker_id, status="running")
+        assigned_tasks = self._db.get_tasks_by_worker(worker_id, status="assigned")
+        if not running_tasks and not assigned_tasks:
+            self.deregister_worker(worker_id)
+            return True, "drained_immediately"
+
+        return True, "draining"
 
     def transition_worker_status(
         self, worker_id: str, old_status: str, new_status: str

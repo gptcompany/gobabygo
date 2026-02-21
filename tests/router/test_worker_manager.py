@@ -174,6 +174,87 @@ class TestWorkerStatusTransitions:
         assert fetched.stale_since is not None
 
 
+class TestDrainWorker:
+    def test_drain_idle_worker_no_tasks(self, wm, db):
+        """Draining an idle worker with no tasks retires immediately."""
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        ok, msg = wm.drain_worker("w1")
+        assert ok is True
+        assert msg == "drained_immediately"
+        fetched = db.get_worker("w1")
+        assert fetched.status == "offline"
+
+    def test_drain_busy_worker(self, wm, db):
+        """Draining a busy worker with running tasks sets to draining."""
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        db.update_worker("w1", {"status": "busy"})
+        # Insert a task assigned to this worker with status running
+        task = Task(
+            task_id="t1",
+            title="test task",
+            status=TaskStatus.running,
+            assigned_worker="w1",
+        )
+        db.insert_task(task)
+        ok, msg = wm.drain_worker("w1")
+        assert ok is True
+        assert msg == "draining"
+        fetched = db.get_worker("w1")
+        assert fetched.status == "draining"
+
+    def test_drain_stale_worker_rejected(self, wm, db):
+        """Stale workers cannot be drained."""
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        db.update_worker("w1", {"status": "stale"})
+        ok, msg = wm.drain_worker("w1")
+        assert ok is False
+        assert msg == "invalid_state"
+
+    def test_drain_offline_worker_rejected(self, wm, db):
+        """Offline workers cannot be drained."""
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        db.update_worker("w1", {"status": "offline"})
+        ok, msg = wm.drain_worker("w1")
+        assert ok is False
+        assert msg == "invalid_state"
+
+    def test_drain_not_found(self, wm):
+        """Draining a nonexistent worker returns not_found."""
+        ok, msg = wm.drain_worker("nonexistent")
+        assert ok is False
+        assert msg == "not_found"
+
+    def test_drain_already_draining(self, wm, db):
+        """Draining a worker already in draining state returns already_draining."""
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        # Manually set to draining (simulating prior drain call)
+        db.update_worker("w1", {"status": "draining"})
+        ok, msg = wm.drain_worker("w1")
+        assert ok is True
+        assert msg == "already_draining"
+
+    def test_fsm_draining_to_idle_rejected(self, wm, db):
+        """draining -> idle is not a valid FSM transition."""
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        db.update_worker("w1", {"status": "draining"})
+        assert wm.transition_worker_status("w1", "draining", "idle") is False
+
+    def test_fsm_draining_to_offline_allowed(self, wm, db):
+        """draining -> offline is a valid FSM transition."""
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        db.update_worker("w1", {"status": "draining"})
+        assert wm.transition_worker_status("w1", "draining", "offline") is True
+        fetched = db.get_worker("w1")
+        assert fetched.status == "offline"
+
+
 class TestTokenRotation:
     def test_grace_period_both_tokens_valid(self, db):
         """During rotation, both old and new tokens are accepted."""
