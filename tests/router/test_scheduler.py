@@ -6,8 +6,8 @@ import pytest
 
 from src.router.db import RouterDB
 from src.router.longpoll import LongPollRegistry
-from src.router.models import CLIType, Lease, Task, TaskStatus, Worker
-from src.router.scheduler import DispatchResult, Scheduler
+from src.router.models import CLIType, Task, TaskStatus, Worker
+from src.router.scheduler import Scheduler
 
 
 @pytest.fixture

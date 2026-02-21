@@ -22,8 +22,6 @@ the same result (no double-requeue).
 
 from __future__ import annotations
 
-import json
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 

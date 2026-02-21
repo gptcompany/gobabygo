@@ -56,8 +56,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — Long-poll registry, server handler, and Prometheus metrics
-- [ ] 08-02-PLAN.md — Scheduler wakeup, lifecycle hooks, and worker client reconnect
+- [x] 08-01-PLAN.md — Long-poll registry, server handler, and Prometheus metrics
+- [x] 08-02-PLAN.md — Scheduler wakeup, lifecycle hooks, and worker client reconnect
 
 ### Phase 9: Self-Healing Resilience
 **Goal**: The mesh recovers from transient failures without operator intervention -- workers re-register, events replay, watchdog catches DB corruption, stale reviews are detected
@@ -104,6 +104,6 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 5. Deployment | v1.0 | 2/2 | Done | 2026-02-19 |
 | 6. Monitoring & Hardening | v1.0 | 2/2 | Done | 2026-02-19 |
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
-| 8. Long-Polling Transport | v1.1 | 0/2 | Not started | - |
+| 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
 | 9. Self-Healing Resilience | v1.1 | 0/? | Not started | - |
 | 10. Operator CLI | v1.1 | 0/? | Not started | - |

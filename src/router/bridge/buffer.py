@@ -8,7 +8,6 @@ Uses fcntl file locking for single-machine concurrency safety.
 from __future__ import annotations
 
 import fcntl
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 

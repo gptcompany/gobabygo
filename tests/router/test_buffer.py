@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -104,7 +103,7 @@ class TestFallbackBuffer:
         buf.clear()  # should not raise
 
     def test_creates_parent_directories(self, tmp_path):
-        buf = FallbackBuffer(tmp_path / "deep" / "nested" / "buf.jsonl")
+        FallbackBuffer(tmp_path / "deep" / "nested" / "buf.jsonl")
         assert (tmp_path / "deep" / "nested").is_dir()
 
 

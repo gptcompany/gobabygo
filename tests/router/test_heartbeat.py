@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.router.db import RouterDB
-from src.router.heartbeat import HeartbeatManager, SweepResult, requeue_task
+from src.router.heartbeat import HeartbeatManager, requeue_task
 from src.router.models import CLIType, Lease, Task, TaskStatus, Worker
 
 

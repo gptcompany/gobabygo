@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.router.comms import CommunicationPolicy, HIERARCHY_EDGES
-from src.router.models import CommunicationRole, Task, TaskPhase, TaskStatus
+from src.router.comms import CommunicationPolicy
+from src.router.models import Task, TaskPhase, TaskStatus
 
 
 @pytest.fixture

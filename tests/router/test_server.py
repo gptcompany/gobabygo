@@ -6,7 +6,6 @@ import json
 import threading
 import time
 from http.server import ThreadingHTTPServer
-from unittest.mock import patch
 
 import pytest
 import requests

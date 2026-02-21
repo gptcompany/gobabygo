@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from src.router.db import RouterDB
 from src.router.heartbeat import requeue_task
 from src.router.longpoll import LongPollRegistry
-from src.router.models import TaskEvent, TaskStatus, Worker
+from src.router.models import TaskEvent, Worker
 
 logger = logging.getLogger(__name__)
 
