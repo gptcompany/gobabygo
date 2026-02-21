@@ -6,7 +6,6 @@ import logging
 import os
 import shutil
 import sqlite3
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -221,7 +220,7 @@ class TestWatchdogDBHealth:
 
             # Simulate one watchdog cycle error handling
             try:
-                wal_size = db.check_wal_size()
+                db.check_wal_size()
             except Exception:
                 metrics.db_health_check_errors_total.inc()
 

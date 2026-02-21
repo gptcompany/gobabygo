@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
-import time
 from datetime import datetime, timezone
 
 from cloudevents.http import CloudEvent
@@ -76,6 +75,7 @@ class EventEmitter:
             return
 
         def _replay_loop() -> None:
+            assert self.buffer is not None  # guaranteed by check above
             while True:
                 # Wait for interval OR early wake from drain event
                 self._drain_event.wait(timeout=self._replay_backoff_s)
