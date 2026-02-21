@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 
 from src.router.db import RouterDB
 from src.router.heartbeat import requeue_task
-from src.router.models import TaskEvent, TaskStatus, Worker
+from src.router.longpoll import LongPollRegistry
+from src.router.models import TaskEvent, Worker
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +43,13 @@ class WorkerManager:
         tokens: list[dict[str, str | None]],
         max_attempts: int = 3,
         dev_mode: bool = False,
+        longpoll_registry: LongPollRegistry | None = None,
     ) -> None:
         self._db = db
         self._tokens = tokens  # [{"token": str, "expires_at": str | None}]
         self._max_attempts = max_attempts
         self._dev_mode = dev_mode
+        self._longpoll_registry = longpoll_registry
 
     def validate_token(self, token: str) -> bool:
         """Check if token is valid and not expired."""
@@ -100,6 +103,9 @@ class WorkerManager:
                     conn=conn,
                 )
                 is_reregister = True
+                # Reset long-poll Condition on re-registration
+                if self._longpoll_registry is not None:
+                    self._longpoll_registry.register(worker.worker_id)
             else:
                 # New registration
                 worker.status = "idle"
@@ -159,6 +165,11 @@ class WorkerManager:
                 {"status": "offline"},
                 conn=conn,
             )
+
+            # Clean up long-poll Condition on deregistration
+            if self._longpoll_registry is not None:
+                self._longpoll_registry.unregister(worker_id)
+
             self._db.insert_event(
                 TaskEvent(
                     task_id=worker_id,

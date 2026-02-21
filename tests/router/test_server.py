@@ -6,13 +6,13 @@ import json
 import threading
 import time
 from http.server import ThreadingHTTPServer
-from unittest.mock import patch
 
 import pytest
 import requests
 
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
+from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
 from src.router.models import Task, TaskStatus, Worker
 from src.router.scheduler import Scheduler
@@ -36,9 +36,10 @@ def server_url(db):
     """Start a test HTTP server in dev mode (no auth required for register)."""
     from datetime import datetime, timezone
 
-    worker_manager = WorkerManager(db, tokens=[], dev_mode=True)
-    heartbeat = HeartbeatManager(db)
-    scheduler = Scheduler(db)
+    longpoll_registry = LongPollRegistry()
+    worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+    heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+    scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
     transport = InProcessTransport(db)
     metrics = MeshMetrics()
 
@@ -50,6 +51,8 @@ def server_url(db):
         "scheduler": scheduler,
         "transport": transport,
         "metrics": metrics,
+        "longpoll_registry": longpoll_registry,
+        "longpoll_timeout": 0.1,
         "auth_token": None,
         "start_time": datetime.now(timezone.utc),
     }
@@ -71,12 +74,15 @@ def authed_server_url(db):
     """Start a test server with auth enabled (token required for register)."""
     from datetime import datetime, timezone
 
+    longpoll_registry = LongPollRegistry()
     worker_manager = WorkerManager(
         db, tokens=[{"token": "test-token-123", "expires_at": None}],
+        longpoll_registry=longpoll_registry,
     )
-    heartbeat = HeartbeatManager(db)
-    scheduler = Scheduler(db)
+    heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+    scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
     transport = InProcessTransport(db)
+    metrics = MeshMetrics()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
     server.router_state = {
@@ -85,6 +91,9 @@ def authed_server_url(db):
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
+        "metrics": metrics,
+        "longpoll_registry": longpoll_registry,
+        "longpoll_timeout": 0.1,
         "auth_token": "test-token-123",
         "start_time": datetime.now(timezone.utc),
     }
@@ -352,6 +361,67 @@ class TestTaskPollEndpoint:
         assert data["title"] == "test task"
 
 
+class TestTaskPollLongPoll:
+    """Tests for long-poll specific behavior through the server."""
+
+    def test_poll_duplicate_returns_409(self, db, tmp_path):
+        """Start first poll in thread (1s timeout), immediately send second poll, verify 409."""
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 1.0,  # 1s for this test
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work")
+        db.insert_worker(worker)
+
+        first_result: list[requests.Response] = []
+
+        def first_poll():
+            resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=5)
+            first_result.append(resp)
+
+        t = threading.Thread(target=first_poll)
+        t.start()
+        time.sleep(0.1)  # let first poll enter wait
+
+        # Second poll should get 409
+        second_resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=5)
+        assert second_resp.status_code == 409
+        assert second_resp.json()["error"] == "duplicate_poll"
+
+        t.join(timeout=5)
+        server.shutdown()
+
+        # First poll should have completed with 204 (timeout, no task)
+        assert len(first_result) == 1
+        assert first_result[0].status_code == 204
+
+
 class TestTaskCompleteEndpoint:
     def test_complete_valid_task(self, server_url, db):
         worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="busy")
@@ -507,3 +577,191 @@ class TestEdgeCases:
             headers={"Content-Length": "0"},
         )
         assert resp.status_code == 400
+
+
+class TestLongPollDispatchIntegration:
+    """End-to-end integration tests for long-poll -> dispatch -> wakeup flow."""
+
+    def test_longpoll_wakeup_on_dispatch(self, db, tmp_path):
+        """Dispatch wakeup delivers task in < 1s (proves wakeup, not timeout)."""
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 5.0,  # Long timeout to prove wakeup works
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+
+        # Register worker in DB (idle, claude, work)
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+
+        # Insert a queued task targeting cli=claude, account=work
+        task = Task(
+            task_id="t1",
+            title="wakeup test",
+            phase="implement",
+            target_cli="claude",
+            target_account="work",
+            idempotency_key="k1",
+        )
+        db.insert_task(task)
+
+        # Register w1 in the LongPollRegistry
+        longpoll_registry.register("w1")
+
+        # Background thread: sleep 0.2s, then call scheduler.dispatch()
+        def dispatch_after_delay():
+            time.sleep(0.2)
+            scheduler.dispatch()
+
+        dispatch_thread = threading.Thread(target=dispatch_after_delay)
+        dispatch_thread.start()
+
+        # Long-poll: GET /tasks/next?worker_id=w1 (blocks until wakeup)
+        start = time.monotonic()
+        resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=10)
+        elapsed = time.monotonic() - start
+
+        dispatch_thread.join(timeout=5)
+        server.shutdown()
+
+        # Assert response is 200 with task JSON
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["task_id"] == "t1"
+        assert data["title"] == "wakeup test"
+
+        # Assert total elapsed time < 1.0s (proves wakeup, not 5s timeout)
+        assert elapsed < 1.0, f"Expected < 1.0s, got {elapsed:.2f}s (wakeup failed)"
+
+    def test_longpoll_timeout_returns_204(self, db, tmp_path):
+        """Timeout returns 204 after configured duration (not instant)."""
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 0.2,  # Short timeout for test
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+
+        # Register worker in DB
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+        longpoll_registry.register("w1")
+
+        # No tasks in DB - should timeout
+        start = time.monotonic()
+        resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=5)
+        elapsed = time.monotonic() - start
+
+        server.shutdown()
+
+        assert resp.status_code == 204
+        # Should take approximately 0.2s, not instant
+        assert elapsed >= 0.15, f"Expected >= 0.15s, got {elapsed:.2f}s (too fast)"
+        assert elapsed < 1.0, f"Expected < 1.0s, got {elapsed:.2f}s (too slow)"
+
+    def test_longpoll_conflict_returns_409(self, db, tmp_path):
+        """Duplicate concurrent poll returns 409."""
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 2.0,  # Long enough for concurrent test
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+
+        # Register worker in DB and LongPollRegistry
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+        longpoll_registry.register("w1")
+
+        # First poll in background (blocks for 2s)
+        first_result: list[requests.Response] = []
+
+        def first_poll():
+            resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=5)
+            first_result.append(resp)
+
+        t = threading.Thread(target=first_poll)
+        t.start()
+        time.sleep(0.1)  # Let first poll enter wait
+
+        # Second concurrent poll should get 409
+        second_resp = requests.get(f"{url}/tasks/next?worker_id=w1", timeout=5)
+        assert second_resp.status_code == 409
+        assert second_resp.json()["error"] == "duplicate_poll"
+
+        t.join(timeout=5)
+        server.shutdown()
+
+        # First poll should complete with 204 (timeout, no task)
+        assert len(first_result) == 1
+        assert first_result[0].status_code == 204

@@ -16,7 +16,7 @@ import json
 from datetime import datetime, timezone
 
 from src.router.db import RouterDB
-from src.router.models import TaskEvent, TaskStatus
+from src.router.models import TaskStatus
 
 # Terminal states — a dependency is "resolved" when its task is in one of these
 TERMINAL_STATES = frozenset({

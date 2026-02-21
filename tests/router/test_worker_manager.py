@@ -4,7 +4,7 @@ import pytest
 
 from src.router.db import RouterDB
 from src.router.models import CLIType, Task, TaskStatus, Worker
-from src.router.worker_manager import WORKER_TRANSITIONS, WorkerManager
+from src.router.worker_manager import WorkerManager
 
 
 @pytest.fixture

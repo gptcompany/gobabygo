@@ -7,7 +7,14 @@ GROUP BY query per scrape to minimize overhead.
 
 from __future__ import annotations
 
-from prometheus_client import CollectorRegistry, Gauge, Summary, generate_latest
+from prometheus_client import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    Summary,
+    generate_latest,
+)
 
 
 class MeshMetrics:
@@ -94,6 +101,25 @@ class MeshMetrics:
         self.task_duration_seconds = Summary(
             "mesh_task_duration_seconds",
             "Task duration from creation to completion",
+            registry=self.registry,
+        )
+
+        # --- Long-poll metrics ---
+        self.longpoll_total = Counter(
+            "mesh_longpoll_total",
+            "Long-poll outcomes",
+            ["result"],
+            registry=self.registry,
+        )
+        self.longpoll_wait_seconds = Histogram(
+            "mesh_longpoll_wait_seconds",
+            "Long-poll wait duration",
+            buckets=[0.1, 0.5, 1, 5, 10, 20, 30],
+            registry=self.registry,
+        )
+        self.longpoll_waiting_workers = Gauge(
+            "mesh_longpoll_waiting_workers",
+            "Workers currently blocked in long-poll",
             registry=self.registry,
         )
 

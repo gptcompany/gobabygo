@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from src.router.bridge.mapping import MappingEngine, MappingResult
+from src.router.bridge.mapping import MappingEngine
 
 # Use the real mapping files from the project
 _MAPPING_DIR = Path(__file__).resolve().parent.parent.parent / "mapping"

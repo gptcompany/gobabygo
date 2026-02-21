@@ -8,7 +8,6 @@ dispatches via a pluggable transport. Falls back to buffer on failure.
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime, timezone
 
 from cloudevents.http import CloudEvent

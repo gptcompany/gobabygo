@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Generator
 
-from src.router.models import CommunicationRole, Lease, Task, TaskEvent, TaskStatus, Worker
+from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
 
 _BUSY_RETRIES = 3
 _BUSY_BACKOFFS_MS = [50, 100, 200]

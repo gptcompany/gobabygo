@@ -10,9 +10,9 @@ Entry point for worker processes. Handles:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
+import random
 import signal
 import threading
 import time
@@ -34,6 +34,7 @@ class WorkerConfig:
     auth_token: str | None = None
     heartbeat_interval: float = 5.0
     poll_interval: float = 2.0
+    longpoll_timeout: float = 25.0  # Must match server MESH_LONGPOLL_TIMEOUT_S
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor"])
 
     @classmethod
@@ -45,6 +46,7 @@ class WorkerConfig:
             cli_type=os.environ.get("MESH_CLI_TYPE", "claude"),
             account_profile=os.environ.get("MESH_ACCOUNT_PROFILE", "work"),
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
+            longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
         )
 
 
@@ -110,25 +112,51 @@ class MeshWorker:
         self._heartbeat_thread.start()
 
     def _poll_loop(self) -> None:
-        """Main loop: poll for tasks, execute, report."""
+        """Main loop: long-poll for tasks, execute, report.
+
+        On 204 (timeout): reconnect immediately with small random jitter (100-500ms).
+        On 200 (task): execute task, then reconnect when idle.
+        On error/unreachable: exponential backoff 1s-30s with random jitter.
+        """
         url = f"{self.config.router_url}/tasks/next?worker_id={self.config.worker_id}"
+        backoff = 0.0  # No backoff on first connect
         while self._running:
+            if backoff > 0:
+                # Jitter applies to ALL reconnect scenarios
+                jitter = random.uniform(0.1, 0.5)
+                time.sleep(backoff + jitter)
             try:
-                resp = self._session.get(url, timeout=10)
+                # Timeout slightly longer than server's longpoll timeout
+                # to avoid client-side timeout before server responds
+                resp = self._session.get(
+                    url, timeout=self.config.longpoll_timeout + 5
+                )
                 if resp.status_code == 200:
+                    backoff = 0.0  # Reset on success
                     try:
                         task = resp.json()
                     except ValueError:
                         logger.warning("Poll returned non-JSON response")
                         continue
                     self._execute_task(task)
+                    # After task execution, reconnect immediately (no backoff)
+                    continue
                 elif resp.status_code == 204:
-                    pass  # No tasks available
+                    # Timeout, reconnect with small jitter only
+                    backoff = 0.0
+                    jitter = random.uniform(0.1, 0.5)
+                    time.sleep(jitter)
+                    continue
+                elif resp.status_code == 409:
+                    # Duplicate poll -- should not happen in normal operation
+                    logger.warning("Duplicate poll detected, backing off")
+                    backoff = min(backoff * 2 or 1.0, 30.0)
                 else:
                     logger.warning("Poll returned %d", resp.status_code)
+                    backoff = min(backoff * 2 or 1.0, 30.0)
             except requests.RequestException as e:
                 logger.warning("Poll failed: %s", e)
-            time.sleep(self.config.poll_interval)
+                backoff = min(backoff * 2 or 1.0, 30.0)
 
     def _execute_task(self, task: dict) -> None:
         """Execute a task via CLI invocation.

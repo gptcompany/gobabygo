@@ -7,7 +7,7 @@ adding not_before calculation, escalation callbacks, and unschedulable detection
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol, runtime_checkable
 

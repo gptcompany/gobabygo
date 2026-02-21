@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from src.router.db import RouterDB
 from src.router.dependency import on_task_terminal
-from src.router.fsm import TERMINAL_STATES, TransitionRequest, TransitionResult, apply_transition
+from src.router.fsm import TransitionRequest, TransitionResult, apply_transition
 from src.router.models import Task, TaskEvent, TaskStatus
 
 logger = logging.getLogger(__name__)

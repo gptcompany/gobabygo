@@ -6,7 +6,7 @@ import pytest
 
 from src.router.db import RouterDB
 from src.router.models import Task, TaskStatus
-from src.router.retry import LogEscalation, RetryPolicy, RetryResult
+from src.router.retry import LogEscalation, RetryPolicy
 
 
 @pytest.fixture

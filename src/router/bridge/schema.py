@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jsonschema import Draft202012Validator, ValidationError
+from jsonschema import Draft202012Validator
 
 _SCHEMA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "schemas"
 _SCHEMA_PATH = _SCHEMA_DIR / "command_event.schema.json"
@@ -24,6 +24,7 @@ def _get_validator() -> Draft202012Validator:
     if _validator is None:
         with open(_SCHEMA_PATH) as f:
             _schema = json.load(f)
+        assert _schema is not None
         _validator = Draft202012Validator(_schema)
     return _validator
 

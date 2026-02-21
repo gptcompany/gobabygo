@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from src.router.db import RouterDB
+from src.router.longpoll import LongPollRegistry
 from src.router.models import TaskEvent, TaskStatus, Worker
 
 logger = logging.getLogger(__name__)
@@ -100,10 +101,12 @@ class HeartbeatManager:
         db: RouterDB,
         stale_threshold_s: int = 35,
         max_attempts: int = 3,
+        longpoll_registry: LongPollRegistry | None = None,
     ) -> None:
         self._db = db
         self._stale_threshold_s = stale_threshold_s
         self._max_attempts = max_attempts
+        self._longpoll_registry = longpoll_registry
 
     def receive_heartbeat(self, worker_id: str) -> dict:
         """Process a heartbeat from a worker.
@@ -197,6 +200,10 @@ class HeartbeatManager:
                 conn=conn,
             )
             result.workers_marked_stale += 1
+
+            # Clean up long-poll Condition for stale worker
+            if self._longpoll_registry is not None:
+                self._longpoll_registry.unregister(worker.worker_id)
 
             # Find and process all leases for this worker
             leases = self._db.list_worker_leases(worker.worker_id)

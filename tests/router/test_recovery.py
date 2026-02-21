@@ -20,8 +20,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import uuid
 from datetime import datetime, timedelta, timezone
 
 
@@ -42,7 +40,7 @@ from src.router.models import (
     TaskStatus,
     Worker,
 )
-from src.router.recovery import RecoveryResult, audit_timeline, recover_on_startup
+from src.router.recovery import audit_timeline, recover_on_startup
 
 
 def _utc_now() -> str:

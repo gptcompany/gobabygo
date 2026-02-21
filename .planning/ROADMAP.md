@@ -53,11 +53,11 @@ Plans:
   2. When a new task is dispatched to a waiting worker, the worker receives it within 1 second (Condition wakeup, not next poll cycle)
   3. Long-poll timeout is configurable (environment variable or config), defaults to 30s, and worker gracefully reconnects after timeout with no error state
   4. Dispatch latency p95 remains under 3s SLO
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 08-01: TBD
-- [ ] 08-02: TBD
+- [x] 08-01-PLAN.md — Long-poll registry, server handler, and Prometheus metrics
+- [x] 08-02-PLAN.md — Scheduler wakeup, lifecycle hooks, and worker client reconnect
 
 ### Phase 9: Self-Healing Resilience
 **Goal**: The mesh recovers from transient failures without operator intervention -- workers re-register, events replay, watchdog catches DB corruption, stale reviews are detected
@@ -104,6 +104,6 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 5. Deployment | v1.0 | 2/2 | Done | 2026-02-19 |
 | 6. Monitoring & Hardening | v1.0 | 2/2 | Done | 2026-02-19 |
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
-| 8. Long-Polling Transport | v1.1 | 0/? | Not started | - |
+| 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
 | 9. Self-Healing Resilience | v1.1 | 0/? | Not started | - |
 | 10. Operator CLI | v1.1 | 0/? | Not started | - |

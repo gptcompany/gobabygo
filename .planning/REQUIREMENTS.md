@@ -9,9 +9,9 @@ Requirements for v1.1 Production Readiness. Each maps to roadmap phases.
 
 ### Transport
 
-- [ ] **TRNS-01**: Worker receives task assignments via long-polling (server holds connection until task available or timeout)
-- [ ] **TRNS-02**: Server notifies waiting workers immediately when new task is dispatched (Condition-based wakeup)
-- [ ] **TRNS-03**: Long-poll timeout is configurable (default 30s) with graceful reconnect on timeout
+- [x] **TRNS-01**: Worker receives task assignments via long-polling (server holds connection until task available or timeout)
+- [x] **TRNS-02**: Server notifies waiting workers immediately when new task is dispatched (Condition-based wakeup)
+- [x] **TRNS-03**: Long-poll timeout is configurable (default 30s) with graceful reconnect on timeout
 
 ### Resilience
 
@@ -63,9 +63,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TRNS-01 | Phase 8 | Pending |
-| TRNS-02 | Phase 8 | Pending |
-| TRNS-03 | Phase 8 | Pending |
+| TRNS-01 | Phase 8 | Complete |
+| TRNS-02 | Phase 8 | Complete |
+| TRNS-03 | Phase 8 | Complete |
 | RESL-01 | Phase 9 | Pending |
 | RESL-02 | Phase 9 | Pending |
 | RESL-03 | Phase 9 | Pending |

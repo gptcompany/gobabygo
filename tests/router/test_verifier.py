@@ -7,8 +7,7 @@ import pytest
 import json
 
 from src.router.db import RouterDB
-from src.router.fsm import TransitionRequest, apply_transition
-from src.router.models import CLIType, Task, TaskEvent, TaskStatus, Worker
+from src.router.models import CLIType, Task, TaskStatus, Worker
 from src.router.scheduler import Scheduler
 from src.router.verifier import VerifierGate, _MAX_REJECTIONS
 
@@ -109,7 +108,7 @@ class TestApproveTask:
         _add_task(db, "t1", critical=True)
         _make_task_review(db, "t1")
         # Create a fix task and complete it
-        fix = _add_task(db, "fix1", parent_task_id="t1")
+        _add_task(db, "fix1", parent_task_id="t1")
         db.update_task_status("fix1", TaskStatus.queued, TaskStatus.assigned)
         db.update_task_status("fix1", TaskStatus.assigned, TaskStatus.running)
         db.update_task_status("fix1", TaskStatus.running, TaskStatus.completed)
