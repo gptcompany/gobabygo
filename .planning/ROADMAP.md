@@ -106,4 +106,4 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 7. Tech Debt Cleanup | v1.1 | 2/2 | Done | 2026-02-20 |
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
 | 9. Self-Healing Resilience | v1.1 | 3/3 | Done | 2026-02-21 |
-| 10. Operator CLI | v1.1 | 0/2 | Planning | - |
+| 10. Operator CLI | 1/2 | In Progress|  | - |

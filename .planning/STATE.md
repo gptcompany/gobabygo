@@ -5,18 +5,18 @@
 See: .planning/PROJECT.md (updated 2026-02-20)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.1 Production Readiness -- Phase 9 complete, ready for Phase 10
+**Current focus:** v1.1 Production Readiness -- Phase 10 in progress (Plan 01 complete)
 
 ## Current Position
 
 Milestone: v1.1 Production Readiness
-Phase: 9 of 10 (Self-Healing & Resilience) -- COMPLETE
-Plan: 3 of 3 in current phase (all complete)
-Status: Phase Complete
-Last activity: 2026-02-21 -- Plan 09-03 Watchdog DB Health Checks completed (2 tasks, 13 new tests, 357 total)
+Phase: 10 of 10 (Operator CLI) -- IN PROGRESS
+Plan: 1 of 2 in current phase
+Status: Plan 10-01 Complete
+Last activity: 2026-02-21 -- Plan 10-01 Worker Management Endpoints completed (3 tasks, 24 new tests, 381 total)
 
-Progress: [=======================...] 88% overall (22/~25 plans)
-v1.1:    [==================........] 75% (3/4 phases complete, phase 9 done)
+Progress: [========================..] 92% overall (23/~25 plans)
+v1.1:    [====================......] 80% (3/4 phases complete, phase 10 in progress)
 
 ## Performance Metrics
 
@@ -28,7 +28,7 @@ v1.1:    [==================........] 75% (3/4 phases complete, phase 9 done)
 - Timeline: ~22 hours (2026-02-18 -> 2026-02-19)
 
 **v1.1 Velocity:**
-- Total plans completed: 7
+- Total plans completed: 8
 - Started: 2026-02-20
 
 | Phase | Plan | Duration | Tasks | Files |
@@ -38,6 +38,7 @@ v1.1:    [==================........] 75% (3/4 phases complete, phase 9 done)
 | 09    | 01   | 7min     | 2     | 4     |
 | 09    | 02   | 9min     | 2     | 7     |
 | 09    | 03   | 8min     | 2     | 4     |
+| 10    | 01   | 10min    | 3     | 7     |
 
 ## Accumulated Context
 
@@ -61,6 +62,9 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - RESL-03: Exponential backoff doubles on failure, caps at 600s, resets on full success
 - RESL-04: sd_notify always first in watchdog cycle; integrity_check gated to every N cycles (default 10)
 - RESL-04: Cycle 0 skips integrity check to avoid delaying startup; escalation = log.error + Prometheus counter
+- OPSC-01: Extracted _update_worker_post_task helper to DRY draining auto-retire across 3 call sites
+- OPSC-01: draining -> stale allowed for heartbeat timeout safety; stale recovery cancels drain (acceptable)
+- OPSC-01: GET /workers embeds running+assigned tasks inline (no N+1 concern for small fleet)
 
 ### Completed Milestones
 
@@ -83,5 +87,5 @@ None
 ## Session Continuity
 
 Last session: 2026-02-21
-Stopped at: Completed 09-03-PLAN.md (Phase 9 complete)
-Resume with: Phase 10 planning or milestone completion
+Stopped at: Completed 10-01-PLAN.md
+Resume with: Execute Plan 10-02 (meshctl CLI tool)
