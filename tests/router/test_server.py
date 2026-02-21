@@ -910,3 +910,144 @@ class TestBufferReplayMetrics:
         output = metrics.generate().decode("utf-8")
         assert "mesh_buffer_replay_total" in output
         assert "mesh_buffer_replay_events_total" in output
+
+
+class TestWorkerEndpoints:
+    """Tests for GET /workers, GET /workers/<id>, POST /workers/<id>/drain."""
+
+    AUTH = {"Authorization": "Bearer test-token-123"}
+
+    def _register_worker(self, url, worker_id="w1"):
+        """Helper to register a worker via POST /register."""
+        return requests.post(
+            f"{url}/register",
+            json={
+                "worker_id": worker_id,
+                "machine": "ws1",
+                "cli_type": "claude",
+                "account_profile": "work",
+                "capabilities": ["code"],
+                "status": "idle",
+                "concurrency": 1,
+            },
+            headers=self.AUTH,
+        )
+
+    def test_get_workers_empty(self, authed_server_url):
+        """GET /workers with no workers returns empty list."""
+        resp = requests.get(f"{authed_server_url}/workers", headers=self.AUTH)
+        assert resp.status_code == 200
+        assert resp.json() == {"workers": []}
+
+    def test_get_workers_with_worker(self, authed_server_url):
+        """GET /workers returns registered worker with all expected fields."""
+        self._register_worker(authed_server_url)
+        resp = requests.get(f"{authed_server_url}/workers", headers=self.AUTH)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["workers"]) == 1
+        w = data["workers"][0]
+        assert w["worker_id"] == "w1"
+        assert w["machine"] == "ws1"
+        assert w["cli_type"] == "claude"
+        assert w["status"] == "idle"
+        assert "last_heartbeat" in w
+        assert "idle_since" in w
+        assert "stale_since" in w
+        assert w["running_tasks"] == []
+
+    def test_get_workers_with_running_task(self, authed_server_url, db):
+        """GET /workers returns worker with inline running_tasks."""
+        self._register_worker(authed_server_url)
+        db.update_worker("w1", {"status": "busy"})
+        task = Task(
+            task_id="t1",
+            title="test task",
+            phase="implement",
+            status=TaskStatus.running,
+            assigned_worker="w1",
+            idempotency_key="k1",
+        )
+        db.insert_task(task)
+        resp = requests.get(f"{authed_server_url}/workers", headers=self.AUTH)
+        assert resp.status_code == 200
+        data = resp.json()
+        w = data["workers"][0]
+        assert len(w["running_tasks"]) == 1
+        rt = w["running_tasks"][0]
+        assert rt["task_id"] == "t1"
+        assert rt["status"] == "running"
+        assert "created_at" in rt
+        assert "age_s" in rt
+
+    def test_get_worker_by_id(self, authed_server_url):
+        """GET /workers/<id> returns single worker detail."""
+        self._register_worker(authed_server_url)
+        resp = requests.get(f"{authed_server_url}/workers/w1", headers=self.AUTH)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["worker_id"] == "w1"
+        assert "machine" in data
+        assert "cli_type" in data
+        assert "status" in data
+        assert "running_tasks" in data
+
+    def test_get_worker_not_found(self, authed_server_url):
+        """GET /workers/<id> returns 404 for unknown worker."""
+        resp = requests.get(f"{authed_server_url}/workers/nonexistent", headers=self.AUTH)
+        assert resp.status_code == 404
+
+    def test_get_workers_requires_auth(self, authed_server_url):
+        """GET /workers without auth returns 401."""
+        resp = requests.get(f"{authed_server_url}/workers")
+        assert resp.status_code == 401
+
+    def test_drain_idle_worker(self, authed_server_url):
+        """POST /workers/<id>/drain on idle worker returns 202 drained_immediately."""
+        self._register_worker(authed_server_url)
+        resp = requests.post(f"{authed_server_url}/workers/w1/drain", headers=self.AUTH)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "drained_immediately"
+        # Verify worker is now offline
+        get_resp = requests.get(f"{authed_server_url}/workers/w1", headers=self.AUTH)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["status"] == "offline"
+
+    def test_drain_busy_worker(self, authed_server_url, db):
+        """POST /workers/<id>/drain on busy worker returns 202 draining."""
+        self._register_worker(authed_server_url)
+        db.update_worker("w1", {"status": "busy"})
+        task = Task(
+            task_id="t1",
+            title="test",
+            phase="implement",
+            status=TaskStatus.running,
+            assigned_worker="w1",
+            idempotency_key="k1",
+        )
+        db.insert_task(task)
+        resp = requests.post(f"{authed_server_url}/workers/w1/drain", headers=self.AUTH)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "draining"
+        # Verify worker is draining
+        get_resp = requests.get(f"{authed_server_url}/workers/w1", headers=self.AUTH)
+        assert get_resp.json()["status"] == "draining"
+
+    def test_drain_stale_worker_409(self, authed_server_url, db):
+        """POST /workers/<id>/drain on stale worker returns 409."""
+        self._register_worker(authed_server_url)
+        db.update_worker("w1", {"status": "stale"})
+        resp = requests.post(f"{authed_server_url}/workers/w1/drain", headers=self.AUTH)
+        assert resp.status_code == 409
+
+    def test_drain_not_found_404(self, authed_server_url):
+        """POST /workers/<id>/drain on unknown worker returns 404."""
+        resp = requests.post(
+            f"{authed_server_url}/workers/nonexistent/drain", headers=self.AUTH
+        )
+        assert resp.status_code == 404
+
+    def test_drain_requires_auth(self, authed_server_url):
+        """POST /workers/<id>/drain without auth returns 401."""
+        resp = requests.post(f"{authed_server_url}/workers/w1/drain")
+        assert resp.status_code == 401
