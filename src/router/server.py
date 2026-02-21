@@ -355,6 +355,8 @@ def run_server(
     Initializes DB, recovery, scheduler, and heartbeat manager,
     then serves HTTP requests. Sends sd_notify for systemd integration.
     """
+    from src.router.bridge.buffer import FallbackBuffer
+    from src.router.bridge.emitter import EventEmitter
     from src.router.bridge.transport import InProcessTransport
 
     db = RouterDB(db_path, check_same_thread=False)
@@ -380,6 +382,14 @@ def run_server(
     heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
     scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
     transport = InProcessTransport(db)
+    buffer = FallbackBuffer()  # default path: ~/.mesh/events-buffer.jsonl
+    replay_interval = float(os.environ.get("MESH_BUFFER_REPLAY_INTERVAL_S", "60"))
+    emitter = EventEmitter(
+        transport=transport,
+        source_machine=os.environ.get("MESH_SOURCE_MACHINE", "router"),
+        buffer=buffer,
+        replay_interval_s=replay_interval,
+    )
     metrics = MeshMetrics()
     review_check_interval = float(os.environ.get("MESH_REVIEW_CHECK_INTERVAL_S", "60"))
     verifier_gate = VerifierGate()
@@ -393,6 +403,8 @@ def run_server(
         "heartbeat": heartbeat,
         "scheduler": scheduler,
         "transport": transport,
+        "emitter": emitter,
+        "buffer": buffer,
         "metrics": metrics,
         "longpoll_registry": longpoll_registry,
         "longpoll_timeout": longpoll_timeout,
@@ -423,6 +435,9 @@ def run_server(
 
     review_thread = threading.Thread(target=review_check_loop, daemon=True, name="review-check")
     review_thread.start()
+
+    # Start buffer replay timer
+    emitter.start_replay_timer()
 
     # Notify systemd we're ready + start watchdog thread
     try:

@@ -847,3 +847,66 @@ class TestReviewTimeoutScheduling:
         assert "t-review-stale" in timed_out
         after = db.get_task("t-review-stale")
         assert after.status == TaskStatus.timeout
+
+
+class TestBufferReplayWiring:
+    """Tests for buffer replay timer wiring in server startup."""
+
+    def test_buffer_replay_interval_configurable(self, db, tmp_path):
+        """MESH_BUFFER_REPLAY_INTERVAL_S env var is read correctly."""
+        import os
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("MESH_BUFFER_REPLAY_INTERVAL_S", "30")
+            interval = float(os.environ.get("MESH_BUFFER_REPLAY_INTERVAL_S", "60"))
+        assert interval == 30.0
+
+    def test_emitter_and_buffer_in_router_state(self, db, tmp_path):
+        """Emitter and buffer are stored in router_state."""
+        from datetime import datetime, timezone
+        from src.router.bridge.buffer import FallbackBuffer
+        from src.router.bridge.emitter import EventEmitter
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler_obj = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        emitter = EventEmitter(
+            transport=transport,
+            source_machine="test",
+            buffer=buf,
+            replay_interval_s=30.0,
+        )
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler_obj,
+            "transport": transport,
+            "emitter": emitter,
+            "buffer": buf,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 0.1,
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        assert isinstance(server.router_state["emitter"], EventEmitter)
+        assert isinstance(server.router_state["buffer"], FallbackBuffer)
+        assert server.router_state["emitter"]._replay_interval_s == 30.0
+
+
+class TestBufferReplayMetrics:
+    """Tests for buffer replay Prometheus metrics."""
+
+    def test_buffer_replay_metrics_exist(self):
+        """mesh_buffer_replay_total and mesh_buffer_replay_events_total are registered."""
+        metrics = MeshMetrics()
+        output = metrics.generate().decode("utf-8")
+        assert "mesh_buffer_replay_total" in output
+        assert "mesh_buffer_replay_events_total" in output

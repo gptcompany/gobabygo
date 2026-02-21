@@ -123,6 +123,19 @@ class MeshMetrics:
             registry=self.registry,
         )
 
+        # --- Buffer replay metrics ---
+        self.buffer_replay_total = Counter(
+            "mesh_buffer_replay_total",
+            "Buffer replay outcomes",
+            ["result"],  # labels: "success", "partial", "failure", "empty"
+            registry=self.registry,
+        )
+        self.buffer_replay_events = Counter(
+            "mesh_buffer_replay_events_total",
+            "Total events replayed from buffer",
+            registry=self.registry,
+        )
+
     def collect_from_db(self, db: object, uptime_s: float) -> None:
         """Update gauge values from database state.
 
