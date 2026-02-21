@@ -11,12 +11,12 @@ See: .planning/PROJECT.md (updated 2026-02-20)
 
 Milestone: v1.1 Production Readiness
 Phase: 9 of 10 (Graceful Shutdown)
-Plan: 1 of N in current phase
-Status: Ready
-Last activity: 2026-02-20 -- Plan 08-02 Scheduler Wakeup Integration completed (3 tasks, 10 new tests, 327 total)
+Plan: 2 of 3 in current phase
+Status: In Progress
+Last activity: 2026-02-21 -- Plan 09-01 Self-Healing Wiring completed (2 tasks, 5 new tests, 332 total)
 
-Progress: [====================......] 76% overall (19/~25 plans)
-v1.1:    [============..............] 40% (2/4 phases complete, starting phase 9)
+Progress: [=====================.....] 80% overall (20/~25 plans)
+v1.1:    [==============............] 50% (2/4 phases complete, phase 9 in progress)
 
 ## Performance Metrics
 
@@ -28,13 +28,14 @@ v1.1:    [============..............] 40% (2/4 phases complete, starting phase 9
 - Timeline: ~22 hours (2026-02-18 -> 2026-02-19)
 
 **v1.1 Velocity:**
-- Total plans completed: 4
+- Total plans completed: 5
 - Started: 2026-02-20
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 08    | 01   | 9min     | 2     | 5     |
 | 08    | 02   | 15min    | 3     | 8     |
+| 09    | 01   | 7min     | 2     | 4     |
 
 ## Accumulated Context
 
@@ -52,6 +53,8 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - LP-02: Notify after transaction commit so DB state is visible when worker reads
 - LP-02: Worker client HTTP timeout = longpoll_timeout + 5s to avoid premature client timeout
 - LP-02: Exponential backoff 1s-30s with jitter on server errors; immediate reconnect on 204
+- RESL-01: Re-registration call wrapped in nested try/except to prevent heartbeat thread death
+- RESL-01: Review check thread uses sleep-first pattern (same as watchdog_loop)
 
 ### Completed Milestones
 
@@ -72,6 +75,6 @@ None
 
 ## Session Continuity
 
-Last session: 2026-02-20
-Stopped at: Completed 08-02-PLAN.md (Phase 8 complete)
-Resume with: Plan phase 09 (Graceful Shutdown)
+Last session: 2026-02-21
+Stopped at: Completed 09-01-PLAN.md
+Resume with: Plan 09-02 (Buffer Replay Timer + On-Next-Emit Drain)
