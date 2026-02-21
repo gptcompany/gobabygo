@@ -102,6 +102,14 @@ class TestFallbackBuffer:
         buf = FallbackBuffer(tmp_path / "nope.jsonl")
         buf.clear()  # should not raise
 
+    def test_has_events_empty_and_nonempty(self, tmp_path):
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        assert buf.has_events() is False
+        buf.append(_sample_event_json())
+        assert buf.has_events() is True
+        buf.clear()
+        assert buf.has_events() is False
+
     def test_creates_parent_directories(self, tmp_path):
         FallbackBuffer(tmp_path / "deep" / "nested" / "buf.jsonl")
         assert (tmp_path / "deep" / "nested").is_dir()

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import time
 
 import pytest
 
+from src.router.bridge.buffer import FallbackBuffer
 from src.router.bridge.emitter import EventEmitter
 from src.router.bridge.schema import load_schema, validate_event_data
 from src.router.bridge.transport import InProcessTransport
@@ -248,3 +251,196 @@ class TestEmitterCommPolicy:
 class TestEmitterReplay:
     def test_replay_buffer_without_buffer_returns_zero(self, emitter):
         assert emitter.replay_buffer() == (0, 0)
+
+
+# --- Helper transports for replay timer tests ---
+
+class _SuccessTransport:
+    def send(self, cloud_event_json: str) -> bool:
+        return True
+
+
+class _FailTransport:
+    def send(self, cloud_event_json: str) -> bool:
+        return False
+
+
+class _SwitchableTransport:
+    """Transport that can switch between success and failure."""
+
+    def __init__(self, succeed: bool = False) -> None:
+        self.succeed = succeed
+
+    def send(self, cloud_event_json: str) -> bool:
+        return self.succeed
+
+
+def _sample_event_json(idem_key: str = "k1") -> str:
+    """Helper: minimal CloudEvent JSON string for buffer appending."""
+    return json.dumps({
+        "specversion": "1.0",
+        "type": "com.mesh.command.started",
+        "source": "mesh/gsd-bridge/test",
+        "id": f"ce-{idem_key}",
+        "data": {
+            "run_id": "run-1",
+            "task_id": "task-1",
+            "gsd_command": "gsd:test",
+            "event": "started",
+            "idempotency_key": idem_key,
+            "ts": "2026-02-19T12:00:00+00:00",
+        },
+    })
+
+
+# --- Replay timer tests ---
+
+class TestReplayTimer:
+    def test_replay_timer_periodic_replay(self, tmp_path):
+        """Timer periodically replays buffered events via transport."""
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        buf.append(_sample_event_json("a"))
+        buf.append(_sample_event_json("b"))
+
+        emitter = EventEmitter(
+            _SuccessTransport(),
+            source_machine="test",
+            buffer=buf,
+            replay_interval_s=0.1,
+        )
+        emitter.start_replay_timer()
+        time.sleep(0.3)
+
+        assert buf.has_events() is False
+
+    def test_replay_timer_backoff_on_failure(self, tmp_path):
+        """Backoff doubles on failure."""
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        buf.append(_sample_event_json("a"))
+
+        emitter = EventEmitter(
+            _FailTransport(),
+            source_machine="test",
+            buffer=buf,
+            replay_interval_s=0.1,
+        )
+        emitter.start_replay_timer()
+        time.sleep(0.15)  # first replay fires, fails
+
+        assert emitter._replay_backoff_s == 0.2  # doubled from 0.1
+        time.sleep(0.25)  # second replay fires, fails
+
+        assert emitter._replay_backoff_s == 0.4  # doubled again
+        assert buf.has_events() is True  # events still in buffer
+
+    def test_replay_timer_backoff_resets_on_success(self, tmp_path):
+        """Backoff resets to base interval after successful replay."""
+        transport = _SwitchableTransport(succeed=False)
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        buf.append(_sample_event_json("a"))
+
+        emitter = EventEmitter(
+            transport,
+            source_machine="test",
+            buffer=buf,
+            replay_interval_s=0.1,
+        )
+        emitter.start_replay_timer()
+        time.sleep(0.15)  # first replay fails, doubles backoff
+
+        assert emitter._replay_backoff_s == 0.2
+
+        # Switch to success and re-append an event (previous one still there)
+        transport.succeed = True
+        # Wake the timer early
+        emitter._drain_event.set()
+        time.sleep(0.2)
+
+        assert emitter._replay_backoff_s == 0.1  # reset to base
+
+    def test_replay_timer_lock_prevents_concurrent_replay(self, tmp_path):
+        """Replay is blocked while lock is held."""
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        buf.append(_sample_event_json("a"))
+
+        emitter = EventEmitter(
+            _SuccessTransport(),
+            source_machine="test",
+            buffer=buf,
+            replay_interval_s=0.1,
+        )
+        # Acquire lock before starting timer
+        emitter._replay_lock.acquire()
+        emitter.start_replay_timer()
+        time.sleep(0.2)
+
+        assert buf.has_events() is True  # replay blocked by lock
+
+        emitter._replay_lock.release()
+        time.sleep(0.2)
+
+        assert buf.has_events() is False  # now drained
+
+    def test_drain_event_triggers_early_replay(self, tmp_path):
+        """Setting drain event wakes timer thread immediately."""
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        buf.append(_sample_event_json("a"))
+
+        emitter = EventEmitter(
+            _SuccessTransport(),
+            source_machine="test",
+            buffer=buf,
+            replay_interval_s=10.0,  # would never fire in test
+        )
+        emitter.start_replay_timer()
+        emitter._drain_event.set()
+        time.sleep(0.2)
+
+        assert buf.has_events() is False  # timer woke early
+
+    def test_emit_success_triggers_drain_when_buffer_has_events(self, tmp_path, db):
+        """Successful emit sets drain event when buffer has pending events."""
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        # Manually append a fake event to simulate pending buffer
+        buf.append(_sample_event_json("old"))
+
+        transport = InProcessTransport(db)
+        emitter = EventEmitter(
+            transport,
+            source_machine="test",
+            buffer=buf,
+        )
+        # Don't start timer -- just verify the flag
+        result = emitter.emit(
+            command="gsd:test",
+            event_kind="started",
+            run_id="run-drain",
+        )
+        assert result is True
+        assert emitter._drain_event.is_set() is True
+
+    def test_emit_failure_does_not_trigger_drain(self, tmp_path):
+        """Failed emit does not set drain event."""
+        buf = FallbackBuffer(tmp_path / "buf.jsonl")
+        emitter = EventEmitter(
+            _FailTransport(),
+            source_machine="test",
+            buffer=buf,
+        )
+        result = emitter.emit(
+            command="gsd:test",
+            event_kind="started",
+            run_id="run-fail",
+        )
+        assert result is False
+        assert emitter._drain_event.is_set() is False
+
+    def test_start_replay_timer_no_buffer_is_noop(self):
+        """start_replay_timer without buffer does nothing."""
+        emitter = EventEmitter(
+            _SuccessTransport(),
+            source_machine="test",
+            buffer=None,
+        )
+        emitter.start_replay_timer()
+        assert emitter._replay_thread is None

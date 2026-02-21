@@ -89,6 +89,12 @@ class FallbackBuffer:
 
         return (sent, len(failed_events))
 
+    def has_events(self) -> bool:
+        """Check if buffer has any pending events without reading them all."""
+        if not self.buffer_path.exists():
+            return False
+        return self.buffer_path.stat().st_size > 0
+
     def clear(self) -> None:
         """Remove the buffer file entirely."""
         if self.buffer_path.exists():
