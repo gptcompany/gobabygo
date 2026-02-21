@@ -73,7 +73,7 @@ Plans:
 
 Plans:
 - [ ] 09-01-PLAN.md — Auto-reregister on unknown_worker heartbeat + stale review timeout scheduling
-- [ ] 09-02: TBD
+- [ ] 09-02-PLAN.md — Buffer replay timer with exponential backoff + on-next-emit drain trigger
 - [ ] 09-03: TBD
 
 ### Phase 10: Operator CLI
