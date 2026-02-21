@@ -99,11 +99,24 @@ class MeshWorker:
             url = f"{self.config.router_url}/heartbeat"
             while self._running:
                 try:
-                    self._session.post(
+                    resp = self._session.post(
                         url,
                         json={"worker_id": self.config.worker_id},
                         timeout=3,
                     )
+                    try:
+                        data = resp.json()
+                        if data.get("status") == "unknown_worker":
+                            logger.warning(
+                                "Router reports unknown_worker for %s, re-registering",
+                                self.config.worker_id,
+                            )
+                            try:
+                                self._register()
+                            except requests.RequestException as re_err:
+                                logger.error("Re-registration failed: %s", re_err)
+                    except (ValueError, KeyError):
+                        pass  # Old server or non-JSON response -- ignore
                 except requests.RequestException as e:
                     logger.warning("Heartbeat failed: %s", e)
                 time.sleep(self.config.heartbeat_interval)

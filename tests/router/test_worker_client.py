@@ -27,6 +27,8 @@ class MockRouterHandler(BaseHTTPRequestHandler):
     task_to_serve = None
     error_on_first_poll = False  # Return 500 on first poll
     return_409_on_poll = False  # Return 409 conflict
+    heartbeat_response = {"status": "ok"}  # Configurable heartbeat response
+    heartbeat_raw_response = False  # Return plain text instead of JSON
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
@@ -37,7 +39,15 @@ class MockRouterHandler(BaseHTTPRequestHandler):
             self._respond(201, {"status": "registered", "worker_id": body.get("worker_id")})
         elif self.path == "/heartbeat":
             MockRouterHandler.heartbeat_calls.append(body)
-            self._respond(200, {"status": "ok"})
+            if MockRouterHandler.heartbeat_raw_response:
+                self.send_response(200)
+                raw = b"OK"
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+            else:
+                self._respond(200, MockRouterHandler.heartbeat_response)
         elif self.path == "/tasks/ack":
             MockRouterHandler.ack_calls.append(body)
             self._respond(200, {"status": "acknowledged"})
@@ -95,6 +105,8 @@ def reset_mock():
     MockRouterHandler.task_to_serve = None
     MockRouterHandler.error_on_first_poll = False
     MockRouterHandler.return_409_on_poll = False
+    MockRouterHandler.heartbeat_response = {"status": "ok"}
+    MockRouterHandler.heartbeat_raw_response = False
 
 
 @pytest.fixture
@@ -323,6 +335,68 @@ class TestMeshWorkerPolling:
 
         # First poll = 409 (triggers backoff), then 204s
         assert MockRouterHandler.poll_count >= 2
+
+
+class TestAutoReregisterOnUnknownWorker:
+    def test_heartbeat_unknown_worker_triggers_reregister(self, mock_router):
+        """On unknown_worker heartbeat response, worker re-registers."""
+        MockRouterHandler.heartbeat_response = {"status": "unknown_worker"}
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            heartbeat_interval=0.1,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+        worker._start_heartbeat()
+        time.sleep(0.35)
+        worker.stop()
+
+        # At least one re-registration beyond initial (heartbeat-triggered)
+        assert len(MockRouterHandler.register_calls) >= 1
+        # Verify register payload has correct worker_id
+        assert all(
+            c["worker_id"] == "ws-test-01"
+            for c in MockRouterHandler.register_calls
+        )
+
+    def test_heartbeat_ok_does_not_reregister(self, mock_router):
+        """Normal 'ok' heartbeat does NOT trigger re-registration."""
+        MockRouterHandler.heartbeat_response = {"status": "ok"}
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            heartbeat_interval=0.1,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+        # Record initial register count (from any prior calls)
+        register_count = len(MockRouterHandler.register_calls)
+        worker._start_heartbeat()
+        time.sleep(0.35)
+        worker.stop()
+
+        # No additional registration calls from heartbeat
+        assert len(MockRouterHandler.register_calls) == register_count
+
+    def test_heartbeat_non_json_response_tolerant(self, mock_router):
+        """Non-JSON heartbeat response (old server) does not crash or trigger re-register."""
+        MockRouterHandler.heartbeat_raw_response = True
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            heartbeat_interval=0.1,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+        # Record initial register count
+        register_count = len(MockRouterHandler.register_calls)
+        worker._start_heartbeat()
+        time.sleep(0.25)
+        worker.stop()
+
+        # No crash, no registration calls from heartbeat
+        assert len(MockRouterHandler.register_calls) == register_count
 
 
 class TestMeshWorkerStop:
