@@ -286,6 +286,53 @@ def cmd_drain(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Submit command
+# ---------------------------------------------------------------------------
+
+
+def cmd_submit(args: argparse.Namespace) -> None:
+    """Submit a new task via POST /tasks."""
+    base = _base_url()
+    headers = _headers()
+    headers["Content-Type"] = "application/json"
+
+    body: dict[str, object] = {"title": args.title}
+    if args.cli:
+        body["target_cli"] = args.cli
+    if args.account:
+        body["target_account"] = args.account
+    if args.phase:
+        body["phase"] = args.phase
+    if args.priority is not None:
+        body["priority"] = args.priority
+    if args.payload:
+        try:
+            body["payload"] = json.loads(args.payload)
+        except json.JSONDecodeError:
+            print("Error: --payload must be valid JSON", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        resp = requests.post(f"{base}/tasks", json=body, headers=headers, timeout=10)
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code == 201:
+        data = resp.json()
+        print(f"Task created: {data.get('task_id', '?')}")
+    elif resp.status_code == 401:
+        print("Error: Authentication failed. Set MESH_AUTH_TOKEN.", file=sys.stderr)
+        sys.exit(1)
+    elif resp.status_code == 409:
+        print(f"Error: Duplicate task -- {resp.json().get('detail', '')}", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"Error: {resp.status_code} -- {resp.text}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
@@ -309,6 +356,14 @@ drain_parser.add_argument(
     help="Timeout in seconds (default: 300)",
 )
 
+submit_parser = sub.add_parser("submit", help="Submit a new task")
+submit_parser.add_argument("--title", required=True, help="Task title")
+submit_parser.add_argument("--cli", default=None, help="Target CLI type (claude/codex/gemini)")
+submit_parser.add_argument("--account", default=None, help="Target account profile")
+submit_parser.add_argument("--phase", default=None, help="Task phase")
+submit_parser.add_argument("--priority", type=int, default=None, help="Priority (higher = first)")
+submit_parser.add_argument("--payload", default=None, help="JSON payload string")
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -319,6 +374,8 @@ if __name__ == "__main__":
         cmd_status(parsed_args)
     elif parsed_args.command == "drain":
         cmd_drain(parsed_args)
+    elif parsed_args.command == "submit":
+        cmd_submit(parsed_args)
     else:
         parser.print_help()
         sys.exit(1)

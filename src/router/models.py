@@ -80,6 +80,22 @@ class Task(BaseModel):
     updated_at: str = Field(default_factory=_utc_now)
 
 
+class TaskCreateRequest(BaseModel):
+    """Public API schema for task submission. Subset of Task fields."""
+
+    title: str
+    phase: TaskPhase = TaskPhase.implement
+    payload: dict[str, Any] = Field(default_factory=dict)
+    target_cli: CLIType = CLIType.claude
+    target_account: str = "work"
+    priority: int = 1
+    depends_on: list[str] = Field(default_factory=list)
+    deadline_ts: str | None = None
+    not_before: str | None = None
+    critical: bool = False
+    idempotency_key: str = Field(default_factory=_uuid4)
+
+
 class TaskEvent(BaseModel):
     event_id: str = Field(default_factory=_uuid4)
     task_id: str
