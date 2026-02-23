@@ -5,15 +5,14 @@
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.2 Operational Readiness -- COMPLETE (all 13 phases delivered)
+**Current focus:** Distributed Deploy -- E2E dry-run VALIDATED on real infra
 
 ## Current Position
 
-Milestone: v1.2 Operational Readiness
-Phase: 13 of 13 (CLI Invocation) -- COMPLETE
-Plan: 1 of 1 in current phase -- COMPLETE
-Status: Phase 13 Complete, v1.2 Milestone Complete
-Last activity: 2026-02-23 -- Phases 11-13 completed (3 plans, 29 new tests, 436 total) + shlex.split bugfix
+Milestone: v1.2 Operational Readiness -- COMPLETE (all 13 phases)
+Deploy: E2E dry-run VALIDATED (2026-02-24)
+Status: Router + 3 Workers running on real infra, dry-run task dispatched & completed
+Last activity: 2026-02-24 -- Deployed mesh to VPS + Workstation, fixed 6 bugs found during deploy
 
 Progress: [============================] 100% overall (28/28 plans)
 v1.2:    [============================] 100% (3/3 phases complete)
@@ -112,6 +111,43 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - **Phase 12: POST /tasks** (2026-02-23): 1 plan, 16 new tests (422 total), confidence 95%
 - **Phase 13: CLI Invocation** (2026-02-23): 1 plan, 12 new tests (436 total), confidence 95%
 
+### Deploy Status (2026-02-24)
+
+**Infrastruttura live:**
+
+| Componente | Host | Servizio systemd | Stato |
+|-----------|------|-------------------|-------|
+| Router | VPS 10.0.0.1 | `mesh-router.service` | active, healthy |
+| Worker claude | Workstation 10.0.0.2 | `mesh-worker@claude-work.service` | active, idle |
+| Worker codex | Workstation 10.0.0.2 | `mesh-worker@codex-work.service` | active, idle |
+| Worker gemini | Workstation 10.0.0.2 | `mesh-worker@gemini-work.service` | active, idle |
+
+**Token:** `***REDACTED***`
+
+**Comandi utili:**
+```bash
+# Health check
+curl -sf http://10.0.0.1:8780/health | python3 -m json.tool
+
+# Status completo
+MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="***REDACTED***" python3 -m src.meshctl status --json
+
+# Submit task
+MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="***REDACTED***" python3 -m src.meshctl submit --title "Test" --payload '{"prompt":"hello"}'
+
+# Logs
+ssh root@10.0.0.1 journalctl -u mesh-router -f
+journalctl -u mesh-worker@claude-work -f
+```
+
+**Bug fixati durante deploy (6):**
+1. `setuptools.backends._legacy` → `setuptools.build_meta` (pyproject.toml)
+2. FallbackBuffer path `~/.mesh` inaccessibile → env var `MESH_BUFFER_PATH`
+3. Worker crash su 409 register → trattato come "already registered"
+4. `account_in_use` con profile condiviso → profile unici per-worker
+5. Python 3.10 su Workstation → uv managed Python 3.12 in `/opt/mesh-worker/.python/`
+6. venv symlink a `/root/.local/` → Python locale in path accessibile
+
 ### Pending Todos
 
 None
@@ -122,6 +158,27 @@ None
 
 ## Session Continuity
 
-Last session: 2026-02-23
-Stopped at: Completed v1.2 milestone (all 3 phases delivered, 436 tests passing) + post-release bugfix (shlex.split)
-Resume with: v1.3 planning or production deployment
+Last session: 2026-02-24
+Stopped at: Deploy E2E dry-run completato e validato su infra reale (VPS + Workstation)
+Resume with: Leggere questa sezione, poi scegliere tra i prossimi passi sotto
+
+## Prossimi Passi (24 febbraio)
+
+### Opzione A: Passare a esecuzione reale (disabilitare dry-run)
+1. Cambiare `MESH_DRY_RUN=1` → `MESH_DRY_RUN=0` nei 3 worker env
+2. Ricaricare: `sudo systemctl restart mesh-worker@claude-work mesh-worker@codex-work mesh-worker@gemini-work`
+3. Submit task reale e verificare che claude/codex/gemini CLI vengano invocati
+
+### Opzione B: Aggiungere monitoring (Grafana)
+1. Configurare Prometheus scrape per `/metrics` del router
+2. Importare dashboard Grafana da `deploy/monitoring/mesh-alerts.yaml`
+3. Configurare alert policy da `deploy/monitoring/notification-policy.md`
+
+### Opzione C: meshctl dal Mac
+1. Verificare che il Mac raggiunga `10.0.0.1` via WireGuard
+2. `pip install requests pydantic` sul Mac
+3. Copiare `src/meshctl.py` e testare `meshctl status`
+
+### Opzione D: Pianificare v1.3
+1. Definire requisiti per prossimo milestone
+2. `/gsd:new-milestone` per scaffolding
