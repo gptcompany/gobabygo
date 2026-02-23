@@ -145,6 +145,46 @@ class MeshMetrics:
             registry=self.registry,
         )
 
+        # --- Dispatch metrics ---
+        self.dispatch_cycles_total = Counter(
+            "mesh_dispatch_cycles_total",
+            "Dispatch loop cycle outcomes",
+            ["result"],  # labels: "dispatched", "empty", "error"
+            registry=self.registry,
+        )
+        self.tasks_dispatched = Counter(
+            "mesh_tasks_dispatched_total",
+            "Tasks dispatched by periodic loop",
+            registry=self.registry,
+        )
+
+        # --- Task creation metrics ---
+        self.tasks_created = Counter(
+            "mesh_tasks_created_total",
+            "Tasks created via POST /tasks",
+            registry=self.registry,
+        )
+        self.tasks_create_errors = Counter(
+            "mesh_tasks_create_errors_total",
+            "Task creation errors",
+            ["reason"],  # labels: "invalid", "duplicate", "db_error"
+            registry=self.registry,
+        )
+
+        # --- CLI execution metrics ---
+        self.cli_executions = Counter(
+            "mesh_cli_executions_total",
+            "CLI execution outcomes",
+            ["result"],  # labels: "success", "failure", "timeout", "not_found", "dry_run"
+            registry=self.registry,
+        )
+        self.cli_duration_seconds = Histogram(
+            "mesh_cli_duration_seconds",
+            "CLI subprocess execution duration",
+            buckets=[1, 5, 10, 30, 60, 120, 300, 600, 1800],
+            registry=self.registry,
+        )
+
         # --- Buffer replay metrics ---
         self.buffer_replay_total = Counter(
             "mesh_buffer_replay_total",

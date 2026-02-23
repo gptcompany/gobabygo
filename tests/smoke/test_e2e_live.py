@@ -121,23 +121,30 @@ class TestE2ELive:
         stored = db.get_task("smoke-t1")
         assert stored.status == TaskStatus.queued
 
-        # 4. Register worker in long-poll registry and dispatch
+        # 4. Register worker in long-poll registry and start dispatch loop
         lp.register("smoke-w1")
 
-        # Dispatch in background so we can long-poll
-        def dispatch_after_delay():
-            time.sleep(0.2)
-            scheduler.dispatch()
+        # Start dispatch loop (mimics run_server behavior, no manual dispatch)
+        dispatch_running = True
 
-        dispatch_thread = threading.Thread(target=dispatch_after_delay)
+        def dispatch_loop():
+            while dispatch_running:
+                time.sleep(0.1)
+                try:
+                    while True:
+                        result = scheduler.dispatch()
+                        if result is None:
+                            break
+                except Exception:
+                    pass
+
+        dispatch_thread = threading.Thread(target=dispatch_loop, daemon=True)
         dispatch_thread.start()
 
-        # 5. Long-poll for task (blocks until dispatch wakes us)
+        # 5. Long-poll for task (blocks until dispatch loop wakes us)
         start = time.monotonic()
         resp = requests.get(f"{url}/tasks/next?worker_id=smoke-w1", timeout=5)
         elapsed = time.monotonic() - start
-
-        dispatch_thread.join(timeout=5)
 
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
         data = resp.json()
@@ -169,6 +176,8 @@ class TestE2ELive:
         # Verify completed state
         t = db.get_task("smoke-t1")
         assert t.status == TaskStatus.completed
+
+        dispatch_running = False
 
     def test_meshctl_status_output(self, mesh):
         """meshctl status returns valid JSON with workers and health."""

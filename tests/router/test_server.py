@@ -14,7 +14,7 @@ from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
 from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
-from src.router.models import Task, TaskStatus, Worker
+from src.router.models import Task, TaskCreateRequest, TaskStatus, Worker
 from src.router.scheduler import Scheduler
 from src.router.server import MeshRouterHandler
 from src.router.worker_manager import WorkerManager
@@ -1051,3 +1051,241 @@ class TestWorkerEndpoints:
         """POST /workers/<id>/drain without auth returns 401."""
         resp = requests.post(f"{authed_server_url}/workers/w1/drain")
         assert resp.status_code == 401
+
+
+class TestDispatchLoop:
+    """Tests for the dispatch_loop daemon thread in run_server()."""
+
+    def _make_server_with_dispatch(self, db, dispatch_interval=0.2):
+        """Create a test server that includes a dispatch loop thread."""
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 0.1,
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        # Start dispatch loop (mimics run_server behavior)
+        def dispatch_loop():
+            while getattr(server, '_dispatch_running', True):
+                time.sleep(dispatch_interval)
+                try:
+                    dispatched = 0
+                    while True:
+                        result = scheduler.dispatch()
+                        if result is None:
+                            break
+                        dispatched += 1
+                        metrics.tasks_dispatched.inc()
+                    if dispatched:
+                        metrics.dispatch_cycles_total.labels(result="dispatched").inc()
+                    else:
+                        metrics.dispatch_cycles_total.labels(result="empty").inc()
+                except Exception:
+                    metrics.dispatch_cycles_total.labels(result="error").inc()
+
+        server._dispatch_running = True
+        dispatch_thread = threading.Thread(target=dispatch_loop, daemon=True, name="dispatch")
+        dispatch_thread.start()
+
+        srv_thread = threading.Thread(target=server.serve_forever)
+        srv_thread.daemon = True
+        srv_thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+        return server, url, scheduler, metrics
+
+    def test_dispatch_loop_dispatches_queued_task(self, db):
+        """Dispatch loop assigns a queued task to an idle worker."""
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+
+        task = Task(
+            task_id="t1",
+            title="auto dispatch",
+            phase="implement",
+            target_cli="claude",
+            target_account="work",
+            idempotency_key="k-dispatch-1",
+        )
+        db.insert_task(task)
+
+        server, url, scheduler, metrics = self._make_server_with_dispatch(db, dispatch_interval=0.1)
+        try:
+            # Wait for dispatch loop to process
+            time.sleep(0.5)
+
+            t = db.get_task("t1")
+            assert t.status == TaskStatus.assigned, f"Expected assigned, got {t.status}"
+            assert t.assigned_worker == "w1"
+        finally:
+            server._dispatch_running = False
+            server.shutdown()
+
+    def test_dispatch_loop_multiple_tasks(self, db):
+        """Dispatch loop drains all dispatchable tasks in one cycle."""
+        # Two workers, two tasks
+        for i in range(2):
+            db.insert_worker(Worker(
+                worker_id=f"w{i}",
+                cli_type="claude",
+                account_profile=f"acct{i}",
+                status="idle",
+            ))
+            db.insert_task(Task(
+                task_id=f"t{i}",
+                title=f"task {i}",
+                phase="implement",
+                target_cli="claude",
+                target_account=f"acct{i}",
+                idempotency_key=f"k-multi-{i}",
+            ))
+
+        server, url, scheduler, metrics = self._make_server_with_dispatch(db, dispatch_interval=0.1)
+        try:
+            time.sleep(0.5)
+
+            for i in range(2):
+                t = db.get_task(f"t{i}")
+                assert t.status == TaskStatus.assigned, f"Task t{i}: expected assigned, got {t.status}"
+        finally:
+            server._dispatch_running = False
+            server.shutdown()
+
+
+class TestPostTasksEndpoint:
+    """Tests for POST /tasks task creation endpoint."""
+
+    def test_post_tasks_creates_task(self, server_url, db):
+        """POST /tasks with valid data returns 201 and task in DB."""
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={"title": "Test task", "phase": "implement"},
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["status"] == "created"
+        assert "task_id" in data
+
+        # Verify in DB
+        task = db.get_task(data["task_id"])
+        assert task is not None
+        assert task.title == "Test task"
+        assert task.status == TaskStatus.queued
+
+    def test_post_tasks_auth_required(self, authed_server_url):
+        """POST /tasks without auth token returns 401."""
+        resp = requests.post(
+            f"{authed_server_url}/tasks",
+            json={"title": "Test"},
+        )
+        assert resp.status_code == 401
+
+    def test_post_tasks_invalid_json(self, server_url):
+        """POST /tasks with invalid JSON returns 400."""
+        resp = requests.post(
+            f"{server_url}/tasks",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_json"
+
+    def test_post_tasks_invalid_fields(self, server_url):
+        """POST /tasks with invalid enum value returns 400."""
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={"title": "Test", "phase": "nonexistent_phase"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_task"
+
+    def test_post_tasks_missing_title(self, server_url):
+        """POST /tasks without required title field returns 400."""
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={"phase": "implement"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_task"
+
+    def test_post_tasks_duplicate_idempotency_key(self, server_url, db):
+        """POST /tasks with duplicate idempotency_key returns 409."""
+        resp1 = requests.post(
+            f"{server_url}/tasks",
+            json={"title": "First", "idempotency_key": "dup-key-1"},
+        )
+        assert resp1.status_code == 201
+
+        resp2 = requests.post(
+            f"{server_url}/tasks",
+            json={"title": "Second", "idempotency_key": "dup-key-1"},
+        )
+        assert resp2.status_code == 409
+        assert resp2.json()["error"] == "duplicate_task"
+
+    def test_post_tasks_ignores_internal_fields(self, server_url, db):
+        """Client-set status/assigned_worker are ignored; server sets defaults."""
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={
+                "title": "Sneaky",
+                "status": "completed",
+                "assigned_worker": "evil-worker",
+            },
+        )
+        assert resp.status_code == 201
+        task = db.get_task(resp.json()["task_id"])
+        assert task.status == TaskStatus.queued
+        assert task.assigned_worker is None
+
+    def test_post_tasks_triggers_dispatch(self, server_url, db):
+        """POST /tasks with idle worker triggers eager dispatch."""
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={
+                "title": "Eager task",
+                "target_cli": "claude",
+                "target_account": "work",
+            },
+        )
+        assert resp.status_code == 201
+
+        task_id = resp.json()["task_id"]
+        task = db.get_task(task_id)
+        assert task.status == TaskStatus.assigned
+        assert task.assigned_worker == "w1"
+
+    def test_post_tasks_with_payload(self, server_url, db):
+        """POST /tasks with payload stores it correctly."""
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={
+                "title": "With payload",
+                "payload": {"prompt": "Hello world", "working_dir": "/tmp"},
+            },
+        )
+        assert resp.status_code == 201
+        task = db.get_task(resp.json()["task_id"])
+        assert task.payload["prompt"] == "Hello world"
+        assert task.payload["working_dir"] == "/tmp"
