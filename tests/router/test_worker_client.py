@@ -220,12 +220,14 @@ class TestMeshWorkerPolling:
             "task_id": "task-1",
             "title": "test task",
             "phase": "implement",
+            "payload": {"prompt": "Do something"},
         }
 
         config = WorkerConfig(
             worker_id="ws-test-01",
             router_url=mock_router,
             longpoll_timeout=0.05,
+            dry_run=True,
         )
         worker = MeshWorker(config)
         worker._running = True
@@ -418,3 +420,299 @@ class TestMeshWorkerStop:
         count_after = len(MockRouterHandler.heartbeat_calls)
         # Should not have sent many more heartbeats after stop
         assert count_after - count_before <= 1
+
+
+class TestCLIExecution:
+    """Tests for real CLI invocation in _execute_task (Phase 3)."""
+
+    def test_dry_run(self, mock_router):
+        """Dry-run logs command without executing, reports complete with dry_run=True."""
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-dry",
+            "title": "dry run test",
+            "payload": {"prompt": "Hello world"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            dry_run=True,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.complete_calls) == 1
+        result = MockRouterHandler.complete_calls[0].get("result", {})
+        assert result.get("dry_run") is True
+        assert "[dry-run]" in result.get("output", "")
+
+    def test_missing_prompt_fails(self, mock_router):
+        """Task without payload.prompt is reported as failure."""
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-noprompt",
+            "title": "no prompt",
+            "payload": {},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.fail_calls) == 1
+        assert "missing payload.prompt" in MockRouterHandler.fail_calls[0].get("error", "")
+
+    def test_missing_payload_fails(self, mock_router):
+        """Task without payload at all is reported as failure."""
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-nopayload",
+            "title": "no payload",
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.fail_calls) == 1
+        assert "missing payload.prompt" in MockRouterHandler.fail_calls[0].get("error", "")
+
+    @patch("src.router.worker_client.subprocess.run")
+    def test_subprocess_success(self, mock_run, mock_router):
+        """Successful subprocess (exit 0) reports completion."""
+        mock_run.return_value = type("Result", (), {
+            "returncode": 0,
+            "stdout": "All done!",
+            "stderr": "",
+        })()
+
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-ok",
+            "title": "success test",
+            "payload": {"prompt": "Do something"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.complete_calls) == 1
+        result = MockRouterHandler.complete_calls[0].get("result", {})
+        assert result.get("output") == "All done!"
+        assert result.get("exit_code") == 0
+
+    @patch("src.router.worker_client.subprocess.run")
+    def test_subprocess_failure(self, mock_run, mock_router):
+        """Failed subprocess (exit != 0) reports failure with stderr."""
+        mock_run.return_value = type("Result", (), {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: something broke",
+        })()
+
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-fail",
+            "title": "fail test",
+            "payload": {"prompt": "Do something"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.fail_calls) == 1
+        error = MockRouterHandler.fail_calls[0].get("error", "")
+        assert "exit_code=1" in error
+        assert "something broke" in error
+
+    @patch("src.router.worker_client.subprocess.run")
+    def test_subprocess_timeout(self, mock_run, mock_router):
+        """TimeoutExpired reports failure with timeout message."""
+        import subprocess as sp
+        mock_run.side_effect = sp.TimeoutExpired(cmd="claude", timeout=30)
+
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-timeout",
+            "title": "timeout test",
+            "payload": {"prompt": "Do something slow"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            task_timeout=30,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.fail_calls) == 1
+        assert "timeout after 30s" in MockRouterHandler.fail_calls[0].get("error", "")
+
+    @patch("src.router.worker_client.subprocess.run")
+    def test_command_not_found(self, mock_run, mock_router):
+        """FileNotFoundError reports failure with command name."""
+        mock_run.side_effect = FileNotFoundError("No such file: 'nonexistent'")
+
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-notfound",
+            "title": "not found test",
+            "payload": {"prompt": "Do something"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            cli_command="nonexistent",
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.fail_calls) == 1
+        assert "command not found: nonexistent" in MockRouterHandler.fail_calls[0].get("error", "")
+
+    @patch("src.router.worker_client.subprocess.run")
+    def test_output_truncation(self, mock_run, mock_router):
+        """Output > 4KB is truncated."""
+        long_output = "x" * 5000
+        mock_run.return_value = type("Result", (), {
+            "returncode": 0,
+            "stdout": long_output,
+            "stderr": "",
+        })()
+
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-trunc",
+            "title": "truncation test",
+            "payload": {"prompt": "Generate output"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.complete_calls) == 1
+        output = MockRouterHandler.complete_calls[0].get("result", {}).get("output", "")
+        assert len(output) == 4096
+
+    def test_cli_command_interpolation(self, mock_router):
+        """cli_command with {account_profile} placeholder is interpolated."""
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-interp",
+            "title": "interpolation test",
+            "payload": {"prompt": "Hello"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            cli_command="ccs {account_profile}",
+            account_profile="work",
+            dry_run=True,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.complete_calls) == 1
+        output = MockRouterHandler.complete_calls[0].get("result", {}).get("output", "")
+        assert "ccs work" in output
+
+    def test_config_from_env(self):
+        """All new env vars are read correctly by from_env()."""
+        env = {
+            "MESH_WORKER_ID": "ws-env-01",
+            "MESH_CLI_COMMAND": "ccs {account_profile}",
+            "MESH_DRY_RUN": "1",
+            "MESH_WORK_DIR": "/opt/tasks",
+            "MESH_TASK_TIMEOUT_S": "600",
+        }
+        with patch.dict(os.environ, env):
+            config = WorkerConfig.from_env()
+            assert config.cli_command == "ccs {account_profile}"
+            assert config.dry_run is True
+            assert config.work_dir == "/opt/tasks"
+            assert config.task_timeout == 600

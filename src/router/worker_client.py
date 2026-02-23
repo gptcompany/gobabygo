@@ -14,6 +14,7 @@ import logging
 import os
 import random
 import signal
+import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
@@ -36,6 +37,10 @@ class WorkerConfig:
     poll_interval: float = 2.0
     longpoll_timeout: float = 25.0  # Must match server MESH_LONGPOLL_TIMEOUT_S
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor"])
+    cli_command: str = "claude"  # Template: "ccs {account_profile}" for multi-account
+    dry_run: bool = False  # MESH_DRY_RUN=1 logs without executing
+    work_dir: str = "/tmp/mesh-tasks"  # MESH_WORK_DIR
+    task_timeout: int = 1800  # MESH_TASK_TIMEOUT_S (30 min)
 
     @classmethod
     def from_env(cls) -> WorkerConfig:
@@ -47,6 +52,10 @@ class WorkerConfig:
             account_profile=os.environ.get("MESH_ACCOUNT_PROFILE", "work"),
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
+            cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
+            dry_run=os.environ.get("MESH_DRY_RUN", "").strip() == "1",
+            work_dir=os.environ.get("MESH_WORK_DIR", "/tmp/mesh-tasks"),
+            task_timeout=int(os.environ.get("MESH_TASK_TIMEOUT_S", "1800")),
         )
 
 
@@ -174,14 +183,73 @@ class MeshWorker:
     def _execute_task(self, task: dict) -> None:
         """Execute a task via CLI invocation.
 
-        For v1: logs task receipt and reports success.
-        Full CLI integration (CCS profile + command dispatch) to be wired
-        in production deployment.
+        Validates payload.prompt, builds CLI command, runs subprocess
+        (or dry-run), and reports result. Every error path reports failure
+        so no task is ever stuck in 'running'.
         """
         task_id = task["task_id"]
+        payload = task.get("payload", {})
+        prompt = payload.get("prompt", "")
+
         logger.info("Executing task %s: %s", task_id, task.get("title", "untitled"))
 
         # Ack task: assigned -> running
+        if not self._ack_task(task_id):
+            return
+
+        try:
+            # Validate payload contract
+            if not prompt:
+                self._report_failure(task_id, "missing payload.prompt")
+                return
+
+            # Build command
+            cmd_base = self.config.cli_command.replace(
+                "{account_profile}", self.config.account_profile
+            )
+            full_cmd = [cmd_base, "--print", "-p", prompt]
+            work_dir = payload.get("working_dir", self.config.work_dir)
+
+            # Dry-run path
+            if self.config.dry_run:
+                logger.info("DRY_RUN task=%s cmd=%s cwd=%s", task_id, full_cmd, work_dir)
+                self._report_complete(task_id, {
+                    "output": f"[dry-run] {' '.join(full_cmd)}",
+                    "dry_run": True,
+                })
+                return
+
+            # Real execution
+            start = time.monotonic()
+            proc = subprocess.run(
+                full_cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.config.task_timeout,
+                cwd=work_dir,
+            )
+            duration = time.monotonic() - start
+            logger.info("CLI finished task=%s exit=%d duration=%.1fs", task_id, proc.returncode, duration)
+
+            if proc.returncode == 0:
+                output = proc.stdout[-4096:] if len(proc.stdout) > 4096 else proc.stdout
+                self._report_complete(task_id, {"output": output, "exit_code": 0})
+            else:
+                stderr = proc.stderr[-2048:] if len(proc.stderr) > 2048 else proc.stderr
+                self._report_failure(task_id, f"exit_code={proc.returncode}: {stderr}")
+
+        except subprocess.TimeoutExpired:
+            self._report_failure(task_id, f"timeout after {self.config.task_timeout}s")
+        except FileNotFoundError:
+            cmd_base = self.config.cli_command.replace(
+                "{account_profile}", self.config.account_profile
+            )
+            self._report_failure(task_id, f"command not found: {cmd_base}")
+        except Exception as e:
+            self._report_failure(task_id, f"unexpected: {e}")
+
+    def _ack_task(self, task_id: str) -> bool:
+        """ACK task (assigned -> running). Returns True on success."""
         try:
             ack_resp = self._session.post(
                 f"{self.config.router_url}/tasks/ack",
@@ -190,15 +258,15 @@ class MeshWorker:
             )
             if ack_resp.status_code != 200:
                 logger.warning("Task %s ack failed (%d), skipping", task_id, ack_resp.status_code)
-                return
+                return False
+            return True
         except requests.RequestException as e:
             logger.warning("Task %s ack error: %s, skipping", task_id, e)
-            return
+            return False
 
+    def _report_complete(self, task_id: str, result: dict) -> None:
+        """Report task completion to router."""
         try:
-            # TODO: Wire CLI invocation (CCS profile + command dispatch)
-            result = {"output": f"Task {task_id} executed by {self.config.worker_id}"}
-
             self._session.post(
                 f"{self.config.router_url}/tasks/complete",
                 json={
@@ -209,20 +277,24 @@ class MeshWorker:
                 timeout=5,
             )
             logger.info("Task %s completed", task_id)
-        except (requests.RequestException, ValueError, RuntimeError, OSError) as e:
-            logger.error("Task %s failed: %s", task_id, e)
-            try:
-                self._session.post(
-                    f"{self.config.router_url}/tasks/fail",
-                    json={
-                        "task_id": task_id,
-                        "worker_id": self.config.worker_id,
-                        "error": str(e),
-                    },
-                    timeout=5,
-                )
-            except requests.RequestException:
-                logger.error("Failed to report failure for task %s", task_id)
+        except requests.RequestException as e:
+            logger.error("Failed to report completion for task %s: %s", task_id, e)
+
+    def _report_failure(self, task_id: str, error: str) -> None:
+        """Report task failure to router."""
+        logger.error("Task %s failed: %s", task_id, error)
+        try:
+            self._session.post(
+                f"{self.config.router_url}/tasks/fail",
+                json={
+                    "task_id": task_id,
+                    "worker_id": self.config.worker_id,
+                    "error": error,
+                },
+                timeout=5,
+            )
+        except requests.RequestException as e:
+            logger.error("Failed to report failure for task %s: %s", task_id, e)
 
 
 def run_worker() -> None:
