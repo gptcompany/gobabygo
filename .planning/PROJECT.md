@@ -8,11 +8,22 @@ A distributed multi-agent orchestration system that coordinates AI CLI workers (
 
 Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth, not terminal state.
 
-## Current Milestone: v1.1 Production Readiness
+## Current Milestone: v1.2 Operational Readiness -- COMPLETE
+
+**Goal:** Close the 3 critical gaps blocking real-world use: automatic dispatch, HTTP task submission, and real CLI execution.
+
+**Delivered features:**
+- Periodic dispatch loop (daemon thread, configurable interval, drains all tasks per cycle)
+- POST /tasks endpoint (TaskCreateRequest DTO, idempotency, eager dispatch)
+- meshctl submit command (CLI task submission)
+- Real CLI invocation via subprocess (dry-run, failure semantics, output truncation)
+- Full env-based configuration (MESH_CLI_COMMAND, MESH_DRY_RUN, MESH_WORK_DIR, etc.)
+
+## Previous Milestone: v1.1 Production Readiness -- SHIPPED 2026-02-21
 
 **Goal:** Make the mesh reliable enough for daily unattended production operation and provide operator CLI tooling.
 
-**Target features:**
+**Delivered features:**
 - Long-polling transport (replace 2s short-polling)
 - Self-healing workers (auto-reregister on unknown_worker)
 - Deterministic event replay triggers (periodic + on-next-emit)
@@ -22,9 +33,8 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 
 ## Current State
 
-**Shipped:** v1.0 MVP (2026-02-19)
-**Codebase:** 3,829 LOC production + 4,313 LOC tests (Python)
-**Test suite:** 294 tests, all passing
+**Shipped:** v1.2 Operational Readiness (2026-02-23)
+**Test suite:** 435 tests, all passing
 **Tech stack:** Python 3.11+, SQLite (WAL), Pydantic, CloudEvents, prometheus-client
 
 ## Requirements
@@ -49,6 +59,10 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 
 ### Active
 
+None -- v1.2 complete
+
+### Delivered in v1.1
+
 - Long-polling transport for worker task dispatch
 - Worker auto-reregister on unknown_worker heartbeat response
 - Buffer replay trigger mechanism (periodic + on-next-emit)
@@ -58,6 +72,13 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 - Fix server._handle_register() to use WorkerManager validation
 - Complete YAML semantic mapping for gsd:implement-* commands
 - Fix heartbeat.py Worker type annotation for mypy
+
+### Delivered in v1.2
+
+- Automatic dispatch loop (periodic daemon thread)
+- POST /tasks HTTP endpoint with TaskCreateRequest DTO
+- meshctl submit command
+- Real CLI invocation via subprocess (dry-run + failure semantics)
 
 ### Out of Scope
 
@@ -112,8 +133,14 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 | Transport adapter pattern: InProcess + HTTP | Clean separation for test vs production | Good |
 | SHA-256 idempotency keys (not built-in hash()) | Stable across Python sessions | Good |
 | Recovery uses direct CAS (not FSM) | Recovery transitions outside FSM table, needs atomic compound ops | Good |
-| Worker short-polling 2s (not long-polling) | Simple, deferred long-polling to v2 | Revisit |
+| Worker short-polling 2s (not long-polling) | Simple, deferred long-polling to v2 | Fixed v1.1 |
 | No /metrics auth | WireGuard-only network, same as /health | Revisit |
+| Dispatch loop drains all tasks per cycle | Maximizes throughput; CAS prevents double-dispatch | Good |
+| TaskCreateRequest DTO separates public/internal fields | Prevents clients from setting status/assigned_worker | Good |
+| Eager dispatch on POST /tasks (best-effort) | Reduces latency; dispatch loop is backup | Good |
+| Dry-run mode for CLI invocation | Safe deployment validation before real execution | Good |
+| subprocess.run without shell=True | Prevents command injection; safe for user prompts | Good |
+| Output truncation (4KB stdout, 2KB stderr) | Prevents oversized task results in DB | Good |
 
 ---
-*Last updated: 2026-02-20 after v1.1 milestone started*
+*Last updated: 2026-02-23 after v1.2 milestone completed*
