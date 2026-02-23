@@ -699,7 +699,47 @@ class TestCLIExecution:
 
         assert len(MockRouterHandler.complete_calls) == 1
         output = MockRouterHandler.complete_calls[0].get("result", {}).get("output", "")
-        assert "ccs work" in output
+        assert "ccs" in output
+        assert "work" in output
+
+    @patch("src.router.worker_client.subprocess.run")
+    def test_multiword_command_tokenized(self, mock_run, mock_router):
+        """Multi-word cli_command is tokenized via shlex.split, not passed as single arg."""
+        mock_run.return_value = type("Result", (), {
+            "returncode": 0,
+            "stdout": "ok",
+            "stderr": "",
+        })()
+
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-split",
+            "title": "shlex split test",
+            "payload": {"prompt": "Do work"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            cli_command="ccs {account_profile}",
+            account_profile="work",
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        # subprocess.run must receive properly tokenized args, NOT ["ccs work", ...]
+        assert mock_run.called
+        actual_cmd = mock_run.call_args[0][0]
+        assert actual_cmd[0] == "ccs", f"Expected 'ccs', got {actual_cmd[0]!r}"
+        assert actual_cmd[1] == "work", f"Expected 'work', got {actual_cmd[1]!r}"
+        assert actual_cmd[2:] == ["--print", "-p", "Do work"]
 
     def test_config_from_env(self):
         """All new env vars are read correctly by from_env()."""

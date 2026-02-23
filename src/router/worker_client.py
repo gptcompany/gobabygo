@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import shlex
 import signal
 import subprocess
 import threading
@@ -203,11 +204,13 @@ class MeshWorker:
                 self._report_failure(task_id, "missing payload.prompt")
                 return
 
-            # Build command
+            # Build command — shlex.split tokenizes multi-word commands
+            # e.g. "ccs {account_profile}" → ["ccs", "work"]
             cmd_base = self.config.cli_command.replace(
                 "{account_profile}", self.config.account_profile
             )
-            full_cmd = [cmd_base, "--print", "-p", prompt]
+            cmd_parts = shlex.split(cmd_base)
+            full_cmd = cmd_parts + ["--print", "-p", prompt]
             work_dir = payload.get("working_dir", self.config.work_dir)
 
             # Dry-run path
@@ -241,10 +244,12 @@ class MeshWorker:
         except subprocess.TimeoutExpired:
             self._report_failure(task_id, f"timeout after {self.config.task_timeout}s")
         except FileNotFoundError:
-            cmd_base = self.config.cli_command.replace(
-                "{account_profile}", self.config.account_profile
-            )
-            self._report_failure(task_id, f"command not found: {cmd_base}")
+            cmd_name = shlex.split(
+                self.config.cli_command.replace(
+                    "{account_profile}", self.config.account_profile
+                )
+            )[0]
+            self._report_failure(task_id, f"command not found: {cmd_name}")
         except Exception as e:
             self._report_failure(task_id, f"unexpected: {e}")
 
