@@ -24,3 +24,39 @@
 
 ---
 
+## v1.1 Production Readiness (Shipped: 2026-02-21)
+
+**Phases:** 4 | **Plans:** 9 | **Tests:** 404 | **New tests:** 110
+**Timeline:** 2026-02-20 -> 2026-02-21
+
+**Key accomplishments:**
+1. Fail-closed worker registration with WorkerManager validation, dev mode bypass
+2. Long-polling transport with LongPollRegistry, Condition-based wakeup, p95 < 1s dispatch
+3. Self-healing: auto-reregister on unknown_worker, buffer replay timer, smart watchdog with DB health
+4. Operator CLI: meshctl status (table + JSON), meshctl drain (poll-based graceful shutdown)
+
+**Archives:** `.planning/phases/07-tech-debt-cleanup/` through `.planning/phases/10-operator-cli/`
+
+---
+
+## v1.2 Operational Readiness (Shipped: 2026-02-23)
+
+**Phases:** 3 | **Plans:** 3 | **Tests:** 435 | **New tests:** 28 (+ 3 updated)
+**Timeline:** 2026-02-23
+
+**Key accomplishments:**
+1. Periodic dispatch loop (daemon thread, configurable interval, drains all tasks per cycle)
+2. POST /tasks endpoint (TaskCreateRequest DTO, idempotency, eager dispatch, 409 on duplicate)
+3. meshctl submit command (--title, --cli, --account, --phase, --priority, --payload)
+4. Real CLI invocation via subprocess (dry-run mode, guaranteed failure semantics, output truncation)
+5. Full env-based worker configuration (MESH_CLI_COMMAND, MESH_DRY_RUN, MESH_WORK_DIR, MESH_TASK_TIMEOUT_S)
+
+**Gaps closed:**
+- Dispatch loop: tasks no longer stuck in queued state
+- POST /tasks: tasks submittable via HTTP (not just direct DB insert)
+- CLI invocation: workers execute real commands (not fake stubs)
+
+**Archives:** `.planning/phases/11-dispatch-loop/` through `.planning/phases/13-cli-invocation/`
+
+---
+

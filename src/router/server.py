@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import signal
+import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
 from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
-from src.router.models import Worker
+from src.router.models import Task, TaskCreateRequest, Worker
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
 from src.router.verifier import VerifierGate
@@ -56,7 +57,9 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path == "/events":
+        if path == "/tasks":
+            self._handle_create_task()
+        elif path == "/events":
             self._handle_events()
         elif path == "/heartbeat":
             self._handle_heartbeat()
@@ -159,6 +162,50 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 worker_id, duration,
             )
             self._send_json(204, None)
+
+    def _handle_create_task(self) -> None:
+        """POST /tasks — create a new task for dispatch."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        state = self.server.router_state  # type: ignore[attr-defined]
+        metrics: MeshMetrics = state["metrics"]
+
+        try:
+            request = TaskCreateRequest(**data)
+        except (ValidationError, ValueError, TypeError) as e:
+            metrics.tasks_create_errors.labels(reason="invalid").inc()
+            self._send_json(400, {"error": "invalid_task", "detail": str(e)})
+            return
+
+        task = Task(**request.model_dump())
+
+        db: RouterDB = state["db"]
+        try:
+            db.insert_task(task)
+        except sqlite3.IntegrityError:
+            metrics.tasks_create_errors.labels(reason="duplicate").inc()
+            self._send_json(409, {"error": "duplicate_task", "detail": "idempotency_key already exists"})
+            return
+
+        # Eager dispatch (best-effort, periodic loop is backup)
+        scheduler: Scheduler = state["scheduler"]
+        try:
+            scheduler.dispatch()
+        except Exception as e:
+            logger.warning("Eager dispatch failed: %s", e)
+
+        logger.info("task_created id=%s title=%s", task.task_id, task.title)
+        metrics.tasks_created.inc()
+        self._send_json(201, {"status": "created", "task_id": task.task_id})
 
     def _handle_events(self) -> None:
         """POST /events — receive CloudEvent JSON from bridge.
@@ -549,6 +596,37 @@ def run_server(
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
+
+    # Start dispatch loop thread
+    dispatch_interval = float(os.environ.get("MESH_DISPATCH_INTERVAL_S", "5"))
+
+    def dispatch_loop() -> None:
+        """Periodically drain all dispatchable tasks to idle workers."""
+        while True:
+            time.sleep(dispatch_interval)
+            try:
+                dispatched = 0
+                while True:
+                    result = scheduler.dispatch()
+                    if result is None:
+                        break
+                    dispatched += 1
+                    logger.info(
+                        "dispatch task=%s -> worker=%s",
+                        result.task.task_id,
+                        result.worker.worker_id,
+                    )
+                    metrics.tasks_dispatched.inc()
+                if dispatched:
+                    metrics.dispatch_cycles_total.labels(result="dispatched").inc()
+                else:
+                    metrics.dispatch_cycles_total.labels(result="empty").inc()
+            except Exception as e:
+                logger.error("Dispatch loop error: %s", e)
+                metrics.dispatch_cycles_total.labels(result="error").inc()
+
+    dispatch_thread = threading.Thread(target=dispatch_loop, daemon=True, name="dispatch")
+    dispatch_thread.start()
 
     # Start periodic review timeout check thread
     def review_check_loop() -> None:

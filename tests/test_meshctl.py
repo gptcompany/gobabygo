@@ -17,6 +17,7 @@ from src.meshctl import (
     _format_duration,
     cmd_drain,
     cmd_status,
+    cmd_submit,
 )
 
 
@@ -370,3 +371,157 @@ class TestDrainCommand:
         cmd_drain(_drain_args("w1"))
         out = capsys.readouterr().out
         assert "drained and retired" in out
+
+
+# ---------------------------------------------------------------------------
+# Submit command tests
+# ---------------------------------------------------------------------------
+
+
+def _submit_args(
+    title: str = "Test task",
+    cli: str | None = None,
+    account: str | None = None,
+    phase: str | None = None,
+    priority: int | None = None,
+    payload: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="submit",
+        title=title,
+        cli=cli,
+        account=account,
+        phase=phase,
+        priority=priority,
+        payload=payload,
+    )
+
+
+class TestSubmitCommand:
+    @patch("src.meshctl.requests.post")
+    def test_submit_success(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            201, {"status": "created", "task_id": "t-123"}
+        )
+
+        cmd_submit(_submit_args("My Task"))
+        out = capsys.readouterr().out
+        assert "Task created: t-123" in out
+
+        # Verify POST body
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.kwargs["json"]["title"] == "My Task"
+
+    @patch("src.meshctl.requests.post")
+    def test_submit_with_payload(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            201, {"status": "created", "task_id": "t-456"}
+        )
+
+        cmd_submit(_submit_args("Task", payload='{"prompt": "Do X"}'))
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.kwargs["json"]["payload"] == {"prompt": "Do X"}
+
+    @patch("src.meshctl.requests.post")
+    def test_submit_invalid_payload_json(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        with pytest.raises(SystemExit) as exc:
+            cmd_submit(_submit_args("Task", payload="not json"))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "valid JSON" in err
+
+    @patch("src.meshctl.requests.post")
+    def test_submit_auth_failure(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(401)
+        with pytest.raises(SystemExit) as exc:
+            cmd_submit(_submit_args("Task"))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Authentication failed" in err
+
+    @patch("src.meshctl.requests.post")
+    def test_submit_duplicate_409(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            409, {"error": "duplicate_task", "detail": "idempotency_key already exists"}
+        )
+        with pytest.raises(SystemExit) as exc:
+            cmd_submit(_submit_args("Task"))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Duplicate" in err
+
+    @patch("src.meshctl.requests.post")
+    def test_submit_connection_error(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        import requests as req
+        mock_post.side_effect = req.ConnectionError("refused")
+        with pytest.raises(SystemExit) as exc:
+            cmd_submit(_submit_args("Task"))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Cannot connect" in err
+
+    @patch("src.meshctl.requests.post")
+    def test_submit_with_all_options(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            201, {"status": "created", "task_id": "t-789"}
+        )
+
+        cmd_submit(_submit_args(
+            "Full task",
+            cli="codex",
+            account="clientA",
+            phase="test",
+            priority=5,
+            payload='{"prompt": "Run tests"}',
+        ))
+
+        call_kwargs = mock_post.call_args
+        body = call_kwargs.kwargs["json"]
+        assert body["title"] == "Full task"
+        assert body["target_cli"] == "codex"
+        assert body["target_account"] == "clientA"
+        assert body["phase"] == "test"
+        assert body["priority"] == 5
+        assert body["payload"] == {"prompt": "Run tests"}

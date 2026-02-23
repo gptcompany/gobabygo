@@ -3,7 +3,8 @@
 ## Milestones
 
 - v1.0 MVP -- Phases 1-6 (shipped 2026-02-19)
-- v1.1 Production Readiness -- Phases 7-10 (in progress)
+- v1.1 Production Readiness -- Phases 7-10 (shipped 2026-02-21)
+- v1.2 Operational Readiness -- Phases 11-13 (shipped 2026-02-23)
 
 ## Phases
 
@@ -21,12 +22,18 @@ Full details: `.planning/milestones/v1.0-ROADMAP.md`
 
 </details>
 
-### v1.1 Production Readiness
+### v1.1 Production Readiness -- SHIPPED 2026-02-21
 
 - [x] **Phase 7: Tech Debt Cleanup** - Fix register validation bypass, complete YAML mapping, resolve mypy annotation
-- [ ] **Phase 8: Long-Polling Transport** - Replace 2s short-polling with server-held long-poll for worker task dispatch
+- [x] **Phase 8: Long-Polling Transport** - Replace 2s short-polling with server-held long-poll for worker task dispatch
 - [x] **Phase 9: Self-Healing Resilience** - Auto-reregister, buffer replay triggers, smart watchdog, review timeout detection
-- [x] **Phase 10: Operator CLI** - meshctl tool for status inspection and worker drain operations (completed 2026-02-21)
+- [x] **Phase 10: Operator CLI** - meshctl tool for status inspection and worker drain operations
+
+### v1.2 Operational Readiness
+
+- [x] **Phase 11: Dispatch Loop** - Periodic dispatch daemon thread auto-assigns queued tasks to idle workers
+- [x] **Phase 12: POST /tasks** - HTTP task submission endpoint with TaskCreateRequest DTO, meshctl submit
+- [x] **Phase 13: CLI Invocation** - Real subprocess execution, dry-run mode, guaranteed failure semantics
 
 ## Phase Details
 
@@ -90,6 +97,51 @@ Plans:
 - [x] 10-01-PLAN.md — Server-side endpoints (GET /workers, POST /drain) + draining FSM state
 - [x] 10-02-PLAN.md — meshctl CLI (argparse, status/drain commands, auth, error handling)
 
+### Phase 11: Dispatch Loop
+**Goal**: Tasks inserted in DB are automatically assigned to idle workers via periodic dispatch daemon thread
+**Depends on**: Phase 10
+**Requirements**: OPRDY-01, OPRDY-02
+**Success Criteria** (what must be TRUE):
+  1. Daemon thread drains all dispatchable tasks per cycle
+  2. Interval configurable via `MESH_DISPATCH_INTERVAL_S` (default 5s)
+  3. Prometheus metrics track dispatch cycles and tasks dispatched
+  4. E2E test works without manual `scheduler.dispatch()` call
+**Plans**: 1 plan
+
+Plans:
+- [x] 11-01-PLAN.md — Dispatch loop thread, metrics, tests, E2E update
+
+### Phase 12: POST /tasks
+**Goal**: Tasks submitted via HTTP POST with clean public API, duplicate detection, eager dispatch, and meshctl submit
+**Depends on**: Phase 11
+**Requirements**: OPRDY-03, OPRDY-04, OPRDY-05
+**Success Criteria** (what must be TRUE):
+  1. `POST /tasks` accepts TaskCreateRequest DTO and returns 201 with task_id
+  2. Internal fields (status, assigned_worker) set server-side, client values ignored
+  3. Duplicate idempotency_key returns 409
+  4. Eager dispatch assigns immediately when worker available
+  5. `meshctl submit` creates tasks via HTTP
+**Plans**: 1 plan
+
+Plans:
+- [x] 12-01-PLAN.md — POST /tasks handler, TaskCreateRequest, meshctl submit, tests
+
+### Phase 13: CLI Invocation
+**Goal**: Workers execute tasks by invoking real CLI subprocess with dry-run mode and guaranteed failure semantics
+**Depends on**: Phase 12
+**Requirements**: OPRDY-06, OPRDY-07, OPRDY-08
+**Success Criteria** (what must be TRUE):
+  1. `_execute_task` validates `payload.prompt` and invokes CLI subprocess
+  2. Dry-run mode logs command without executing
+  3. Every error scenario reports failure (no task stuck in 'running')
+  4. CLI command template supports `{account_profile}` interpolation
+  5. Output truncated (4KB stdout, 2KB stderr)
+  6. All config from env vars
+**Plans**: 1 plan
+
+Plans:
+- [x] 13-01-PLAN.md — Rewrite _execute_task, dry-run, failure semantics, config from env
+
 ## Progress
 
 **Execution Order:**
@@ -107,3 +159,6 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 8. Long-Polling Transport | v1.1 | 2/2 | Done | 2026-02-20 |
 | 9. Self-Healing Resilience | v1.1 | 3/3 | Done | 2026-02-21 |
 | 10. Operator CLI | v1.1 | 2/2 | Done | 2026-02-21 |
+| 11. Dispatch Loop | v1.2 | 1/1 | Done | 2026-02-23 |
+| 12. POST /tasks | v1.2 | 1/1 | Done | 2026-02-23 |
+| 13. CLI Invocation | v1.2 | 1/1 | Done | 2026-02-23 |
