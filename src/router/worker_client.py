@@ -99,8 +99,11 @@ class MeshWorker:
             "concurrency": 1,
         }
         resp = self._session.post(url, json=payload, timeout=5)
-        resp.raise_for_status()
-        logger.info("Registered as %s", self.config.worker_id)
+        if resp.status_code == 409:
+            logger.info("Worker %s already registered, continuing", self.config.worker_id)
+        else:
+            resp.raise_for_status()
+            logger.info("Registered as %s", self.config.worker_id)
 
     def _start_heartbeat(self) -> None:
         """Start background heartbeat thread."""

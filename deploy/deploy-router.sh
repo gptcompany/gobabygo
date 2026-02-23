@@ -56,12 +56,12 @@ echo "  rsync: OK"
 # 5. Create venv and install dependencies
 echo "[5/8] Installing dependencies..."
 ssh "$VPS_HOST" bash -s <<'REMOTE_INSTALL'
+set -euo pipefail
 export PATH="/root/.local/bin:$PATH"
 cd /opt/mesh-router
-# Create venv as mesh user (uv needs to be accessible)
-if [ ! -d venv ]; then
-    uv venv venv --python python3
-fi
+# Remove stale venv to avoid cached build artifacts
+rm -rf venv
+uv venv venv --python python3
 uv pip install -e . --python venv/bin/python
 chown -R mesh:mesh /opt/mesh-router
 REMOTE_INSTALL

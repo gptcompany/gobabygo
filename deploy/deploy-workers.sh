@@ -31,8 +31,9 @@ echo "[1/7] Creating mesh-worker user..."
 # Ensure mesh group exists (shared with router service unit)
 groupadd -f mesh
 if ! id mesh-worker &>/dev/null; then
-    useradd --system --create-home --shell /bin/bash -g mesh-worker -G mesh,sam mesh-worker
-    echo "  Created user: mesh-worker (groups: mesh-worker, mesh, sam)"
+    useradd --system --create-home --shell /bin/bash mesh-worker
+    usermod -aG mesh,sam mesh-worker 2>/dev/null || true
+    echo "  Created user: mesh-worker (groups: mesh, sam)"
 else
     usermod -aG mesh,sam mesh-worker 2>/dev/null || true
     echo "  User mesh-worker already exists (groups updated)"
@@ -80,17 +81,27 @@ if [ -z "$PYTHON_BIN" ]; then
     PYTHON_BIN="python3"
 fi
 
-if command -v uv &>/dev/null; then
-    if [ ! -d venv ]; then
-        sudo -u mesh-worker uv venv venv --python "$PYTHON_BIN"
+# Find uv — may not be in root's PATH
+UV_BIN=""
+for uv_candidate in /home/sam/.local/bin/uv /usr/local/bin/uv /root/.local/bin/uv; do
+    if [ -x "$uv_candidate" ]; then
+        UV_BIN="$uv_candidate"
+        break
     fi
-    sudo -u mesh-worker uv pip install -e . --python venv/bin/python
+done
+if [ -z "$UV_BIN" ] && command -v uv &>/dev/null; then
+    UV_BIN="$(command -v uv)"
+fi
+
+if [ -n "$UV_BIN" ]; then
+    echo "  Using uv: $UV_BIN"
+    rm -rf venv
+    # uv manages Python automatically — request 3.12 even if system only has 3.10
+    "$UV_BIN" venv venv --python 3.12
+    "$UV_BIN" pip install -e . --python venv/bin/python
 else
-    echo "WARNING: uv not found, falling back to pip..."
-    if [ ! -d venv ]; then
-        sudo -u mesh-worker "$PYTHON_BIN" -m venv venv
-    fi
-    sudo -u mesh-worker venv/bin/pip install -e .
+    echo "ERROR: uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
 fi
 chown -R mesh-worker:mesh-worker /opt/mesh-worker
 echo "  venv + deps: OK"

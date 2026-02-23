@@ -550,7 +550,8 @@ def run_server(
     heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
     scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
     transport = InProcessTransport(db)
-    buffer = FallbackBuffer()  # default path: ~/.mesh/events-buffer.jsonl
+    buffer_path = os.environ.get("MESH_BUFFER_PATH", "~/.mesh/events-buffer.jsonl")
+    buffer = FallbackBuffer(buffer_path=buffer_path)
     replay_interval = float(os.environ.get("MESH_BUFFER_REPLAY_INTERVAL_S", "60"))
     emitter = EventEmitter(
         transport=transport,
