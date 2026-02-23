@@ -13,7 +13,7 @@ Milestone: v1.2 Operational Readiness
 Phase: 13 of 13 (CLI Invocation) -- COMPLETE
 Plan: 1 of 1 in current phase -- COMPLETE
 Status: Phase 13 Complete, v1.2 Milestone Complete
-Last activity: 2026-02-23 -- Phases 11-13 completed (3 plans, 28 new tests, 435 total)
+Last activity: 2026-02-23 -- Phases 11-13 completed (3 plans, 29 new tests, 436 total) + shlex.split bugfix
 
 Progress: [============================] 100% overall (28/28 plans)
 v1.2:    [============================] 100% (3/3 phases complete)
@@ -91,12 +91,13 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - OPRDY-06: --print -p flags for claude CLI (print-only mode with prompt)
 - OPRDY-07: Dry-run reports as completed (not failed) since it's intentional behavior
 - OPRDY-08: Global try/except in _execute_task guarantees _report_failure on any error
+- FIX-01: shlex.split() for multi-word cli_command tokenization (subprocess requires list of args, not single string)
 
 ### Completed Milestones
 
 - **v1.0 MVP** (2026-02-19): 6 phases, 15 plans, 291 tests -- see `.planning/milestones/`
 - **v1.1 Production Readiness** (2026-02-21): 4 phases, 9 plans, 404 tests
-- **v1.2 Operational Readiness** (2026-02-23): 3 phases, 3 plans, 435 tests
+- **v1.2 Operational Readiness** (2026-02-23): 3 phases, 3 plans, 436 tests
 
 ### Completed Phases (v1.1)
 
@@ -109,7 +110,7 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 
 - **Phase 11: Dispatch Loop** (2026-02-23): 1 plan, 2 new tests (406 total + E2E updated), confidence 95%
 - **Phase 12: POST /tasks** (2026-02-23): 1 plan, 16 new tests (422 total), confidence 95%
-- **Phase 13: CLI Invocation** (2026-02-23): 1 plan, 11 new tests (435 total), confidence 95%
+- **Phase 13: CLI Invocation** (2026-02-23): 1 plan, 12 new tests (436 total), confidence 95%
 
 ### Pending Todos
 
@@ -122,5 +123,5 @@ None
 ## Session Continuity
 
 Last session: 2026-02-23
-Stopped at: Completed v1.2 milestone (all 3 phases delivered, 435 tests passing)
+Stopped at: Completed v1.2 milestone (all 3 phases delivered, 436 tests passing) + post-release bugfix (shlex.split)
 Resume with: v1.3 planning or production deployment

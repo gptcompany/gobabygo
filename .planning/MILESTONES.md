@@ -41,7 +41,7 @@
 
 ## v1.2 Operational Readiness (Shipped: 2026-02-23)
 
-**Phases:** 3 | **Plans:** 3 | **Tests:** 435 | **New tests:** 28 (+ 3 updated)
+**Phases:** 3 | **Plans:** 3 | **Tests:** 436 | **New tests:** 29 (+ 3 updated)
 **Timeline:** 2026-02-23
 
 **Key accomplishments:**
@@ -55,6 +55,9 @@
 - Dispatch loop: tasks no longer stuck in queued state
 - POST /tasks: tasks submittable via HTTP (not just direct DB insert)
 - CLI invocation: workers execute real commands (not fake stubs)
+
+**Post-release fix:**
+- shlex.split() for multi-word CLI commands (e.g. `ccs {account_profile}` → `["ccs", "work"]`)
 
 **Archives:** `.planning/phases/11-dispatch-loop/` through `.planning/phases/13-cli-invocation/`
 

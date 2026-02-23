@@ -34,7 +34,7 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 ## Current State
 
 **Shipped:** v1.2 Operational Readiness (2026-02-23)
-**Test suite:** 435 tests, all passing
+**Test suite:** 436 tests, all passing
 **Tech stack:** Python 3.11+, SQLite (WAL), Pydantic, CloudEvents, prometheus-client
 
 ## Requirements
@@ -141,6 +141,7 @@ None -- v1.2 complete
 | Dry-run mode for CLI invocation | Safe deployment validation before real execution | Good |
 | subprocess.run without shell=True | Prevents command injection; safe for user prompts | Good |
 | Output truncation (4KB stdout, 2KB stderr) | Prevents oversized task results in DB | Good |
+| shlex.split() for CLI command tokenization | Multi-word commands (e.g. "ccs work") must be split for subprocess with shell=False | Bugfix |
 
 ---
-*Last updated: 2026-02-23 after v1.2 milestone completed*
+*Last updated: 2026-02-23 after v1.2 milestone + shlex.split bugfix*
