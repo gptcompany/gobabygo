@@ -127,3 +127,12 @@ class TestBootOrderDoc:
         assert "Workstation Startup Sequence" in content
         assert "Verification" in content
         assert "Failure Recovery" in content
+
+    def test_session_first_e2e_runbook_exists(self):
+        path = DEPLOY_DIR / "SESSION-FIRST-E2E-RUNBOOK.md"
+        assert path.exists()
+        content = path.read_text()
+        assert "Session-First E2E Runbook" in content
+        assert ".111" in content
+        assert ".112" in content
+        assert "10.0.0.1" in content

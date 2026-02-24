@@ -32,6 +32,7 @@
    - approval/yolo/manual modes are configured in each CLI, not in router logic
 
 See `deploy/MAC-112-ITERM2-CLI-SETUP.md` for install/update/verification commands.
+For an end-to-end operator validation of interactive sessions, see `deploy/SESSION-FIRST-E2E-RUNBOOK.md`.
 
 ## Verification
 

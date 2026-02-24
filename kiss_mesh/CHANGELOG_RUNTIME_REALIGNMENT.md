@@ -83,6 +83,10 @@ Implementation validation executed during S0/S0.1:
 - router/unit/API tests passed (including session bus/session worker coverage)
 - deploy script tests passed
 - `py_compile` on `src/router/session_worker.py` passed
+- local E2E smoke test passed (router + tmux session worker + persisted `/sessions/*` bus)
+  - worker launched with `MESH_CLI_COMMAND=cat` to validate orchestration without CLI auth/login dependencies
+  - confirmed persisted `system` / `in` / `out` messages
+  - confirmed human-in-the-loop bus injection (`/sessions/send`) produced subsequent CLI output
 
 Operational verification performed on Mac `.112` (outside repo, operator machine):
 - enabled `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `~/.claude/settings.json`
@@ -104,4 +108,3 @@ Network assumptions (documented SSOT):
 - auto event emitter for command lifecycle
 - YAML mapping/override integration without changing runtime execution truth
 - milestone/status dashboards aligned with router event stream
-

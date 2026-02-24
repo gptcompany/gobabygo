@@ -107,6 +107,9 @@ During execution, `session_worker` appends incremental CLI output to `/sessions/
 (`direction="out"`, `role="cli"`) using tmux pane deltas/snapshots, so operators can tail
 progress without attaching immediately.
 
+For a real `.111` (worker) + `.112` (iTerm2 operator) VPN-first validation run, use:
+- `deploy/SESSION-FIRST-E2E-RUNBOOK.md`
+
 ## 5. Run the Smoke Test
 
 ```bash
