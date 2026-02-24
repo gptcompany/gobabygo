@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-from src.router.session_worker import SessionWorkerConfig, _sanitize_session_name
+from src.router.session_worker import (
+    SessionWorkerConfig,
+    _compute_output_emit,
+    _sanitize_session_name,
+)
 
 
 def test_sanitize_session_name() -> None:
@@ -36,3 +40,29 @@ def test_session_worker_config_from_env() -> None:
     assert cfg.cli_command == "claude"
     assert cfg.session_poll_interval_s == 0.5
     assert cfg.tmux_session_prefix == "meshx"
+
+
+def test_compute_output_emit_delta() -> None:
+    prev = "line1\nline2"
+    cur = "line1\nline2\nline3"
+    result = _compute_output_emit(prev, cur, max_chars=100)
+    assert result is not None
+    content, meta = result
+    assert content == "line3"
+    assert meta["snapshot"] is False
+    assert meta["kind"] == "delta"
+
+
+def test_compute_output_emit_snapshot_on_reflow() -> None:
+    prev = "abcd"
+    cur = "ab\ncd"
+    result = _compute_output_emit(prev, cur, max_chars=100)
+    assert result is not None
+    content, meta = result
+    assert content == "ab\ncd"
+    assert meta["snapshot"] is True
+    assert meta["kind"] == "snapshot"
+
+
+def test_compute_output_emit_none_on_unchanged() -> None:
+    assert _compute_output_emit("same", "same") is None

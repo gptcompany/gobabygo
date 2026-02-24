@@ -33,6 +33,42 @@ def _sanitize_session_name(value: str) -> str:
     return (s or "mesh-session")[:64]
 
 
+def _compute_output_emit(
+    previous_capture: str,
+    current_capture: str,
+    *,
+    max_chars: int = 8000,
+) -> tuple[str, dict] | None:
+    """Compute an output message payload from tmux pane snapshots.
+
+    Returns `(content, metadata)` or `None` if nothing should be emitted.
+    Heuristic:
+    - unchanged/empty => no emit
+    - prefix-growth => emit delta only
+    - otherwise => emit bounded snapshot (screen redraw / scroll / reflow)
+    """
+    prev = (previous_capture or "").strip()
+    cur = (current_capture or "").strip()
+    if not cur or cur == prev:
+        return None
+
+    if prev and cur.startswith(prev):
+        delta = cur[len(prev):].lstrip("\n")
+        if not delta:
+            return None
+        return delta[-max_chars:], {
+            "snapshot": False,
+            "kind": "delta",
+            "chars": len(delta),
+        }
+
+    return cur[-max_chars:], {
+        "snapshot": True,
+        "kind": "snapshot",
+        "chars": len(cur),
+    }
+
+
 @dataclass
 class SessionWorkerConfig:
     """Configuration for a tmux-backed interactive session worker."""
@@ -51,6 +87,7 @@ class SessionWorkerConfig:
     session_poll_interval_s: float = 1.0
     tmux_bin: str = "tmux"
     tmux_capture_lines: int = 200
+    output_emit_max_chars: int = 8000
     tmux_session_prefix: str = "mesh"
     task_timeout: int = 7200  # Hard ceiling for interactive sessions (2h)
     auto_complete_on_exit: bool = True
@@ -73,6 +110,7 @@ class SessionWorkerConfig:
             session_poll_interval_s=float(os.environ.get("MESH_SESSION_POLL_INTERVAL_S", "1.0")),
             tmux_bin=os.environ.get("MESH_TMUX_BIN", "tmux"),
             tmux_capture_lines=int(os.environ.get("MESH_TMUX_CAPTURE_LINES", "200")),
+            output_emit_max_chars=int(os.environ.get("MESH_OUTPUT_EMIT_MAX_CHARS", "8000")),
             tmux_session_prefix=os.environ.get("MESH_TMUX_SESSION_PREFIX", "mesh"),
             task_timeout=int(os.environ.get("MESH_TASK_TIMEOUT_S", "7200")),
             auto_complete_on_exit=os.environ.get("MESH_AUTO_COMPLETE_ON_EXIT", "1").strip() != "0",
@@ -218,6 +256,7 @@ class MeshSessionWorker:
             if msgs:
                 after_seq = max(int(m.get("seq") or 0) for m in msgs)
             last_capture = ""
+            last_emitted_capture = ""
 
             while self._running:
                 # Safety cap for abandoned sessions
@@ -243,16 +282,19 @@ class MeshSessionWorker:
                 captured = self._tmux_capture_pane(tmux_session_name)
                 if captured:
                     last_capture = captured
+                    last_emitted_capture = self._emit_cli_output_if_changed(
+                        session_id, captured, last_emitted_capture
+                    )
                 time.sleep(self.config.session_poll_interval_s)
 
             final_snapshot = last_capture
             if session_id:
-                if final_snapshot:
+                if final_snapshot and final_snapshot.strip() != (last_emitted_capture or "").strip():
                     self._send_session_message(
                         session_id,
                         direction="out",
                         role="cli",
-                        content=final_snapshot[-8000:],
+                        content=final_snapshot[-self.config.output_emit_max_chars:],
                         metadata={"snapshot": True, "final": True},
                     )
                 self._send_session_message(
@@ -353,6 +395,33 @@ class MeshSessionWorker:
         if proc.returncode != 0:
             return ""
         return proc.stdout.strip()
+
+    def _emit_cli_output_if_changed(
+        self,
+        session_id: str,
+        current_capture: str,
+        previous_emitted_capture: str,
+    ) -> str:
+        payload = _compute_output_emit(
+            previous_emitted_capture,
+            current_capture,
+            max_chars=self.config.output_emit_max_chars,
+        )
+        if payload is None:
+            return previous_emitted_capture
+        content, metadata = payload
+        try:
+            self._send_session_message(
+                session_id,
+                direction="out",
+                role="cli",
+                content=content,
+                metadata=metadata,
+            )
+        except requests.RequestException as e:
+            logger.warning("Failed to emit CLI output for session %s: %s", session_id, e)
+            return previous_emitted_capture
+        return current_capture
 
     def _ack_task(self, task_id: str) -> bool:
         try:

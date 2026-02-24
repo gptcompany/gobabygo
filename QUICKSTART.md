@@ -103,6 +103,10 @@ curl -s http://localhost:8780/sessions | python -m json.tool
 curl -s "http://localhost:8780/sessions/messages?session_id=<SESSION_ID>" | python -m json.tool
 ```
 
+During execution, `session_worker` appends incremental CLI output to `/sessions/messages`
+(`direction="out"`, `role="cli"`) using tmux pane deltas/snapshots, so operators can tail
+progress without attaching immediately.
+
 ## 5. Run the Smoke Test
 
 ```bash
