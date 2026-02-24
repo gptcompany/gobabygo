@@ -1,7 +1,10 @@
 # Handoff — Session-First E2E (2026-02-25)
 
-Date prepared:
-- 2026-02-24 (for execution on 2026-02-25)
+Prepared on:
+- 2026-02-24
+
+Execution date:
+- 2026-02-25
 
 Purpose:
 - resume work tomorrow without losing scope
@@ -129,4 +132,3 @@ Do not change runtime `TaskPhase` values to represent roadmap milestones.
 - `c57bc2e` — canonical docs: runtime fixes aligned with GSD tracking
 - `44eb98e` — runtime realignment changelog (GSD-tracked)
 - `f15c015` — deploy E2E runbook (`.111/.112`, VPN-first)
-
