@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator
 
-from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
+from src.router.models import Lease, Session, SessionMessage, Task, TaskEvent, TaskStatus, Worker
 
 _BUSY_RETRIES = 3
 _BUSY_BACKOFFS_MS = [50, 100, 200]
@@ -33,11 +33,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     payload         TEXT NOT NULL DEFAULT '{}',
     target_cli      TEXT NOT NULL DEFAULT 'claude',
     target_account  TEXT NOT NULL DEFAULT 'default',
+    execution_mode  TEXT NOT NULL DEFAULT 'batch',
     priority        INTEGER NOT NULL DEFAULT 1,
     deadline_ts     TEXT,
     depends_on      TEXT NOT NULL DEFAULT '[]',
     status          TEXT NOT NULL DEFAULT 'queued',
     assigned_worker TEXT,
+    session_id      TEXT,
     lease_expires_at TEXT,
     attempt         INTEGER NOT NULL DEFAULT 1,
     not_before      TEXT,
@@ -72,6 +74,7 @@ CREATE TABLE IF NOT EXISTS workers (
     cli_type        TEXT NOT NULL DEFAULT 'claude',
     account_profile TEXT NOT NULL DEFAULT 'default',
     capabilities    TEXT NOT NULL DEFAULT '[]',
+    execution_modes TEXT NOT NULL DEFAULT '["batch"]',
     role            TEXT NOT NULL DEFAULT 'worker',
     status          TEXT NOT NULL DEFAULT 'idle',
     last_heartbeat  TEXT NOT NULL,
@@ -105,6 +108,36 @@ CREATE TABLE IF NOT EXISTS dead_letter_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dead_letter_task_id ON dead_letter_events(task_id);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id      TEXT PRIMARY KEY,
+    worker_id       TEXT NOT NULL,
+    cli_type        TEXT NOT NULL DEFAULT 'claude',
+    account_profile TEXT NOT NULL DEFAULT 'default',
+    task_id         TEXT,
+    state           TEXT NOT NULL DEFAULT 'open',
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_worker_id ON sessions(worker_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_state ON sessions(state);
+CREATE INDEX IF NOT EXISTS idx_sessions_task_id ON sessions(task_id);
+
+CREATE TABLE IF NOT EXISTS session_messages (
+    seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    direction       TEXT NOT NULL DEFAULT 'in',
+    role            TEXT NOT NULL DEFAULT 'operator',
+    content         TEXT NOT NULL,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    ts              TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_messages_session_seq
+ON session_messages(session_id, seq);
 """
 
 
@@ -177,6 +210,21 @@ class RouterDB:
     def init_schema(self) -> None:
         """Create all tables and indexes if they don't exist."""
         self._conn.executescript(_SCHEMA_SQL)
+        # Lightweight additive migrations for existing DBs (safe to re-run)
+        self._ensure_column("tasks", "execution_mode", "TEXT NOT NULL DEFAULT 'batch'")
+        self._ensure_column("tasks", "session_id", "TEXT")
+        self._ensure_column("workers", "execution_modes", "TEXT NOT NULL DEFAULT '[\"batch\"]'")
+        self._conn.commit()
+
+    def _ensure_column(self, table: str, column: str, sql_type_clause: str) -> None:
+        """Add a column if it does not exist (best-effort additive migration)."""
+        cur = self._conn.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cur.fetchall()}
+        if column in existing:
+            return
+        self._conn.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {sql_type_clause}"
+        )
 
     @contextmanager
     def transaction(self) -> Generator[sqlite3.Connection, None, None]:
@@ -205,11 +253,13 @@ class RouterDB:
             payload=json.loads(row["payload"]),
             target_cli=row["target_cli"],
             target_account=row["target_account"],
+            execution_mode=row["execution_mode"] if "execution_mode" in row.keys() else "batch",
             priority=row["priority"],
             deadline_ts=row["deadline_ts"],
             depends_on=json.loads(row["depends_on"]),
             status=row["status"],
             assigned_worker=row["assigned_worker"],
+            session_id=row["session_id"] if "session_id" in row.keys() else None,
             lease_expires_at=row["lease_expires_at"],
             attempt=row["attempt"],
             not_before=row["not_before"],
@@ -229,11 +279,11 @@ class RouterDB:
         c.execute(
             """INSERT INTO tasks (
                 task_id, parent_task_id, phase, title, payload, target_cli,
-                target_account, priority, deadline_ts, depends_on, status,
-                assigned_worker, lease_expires_at, attempt, not_before,
+                target_account, execution_mode, priority, deadline_ts, depends_on, status,
+                assigned_worker, session_id, lease_expires_at, attempt, not_before,
                 created_by, critical, rejection_count, review_timeout_at,
                 idempotency_key, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.task_id,
                 task.parent_task_id,
@@ -242,11 +292,13 @@ class RouterDB:
                 json.dumps(task.payload),
                 task.target_cli.value,
                 task.target_account,
+                task.execution_mode.value if hasattr(task.execution_mode, "value") else str(task.execution_mode),
                 task.priority,
                 task.deadline_ts,
                 json.dumps(task.depends_on),
                 task.status.value,
                 task.assigned_worker,
+                task.session_id,
                 task.lease_expires_at,
                 task.attempt,
                 task.not_before,
@@ -339,6 +391,151 @@ class RouterDB:
         )
         return [self._event_from_row(row) for row in cur.fetchall()]
 
+    # -- Sessions --
+
+    def _session_from_row(self, row: sqlite3.Row) -> Session:
+        return Session(
+            session_id=row["session_id"],
+            worker_id=row["worker_id"],
+            cli_type=row["cli_type"],
+            account_profile=row["account_profile"],
+            task_id=row["task_id"],
+            state=row["state"],
+            metadata=json.loads(row["metadata"]),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def _session_message_from_row(self, row: sqlite3.Row) -> SessionMessage:
+        return SessionMessage(
+            seq=row["seq"],
+            session_id=row["session_id"],
+            direction=row["direction"],
+            role=row["role"],
+            content=row["content"],
+            metadata=json.loads(row["metadata"]),
+            ts=row["ts"],
+        )
+
+    @_retry_on_busy
+    def insert_session(self, session: Session, conn: sqlite3.Connection | None = None) -> Session:
+        c = conn or self._conn
+        c.execute(
+            """INSERT INTO sessions (
+                session_id, worker_id, cli_type, account_profile, task_id,
+                state, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session.session_id,
+                session.worker_id,
+                session.cli_type.value if hasattr(session.cli_type, "value") else str(session.cli_type),
+                session.account_profile,
+                session.task_id,
+                session.state.value if hasattr(session.state, "value") else str(session.state),
+                json.dumps(session.metadata),
+                session.created_at,
+                session.updated_at,
+            ),
+        )
+        if conn is None:
+            self._conn.commit()
+        return session
+
+    def get_session(self, session_id: str) -> Session | None:
+        cur = self._conn.execute(
+            "SELECT * FROM sessions WHERE session_id = ?",
+            (session_id,),
+        )
+        row = cur.fetchone()
+        return self._session_from_row(row) if row else None
+
+    def list_sessions(
+        self,
+        *,
+        state: str | None = None,
+        worker_id: str | None = None,
+        limit: int = 200,
+    ) -> list[Session]:
+        sql = "SELECT * FROM sessions"
+        params: list[object] = []
+        clauses: list[str] = []
+        if state is not None:
+            clauses.append("state = ?")
+            params.append(state)
+        if worker_id is not None:
+            clauses.append("worker_id = ?")
+            params.append(worker_id)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        cur = self._conn.execute(sql, params)
+        return [self._session_from_row(row) for row in cur.fetchall()]
+
+    @_retry_on_busy
+    def update_session(
+        self,
+        session_id: str,
+        updates: dict[str, str | None],
+        conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        if not updates:
+            return False
+        c = conn or self._conn
+        updates = dict(updates)
+        updates["updated_at"] = _utc_now()
+        if "metadata" in updates and isinstance(updates["metadata"], dict):  # type: ignore[unreachable]
+            updates["metadata"] = json.dumps(updates["metadata"])  # pragma: no cover
+        set_clauses = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [session_id]
+        cur = c.execute(
+            f"UPDATE sessions SET {set_clauses} WHERE session_id = ?",
+            values,
+        )
+        if conn is None:
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    @_retry_on_busy
+    def append_session_message(
+        self,
+        message: SessionMessage,
+        conn: sqlite3.Connection | None = None,
+    ) -> int:
+        c = conn or self._conn
+        cur = c.execute(
+            """INSERT INTO session_messages (
+                session_id, direction, role, content, metadata, ts
+            ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                message.session_id,
+                message.direction,
+                message.role,
+                message.content,
+                json.dumps(message.metadata),
+                message.ts,
+            ),
+        )
+        if conn is None:
+            self._conn.commit()
+        return int(cur.lastrowid)
+
+    def list_session_messages(
+        self,
+        session_id: str,
+        *,
+        after_seq: int = 0,
+        limit: int = 200,
+    ) -> list[SessionMessage]:
+        cur = self._conn.execute(
+            """SELECT * FROM session_messages
+            WHERE session_id = ? AND seq > ?
+            ORDER BY seq ASC
+            LIMIT ?""",
+            (session_id, after_seq, limit),
+        )
+        return [self._session_message_from_row(row) for row in cur.fetchall()]
+
     # -- Workers --
 
     def _worker_from_row(self, row: sqlite3.Row) -> Worker:
@@ -348,6 +545,7 @@ class RouterDB:
             cli_type=row["cli_type"],
             account_profile=row["account_profile"],
             capabilities=json.loads(row["capabilities"]),
+            execution_modes=json.loads(row["execution_modes"]) if "execution_modes" in row.keys() else ["batch"],
             role=row["role"],
             status=row["status"],
             last_heartbeat=row["last_heartbeat"],
@@ -363,15 +561,16 @@ class RouterDB:
         c.execute(
             """INSERT INTO workers (
                 worker_id, machine, cli_type, account_profile,
-                capabilities, role, status, last_heartbeat, idle_since,
+                capabilities, execution_modes, role, status, last_heartbeat, idle_since,
                 stale_since, concurrency
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 worker.worker_id,
                 worker.machine,
                 worker.cli_type.value,
                 worker.account_profile,
                 json.dumps(worker.capabilities),
+                json.dumps(worker.execution_modes),
                 worker.role,
                 worker.status,
                 worker.last_heartbeat,
@@ -391,14 +590,15 @@ class RouterDB:
         c.execute(
             """INSERT INTO workers (
                 worker_id, machine, cli_type, account_profile,
-                capabilities, role, status, last_heartbeat, idle_since,
+                capabilities, execution_modes, role, status, last_heartbeat, idle_since,
                 stale_since, concurrency
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(worker_id) DO UPDATE SET
                 machine=excluded.machine,
                 cli_type=excluded.cli_type,
                 account_profile=excluded.account_profile,
                 capabilities=excluded.capabilities,
+                execution_modes=excluded.execution_modes,
                 status=excluded.status,
                 last_heartbeat=excluded.last_heartbeat,
                 idle_since=excluded.idle_since,
@@ -410,6 +610,7 @@ class RouterDB:
                 worker.cli_type.value,
                 worker.account_profile,
                 json.dumps(worker.capabilities),
+                json.dumps(worker.execution_modes),
                 worker.role,
                 worker.status,
                 worker.last_heartbeat,

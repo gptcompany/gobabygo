@@ -26,6 +26,22 @@ python -m src.router.worker_client
 
 The worker registers itself, then long-polls `/tasks/next` waiting for work.
 
+## 2b. Start an Interactive Session Worker (Claude/Codex)
+
+Use this for tmux-backed interactive sessions (human can attach via iTerm2/tmux).
+
+```bash
+MESH_WORKER_ID=ws-claude-session-01 \
+MESH_CLI_TYPE=claude \
+MESH_ACCOUNT_PROFILE=work-claude \
+MESH_EXECUTION_MODES=session \
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
+python -m src.router.session_worker
+```
+
+Session workers persist session metadata/messages via router `/sessions/*`.
+CLI approval prompts remain CLI-native (manual/yolo/etc.).
+
 ## 3. Check Status with meshctl
 
 ```bash
@@ -65,6 +81,27 @@ db.insert_task(task)
 ```
 
 The scheduler dispatches it to the next eligible idle worker.
+
+Interactive task example (`execution_mode=session`):
+
+```bash
+curl -s -X POST http://localhost:8780/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "title": "Interactive refactor with human oversight",
+    "target_cli": "claude",
+    "target_account": "work-claude",
+    "execution_mode": "session",
+    "payload": {"prompt": "Refactor auth module safely and ask before risky commands"}
+  }'
+```
+
+Inspect sessions/messages:
+
+```bash
+curl -s http://localhost:8780/sessions | python -m json.tool
+curl -s "http://localhost:8780/sessions/messages?session_id=<SESSION_ID>" | python -m json.tool
+```
 
 ## 5. Run the Smoke Test
 

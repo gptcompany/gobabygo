@@ -60,11 +60,13 @@ class Scheduler:
     def find_all_eligible_workers(self, task: Task) -> list[Worker]:
         """Find all eligible workers for a task, sorted by idle_since ASC."""
         idle_workers = self._db.list_workers(status="idle")
+        task_mode = task.execution_mode.value if hasattr(task.execution_mode, "value") else str(task.execution_mode)
         eligible = [
             w
             for w in idle_workers
             if w.cli_type == task.target_cli
             and w.account_profile == task.target_account
+            and task_mode in (w.execution_modes or ["batch"])
         ]
         eligible.sort(key=lambda w: w.idle_since or "")
         return eligible

@@ -88,18 +88,21 @@ case "$MODE" in
     fi
 
     # 5. Copy env file templates (owned by service user)
-    for env_file in deploy/mesh-worker-*.env; do
+    # Includes batch (`mesh-worker-*`) and interactive session (`mesh-session-*`) templates.
+    for env_file in deploy/mesh-*.env; do
       [ -e "$env_file" ] || continue
       name=$(basename "$env_file" .env)
-      instance="${name#mesh-worker-}"
-      sudo cp "$env_file" "/etc/mesh-worker/${instance}.env"
-      sudo chown mesh-worker "/etc/mesh-worker/${instance}.env"
-      sudo chmod 600 "/etc/mesh-worker/${instance}.env"
+      sudo cp "$env_file" "/etc/mesh-worker/${name}.env"
+      sudo chown mesh-worker "/etc/mesh-worker/${name}.env"
+      sudo chmod 600 "/etc/mesh-worker/${name}.env"
     done
     echo "!! Edit /etc/mesh-worker/*.env with real MESH_AUTH_TOKEN and MESH_ROUTER_URL"
 
     # 6. Install systemd template unit
     sudo cp deploy/mesh-worker@.service /etc/systemd/system/
+    if [ -f deploy/mesh-session-worker@.service ]; then
+      sudo cp deploy/mesh-session-worker@.service /etc/systemd/system/
+    fi
     sudo systemctl daemon-reload
 
     # Enable known worker instances
@@ -107,7 +110,8 @@ case "$MODE" in
     sudo systemctl enable mesh-worker@codex-work.service
     sudo systemctl enable mesh-worker@gemini-work.service
 
-    echo "=== Workers installed. Start with: sudo systemctl start mesh-worker@claude-work ==="
+    echo "=== Workers installed. Start batch with: sudo systemctl start mesh-worker@claude-work ==="
+    echo "=== Interactive session workers available: mesh-session-worker@mesh-session-claude-work ==="
     ;;
 
   *)

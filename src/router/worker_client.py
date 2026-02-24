@@ -38,6 +38,7 @@ class WorkerConfig:
     poll_interval: float = 2.0
     longpoll_timeout: float = 25.0  # Must match server MESH_LONGPOLL_TIMEOUT_S
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor"])
+    execution_modes: list[str] = field(default_factory=lambda: ["batch"])
     cli_command: str = "claude"  # Template: "ccs {account_profile}" for multi-account
     dry_run: bool = False  # MESH_DRY_RUN=1 logs without executing
     work_dir: str = "/tmp/mesh-tasks"  # MESH_WORK_DIR
@@ -54,6 +55,10 @@ class WorkerConfig:
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
+            execution_modes=[
+                m.strip() for m in os.environ.get("MESH_EXECUTION_MODES", "batch").split(",")
+                if m.strip()
+            ] or ["batch"],
             dry_run=os.environ.get("MESH_DRY_RUN", "").strip() == "1",
             work_dir=os.environ.get("MESH_WORK_DIR", "/tmp/mesh-tasks"),
             task_timeout=int(os.environ.get("MESH_TASK_TIMEOUT_S", "1800")),
@@ -95,6 +100,7 @@ class MeshWorker:
             "cli_type": self.config.cli_type,
             "account_profile": self.config.account_profile,
             "capabilities": self.config.capabilities,
+            "execution_modes": self.config.execution_modes,
             "status": "idle",
             "concurrency": 1,
         }
@@ -194,6 +200,7 @@ class MeshWorker:
         task_id = task["task_id"]
         payload = task.get("payload", {})
         prompt = payload.get("prompt", "")
+        execution_mode = str(task.get("execution_mode", "batch")).strip() or "batch"
 
         logger.info("Executing task %s: %s", task_id, task.get("title", "untitled"))
 
@@ -203,6 +210,12 @@ class MeshWorker:
 
         try:
             # Validate payload contract
+            if execution_mode != "batch":
+                self._report_failure(
+                    task_id,
+                    f"unsupported execution_mode={execution_mode} for batch worker",
+                )
+                return
             if not prompt:
                 self._report_failure(task_id, "missing payload.prompt")
                 return

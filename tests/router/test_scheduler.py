@@ -6,7 +6,7 @@ import pytest
 
 from src.router.db import RouterDB
 from src.router.longpoll import LongPollRegistry
-from src.router.models import CLIType, Task, TaskStatus, Worker
+from src.router.models import CLIType, ExecutionMode, Task, TaskStatus, Worker
 from src.router.scheduler import Scheduler
 
 
@@ -34,11 +34,20 @@ def _future(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
 
 
-def _add_worker(db, worker_id="w1", account="work", cli=CLIType.claude, status="idle", idle_since=None):
+def _add_worker(
+    db,
+    worker_id="w1",
+    account="work",
+    cli=CLIType.claude,
+    status="idle",
+    idle_since=None,
+    execution_modes=None,
+):
     w = Worker(
         worker_id=worker_id, machine="ws1", cli_type=cli,
         account_profile=account, status=status,
         last_heartbeat=_now(), idle_since=idle_since or _now(),
+        execution_modes=execution_modes or ["batch"],
     )
     db.insert_worker(w)
     return w
@@ -82,6 +91,37 @@ class TestFindEligibleWorker:
         # w2 has been idle longer -> should be first
         assert workers[0].worker_id == "w2"
         assert workers[1].worker_id == "w1"
+
+    def test_session_task_excludes_batch_only_worker(self, sched, db):
+        _add_worker(db, "w1", "work", CLIType.claude, execution_modes=["batch"])
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.session,
+        )
+        assert sched.find_all_eligible_workers(task) == []
+
+    def test_session_task_matches_session_worker(self, sched, db):
+        _add_worker(db, "w1", "work", CLIType.claude, execution_modes=["session"])
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.session,
+        )
+        workers = sched.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w1"]
+
+    def test_batch_task_excludes_session_only_worker(self, sched, db):
+        _add_worker(db, "w1", "work", CLIType.claude, execution_modes=["session"])
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.batch,
+        )
+        assert sched.find_all_eligible_workers(task) == []
 
 
 class TestFindNextTask:

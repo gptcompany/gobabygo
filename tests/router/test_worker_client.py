@@ -138,6 +138,7 @@ class TestWorkerConfig:
             "MESH_CLI_TYPE": "codex",
             "MESH_ACCOUNT_PROFILE": "clientA",
             "MESH_AUTH_TOKEN": "tok-123",
+            "MESH_EXECUTION_MODES": "session,batch",
         }
         with patch.dict(os.environ, env):
             config = WorkerConfig.from_env()
@@ -146,6 +147,7 @@ class TestWorkerConfig:
             assert config.cli_type == "codex"
             assert config.account_profile == "clientA"
             assert config.auth_token == "tok-123"
+            assert config.execution_modes == ["session", "batch"]
 
 
 class TestMeshWorkerRegistration:
@@ -164,6 +166,7 @@ class TestMeshWorkerRegistration:
         assert call["worker_id"] == "ws-test-01"
         assert call["cli_type"] == "claude"
         assert call["account_profile"] == "work"
+        assert call["execution_modes"] == ["batch"]
         assert call["status"] == "idle"
 
     def test_register_includes_auth_header(self, mock_router):

@@ -1289,3 +1289,85 @@ class TestPostTasksEndpoint:
         task = db.get_task(resp.json()["task_id"])
         assert task.payload["prompt"] == "Hello world"
         assert task.payload["working_dir"] == "/tmp"
+
+
+class TestSessionBusEndpoints:
+    def test_open_send_read_close_roundtrip(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+        task = Task(
+            title="Interactive task",
+            phase="implement",
+            target_cli="claude",
+            target_account="work",
+            execution_mode="session",
+            idempotency_key="session-bus-1",
+        )
+        db.insert_task(task)
+
+        open_resp = requests.post(
+            f"{server_url}/sessions/open",
+            json={
+                "worker_id": "w1",
+                "cli_type": "claude",
+                "account_profile": "work",
+                "task_id": task.task_id,
+                "metadata": {"tmux_session": "mesh-claude-test"},
+            },
+        )
+        assert open_resp.status_code == 201
+        session = open_resp.json()["session"]
+        session_id = session["session_id"]
+        assert session["worker_id"] == "w1"
+        assert session["metadata"]["tmux_session"] == "mesh-claude-test"
+
+        send_resp = requests.post(
+            f"{server_url}/sessions/send",
+            json={
+                "session_id": session_id,
+                "direction": "in",
+                "role": "operator",
+                "content": "Please continue",
+            },
+        )
+        assert send_resp.status_code == 201
+        assert send_resp.json()["seq"] >= 1
+
+        list_resp = requests.get(f"{server_url}/sessions")
+        assert list_resp.status_code == 200
+        assert any(s["session_id"] == session_id for s in list_resp.json()["sessions"])
+
+        get_resp = requests.get(f"{server_url}/sessions/{session_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["session_id"] == session_id
+
+        msg_resp = requests.get(
+            f"{server_url}/sessions/messages",
+            params={"session_id": session_id, "after_seq": 0},
+        )
+        assert msg_resp.status_code == 200
+        messages = msg_resp.json()["messages"]
+        assert len(messages) == 1
+        assert messages[0]["content"] == "Please continue"
+
+        close_resp = requests.post(
+            f"{server_url}/sessions/close",
+            json={"session_id": session_id, "state": "closed"},
+        )
+        assert close_resp.status_code == 200
+
+        send_closed = requests.post(
+            f"{server_url}/sessions/send",
+            json={
+                "session_id": session_id,
+                "direction": "in",
+                "role": "operator",
+                "content": "late message",
+            },
+        )
+        assert send_closed.status_code == 409
+
+        refreshed_task = db.get_task(task.task_id)
+        # Session open should persist linkage when task_id is provided.
+        assert refreshed_task is not None
+        assert refreshed_task.session_id == session_id

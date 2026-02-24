@@ -24,7 +24,7 @@ from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
 from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
-from src.router.models import Task, TaskCreateRequest, Worker
+from src.router.models import Session, SessionMessage, Task, TaskCreateRequest, Worker
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
 from src.router.verifier import VerifierGate
@@ -46,6 +46,16 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_task_poll()
         elif path == "/workers":
             self._handle_list_workers()
+        elif path == "/sessions":
+            self._handle_list_sessions()
+        elif path == "/sessions/messages":
+            self._handle_list_session_messages()
+        elif path.startswith("/sessions/"):
+            session_id = path[len("/sessions/"):]
+            if session_id:
+                self._handle_get_session(session_id)
+            else:
+                self._send_json(404, {"error": "not_found"})
         elif path.startswith("/workers/"):
             worker_id = path[len("/workers/"):]
             if worker_id:
@@ -65,6 +75,12 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_heartbeat()
         elif path == "/register":
             self._handle_register()
+        elif path == "/sessions/open":
+            self._handle_open_session()
+        elif path == "/sessions/send":
+            self._handle_send_session_message()
+        elif path == "/sessions/close":
+            self._handle_close_session()
         elif path == "/tasks/ack":
             self._handle_task_ack()
         elif path == "/tasks/complete":
@@ -363,6 +379,160 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
         except KeyError as e:
             self._send_json(400, {"error": f"missing_field: {e}"})
+
+    # --- Session bus endpoints ---
+
+    def _handle_open_session(self) -> None:
+        """POST /sessions/open — create a persisted interactive session record."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        try:
+            session = Session(**data)
+        except (ValidationError, ValueError, TypeError) as e:
+            self._send_json(400, {"error": "invalid_session", "detail": str(e)})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        try:
+            db.insert_session(session)
+        except sqlite3.IntegrityError:
+            self._send_json(409, {"error": "duplicate_session"})
+            return
+        if session.task_id:
+            # Link task -> session for auditability / later operator attach workflows.
+            db.update_task_fields(session.task_id, {"session_id": session.session_id})
+
+        self._send_json(201, {"status": "opened", "session": session.model_dump(mode="json")})
+
+    def _handle_send_session_message(self) -> None:
+        """POST /sessions/send — append a persisted message to a session."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        try:
+            message = SessionMessage(**data)
+        except (ValidationError, ValueError, TypeError) as e:
+            self._send_json(400, {"error": "invalid_session_message", "detail": str(e)})
+            return
+
+        state = self.server.router_state  # type: ignore[attr-defined]
+        db: RouterDB = state["db"]
+        session = db.get_session(message.session_id)
+        if session is None:
+            self._send_json(404, {"error": "session_not_found"})
+            return
+        session_state = session.state.value if hasattr(session.state, "value") else str(session.state)
+        if session_state in {"closed", "errored"}:
+            self._send_json(409, {"error": "session_closed"})
+            return
+
+        try:
+            seq = db.append_session_message(message)
+        except sqlite3.IntegrityError:
+            self._send_json(404, {"error": "session_not_found"})
+            return
+
+        self._send_json(201, {"status": "accepted", "seq": seq, "session_id": message.session_id})
+
+    def _handle_close_session(self) -> None:
+        """POST /sessions/close — mark a session as closed/errored."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        session_id = data.get("session_id")
+        if not session_id:
+            self._send_json(400, {"error": "missing_session_id"})
+            return
+        requested_state = str(data.get("state", "closed"))
+        if requested_state not in {"closed", "errored"}:
+            self._send_json(400, {"error": "invalid_state"})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        ok = db.update_session(session_id, {"state": requested_state})
+        if not ok:
+            self._send_json(404, {"error": "session_not_found"})
+            return
+
+        self._send_json(200, {"status": requested_state, "session_id": session_id})
+
+    def _handle_list_sessions(self) -> None:
+        """GET /sessions — list persisted sessions."""
+        if not self._check_auth():
+            return
+        query = parse_qs(urlparse(self.path).query)
+        state_q = query.get("state", [None])[0]
+        worker_id = query.get("worker_id", [None])[0]
+        limit_raw = query.get("limit", ["200"])[0]
+        try:
+            limit = max(1, min(1000, int(limit_raw)))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_limit"})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        sessions = db.list_sessions(state=state_q, worker_id=worker_id, limit=limit)
+        self._send_json(200, {"sessions": [s.model_dump(mode="json") for s in sessions]})
+
+    def _handle_get_session(self, session_id: str) -> None:
+        """GET /sessions/<id> — fetch a single session."""
+        if not self._check_auth():
+            return
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        session = db.get_session(session_id)
+        if session is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+        self._send_json(200, session.model_dump(mode="json"))
+
+    def _handle_list_session_messages(self) -> None:
+        """GET /sessions/messages?session_id=...&after_seq=N&limit=M."""
+        if not self._check_auth():
+            return
+        query = parse_qs(urlparse(self.path).query)
+        session_id = query.get("session_id", [None])[0]
+        if not session_id:
+            self._send_json(400, {"error": "missing_session_id"})
+            return
+        try:
+            after_seq = int(query.get("after_seq", ["0"])[0])
+            limit = max(1, min(1000, int(query.get("limit", ["200"])[0])))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_pagination"})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        if db.get_session(session_id) is None:
+            self._send_json(404, {"error": "session_not_found"})
+            return
+
+        messages = db.list_session_messages(session_id, after_seq=after_seq, limit=limit)
+        self._send_json(200, {"messages": [m.model_dump(mode="json") for m in messages]})
 
     # --- Worker management endpoints ---
 

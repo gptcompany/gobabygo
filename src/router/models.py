@@ -55,6 +55,11 @@ class CLIType(str, Enum):
     gemini = "gemini"
 
 
+class ExecutionMode(str, Enum):
+    batch = "batch"
+    session = "session"
+
+
 class Task(BaseModel):
     task_id: str = Field(default_factory=_uuid4)
     parent_task_id: str | None = None
@@ -63,11 +68,13 @@ class Task(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     target_cli: CLIType = CLIType.claude
     target_account: str = "default"
+    execution_mode: ExecutionMode = ExecutionMode.batch
     priority: int = 1
     deadline_ts: str | None = None
     depends_on: list[str] = Field(default_factory=list)
     status: TaskStatus = TaskStatus.queued
     assigned_worker: str | None = None
+    session_id: str | None = None
     lease_expires_at: str | None = None
     attempt: int = 1
     not_before: str | None = None
@@ -88,6 +95,7 @@ class TaskCreateRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     target_cli: CLIType = CLIType.claude
     target_account: str = "work"
+    execution_mode: ExecutionMode = ExecutionMode.batch
     priority: int = 1
     depends_on: list[str] = Field(default_factory=list)
     deadline_ts: str | None = None
@@ -111,6 +119,7 @@ class Worker(BaseModel):
     cli_type: CLIType = CLIType.claude
     account_profile: str = "default"
     capabilities: list[str] = Field(default_factory=list)
+    execution_modes: list[str] = Field(default_factory=lambda: [ExecutionMode.batch.value])
     role: str = CommunicationRole.worker.value
     status: str = "idle"
     last_heartbeat: str = Field(default_factory=_utc_now)
@@ -125,3 +134,31 @@ class Lease(BaseModel):
     worker_id: str
     granted_at: str = Field(default_factory=_utc_now)
     expires_at: str
+
+
+class SessionState(str, Enum):
+    open = "open"
+    closed = "closed"
+    errored = "errored"
+
+
+class Session(BaseModel):
+    session_id: str = Field(default_factory=_uuid4)
+    worker_id: str
+    cli_type: CLIType = CLIType.claude
+    account_profile: str = "default"
+    task_id: str | None = None
+    state: SessionState = SessionState.open
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=_utc_now)
+    updated_at: str = Field(default_factory=_utc_now)
+
+
+class SessionMessage(BaseModel):
+    session_id: str
+    direction: str = "in"  # in|out|system (relative to session process)
+    role: str = "operator"  # operator|worker|cli|system
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    seq: int | None = None
+    ts: str = Field(default_factory=_utc_now)

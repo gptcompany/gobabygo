@@ -123,9 +123,23 @@ for worker in "${WORKERS[@]}"; do
     echo "  ${worker}.env: OK"
 done
 
+# Optional interactive session worker env templates (claude/codex/gemini if present)
+for SRC_ENV in "${PROJECT_ROOT}"/deploy/mesh-session-*.env; do
+    [ -f "$SRC_ENV" ] || continue
+    name="$(basename "$SRC_ENV" .env)"
+    DST_ENV="/etc/mesh-worker/${name}.env"
+    sed "s/__REPLACE_WITH_TOKEN__/${TOKEN}/" "$SRC_ENV" > "$DST_ENV"
+    chown mesh-worker:mesh-worker "$DST_ENV"
+    chmod 600 "$DST_ENV"
+    echo "  ${name}.env: OK (session template)"
+done
+
 # 6. Install systemd template unit
 echo "[6/7] Installing systemd service..."
 cp "${PROJECT_ROOT}/deploy/mesh-worker@.service" /etc/systemd/system/mesh-worker@.service
+if [ -f "${PROJECT_ROOT}/deploy/mesh-session-worker@.service" ]; then
+    cp "${PROJECT_ROOT}/deploy/mesh-session-worker@.service" /etc/systemd/system/mesh-session-worker@.service
+fi
 systemctl daemon-reload
 
 for worker in "${WORKERS[@]}"; do
@@ -163,3 +177,4 @@ else
     echo "=== Some workers failed to start — check logs above ==="
 fi
 echo "  Logs: journalctl -u mesh-worker@claude-work -f"
+echo "  Interactive session worker (manual start): systemctl start mesh-session-worker@mesh-session-claude-work"

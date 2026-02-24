@@ -100,6 +100,7 @@ class WorkerManager:
                         "capabilities": json.dumps(
                             worker.capabilities
                         ),
+                        "execution_modes": json.dumps(worker.execution_modes),
                     },
                     conn=conn,
                 )
@@ -125,6 +126,7 @@ class WorkerManager:
                         "machine": worker.machine,
                         "cli_type": worker.cli_type.value,
                         "account_profile": worker.account_profile,
+                        "execution_modes": worker.execution_modes,
                     },
                     idempotency_key=_uuid4(),
                 ),

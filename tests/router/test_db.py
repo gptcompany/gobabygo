@@ -11,7 +11,10 @@ import pytest
 from src.router.db import RouterDB
 from src.router.models import (
     CLIType,
+    ExecutionMode,
     Lease,
+    Session,
+    SessionMessage,
     Task,
     TaskEvent,
     TaskPhase,
@@ -90,6 +93,7 @@ def test_insert_and_get_task(db: RouterDB, sample_task: Task) -> None:
     assert retrieved.status == TaskStatus.queued
     assert retrieved.phase == TaskPhase.implement
     assert retrieved.target_cli == CLIType.claude
+    assert retrieved.execution_mode == ExecutionMode.batch
     assert retrieved.priority == 2
     assert retrieved.attempt == 1
 
@@ -205,6 +209,7 @@ def test_worker_crud(db: RouterDB, sample_worker: Worker) -> None:
     assert retrieved.machine == "vps-01"
     assert retrieved.cli_type == CLIType.claude
     assert retrieved.capabilities == ["python", "typescript"]
+    assert retrieved.execution_modes == ["batch"]
     assert retrieved.concurrency == 2
 
     # List all
@@ -253,6 +258,48 @@ def test_lease_crud(db: RouterDB, sample_task: Task, sample_worker: Worker) -> N
     # Double expire returns False
     result = db.expire_lease(lease.lease_id)
     assert result is False
+
+
+# -- Sessions --
+
+
+def test_session_crud_and_messages(db: RouterDB, sample_worker: Worker) -> None:
+    db.insert_worker(sample_worker)
+    session = Session(
+        worker_id=sample_worker.worker_id,
+        cli_type=sample_worker.cli_type,
+        account_profile=sample_worker.account_profile,
+        metadata={"pane": "claude-1"},
+    )
+    db.insert_session(session)
+
+    retrieved = db.get_session(session.session_id)
+    assert retrieved is not None
+    assert retrieved.worker_id == sample_worker.worker_id
+    assert retrieved.metadata["pane"] == "claude-1"
+
+    seq1 = db.append_session_message(SessionMessage(
+        session_id=session.session_id,
+        direction="in",
+        role="operator",
+        content="hello",
+    ))
+    seq2 = db.append_session_message(SessionMessage(
+        session_id=session.session_id,
+        direction="out",
+        role="cli",
+        content="hi",
+    ))
+    assert seq2 > seq1
+
+    msgs = db.list_session_messages(session.session_id, after_seq=0)
+    assert [m.content for m in msgs] == ["hello", "hi"]
+
+    ok = db.update_session(session.session_id, {"state": "closed"})
+    assert ok is True
+    closed = db.get_session(session.session_id)
+    assert closed is not None
+    assert str(getattr(closed.state, "value", closed.state)) == "closed"
 
 
 # -- Transaction context manager --
