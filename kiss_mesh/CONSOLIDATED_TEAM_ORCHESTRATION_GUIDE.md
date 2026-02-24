@@ -130,6 +130,7 @@ Runtime realignment addendum (interactive sessions):
 - Add `execution_mode=session|batch` to avoid dispatching interactive tasks to batch workers.
 - Prioritize session workers (`claude`, `codex`) + persisted session bus before GSD tracking integration.
 - Keep GSD as tracking/integration workstream after runtime behavior matches the real operator workflow.
+- Treat this addendum as a GSD-tracked prerequisite milestone (not an out-of-scope fork from the GSD implementation effort).
 
 ## 11) Read order (recommended)
 1. `README.md`

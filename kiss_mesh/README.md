@@ -71,6 +71,7 @@ Scope guard (important):
 - GSD is a tracking/integration layer, not the execution runtime.
 - Session workers + router/DB are the execution truth for interactive multi-CLI operation.
 - GSD integration must not block runtime fixes (session persistence, message bus, iTerm2 operator control).
+- Runtime realignment work (`S0`/`S1`) is still tracked inside the GSD roadmap/governance; sequencing changes execution order, not ownership/tracking.
 
 Implementation direction:
 - auto instrumentation for all commands (`started/completed/failed`),
@@ -108,6 +109,10 @@ Moved to `archive/` to reduce noise:
 - `archive/OPENCLAW_PATTERNS_ADAPTATION.md`
 
 ## Immediate Next Build Slice
+Traceability note:
+- The session-first runtime fixes are a GSD-tracked milestone/workstream (not a parallel undocumented fork).
+- Runtime implementation lives in router/session-worker code; GSD continues to provide milestone/status tracking and later semantic event enrichment.
+
 1. **S0 Runtime Realignment (session-first)**: interactive session workers (`claude`, `codex`) + router-persisted session bus + iTerm2 operator attach flow.
 2. Stabilize session streaming/attach workflows and operator controls (`open/send/read/close`, manual intervention path).
 3. Keep `TaskPhase` runtime phases unchanged (`plan|implement|test|integrate|release`) to avoid mixing orchestration semantics with roadmap milestones.

@@ -160,6 +160,7 @@ Milestone alignment note (2026-02 runtime realignment):
 - Do **not** change runtime `TaskPhase` values (`plan|implement|test|integrate|release`) to represent roadmap work.
 - Add a separate milestone/workstream for session-first runtime fixes (`S0`, `S1`, `G1`, etc.).
 - `GSD` remains a tracking/integration layer and should not block interactive session runtime rollout.
+- The runtime realignment milestones are **inside** the GSD program tracking model (roadmap/governance), even when implementation lands directly in router/session-worker code first.
 
 ### Phase A (2-3 giorni) — Core Router/Worker Reliability
 - task + worker schema
@@ -172,6 +173,7 @@ Milestone alignment note (2026-02 runtime realignment):
 - persist sessions + session messages in router DB (`sessions`, `session_messages`)
 - introduce tmux/PTY-backed session workers (`claude`, `codex`) with operator attach path
 - keep human command approval gates CLI-native (manual/yolo/etc.)
+- record progress/status of A0 under GSD milestone tracking (do not represent A0 via runtime `TaskPhase`)
 
 ### Phase B — Execution Quality + Controls
 - verifier gate and phase transitions
