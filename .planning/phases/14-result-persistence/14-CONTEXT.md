@@ -73,7 +73,7 @@ Inviato via `_report_complete(task_id, result)` a `POST /tasks/complete` con cam
 2. **Backward compatible**: `POST /tasks/complete` senza result deve continuare a funzionare
 3. **DB migration**: `ALTER TABLE ADD COLUMN ... DEFAULT NULL` non-blocking in SQLite WAL
 4. **Worker non toccati**: Zero modifiche ai worker — il gap e' solo server-side
-5. **Size limit**: Result > 32KB troncato con flag `_truncated: true`
+5. **Size limit**: Result > 32KB troncato con `_truncated: true`; se ancora fuori limite, fallback compatto `_hard_truncated: true`
 6. **Secret filtering**: Pattern sk-, ghp_, xoxb- filtrati prima di persistere
 
 ## Files to Modify

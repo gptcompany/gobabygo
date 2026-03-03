@@ -105,7 +105,7 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - RPER-01: result_json as inline TEXT column on tasks (not separate table) -- YAGNI
 - RPER-01: Sanitize + persist in same DB transaction as state change for atomicity
 - RPER-01: Secret patterns filtered via regex before persistence (sk-, ghp_, xoxb-)
-- RPER-01: 32KB size limit with recursive string truncation + _truncated flag
+- RPER-01: 32KB size limit with recursive string truncation + `_truncated`; fallback compact summary with `_hard_truncated` if still oversized
 
 ### Completed Milestones
 

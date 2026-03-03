@@ -35,7 +35,7 @@ key-decisions:
   - "result_json as inline TEXT column (not separate table) -- YAGNI"
   - "Sanitize + persist in same DB transaction as state change for atomicity"
   - "Secret patterns filtered via regex before persistence (sk-, ghp_, xoxb-)"
-  - "32KB size limit with recursive string truncation + _truncated flag"
+  - "32KB size limit with recursive string truncation + `_truncated`; fallback compact `_hard_truncated` summary if still oversized"
 
 patterns-established:
   - "_ensure_column for additive DB migrations (reusable pattern)"
@@ -63,7 +63,7 @@ completed: 2026-03-03
 ## Accomplishments
 - Worker results now persisted in DB on task completion (both completed and review states)
 - Secret patterns (sk-, ghp_, xoxb-) automatically redacted before persistence
-- Results > 32KB truncated with _truncated flag to prevent DB bloat
+- Results > 32KB are recursively truncated with `_truncated`; if still too large, they fall back to a compact `_hard_truncated` summary to prevent DB bloat
 - New GET /tasks/{id} and GET /tasks?status=... endpoints for result retrieval
 - Full backward compatibility: POST /tasks/complete without result still works
 

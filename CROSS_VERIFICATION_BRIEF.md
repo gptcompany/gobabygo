@@ -3,7 +3,7 @@
 **Data**: 2026-03-03 (aggiornato con cross-verifica Codex)
 **Preparato da**: Claude (Opus 4.6) + Codex (cross-verifica)
 **Repo**: /media/sam/1TB/gobabygo (branch: master, tag: v1.0, HEAD: b897022)
-**Stato**: v3 — corretto con findings Codex, piano rivisto e allineato
+**Stato**: v5 — decisione architetturale finale, piano consolidato
 
 ---
 
@@ -14,6 +14,8 @@
 | v1 | 2026-03-03 | Claude | Draft iniziale con 11 claim |
 | v2 | 2026-03-03 | Claude + Codex | Corretto: Task ha 24 campi (non 25), src/ totale 6,149 LOC (non 4,438), 455 test function (non ~441). **Scoperta critica**: i worker GIA' inviano result payload — il gap e' solo server-side persistence. Piano rivisto di conseguenza. |
 | v3 | 2026-03-03 | Claude + Codex (round 2) | 5 incoerenze architetturali corrette: handler review inesistente rimosso, result persistence spostata in scheduler.py/db.py (non server.py), filtro thread rimosso da Fase 14, comms.py rimosso da Fase 15, decisione task_results risolta (colonna inline + pre-condizione chiusa). |
+| v4 | 2026-03-03 | Claude | Decisioni architetturali: router spostato su WS (no VPS), batch worker declassato a fallback, deploy semplificato a single-machine. Tag v1.1 e v1.2 creati nel repo. |
+| v5 | 2026-03-03 | Claude | **Decisione finale**: GoBabyGo unico orchestratore (Opzione A=C). Agent Teams (Opzione B) scartata: non puo' spawnare CLI diverse (solo Claude↔Claude). Spawn dinamico (+180 LOC) integrato in Fase 15. Opzioni ridondanti A/B/C eliminate. |
 
 ---
 
@@ -469,7 +471,7 @@ Questo copre sia il path `completed` che il path `review` (task critici) senza b
 3. Result persistito anche su transition a `review` (task critici, `scheduler.py:233`) — stessa transazione
 4. `GET /tasks/{id}` ritorna task completo con result
 5. `GET /tasks?status=completed` lista task filtrati per status
-6. Result > 32KB viene troncato con flag `_truncated: true`
+6. Result > 32KB viene troncato con flag `_truncated: true`; se ancora fuori limite, fallback compatto con `_hard_truncated: true`
 
 #### Fase 15: Thread Model + Cross-Repo Context
 
@@ -482,31 +484,38 @@ Questo copre sia il path `completed` che il path `review` (task critici) senza b
 | File | Descrizione | LOC stimate |
 |------|-------------|-------------|
 | `src/router/thread.py` | Thread CRUD: create, get, list, status, context aggregation | ~120 |
+| `src/router/session_spawner.py` | **Spawn dinamico**: crea sessioni tmux on-demand per thread step. `POST /sessions/spawn` → `tmux new-window -t mesh -n "{role}" "{cli}"` | ~100 |
 | `tests/test_thread.py` | Test thread model, step creation, context propagation | ~150 |
+| `tests/test_session_spawner.py` | Test spawn dinamico: creazione, naming, cleanup | ~80 |
 
 **Modifiche a file esistenti**:
 
 | File | Modifica | LOC stimate |
 |------|----------|-------------|
-| `src/router/models.py` | `ThreadCreate`, `ThreadStep` schemas; `thread_id`, `step_index`, `repo` su Task | ~30 |
+| `src/router/models.py` | `ThreadCreate`, `ThreadStep` schemas; `thread_id`, `step_index`, `repo`, `role` su Task | ~35 |
 | `src/router/db.py` | Tabella `threads` (id, name, status, created_at) + colonne thread su tasks | ~50 |
-| `src/router/server.py` | `POST /threads`, `GET /threads/{id}`, `GET /threads/{id}/context`, `GET /tasks?thread_id=...` (filtro thread aggiunto QUI, non in Fase 14) | ~70 |
-| `src/router/scheduler.py` | Al complete di uno step, iniettare result come contesto nello step successivo | ~30 |
-| `src/router/thread.py` | Metodo `get_aggregated_context(thread_id)`: legge result di tutti gli step completati dal DB — logica di lettura dati, NON in comms.py | ~30 |
-| `src/meshctl.py` | `meshctl thread create/status/context` comandi | ~60 |
+| `src/router/server.py` | `POST /threads`, `GET /threads/{id}`, `GET /threads/{id}/context`, `GET /tasks?thread_id=...`, `POST /sessions/spawn` | ~80 |
+| `src/router/scheduler.py` | Al complete di uno step: iniettare result come contesto nello step successivo + trigger spawn dello step successivo | ~40 |
+| `src/router/thread.py` | `get_aggregated_context(thread_id)`: legge result di tutti gli step completati dal DB | ~30 |
+| `src/meshctl.py` | `meshctl thread create/add-step/status/context` comandi | ~60 |
 
-**LOC totali**: ~520
+**LOC totali**: ~745
 
-**Nota architetturale (corretto dopo cross-verifica round 2)**:
-- `comms.py` resta un policy engine stateless (autorizzazione). La lettura dei result aggregati va in `thread.py` che accede direttamente al DB.
-- Il filtro `GET /tasks?thread_id=...` viene introdotto in questa fase, non in Fase 14, perche' `thread_id` non esiste ancora in Fase 14.
+**Decisioni architetturali (v5)**:
+- `comms.py` resta policy engine stateless. Lettura result in `thread.py`.
+- Filtro `GET /tasks?thread_id=...` introdotto in questa fase (non Fase 14).
+- **Spawn dinamico**: il router crea sessioni tmux on-demand quando un thread step viene attivato. I worker systemd statici restano come fallback per batch/unattended. Il campo `role` (president/boss/worker) determina l'ordine di spawn e il contesto iniziale.
+- **iTerm2 visibilita'**: con `tmux -CC`, ogni sessione spawnata appare come tab/pane nativo in iTerm2.
+
 **Success criteria**:
 1. `meshctl thread create --name "monitoring-hl"` crea thread
-2. `meshctl thread add-step --thread "monitoring-hl" --repo hyperliquid-node --cli claude --prompt "..."` aggiunge step come Task
-3. Step usano `depends_on` esistente — dependency.py li sblocca automaticamente
-4. Al complete di step N, `result` di step N viene iniettato come contesto in `payload` di step N+1
-5. `meshctl thread context {name}` mostra result aggregati di tutti gli step completati
-6. `meshctl thread status {name}` mostra tabella con stato per step
+2. `meshctl thread add-step --thread "monitoring-hl" --repo hyperliquid-node --cli claude --role president --prompt "..."` aggiunge step come Task
+3. Quando lo step diventa attivo, il router spawna una sessione tmux interattiva per la CLI specificata
+4. Step usano `depends_on` esistente — dependency.py li sblocca automaticamente
+5. Al complete di step N, `result` di step N viene iniettato come contesto in `payload` di step N+1
+6. `meshctl thread context {name}` mostra result aggregati di tutti gli step completati
+7. `meshctl thread status {name}` mostra tabella con stato per step
+8. In iTerm2 con `tmux -CC`, ogni sessione attiva e' visibile come pane/tab nativo
 
 #### Fase 16: Aggregator + Error Handling
 
@@ -539,10 +548,10 @@ Questo copre sia il path `completed` che il path `review` (task critici) senza b
 
 | Fase | LOC | Dipende da | Risolve gap | Note |
 |------|-----|-----------|-------------|------|
-| 14: Result Persistence + Read Path | ~250 | nessuna | G1, G2 | Worker non toccati — solo modifiche router-side |
-| 15: Thread + Cross-Repo | ~520 | Fase 14 | G3, G4, G5, G6 | Riusa dependency.py, NO engine parallelo |
+| 14: Result Persistence + Read Path | ~260 | nessuna | G1, G2 | Worker non toccati — solo modifiche router-side |
+| 15: Thread + Cross-Repo + Spawn Dinamico | ~745 | Fase 14 | G3, G4, G5, G6 | Riusa dependency.py + spawn tmux on-demand (+180 LOC per session_spawner) |
 | 16: Aggregator + Error | ~390 | Fase 15 | G7, UX completa | |
-| **TOTALE** | **~1,160** | | **Tutti i gap** | -220 LOC vs piano originale |
+| **TOTALE** | **~1,395** | | **Tutti i gap** | GoBabyGo unico orchestratore, spawn dinamico incluso |
 
 ### 7.4 Rischi e mitigazioni (aggiornati con findings Codex)
 
@@ -607,9 +616,73 @@ Questo copre sia il path `completed` che il path `review` (task critici) senza b
 
 ---
 
-## 9. Step parallelo: iTerm2 + tmux setup (indipendente dalla v1.3)
+## 9. Decisioni architetturali v1.3
 
-> Sezione invariata — resta valida.
+### 9.1 Router su WS (no VPS)
+
+**Decisione**: Il router gira sulla WS (.111), stessa macchina dei worker.
+
+**Razionale**: La WS e' always-on (Hyperliquid, N8N, Grafana). Il VPS aggiungeva latenza VPN e un punto di failure senza valore pratico per single-operator. Il path multi-machine resta aperto: basta cambiare `MESH_ROUTER_URL` nei `.env` dei worker e fare bind su `0.0.0.0`.
+
+**Impatto deploy**:
+- `MESH_ROUTER_URL=http://localhost:8780` in tutti i `.env`
+- `mesh-router.service` installato sulla WS (non piu' VPS)
+- UFW rules sul VPS non piu' necessarie per porta 8780
+
+### 9.2 Session worker come default (batch = fallback)
+
+**Decisione**: I session worker (tmux interattivi) sono il tipo primario. I batch worker (`--print`) restano come fallback disponibile ma non attivato di default.
+
+**Razionale**: Il caso d'uso dell'utente richiede sessioni interattive (GSD/SpecKit, approval gates, contesto conversazionale). Il batch mode serve solo per task fire-and-forget (test, build, lint).
+
+**Impatto deploy**:
+- `mesh-session-worker@{cli}.service`: enabled e started
+- `mesh-worker@{cli}.service`: available ma stopped (avviabile on demand)
+
+### 9.3 GoBabyGo unico orchestratore (decisione finale)
+
+**Decisione**: GoBabyGo e' l'unico orchestratore. Claude Code Agent Teams NON viene usato per orchestrazione.
+
+**Razionale — perche' Agent Teams (Opzione B) non funziona**:
+
+1. Agent Teams spawna **solo Claude ↔ Claude**. Non puo' spawnare Codex o Gemini come teammate.
+2. Se PRESIDENT = Codex e BOSS = Claude, Agent Teams non puo' gestire questa configurazione.
+3. Con due orchestratori (Agent Teams + GoBabyGo) nessuno dei due ha visibilita' completa.
+4. Il cross-repo tracking vivrebbe in due posti diversi.
+
+**Come funziona con GoBabyGo unico orchestratore**:
+
+```
+Mac iTerm2 + tmux -CC → ssh WS → tmux session "mesh"
+
+Router riceve thread:
+  Step 1: role=president, cli=claude  → router spawna tmux window "claude-president"
+  Step 2: role=boss, cli=codex        → router spawna tmux window "codex-boss"
+  Step 3: role=worker, cli=claude     → router spawna tmux window "claude-worker-1"
+  Step 4: role=worker, cli=gemini     → router spawna tmux window "gemini-worker-1"
+
+iTerm2 in tmux -CC mostra tutto come tab/pane nativi.
+L'operatore vede tutte le sessioni e puo' intervenire su qualsiasi pane.
+PRESIDENT/BOSS/WORKER sono ruoli REALI con comportamento, non solo policy.
+```
+
+**Spawn dinamico**: il router crea sessioni tmux on-demand quando un thread step lo richiede. Non servono worker systemd pre-registrati (restano come fallback per batch/unattended).
+
+**Impatto su Fase 15**: +180 LOC per `POST /sessions/spawn` e session spawner logic.
+
+### 9.4 Configurabilita' garantita
+
+Tutte le decisioni sopra sono configurabili on-the-fly via env var, senza modifiche al codice:
+
+| Parametro | Default v1.3 | Per tornare a VPS |
+|-----------|-------------|-------------------|
+| `MESH_ROUTER_URL` | `http://localhost:8780` | `http://10.0.0.1:8780` |
+| `MESH_BIND_HOST` | `127.0.0.1` | `0.0.0.0` |
+| `MESH_EXECUTION_MODES` | `session` | `batch` o `session,batch` |
+
+---
+
+## 10. Step parallelo: iTerm2 + tmux setup (indipendente dalla v1.3)
 
 Mentre la v1.3 viene implementata, l'utente puo' migrare da VSCode SSH a iTerm2 + tmux per stabilita' immediata:
 
@@ -657,9 +730,11 @@ Il brief e' completo e cross-verificato. Le opzioni sono:
 
 ### Pre-condizioni per avvio implementazione
 
-- [x] ~~Decisione su `task_results` tabella separata vs colonna su tasks~~ → **DECISO: colonna `result_json TEXT` inline su tasks** (piu' semplice, transazione atomica con cambio stato; se bloat diventa problema, si migra a tabella separata in futuro — YAGNI)
-- [ ] Conferma che il deploy corrente (VPS router + WS workers) e' ancora attivo
-- [ ] Tag `v1.2` nel repo per allineare versioning prima di iniziare v1.3
+- [x] ~~Decisione su `task_results` tabella separata vs colonna su tasks~~ → **DECISO: colonna `result_json TEXT` inline su tasks** (YAGNI)
+- [x] ~~Tag `v1.2` nel repo~~ → **FATTO: `v1.1` @ e52cfd4, `v1.2` @ 768c399** (2026-03-03)
+- [x] ~~Architettura deploy~~ → **DECISO: router su WS, session worker default, batch fallback** (sezione 9)
+- [ ] Verificare che WS possa eseguire `mesh-router.service` (installare se necessario)
+- [ ] Spostare o copiare i file deploy dalla config VPS alla WS
 
 ---
 

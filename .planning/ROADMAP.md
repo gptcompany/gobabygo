@@ -159,7 +159,7 @@ Plans:
   3. Result persistito anche su transition a `review` (task critici) -- stessa transazione
   4. `GET /tasks/{id}` ritorna task completo con result
   5. `GET /tasks?status=completed` lista task filtrati per status
-  6. Result > 32KB viene troncato con flag `_truncated: true`
+  6. Result > 32KB viene troncato con `_truncated: true`; se ancora fuori limite, fallback compatto `_hard_truncated: true`
 **Plans**: 1 plan
 
 Plans:

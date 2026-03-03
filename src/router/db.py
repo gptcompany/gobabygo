@@ -251,6 +251,7 @@ class RouterDB:
         # Check size and truncate iteratively until under limit
         if len(sanitized_str.encode("utf-8")) > self._MAX_RESULT_BYTES:
             data = json.loads(sanitized_str)
+            original_key_count = len(data)
             max_len = self._MAX_STRING_VALUE
             for _ in range(3):
                 self._truncate_strings(data, max_len)
@@ -260,10 +261,12 @@ class RouterDB:
                     break
                 max_len //= 2
             else:
-                # Hard cap: produce valid JSON under the limit
+                # Hard cap: return a small, bounded summary object. Do not echo
+                # original keys here, because oversized key names can defeat the cap.
                 sanitized_str = json.dumps({
                     "_hard_truncated": True,
-                    "_original_keys": list(data.keys())[:20],
+                    "_key_count": original_key_count,
+                    "_reason": "result exceeded size limit",
                 })
         return sanitized_str
 

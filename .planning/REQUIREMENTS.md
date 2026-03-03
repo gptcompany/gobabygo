@@ -43,7 +43,7 @@ Requirements for v1.3 Cross-Repo Orchestration. Each maps to roadmap phases.
 - [x] **RPER-02**: `/tasks/complete` extracts result from body and persists in same transaction as state change (covers both completed and review paths)
 - [x] **RPER-03**: `GET /tasks/{id}` returns full task with result
 - [x] **RPER-04**: `GET /tasks?status=...` returns filtered task list
-- [x] **RPER-05**: Result > 32KB truncated with `_truncated: true` flag; secret patterns (sk-, ghp_, xoxb-) filtered before persistence
+- [x] **RPER-05**: Result > 32KB truncated with `_truncated: true`; if still oversized, replaced by compact `_hard_truncated: true` summary. Secret patterns (sk-, ghp_, xoxb-) filtered before persistence
 
 ### Thread Model
 

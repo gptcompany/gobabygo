@@ -278,3 +278,31 @@ class TestTruncationHardCap:
         sanitized = db._sanitize_result(big_result)
         assert sanitized is not None
         assert len(sanitized.encode("utf-8")) <= 32768
+
+    def test_truncation_enforces_hard_cap_with_long_keys(self, db):
+        """Even huge key names must not defeat the hard cap fallback."""
+        big_result = {("k" * 5000) + str(i): "x" * 2000 for i in range(50)}
+        sanitized = db._sanitize_result(big_result)
+        assert sanitized is not None
+        assert len(sanitized.encode("utf-8")) <= 32768
+        parsed = json.loads(sanitized)
+        assert parsed["_hard_truncated"] is True
+        assert parsed["_key_count"] == 50
+
+    def test_get_task_returns_hard_truncated_result(self, server_url, db):
+        """Hard-truncated results must still round-trip through GET /tasks/{id}."""
+        _setup_running_task(db)
+        huge_result = {("k" * 5000) + str(i): "x" * 2000 for i in range(50)}
+
+        complete = requests.post(
+            f"{server_url}/tasks/complete",
+            json={"task_id": "t1", "worker_id": "w1", "result": huge_result},
+        )
+        assert complete.status_code == 200
+
+        resp = requests.get(f"{server_url}/tasks/t1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["task_id"] == "t1"
+        assert data["result"]["_hard_truncated"] is True
+        assert data["result"]["_key_count"] == 50
