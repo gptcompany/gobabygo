@@ -8,7 +8,20 @@ A distributed multi-agent orchestration system that coordinates AI CLI workers (
 
 Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth, not terminal state.
 
-## Current Milestone: v1.2 Operational Readiness -- COMPLETE
+## Current Milestone: v1.3 Cross-Repo Orchestration -- IN PROGRESS
+
+**Goal:** Permettere orchestrazione di thread di lavoro cross-repo e multi-CLI da un singolo punto di controllo, eliminando il copia-incolla manuale e tracciando contesto e risultati in modo persistente.
+
+**Planned features:**
+- Result persistence: server persiste result che worker gia' inviano, espone via GET API
+- Thread model: gruppi ordinati di task cross-repo con contesto condiviso
+- Session spawner: creazione on-demand di sessioni tmux per thread steps
+- Aggregator: fan-in result aggregation con error handling per-step
+- meshctl thread CLI: create, add-step, status, context
+
+**Source:** `CROSS_VERIFICATION_BRIEF.md` (cross-verified with Codex, 2026-03-03)
+
+## Previous Milestone: v1.2 Operational Readiness -- SHIPPED 2026-02-23
 
 **Goal:** Close the 3 critical gaps blocking real-world use: automatic dispatch, HTTP task submission, and real CLI execution.
 
@@ -33,7 +46,8 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 
 ## Current State
 
-**Shipped:** v1.2 Operational Readiness (2026-02-23)
+**Active:** v1.3 Cross-Repo Orchestration (started 2026-03-03)
+**Last shipped:** v1.2 Operational Readiness (2026-02-23)
 **Test suite:** 436 tests, all passing
 **Tech stack:** Python 3.11+, SQLite (WAL), Pydantic, CloudEvents, prometheus-client
 
