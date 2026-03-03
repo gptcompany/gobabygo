@@ -5,17 +5,18 @@
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** Distributed Deploy -- E2E dry-run VALIDATED on real infra
+**Current focus:** v1.3 Cross-Repo Orchestration -- Phase 15 Thread Model
 
 ## Current Position
 
-Milestone: v1.2 Operational Readiness -- COMPLETE (all 13 phases)
-Deploy: E2E dry-run VALIDATED (2026-02-24)
-Status: Router + 3 Workers running on real infra, dry-run task dispatched & completed
-Last activity: 2026-02-24 -- Deployed mesh to VPS + Workstation, fixed 6 bugs found during deploy
+Milestone: v1.3 Cross-Repo Orchestration -- IN PROGRESS
+Phase: 14 Result Persistence + Read Path -- COMPLETE
+Status: Phase 14 complete (1/1 plans), ready for Phase 15
+Last activity: 2026-03-03 -- Phase 14 executed: result persistence + read endpoints
 
-Progress: [============================] 100% overall (28/28 plans)
-v1.2:    [============================] 100% (3/3 phases complete)
+Progress: [=========                   ] 33% v1.3 (1/3 phases)
+v1.3:    Phase 14 [====================] COMPLETE
+         Phase 15 [>                   ] next
 
 ## Performance Metrics
 
@@ -49,6 +50,14 @@ v1.2:    [============================] 100% (3/3 phases complete)
 | 11    | 01   | 5min     | 3     | 4     |
 | 12    | 01   | 8min     | 4     | 6     |
 | 13    | 01   | 7min     | 3     | 3     |
+
+**v1.3 Velocity:**
+- Total plans completed: 1
+- Started: 2026-03-03
+
+| Phase | Plan | Duration | Tasks | Files |
+|-------|------|----------|-------|-------|
+| 14    | 01   | 10min    | 4     | 5     |
 
 ## Accumulated Context
 
@@ -92,6 +101,12 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - OPRDY-08: Global try/except in _execute_task guarantees _report_failure on any error
 - FIX-01: shlex.split() for multi-word cli_command tokenization (subprocess requires list of args, not single string)
 
+**v1.3 decisions:**
+- RPER-01: result_json as inline TEXT column on tasks (not separate table) -- YAGNI
+- RPER-01: Sanitize + persist in same DB transaction as state change for atomicity
+- RPER-01: Secret patterns filtered via regex before persistence (sk-, ghp_, xoxb-)
+- RPER-01: 32KB size limit with recursive string truncation + _truncated flag
+
 ### Completed Milestones
 
 - **v1.0 MVP** (2026-02-19): 6 phases, 15 plans, 291 tests -- see `.planning/milestones/`
@@ -110,6 +125,10 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - **Phase 11: Dispatch Loop** (2026-02-23): 1 plan, 2 new tests (406 total + E2E updated), confidence 95%
 - **Phase 12: POST /tasks** (2026-02-23): 1 plan, 16 new tests (422 total), confidence 95%
 - **Phase 13: CLI Invocation** (2026-02-23): 1 plan, 12 new tests (436 total), confidence 95%
+
+### Completed Phases (v1.3)
+
+- **Phase 14: Result Persistence** (2026-03-03): 1 plan, 10 new tests (467 total), confidence 95%
 
 ### Deploy Status (2026-02-24)
 
@@ -158,27 +177,11 @@ None
 
 ## Session Continuity
 
-Last session: 2026-02-24
-Stopped at: Deploy E2E dry-run completato e validato su infra reale (VPS + Workstation)
-Resume with: Leggere questa sezione, poi scegliere tra i prossimi passi sotto
+Last session: 2026-03-03
+Stopped at: Completed 14-01-PLAN.md (Phase 14 Result Persistence)
+Resume with: `/pipeline:gsd 15` per continuare Phase 15
 
-## Prossimi Passi (24 febbraio)
+## Prossimi Passi
 
-### Opzione A: Passare a esecuzione reale (disabilitare dry-run)
-1. Cambiare `MESH_DRY_RUN=1` → `MESH_DRY_RUN=0` nei 3 worker env
-2. Ricaricare: `sudo systemctl restart mesh-worker@claude-work mesh-worker@codex-work mesh-worker@gemini-work`
-3. Submit task reale e verificare che claude/codex/gemini CLI vengano invocati
-
-### Opzione B: Aggiungere monitoring (Grafana)
-1. Configurare Prometheus scrape per `/metrics` del router
-2. Importare dashboard Grafana da `deploy/monitoring/mesh-alerts.yaml`
-3. Configurare alert policy da `deploy/monitoring/notification-policy.md`
-
-### Opzione C: meshctl dal Mac
-1. Verificare che il Mac raggiunga `10.0.0.1` via WireGuard
-2. `pip install requests pydantic` sul Mac
-3. Copiare `src/meshctl.py` e testare `meshctl status`
-
-### Opzione D: Pianificare v1.3
-1. Definire requisiti per prossimo milestone
-2. `/gsd:new-milestone` per scaffolding
+### Next: v1.3 Phase 15 — Thread Model + Cross-Repo Context
+### Dopo Phase 15: Phase 16 — Aggregator + Error Handling

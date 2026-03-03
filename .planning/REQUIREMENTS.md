@@ -33,6 +33,33 @@ Requirements for v1.1 Production Readiness. Each maps to roadmap phases.
 - [x] **DEBT-02**: YAML semantic mapping includes rules for gsd:implement-* commands
 - [x] **DEBT-03**: heartbeat.py Worker type annotation properly imported (mypy clean)
 
+## v1.3 Requirements
+
+Requirements for v1.3 Cross-Repo Orchestration. Each maps to roadmap phases.
+
+### Result Persistence
+
+- [x] **RPER-01**: Task model has `result` field; DB has `result_json TEXT` column (backward-compatible migration)
+- [x] **RPER-02**: `/tasks/complete` extracts result from body and persists in same transaction as state change (covers both completed and review paths)
+- [x] **RPER-03**: `GET /tasks/{id}` returns full task with result
+- [x] **RPER-04**: `GET /tasks?status=...` returns filtered task list
+- [x] **RPER-05**: Result > 32KB truncated with `_truncated: true` flag; secret patterns (sk-, ghp_, xoxb-) filtered before persistence
+
+### Thread Model
+
+- [ ] **THRD-01**: Thread CRUD: create, get, list, status via HTTP API + meshctl
+- [ ] **THRD-02**: Thread steps are normal Task rows with `thread_id`, `step_index`, `repo`, `role` fields
+- [ ] **THRD-03**: Step chaining: on step N complete, result injected as context into step N+1 payload
+- [ ] **THRD-04**: Session spawner: router creates tmux sessions on-demand when thread step activates (`POST /sessions/spawn`)
+- [ ] **THRD-05**: `meshctl thread` CLI commands: create, add-step, status, context
+
+### Aggregation & Error Handling
+
+- [ ] **AGGR-01**: Fan-in aggregator reads thread results and produces summary
+- [ ] **AGGR-02**: Per-step `on_failure` configuration: skip, retry (max 3), abort
+- [ ] **AGGR-03**: E2E test: 3-step cross-repo thread executes without manual intervention
+- [ ] **AGGR-04**: Full audit trail in DB: input, output, timestamps, worker, repo per step
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -83,6 +110,26 @@ Which phases cover which requirements. Updated during roadmap creation.
 - Mapped to phases: 14
 - Unmapped: 0
 
+| RPER-01 | Phase 14 | Complete |
+| RPER-02 | Phase 14 | Complete |
+| RPER-03 | Phase 14 | Complete |
+| RPER-04 | Phase 14 | Complete |
+| RPER-05 | Phase 14 | Complete |
+| THRD-01 | Phase 15 | Ready |
+| THRD-02 | Phase 15 | Ready |
+| THRD-03 | Phase 15 | Ready |
+| THRD-04 | Phase 15 | Ready |
+| THRD-05 | Phase 15 | Ready |
+| AGGR-01 | Phase 16 | Blocked (15) |
+| AGGR-02 | Phase 16 | Blocked (15) |
+| AGGR-03 | Phase 16 | Blocked (15) |
+| AGGR-04 | Phase 16 | Blocked (15) |
+
+**Coverage:**
+- v1.3 requirements: 14 total
+- Mapped to phases: 14
+- Unmapped: 0
+
 ---
 *Requirements defined: 2026-02-20*
-*Last updated: 2026-02-20 -- traceability updated with phase mappings*
+*Last updated: 2026-03-03 -- v1.3 requirements added*

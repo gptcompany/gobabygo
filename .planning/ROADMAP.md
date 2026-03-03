@@ -5,6 +5,7 @@
 - v1.0 MVP -- Phases 1-6 (shipped 2026-02-19)
 - v1.1 Production Readiness -- Phases 7-10 (shipped 2026-02-21)
 - v1.2 Operational Readiness -- Phases 11-13 (shipped 2026-02-23)
+- v1.3 Cross-Repo Orchestration -- Phases 14-16 (in progress)
 
 ## Phases
 
@@ -142,6 +143,54 @@ Plans:
 Plans:
 - [x] 13-01-PLAN.md — Rewrite _execute_task, dry-run, failure semantics, config from env
 
+### v1.3 Cross-Repo Orchestration
+
+- [x] **Phase 14: Result Persistence + Read Path** - Persist worker results server-side, add GET /tasks/{id} and GET /tasks?status=...
+- [ ] **Phase 15: Thread Model + Cross-Repo Context** - Thread as ordered task group with context propagation, session spawn, meshctl thread CLI
+- [ ] **Phase 16: Aggregator + Error Handling** - Fan-in aggregation, per-step on_failure (skip/retry/abort), E2E cross-repo test
+
+### Phase 14: Result Persistence + Read Path
+**Goal**: Il router persiste i result che i worker gia' inviano, e li rende leggibili via API.
+**Depends on**: Phase 13
+**Requirements**: RPER-01, RPER-02, RPER-03, RPER-04, RPER-05
+**Success Criteria** (what must be TRUE):
+  1. `POST /tasks/complete` con `result: {...}` persiste result in DB (stessa transazione che cambia stato)
+  2. `POST /tasks/complete` senza result continua a funzionare (backward compatible)
+  3. Result persistito anche su transition a `review` (task critici) -- stessa transazione
+  4. `GET /tasks/{id}` ritorna task completo con result
+  5. `GET /tasks?status=completed` lista task filtrati per status
+  6. Result > 32KB viene troncato con flag `_truncated: true`
+**Plans**: 1 plan
+
+Plans:
+- [x] 14-01-PLAN.md -- Result field, DB migration, sanitization, scheduler persistence, GET endpoints
+
+### Phase 15: Thread Model + Cross-Repo Context
+**Goal**: Thread come gruppo di task con contesto condiviso cross-repo. Costruito sopra Task + dependency.py esistenti.
+**Depends on**: Phase 14
+**Requirements**: THRD-01, THRD-02, THRD-03, THRD-04, THRD-05
+**Success Criteria** (what must be TRUE):
+  1. `meshctl thread create --name "..."` crea thread
+  2. `meshctl thread add-step` aggiunge step come Task con thread_id, step_index, repo
+  3. Quando step diventa attivo, il router spawna sessione tmux interattiva per la CLI specificata
+  4. Step usano `depends_on` esistente -- dependency.py li sblocca automaticamente
+  5. Al complete di step N, `result` di step N viene iniettato come contesto in `payload` di step N+1
+  6. `meshctl thread context {name}` mostra result aggregati
+  7. `meshctl thread status {name}` mostra tabella con stato per step
+**Plans**: TBD
+
+### Phase 16: Aggregator + Error Handling
+**Goal**: Aggregazione automatica dei risultati e gestione errori nei thread.
+**Depends on**: Phase 15
+**Requirements**: AGGR-01, AGGR-02, AGGR-03, AGGR-04
+**Success Criteria** (what must be TRUE):
+  1. Thread 3-step cross-repo esegue E2E senza copia-incolla
+  2. Step fallito con `on_failure: retry` viene ri-eseguito (max 3 tentativi)
+  3. Step fallito con `on_failure: skip` non blocca thread
+  4. `meshctl thread status` mostra tabella leggibile con risultati per step
+  5. Audit trail completo in DB: ogni step ha input, output, timestamps, worker, repo
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -162,3 +211,6 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 11. Dispatch Loop | v1.2 | 1/1 | Done | 2026-02-23 |
 | 12. POST /tasks | v1.2 | 1/1 | Done | 2026-02-23 |
 | 13. CLI Invocation | v1.2 | 1/1 | Done | 2026-02-23 |
+| 14. Result Persistence | v1.3 | 1/1 | Done | 2026-03-03 |
+| 15. Thread + Cross-Repo | v1.3 | 0/? | Ready | - |
+| 16. Aggregator + Error | v1.3 | 0/? | Blocked (15) | - |
