@@ -1,0 +1,247 @@
+"""Tests for thread model, thread module, and scheduler thread integration."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from src.router.db import RouterDB
+from src.router.models import (
+    CLIType,
+    ExecutionMode,
+    Task,
+    TaskStatus,
+    Thread,
+    ThreadStatus,
+    ThreadStepRequest,
+    Worker,
+)
+from src.router.scheduler import Scheduler
+from src.router.thread import add_step, compute_thread_status, create_thread, get_thread_context
+
+
+@pytest.fixture
+def db() -> RouterDB:
+    rdb = RouterDB(":memory:")
+    rdb.init_schema()
+    return rdb
+
+
+@pytest.fixture
+def sched(db: RouterDB) -> Scheduler:
+    return Scheduler(db=db, lease_duration_s=300)
+
+
+def _step_request(title: str, step_index: int, **kwargs) -> ThreadStepRequest:
+    return ThreadStepRequest(title=title, step_index=step_index, **kwargs)
+
+
+def _add_worker(db: RouterDB, worker_id: str = "w1") -> Worker:
+    from datetime import datetime, timezone
+    w = Worker(
+        worker_id=worker_id,
+        machine="ws1",
+        cli_type=CLIType.claude,
+        account_profile="work",
+        status="idle",
+        last_heartbeat=datetime.now(timezone.utc).isoformat(),
+        idle_since=datetime.now(timezone.utc).isoformat(),
+    )
+    db.insert_worker(w)
+    return w
+
+
+# -- Thread creation --
+
+
+def test_create_thread(db: RouterDB) -> None:
+    thread = create_thread(db, "cross-repo-refactor")
+    assert thread.name == "cross-repo-refactor"
+    assert thread.status == ThreadStatus.pending
+    assert thread.thread_id
+    assert thread.created_at
+    # Verify persisted
+    retrieved = db.get_thread(thread.thread_id)
+    assert retrieved is not None
+    assert retrieved.name == "cross-repo-refactor"
+
+
+def test_create_thread_duplicate_name(db: RouterDB) -> None:
+    t1 = create_thread(db, "same-name")
+    t2 = create_thread(db, "same-name")
+    assert t1.thread_id != t2.thread_id
+    assert t1.name == t2.name
+
+
+def test_get_thread_by_name(db: RouterDB) -> None:
+    create_thread(db, "my-thread")
+    found = db.get_thread_by_name("my-thread")
+    assert found is not None
+    assert found.name == "my-thread"
+    assert db.get_thread_by_name("nonexistent") is None
+
+
+# -- Add step --
+
+
+def test_add_step_to_thread(db: RouterDB) -> None:
+    thread = create_thread(db, "t1")
+    req = _step_request("step zero", 0, repo="frontend")
+    task = add_step(db, thread.thread_id, req)
+    assert task.thread_id == thread.thread_id
+    assert task.step_index == 0
+    assert task.repo == "frontend"
+    assert task.title == "step zero"
+    assert task.status == TaskStatus.queued
+
+
+def test_add_step_auto_depends_on(db: RouterDB) -> None:
+    thread = create_thread(db, "t1")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    step1 = add_step(db, thread.thread_id, _step_request("s1", 1))
+    assert step1.depends_on == [step0.task_id]
+
+
+def test_add_step_blocked_status(db: RouterDB) -> None:
+    thread = create_thread(db, "t1")
+    add_step(db, thread.thread_id, _step_request("s0", 0))
+    step1 = add_step(db, thread.thread_id, _step_request("s1", 1))
+    assert step1.status == TaskStatus.blocked
+
+
+def test_add_step_explicit_depends_on(db: RouterDB) -> None:
+    thread = create_thread(db, "t1")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    # Explicit depends_on overrides auto
+    other_task = Task(title="external", target_cli=CLIType.claude, target_account="work")
+    db.insert_task(other_task)
+    step1 = add_step(
+        db,
+        thread.thread_id,
+        _step_request("s1", 1, depends_on=[other_task.task_id]),
+    )
+    assert step1.depends_on == [other_task.task_id]
+    assert step0.task_id not in step1.depends_on
+
+
+# -- Thread context --
+
+
+def test_get_thread_context(db: RouterDB) -> None:
+    thread = create_thread(db, "ctx")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0, repo="backend"))
+    step1 = add_step(db, thread.thread_id, _step_request("s1", 1, repo="frontend"))
+
+    # Mark step0 as completed with result
+    db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.assigned)
+    db.update_task_status(step0.task_id, TaskStatus.assigned, TaskStatus.running)
+    db.update_task_status(step0.task_id, TaskStatus.running, TaskStatus.completed)
+    db.update_task_fields(step0.task_id, {"result_json": json.dumps({"output": "done"})})
+
+    ctx = get_thread_context(db, thread.thread_id, up_to_step_index=1)
+    assert len(ctx) == 1
+    assert ctx[0]["step_index"] == 0
+    assert ctx[0]["repo"] == "backend"
+    assert ctx[0]["result"] == {"output": "done"}
+
+
+def test_get_thread_context_cap_32kb(db: RouterDB) -> None:
+    thread = create_thread(db, "big")
+    # Create a step with a large result
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.assigned)
+    db.update_task_status(step0.task_id, TaskStatus.assigned, TaskStatus.running)
+    db.update_task_status(step0.task_id, TaskStatus.running, TaskStatus.completed)
+    big_result = {"data": "x" * 40000}
+    db.update_task_fields(step0.task_id, {"result_json": json.dumps(big_result)})
+
+    step1 = add_step(db, thread.thread_id, _step_request("s1", 1))
+
+    ctx = get_thread_context(db, thread.thread_id, up_to_step_index=2)
+    serialized = json.dumps(ctx).encode("utf-8")
+    assert len(serialized) <= 32768
+
+
+# -- Thread status computation --
+
+
+def test_compute_thread_status_pending(db: RouterDB) -> None:
+    thread = create_thread(db, "empty")
+    assert compute_thread_status(db, thread.thread_id) == ThreadStatus.pending
+
+
+def test_compute_thread_status_active(db: RouterDB) -> None:
+    thread = create_thread(db, "active")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.assigned)
+    db.update_task_status(step0.task_id, TaskStatus.assigned, TaskStatus.running)
+    assert compute_thread_status(db, thread.thread_id) == ThreadStatus.active
+
+
+def test_compute_thread_status_completed(db: RouterDB) -> None:
+    thread = create_thread(db, "done")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.assigned)
+    db.update_task_status(step0.task_id, TaskStatus.assigned, TaskStatus.running)
+    db.update_task_status(step0.task_id, TaskStatus.running, TaskStatus.completed)
+    assert compute_thread_status(db, thread.thread_id) == ThreadStatus.completed
+
+
+def test_compute_thread_status_failed(db: RouterDB) -> None:
+    thread = create_thread(db, "fail")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.assigned)
+    db.update_task_status(step0.task_id, TaskStatus.assigned, TaskStatus.running)
+    db.update_task_status(step0.task_id, TaskStatus.running, TaskStatus.failed)
+    assert compute_thread_status(db, thread.thread_id) == ThreadStatus.failed
+
+
+# -- Scheduler integration --
+
+
+def test_thread_status_update_on_complete(db: RouterDB, sched: Scheduler) -> None:
+    thread = create_thread(db, "sched-complete")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    _add_worker(db, "w1")
+
+    result = sched.dispatch()
+    assert result is not None
+    sched.ack_task(step0.task_id, "w1")
+    sched.complete_task(step0.task_id, "w1")
+
+    updated = db.get_thread(thread.thread_id)
+    assert updated is not None
+    assert updated.status == ThreadStatus.completed
+
+
+def test_thread_status_pending_to_active(db: RouterDB, sched: Scheduler) -> None:
+    thread = create_thread(db, "dispatch-test")
+    add_step(db, thread.thread_id, _step_request("s0", 0))
+    _add_worker(db, "w1")
+
+    # Before dispatch, thread is pending
+    assert db.get_thread(thread.thread_id).status == ThreadStatus.pending
+
+    sched.dispatch()
+
+    # After dispatch, thread should be active
+    updated = db.get_thread(thread.thread_id)
+    assert updated.status == ThreadStatus.active
+
+
+def test_add_step_duplicate_step_index_rejected(db: RouterDB) -> None:
+    thread = create_thread(db, "dup")
+    add_step(db, thread.thread_id, _step_request("s0", 0))
+    with pytest.raises(Exception):
+        add_step(db, thread.thread_id, _step_request("s0-dup", 0))
+
+
+def test_compute_thread_status_blocked_is_active(db: RouterDB) -> None:
+    thread = create_thread(db, "blocked-active")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
+    # step1 auto-depends on step0, so it starts blocked
+    step1 = add_step(db, thread.thread_id, _step_request("s1", 1))
+    assert step1.status == TaskStatus.blocked
+    # Thread has steps (one queued, one blocked) -> active
+    assert compute_thread_status(db, thread.thread_id) == ThreadStatus.active

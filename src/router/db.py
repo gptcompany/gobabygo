@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
-from src.router.models import Lease, Session, SessionMessage, Task, TaskEvent, TaskStatus, Worker
+from src.router.models import Lease, Session, SessionMessage, Task, TaskEvent, TaskStatus, Thread, Worker
 
 _BUSY_RETRIES = 3
 _BUSY_BACKOFFS_MS = [50, 100, 200]
@@ -139,6 +139,18 @@ CREATE TABLE IF NOT EXISTS session_messages (
 
 CREATE INDEX IF NOT EXISTS idx_session_messages_session_seq
 ON session_messages(session_id, seq);
+
+CREATE TABLE IF NOT EXISTS threads (
+    thread_id   TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status);
+CREATE INDEX IF NOT EXISTS idx_threads_name ON threads(name);
+
 """
 
 
@@ -216,6 +228,14 @@ class RouterDB:
         self._ensure_column("tasks", "session_id", "TEXT")
         self._ensure_column("tasks", "result_json", "TEXT DEFAULT NULL")
         self._ensure_column("workers", "execution_modes", "TEXT NOT NULL DEFAULT '[\"batch\"]'")
+        self._ensure_column("tasks", "thread_id", "TEXT DEFAULT NULL")
+        self._ensure_column("tasks", "step_index", "INTEGER DEFAULT NULL")
+        self._ensure_column("tasks", "repo", "TEXT DEFAULT NULL")
+        self._ensure_column("tasks", "role", "TEXT DEFAULT NULL")
+        self._conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_thread_step
+            ON tasks(thread_id, step_index) WHERE thread_id IS NOT NULL"""
+        )
         self._conn.commit()
 
     def _ensure_column(self, table: str, column: str, sql_type_clause: str) -> None:
@@ -332,6 +352,10 @@ class RouterDB:
             review_timeout_at=row["review_timeout_at"],
             idempotency_key=row["idempotency_key"],
             result=result,
+            thread_id=row["thread_id"] if "thread_id" in keys else None,
+            step_index=row["step_index"] if "step_index" in keys else None,
+            repo=row["repo"] if "repo" in keys else None,
+            role=row["role"] if "role" in keys else None,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -346,8 +370,9 @@ class RouterDB:
                 target_account, execution_mode, priority, deadline_ts, depends_on, status,
                 assigned_worker, session_id, lease_expires_at, attempt, not_before,
                 created_by, critical, rejection_count, review_timeout_at,
-                idempotency_key, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                idempotency_key, thread_id, step_index, repo, role,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.task_id,
                 task.parent_task_id,
@@ -371,6 +396,10 @@ class RouterDB:
                 task.rejection_count,
                 task.review_timeout_at,
                 task.idempotency_key,
+                task.thread_id,
+                task.step_index,
+                task.repo,
+                task.role,
                 task.created_at,
                 task.updated_at,
             ),
@@ -844,6 +873,106 @@ class RouterDB:
         """Count dead letter events."""
         cur = self._conn.execute("SELECT COUNT(*) FROM dead_letter_events")
         return cur.fetchone()[0]
+
+    # -- Threads --
+
+    def _thread_from_row(self, row: sqlite3.Row) -> Thread:
+        return Thread(
+            thread_id=row["thread_id"],
+            name=row["name"],
+            status=row["status"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    @_retry_on_busy
+    def insert_thread(self, thread: Thread, conn: sqlite3.Connection | None = None) -> Thread:
+        c = conn or self._conn
+        c.execute(
+            """INSERT INTO threads (thread_id, name, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)""",
+            (
+                thread.thread_id,
+                thread.name,
+                thread.status.value if hasattr(thread.status, "value") else str(thread.status),
+                thread.created_at,
+                thread.updated_at,
+            ),
+        )
+        if conn is None:
+            self._conn.commit()
+        return thread
+
+    def get_thread(self, thread_id: str) -> Thread | None:
+        cur = self._conn.execute(
+            "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+        )
+        row = cur.fetchone()
+        return self._thread_from_row(row) if row else None
+
+    def get_thread_by_name(self, name: str) -> Thread | None:
+        cur = self._conn.execute(
+            "SELECT * FROM threads WHERE name = ? LIMIT 1", (name,)
+        )
+        row = cur.fetchone()
+        return self._thread_from_row(row) if row else None
+
+    def list_threads(
+        self,
+        status: str | None = None,
+        name: str | None = None,
+        limit: int = 50,
+    ) -> list[Thread]:
+        sql = "SELECT * FROM threads"
+        params: list[object] = []
+        clauses: list[str] = []
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if name is not None:
+            clauses.append("name = ?")
+            params.append(name)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        cur = self._conn.execute(sql, params)
+        return [self._thread_from_row(row) for row in cur.fetchall()]
+
+    @_retry_on_busy
+    def update_thread(
+        self,
+        thread_id: str,
+        updates: dict[str, str | int | None],
+        conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        if not updates:
+            return False
+        c = conn or self._conn
+        set_clauses = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [thread_id]
+        cur = c.execute(
+            f"UPDATE threads SET {set_clauses} WHERE thread_id = ?",
+            values,
+        )
+        if conn is None:
+            self._conn.commit()
+        return cur.rowcount > 0
+
+    def list_thread_steps(
+        self, thread_id: str, status: str | None = None
+    ) -> list[Task]:
+        if status is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE thread_id = ? AND status = ? ORDER BY step_index ASC",
+                (thread_id, status),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE thread_id = ? ORDER BY step_index ASC",
+                (thread_id,),
+            )
+        return [self._task_from_row(row) for row in cur.fetchall()]
 
     # -- Leases --
 

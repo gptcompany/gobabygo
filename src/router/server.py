@@ -24,9 +24,18 @@ from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
 from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
-from src.router.models import Session, SessionMessage, Task, TaskCreateRequest, Worker
+from src.router.models import (
+    Session,
+    SessionMessage,
+    Task,
+    TaskCreateRequest,
+    ThreadCreateRequest,
+    ThreadStepRequest,
+    Worker,
+)
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
+from src.router.thread import add_step, compute_thread_status, create_thread, get_thread_context
 from src.router.verifier import VerifierGate
 from src.router.worker_manager import WorkerManager
 
@@ -70,6 +79,19 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._handle_get_worker(worker_id)
             else:
                 self._send_json(404, {"error": "not_found"})
+        elif path == "/threads":
+            self._handle_list_threads()
+        elif path.startswith("/threads/"):
+            parts = path[len("/threads/"):].split("/")
+            thread_id = parts[0]
+            if len(parts) == 1:
+                self._handle_get_thread(thread_id)
+            elif len(parts) == 2 and parts[1] == "status":
+                self._handle_thread_status(thread_id)
+            elif len(parts) == 2 and parts[1] == "context":
+                self._handle_thread_context(thread_id)
+            else:
+                self._send_json(404, {"error": "not_found"})
         else:
             self._send_json(404, {"error": "not_found"})
 
@@ -95,6 +117,14 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_task_complete()
         elif path == "/tasks/fail":
             self._handle_task_fail()
+        elif path == "/threads":
+            self._handle_create_thread()
+        elif path.startswith("/threads/") and path.endswith("/steps"):
+            thread_id = path[len("/threads/"):-len("/steps")]
+            if thread_id:
+                self._handle_add_step(thread_id)
+            else:
+                self._send_json(404, {"error": "not_found"})
         elif path.endswith("/drain") and path.startswith("/workers/"):
             # Extract worker_id from /workers/<id>/drain
             worker_id = path[len("/workers/"):-len("/drain")]
@@ -178,7 +208,13 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 "poll_complete worker_id=%s result=task duration=%.1fs",
                 worker_id, duration,
             )
-            self._send_json(200, result.task.model_dump(mode="json"))
+            task_dict = result.task.model_dump(mode="json")
+            # Runtime thread context enrichment
+            if result.task.thread_id and result.task.step_index and result.task.step_index > 0:
+
+                thread_ctx = get_thread_context(db, result.task.thread_id, result.task.step_index)
+                task_dict["thread_context"] = thread_ctx
+            self._send_json(200, task_dict)
         else:
             metrics.longpoll_total.labels(result="timeout").inc()
             logger.info(
@@ -322,6 +358,22 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
             ok = scheduler.ack_task(task_id, worker_id)
             if ok:
+                db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+                task = db.get_task(task_id)
+                if task and task.thread_id and task.step_index is not None:
+                    import threading as _threading
+                    def _spawn():
+                        from src.router.session_spawner import spawn_tmux_session
+                        try:
+                            cli_cmd = os.environ.get("MESH_CLI_COMMAND", "claude --print -p")
+                            work_dir = task.repo or ""
+                            session_name = spawn_tmux_session(
+                                task.thread_id, task.step_index, cli_cmd, work_dir
+                            )
+                            logger.info("tmux session spawned: %s for task %s", session_name, task_id)
+                        except Exception as e:
+                            logger.warning("tmux spawn failed for task %s: %s", task_id, e)
+                    _threading.Thread(target=_spawn, daemon=True).start()
                 self._send_json(200, {"status": "acknowledged"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
@@ -361,6 +413,11 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                         metrics.observe_task_duration(duration_s)
                     except (ValueError, TypeError):
                         pass  # Skip duration if timestamp parse fails
+                # Cleanup tmux session for thread tasks
+                if task and task.thread_id and task.step_index is not None:
+                    from src.router.session_spawner import kill_tmux_session
+                    session_name = f"mesh-{task.thread_id[:8]}-s{task.step_index}"
+                    kill_tmux_session(session_name)
                 self._send_json(200, {"status": "completed"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
@@ -384,6 +441,13 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
             ok = scheduler.report_failure(task_id, worker_id, reason=error)
             if ok:
+                # Cleanup tmux session for thread tasks
+                db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+                task = db.get_task(task_id)
+                if task and task.thread_id and task.step_index is not None:
+                    from src.router.session_spawner import kill_tmux_session
+                    session_name = f"mesh-{task.thread_id[:8]}-s{task.step_index}"
+                    kill_tmux_session(session_name)
                 self._send_json(200, {"status": "failed_recorded"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
@@ -683,6 +747,141 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
         # 202 Accepted: drain initiated (or completed immediately for idle workers)
         self._send_json(202, {"status": message, "worker_id": worker_id})
+
+    # --- Thread endpoints ---
+
+    def _handle_list_threads(self) -> None:
+        """GET /threads — list threads with optional filters."""
+        if not self._check_auth():
+            return
+        query = parse_qs(urlparse(self.path).query)
+        status = query.get("status", [None])[0]
+        name = query.get("name", [None])[0]
+        limit_raw = query.get("limit", ["50"])[0]
+        try:
+            limit = max(1, min(1000, int(limit_raw)))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_limit"})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        threads = db.list_threads(status=status, name=name, limit=limit)
+        self._send_json(200, {"threads": [t.model_dump(mode="json") for t in threads]})
+
+    def _handle_get_thread(self, thread_id: str) -> None:
+        """GET /threads/<id> — fetch a single thread."""
+        if not self._check_auth():
+            return
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        thread = db.get_thread(thread_id)
+        if thread is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+        self._send_json(200, thread.model_dump(mode="json"))
+
+    def _handle_thread_status(self, thread_id: str) -> None:
+        """GET /threads/<id>/status — thread + all steps with status."""
+        if not self._check_auth():
+            return
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        thread = db.get_thread(thread_id)
+        if thread is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+
+        computed_status = compute_thread_status(db, thread_id)
+        thread_dict = thread.model_dump(mode="json")
+        thread_dict["status"] = computed_status.value
+
+        steps = db.list_thread_steps(thread_id)
+        steps_list = []
+        for s in steps:
+            steps_list.append({
+                "step_index": s.step_index,
+                "task_id": s.task_id,
+                "status": s.status.value if hasattr(s.status, "value") else str(s.status),
+                "repo": s.repo or "",
+                "title": s.title,
+            })
+
+        self._send_json(200, {"thread": thread_dict, "steps": steps_list})
+
+    def _handle_thread_context(self, thread_id: str) -> None:
+        """GET /threads/<id>/context — aggregated results from completed steps."""
+        if not self._check_auth():
+            return
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        thread = db.get_thread(thread_id)
+        if thread is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+
+        context = get_thread_context(db, thread_id, up_to_step_index=999)
+        self._send_json(200, {"thread_id": thread_id, "context": context})
+
+    def _handle_create_thread(self) -> None:
+        """POST /threads — create a new thread."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        try:
+            request = ThreadCreateRequest(**data)
+        except (ValidationError, ValueError, TypeError) as e:
+            self._send_json(400, {"error": "invalid_thread", "detail": str(e)})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        thread = create_thread(db, request.name)
+        logger.info("thread_created id=%s name=%s", thread.thread_id, thread.name)
+        self._send_json(201, {
+            "status": "created",
+            "thread_id": thread.thread_id,
+            "name": thread.name,
+        })
+
+    def _handle_add_step(self, thread_id: str) -> None:
+        """POST /threads/<id>/steps — add a step to a thread."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        try:
+            step_request = ThreadStepRequest(**data)
+        except (ValidationError, ValueError, TypeError) as e:
+            self._send_json(400, {"error": "invalid_step", "detail": str(e)})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        try:
+            task = add_step(db, thread_id, step_request)
+        except ValueError as e:
+            self._send_json(404, {"error": "not_found", "detail": str(e)})
+            return
+
+        logger.info(
+            "thread_step_added thread=%s step=%d task=%s",
+            thread_id, step_request.step_index, task.task_id,
+        )
+        self._send_json(201, {
+            "status": "created",
+            "task_id": task.task_id,
+            "step_index": step_request.step_index,
+        })
 
     # --- Helpers ---
 

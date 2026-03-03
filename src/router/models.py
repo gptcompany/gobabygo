@@ -23,6 +23,13 @@ def _uuid4() -> str:
     return str(uuid.uuid4())
 
 
+class ThreadStatus(str, Enum):
+    pending = "pending"
+    active = "active"
+    completed = "completed"
+    failed = "failed"
+
+
 class TaskStatus(str, Enum):
     queued = "queued"
     assigned = "assigned"
@@ -84,8 +91,40 @@ class Task(BaseModel):
     review_timeout_at: str | None = None
     idempotency_key: str = Field(default_factory=_uuid4)
     result: dict[str, Any] | None = None
+    # Thread fields (nullable -- non-thread tasks have these as None)
+    thread_id: str | None = None
+    step_index: int | None = None
+    repo: str | None = None
+    role: str | None = None
     created_at: str = Field(default_factory=_utc_now)
     updated_at: str = Field(default_factory=_utc_now)
+
+
+class Thread(BaseModel):
+    thread_id: str = Field(default_factory=_uuid4)
+    name: str
+    status: ThreadStatus = ThreadStatus.pending
+    created_at: str = Field(default_factory=_utc_now)
+    updated_at: str = Field(default_factory=_utc_now)
+
+
+class ThreadCreateRequest(BaseModel):
+    name: str
+
+
+class ThreadStepRequest(BaseModel):
+    """Add a step to a thread. Maps to a Task with thread fields set."""
+
+    title: str
+    step_index: int
+    repo: str = ""
+    target_cli: CLIType = CLIType.claude
+    target_account: str = "work"
+    execution_mode: ExecutionMode = ExecutionMode.batch
+    payload: dict[str, Any] = Field(default_factory=dict)
+    depends_on: list[str] = Field(default_factory=list)
+    priority: int = 1
+    critical: bool = False
 
 
 class TaskCreateRequest(BaseModel):

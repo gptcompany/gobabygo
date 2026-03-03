@@ -164,6 +164,16 @@ class Scheduler:
                     conn=conn,
                 )
 
+                # Transition thread pending -> active on first dispatch
+                if task.thread_id:
+                    thread = self._db.get_thread(task.thread_id)
+                    if thread and thread.status.value == "pending":
+                        self._db.update_thread(
+                            task.thread_id,
+                            {"status": "active", "updated_at": _utc_now()},
+                            conn=conn,
+                        )
+
                 result = DispatchResult(task=task, worker=worker, lease=lease)
 
         except _CASFailure:
@@ -276,6 +286,16 @@ class Scheduler:
                 conn=conn,
             )
 
+            # Update thread status if this task belongs to a thread
+            if task.thread_id:
+                from src.router.thread import compute_thread_status
+                new_thread_status = compute_thread_status(self._db, task.thread_id)
+                self._db.update_thread(
+                    task.thread_id,
+                    {"status": new_thread_status.value, "updated_at": _utc_now()},
+                    conn=conn,
+                )
+
             lease = self._db.get_active_lease(task.task_id)
             if lease:
                 self._db.expire_lease(lease.lease_id, conn=conn)
@@ -313,6 +333,16 @@ class Scheduler:
                     conn=conn,
                 )
 
+            # Update thread status if this task belongs to a thread
+            if task.thread_id:
+                from src.router.thread import compute_thread_status
+                new_thread_status = compute_thread_status(self._db, task.thread_id)
+                self._db.update_thread(
+                    task.thread_id,
+                    {"status": new_thread_status.value, "updated_at": _utc_now()},
+                    conn=conn,
+                )
+
             lease = self._db.get_active_lease(task.task_id)
             if lease:
                 self._db.expire_lease(lease.lease_id, conn=conn)
@@ -346,6 +376,16 @@ class Scheduler:
                 ),
                 conn=conn,
             )
+
+            # Update thread status if this task belongs to a thread
+            if task.thread_id:
+                from src.router.thread import compute_thread_status
+                new_thread_status = compute_thread_status(self._db, task.thread_id)
+                self._db.update_thread(
+                    task.thread_id,
+                    {"status": new_thread_status.value, "updated_at": _utc_now()},
+                    conn=conn,
+                )
 
             lease = self._db.get_active_lease(task_id)
             if lease:

@@ -333,6 +333,169 @@ def cmd_submit(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Thread helper
+# ---------------------------------------------------------------------------
+
+
+def _resolve_thread_id(name_or_id: str) -> str:
+    """Resolve a thread name or ID to a thread_id.
+
+    If the input looks like a UUID (36 chars with dashes), use as-is.
+    Otherwise, query GET /threads?name=X and resolve:
+    - 1 match: return its thread_id
+    - 0 matches: error
+    - >1 matches: error (ambiguous)
+    """
+    # UUID format check: 8-4-4-4-12 = 36 chars with dashes
+    if len(name_or_id) == 36 and name_or_id.count("-") == 4:
+        return name_or_id
+
+    base = _base_url()
+    headers = _headers()
+    try:
+        resp = requests.get(
+            f"{base}/threads", params={"name": name_or_id}, headers=headers, timeout=10
+        )
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code != 200:
+        print(f"Error: /threads returned {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    threads = resp.json().get("threads", [])
+    if len(threads) == 0:
+        print(f"Error: Thread not found: '{name_or_id}'", file=sys.stderr)
+        sys.exit(1)
+    if len(threads) > 1:
+        print(
+            f"Error: Ambiguous thread name '{name_or_id}', "
+            f"{len(threads)} threads match. Use thread_id instead.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    return threads[0]["thread_id"]
+
+
+# ---------------------------------------------------------------------------
+# Thread commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_thread_create(args: argparse.Namespace) -> None:
+    """Create a new thread."""
+    base = _base_url()
+    headers = _headers()
+    headers["Content-Type"] = "application/json"
+    body = {"name": args.name}
+    try:
+        resp = requests.post(f"{base}/threads", json=body, headers=headers, timeout=10)
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code == 201:
+        data = resp.json()
+        print(f"Thread created: {data.get('thread_id', '?')} ({data.get('name', '')})")
+    else:
+        print(f"Error: {resp.status_code} -- {resp.text}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_thread_add_step(args: argparse.Namespace) -> None:
+    """Add a step to a thread."""
+    base = _base_url()
+    headers = _headers()
+    headers["Content-Type"] = "application/json"
+    thread_id = _resolve_thread_id(args.thread)
+    body: dict[str, object] = {
+        "title": args.title,
+        "step_index": args.step_index,
+        "repo": args.repo or "",
+        "target_cli": args.cli or "claude",
+        "target_account": args.account or "work",
+    }
+    if args.payload:
+        try:
+            body["payload"] = json.loads(args.payload)
+        except json.JSONDecodeError:
+            print("Error: --payload must be valid JSON", file=sys.stderr)
+            sys.exit(1)
+    try:
+        resp = requests.post(
+            f"{base}/threads/{thread_id}/steps", json=body, headers=headers, timeout=10
+        )
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code == 201:
+        data = resp.json()
+        print(f"Step {args.step_index} added: task_id={data.get('task_id', '?')}")
+    else:
+        print(f"Error: {resp.status_code} -- {resp.text}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_thread_status(args: argparse.Namespace) -> None:
+    """Show thread status with steps table."""
+    base = _base_url()
+    headers = _headers()
+    thread_id = _resolve_thread_id(args.thread)
+    try:
+        resp = requests.get(
+            f"{base}/threads/{thread_id}/status", headers=headers, timeout=10
+        )
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code != 200:
+        print(f"Error: {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    data = resp.json()
+    thread = data["thread"]
+    steps = data["steps"]
+
+    if args.json_output:
+        print(json.dumps(data, indent=2))
+        return
+
+    print(f"THREAD: {thread.get('name', '?')} [{thread.get('status', '?')}]")
+    print(f"{'STEP':<6} {'STATUS':<12} {'REPO':<20} TITLE")
+    for s in steps:
+        idx = s.get("step_index", "?")
+        status = str(s.get("status", "?"))[:12]
+        repo = (s.get("repo", "") or "")[:20]
+        title = s.get("title", "")[:40]
+        print(f"{idx:<6} {status:<12} {repo:<20} {title}")
+
+
+def cmd_thread_context(args: argparse.Namespace) -> None:
+    """Show thread context (aggregated results from completed steps)."""
+    base = _base_url()
+    headers = _headers()
+    thread_id = _resolve_thread_id(args.thread)
+    try:
+        resp = requests.get(
+            f"{base}/threads/{thread_id}/context", headers=headers, timeout=10
+        )
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code != 200:
+        print(f"Error: {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    data = resp.json()
+    print(json.dumps(data, indent=2))
+
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
@@ -364,6 +527,30 @@ submit_parser.add_argument("--phase", default=None, help="Task phase")
 submit_parser.add_argument("--priority", type=int, default=None, help="Priority (higher = first)")
 submit_parser.add_argument("--payload", default=None, help="JSON payload string")
 
+thread_parser = sub.add_parser("thread", help="Thread management")
+thread_sub = thread_parser.add_subparsers(dest="thread_command")
+
+thread_create_parser = thread_sub.add_parser("create", help="Create a new thread")
+thread_create_parser.add_argument("--name", required=True, help="Thread name")
+
+thread_add_step_parser = thread_sub.add_parser("add-step", help="Add step to thread")
+thread_add_step_parser.add_argument("--thread", required=True, help="Thread ID or name")
+thread_add_step_parser.add_argument("--title", required=True, help="Step title")
+thread_add_step_parser.add_argument(
+    "--step-index", type=int, required=True, dest="step_index", help="Step index (0-based)"
+)
+thread_add_step_parser.add_argument("--repo", default="", help="Repository path")
+thread_add_step_parser.add_argument("--cli", default=None, help="Target CLI")
+thread_add_step_parser.add_argument("--account", default=None, help="Target account")
+thread_add_step_parser.add_argument("--payload", default=None, help="JSON payload")
+
+thread_status_parser = thread_sub.add_parser("status", help="Show thread status")
+thread_status_parser.add_argument("thread", help="Thread ID or name")
+thread_status_parser.add_argument("--json", action="store_true", dest="json_output")
+
+thread_context_parser = thread_sub.add_parser("context", help="Show thread context")
+thread_context_parser.add_argument("thread", help="Thread ID or name")
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -376,6 +563,18 @@ if __name__ == "__main__":
         cmd_drain(parsed_args)
     elif parsed_args.command == "submit":
         cmd_submit(parsed_args)
+    elif parsed_args.command == "thread":
+        if parsed_args.thread_command == "create":
+            cmd_thread_create(parsed_args)
+        elif parsed_args.thread_command == "add-step":
+            cmd_thread_add_step(parsed_args)
+        elif parsed_args.thread_command == "status":
+            cmd_thread_status(parsed_args)
+        elif parsed_args.thread_command == "context":
+            cmd_thread_context(parsed_args)
+        else:
+            thread_parser.print_help()
+            sys.exit(1)
     else:
         parser.print_help()
         sys.exit(1)
