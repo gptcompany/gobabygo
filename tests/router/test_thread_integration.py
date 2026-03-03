@@ -1,7 +1,7 @@
 """Integration tests for thread HTTP endpoints and runtime hooks.
 
 Tests thread CRUD via server endpoints, thread_context enrichment in
-long-poll, and tmux spawn/cleanup on ack/complete.
+long-poll, and ensures runtime execution stays worker-owned.
 """
 
 from __future__ import annotations
@@ -108,6 +108,13 @@ class TestCreateThread:
         resp = requests.post(f"{server_url}/threads", json={})
         assert resp.status_code == 400
 
+    def test_create_thread_duplicate_name_conflict(self, server_url):
+        resp1 = requests.post(f"{server_url}/threads", json={"name": "dup-name"})
+        assert resp1.status_code == 201
+        resp2 = requests.post(f"{server_url}/threads", json={"name": "dup-name"})
+        assert resp2.status_code == 409
+        assert resp2.json()["error"] == "duplicate_thread_name"
+
 
 class TestListThreads:
     def test_list_threads(self, server_url):
@@ -166,6 +173,31 @@ class TestAddStep:
             json={"title": "step", "step_index": 0},
         )
         assert resp.status_code == 404
+
+    def test_add_step_missing_previous_step_conflict(self, server_url):
+        create_resp = requests.post(f"{server_url}/threads", json={"name": "gap-step"})
+        thread_id = create_resp.json()["thread_id"]
+        resp = requests.post(
+            f"{server_url}/threads/{thread_id}/steps",
+            json={"title": "step1", "step_index": 1},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "invalid_step_order"
+
+    def test_add_step_duplicate_step_index_conflict(self, server_url):
+        create_resp = requests.post(f"{server_url}/threads", json={"name": "dup-step"})
+        thread_id = create_resp.json()["thread_id"]
+        resp1 = requests.post(
+            f"{server_url}/threads/{thread_id}/steps",
+            json={"title": "step0", "step_index": 0},
+        )
+        assert resp1.status_code == 201
+        resp2 = requests.post(
+            f"{server_url}/threads/{thread_id}/steps",
+            json={"title": "step0b", "step_index": 0},
+        )
+        assert resp2.status_code == 409
+        assert resp2.json()["error"] == "duplicate_step_index"
 
 
 class TestThreadStatus:
@@ -309,12 +341,12 @@ class TestTaskPollThreadContext:
             assert "thread_context" not in data
 
 
-# --- Tmux spawn/cleanup ---
+# --- Worker-owned runtime execution ---
 
 
-class TestTmuxSpawnOnAck:
-    def test_tmux_spawn_on_ack(self, server_url, db):
-        """Mock subprocess, verify tmux spawn is called on thread task ack."""
+class TestAckAndCompleteHooks:
+    def test_ack_does_not_spawn_tmux_from_router(self, server_url, db):
+        """Router should not create tmux sessions when a worker acks a task."""
         _register_worker(db, "tmux-w1")
         thread = create_thread(db, "tmux-spawn")
         step0 = add_step(db, thread.thread_id, ThreadStepRequest(
@@ -325,25 +357,17 @@ class TestTmuxSpawnOnAck:
         db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.assigned)
         db.update_task_fields(step0.task_id, {"assigned_worker": "tmux-w1"})
 
-        with patch("src.router.session_spawner.subprocess.run") as mock_run:
-            mock_run.return_value = type("Result", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
+        with patch("src.router.session_spawner.spawn_tmux_session") as mock_spawn:
             resp = requests.post(
                 f"{server_url}/tasks/ack",
                 json={"task_id": step0.task_id, "worker_id": "tmux-w1"},
             )
             assert resp.status_code == 200
-            # Give the daemon thread a moment to execute
-            time.sleep(0.3)
-            # Verify subprocess.run was called with tmux new-session
-            assert mock_run.called
-            call_args = mock_run.call_args[0][0]
-            assert "tmux" in call_args
-            assert "new-session" in call_args
+            time.sleep(0.1)
+            mock_spawn.assert_not_called()
 
-
-class TestTmuxCleanupOnComplete:
-    def test_tmux_cleanup_on_complete(self, server_url, db):
-        """Mock subprocess, verify tmux kill is called on thread task complete."""
+    def test_complete_does_not_kill_router_tmux_session(self, server_url, db):
+        """Router should not kill tmux sessions; the worker owns session lifecycle."""
         _register_worker(db, "tmux-w2")
         thread = create_thread(db, "tmux-cleanup")
         step0 = add_step(db, thread.thread_id, ThreadStepRequest(
@@ -355,15 +379,10 @@ class TestTmuxCleanupOnComplete:
         db.update_task_fields(step0.task_id, {"assigned_worker": "tmux-w2"})
         db.update_task_status(step0.task_id, TaskStatus.assigned, TaskStatus.running)
 
-        with patch("src.router.session_spawner.subprocess.run") as mock_run:
-            mock_run.return_value = type("Result", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
+        with patch("src.router.session_spawner.kill_tmux_session") as mock_kill:
             resp = requests.post(
                 f"{server_url}/tasks/complete",
                 json={"task_id": step0.task_id, "worker_id": "tmux-w2"},
             )
             assert resp.status_code == 200
-            # Verify tmux kill-session was called
-            assert mock_run.called
-            call_args = mock_run.call_args[0][0]
-            assert "tmux" in call_args
-            assert "kill-session" in call_args
+            mock_kill.assert_not_called()

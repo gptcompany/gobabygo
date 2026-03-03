@@ -15,6 +15,8 @@ from src.router.models import Task, TaskStatus, Thread, ThreadStatus, _utc_now, 
 
 def create_thread(db: RouterDB, name: str) -> Thread:
     """Create a new thread and persist it."""
+    if db.get_thread_by_name(name) is not None:
+        raise ValueError(f"Thread name already exists: {name}")
     thread = Thread(name=name)
     return db.insert_thread(thread)
 
@@ -47,6 +49,10 @@ def add_step(
         row = cur.fetchone()
         if row:
             depends_on = [row["task_id"]]
+        else:
+            raise ValueError(
+                f"Cannot add step {step_request.step_index} before step {step_request.step_index - 1}"
+            )
 
     initial_status = TaskStatus.blocked if depends_on else TaskStatus.queued
 

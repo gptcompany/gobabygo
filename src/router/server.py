@@ -358,22 +358,6 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
             ok = scheduler.ack_task(task_id, worker_id)
             if ok:
-                db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
-                task = db.get_task(task_id)
-                if task and task.thread_id and task.step_index is not None:
-                    import threading as _threading
-                    def _spawn():
-                        from src.router.session_spawner import spawn_tmux_session
-                        try:
-                            cli_cmd = os.environ.get("MESH_CLI_COMMAND", "claude --print -p")
-                            work_dir = task.repo or ""
-                            session_name = spawn_tmux_session(
-                                task.thread_id, task.step_index, cli_cmd, work_dir
-                            )
-                            logger.info("tmux session spawned: %s for task %s", session_name, task_id)
-                        except Exception as e:
-                            logger.warning("tmux spawn failed for task %s: %s", task_id, e)
-                    _threading.Thread(target=_spawn, daemon=True).start()
                 self._send_json(200, {"status": "acknowledged"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
@@ -413,11 +397,6 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                         metrics.observe_task_duration(duration_s)
                     except (ValueError, TypeError):
                         pass  # Skip duration if timestamp parse fails
-                # Cleanup tmux session for thread tasks
-                if task and task.thread_id and task.step_index is not None:
-                    from src.router.session_spawner import kill_tmux_session
-                    session_name = f"mesh-{task.thread_id[:8]}-s{task.step_index}"
-                    kill_tmux_session(session_name)
                 self._send_json(200, {"status": "completed"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
@@ -441,13 +420,6 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
             ok = scheduler.report_failure(task_id, worker_id, reason=error)
             if ok:
-                # Cleanup tmux session for thread tasks
-                db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
-                task = db.get_task(task_id)
-                if task and task.thread_id and task.step_index is not None:
-                    from src.router.session_spawner import kill_tmux_session
-                    session_name = f"mesh-{task.thread_id[:8]}-s{task.step_index}"
-                    kill_tmux_session(session_name)
                 self._send_json(200, {"status": "failed_recorded"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
@@ -839,7 +811,11 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             return
 
         db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
-        thread = create_thread(db, request.name)
+        try:
+            thread = create_thread(db, request.name)
+        except ValueError as e:
+            self._send_json(409, {"error": "duplicate_thread_name", "detail": str(e)})
+            return
         logger.info("thread_created id=%s name=%s", thread.thread_id, thread.name)
         self._send_json(201, {
             "status": "created",
@@ -870,7 +846,14 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         try:
             task = add_step(db, thread_id, step_request)
         except ValueError as e:
-            self._send_json(404, {"error": "not_found", "detail": str(e)})
+            detail = str(e)
+            if detail.endswith("not found"):
+                self._send_json(404, {"error": "not_found", "detail": detail})
+            else:
+                self._send_json(409, {"error": "invalid_step_order", "detail": detail})
+            return
+        except sqlite3.IntegrityError:
+            self._send_json(409, {"error": "duplicate_step_index"})
             return
 
         logger.info(

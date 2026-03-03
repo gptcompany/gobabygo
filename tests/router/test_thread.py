@@ -67,11 +67,10 @@ def test_create_thread(db: RouterDB) -> None:
     assert retrieved.name == "cross-repo-refactor"
 
 
-def test_create_thread_duplicate_name(db: RouterDB) -> None:
-    t1 = create_thread(db, "same-name")
-    t2 = create_thread(db, "same-name")
-    assert t1.thread_id != t2.thread_id
-    assert t1.name == t2.name
+def test_create_thread_duplicate_name_rejected(db: RouterDB) -> None:
+    create_thread(db, "same-name")
+    with pytest.raises(ValueError, match="Thread name already exists"):
+        create_thread(db, "same-name")
 
 
 def test_get_thread_by_name(db: RouterDB) -> None:
@@ -108,6 +107,12 @@ def test_add_step_blocked_status(db: RouterDB) -> None:
     add_step(db, thread.thread_id, _step_request("s0", 0))
     step1 = add_step(db, thread.thread_id, _step_request("s1", 1))
     assert step1.status == TaskStatus.blocked
+
+
+def test_add_step_missing_previous_step_rejected(db: RouterDB) -> None:
+    thread = create_thread(db, "missing-prev")
+    with pytest.raises(ValueError, match="Cannot add step 1 before step 0"):
+        add_step(db, thread.thread_id, _step_request("s1", 1))
 
 
 def test_add_step_explicit_depends_on(db: RouterDB) -> None:
