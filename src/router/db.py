@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Generator
+from typing import Any, Generator
 
 from src.router.models import Lease, Session, SessionMessage, Task, TaskEvent, TaskStatus, Worker
 
@@ -213,6 +214,7 @@ class RouterDB:
         # Lightweight additive migrations for existing DBs (safe to re-run)
         self._ensure_column("tasks", "execution_mode", "TEXT NOT NULL DEFAULT 'batch'")
         self._ensure_column("tasks", "session_id", "TEXT")
+        self._ensure_column("tasks", "result_json", "TEXT DEFAULT NULL")
         self._ensure_column("workers", "execution_modes", "TEXT NOT NULL DEFAULT '[\"batch\"]'")
         self._conn.commit()
 
@@ -225,6 +227,50 @@ class RouterDB:
         self._conn.execute(
             f"ALTER TABLE {table} ADD COLUMN {column} {sql_type_clause}"
         )
+
+    # -- Result sanitization --
+
+    _SECRET_PATTERNS = re.compile(
+        r"sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36,}|xoxb-[a-zA-Z0-9\-]{50,}"
+    )
+    _MAX_RESULT_BYTES = 32768  # 32KB
+    _MAX_STRING_VALUE = 1000
+
+    def _sanitize_result(self, result: dict[str, Any] | None) -> str | None:
+        """Sanitize and serialize a task result dict to JSON string.
+
+        - Replaces secret patterns (sk-, ghp_, xoxb-) with [REDACTED]
+        - Truncates if JSON > 32KB (trims long string values, adds _truncated flag)
+        - Returns JSON string or None
+        """
+        if result is None:
+            return None
+        # Deep-copy via JSON round-trip and sanitize secrets in the string form
+        raw = json.dumps(result)
+        sanitized_str = self._SECRET_PATTERNS.sub("[REDACTED]", raw)
+        # Check size and truncate if needed
+        if len(sanitized_str.encode("utf-8")) > self._MAX_RESULT_BYTES:
+            data = json.loads(sanitized_str)
+            self._truncate_strings(data)
+            data["_truncated"] = True
+            sanitized_str = json.dumps(data)
+        return sanitized_str
+
+    @staticmethod
+    def _truncate_strings(obj: Any, max_len: int = 1000) -> None:
+        """Recursively truncate string values longer than max_len in-place."""
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, str) and len(v) > max_len:
+                    obj[k] = v[:max_len] + "...[truncated]"
+                elif isinstance(v, (dict, list)):
+                    RouterDB._truncate_strings(v, max_len)
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                if isinstance(v, str) and len(v) > max_len:
+                    obj[i] = v[:max_len] + "...[truncated]"
+                elif isinstance(v, (dict, list)):
+                    RouterDB._truncate_strings(v, max_len)
 
     @contextmanager
     def transaction(self) -> Generator[sqlite3.Connection, None, None]:
@@ -245,6 +291,9 @@ class RouterDB:
     # -- Tasks --
 
     def _task_from_row(self, row: sqlite3.Row) -> Task:
+        keys = row.keys()
+        result_json = row["result_json"] if "result_json" in keys else None
+        result = json.loads(result_json) if result_json else None
         return Task(
             task_id=row["task_id"],
             parent_task_id=row["parent_task_id"],
@@ -253,13 +302,13 @@ class RouterDB:
             payload=json.loads(row["payload"]),
             target_cli=row["target_cli"],
             target_account=row["target_account"],
-            execution_mode=row["execution_mode"] if "execution_mode" in row.keys() else "batch",
+            execution_mode=row["execution_mode"] if "execution_mode" in keys else "batch",
             priority=row["priority"],
             deadline_ts=row["deadline_ts"],
             depends_on=json.loads(row["depends_on"]),
             status=row["status"],
             assigned_worker=row["assigned_worker"],
-            session_id=row["session_id"] if "session_id" in row.keys() else None,
+            session_id=row["session_id"] if "session_id" in keys else None,
             lease_expires_at=row["lease_expires_at"],
             attempt=row["attempt"],
             not_before=row["not_before"],
@@ -268,6 +317,7 @@ class RouterDB:
             rejection_count=row["rejection_count"],
             review_timeout_at=row["review_timeout_at"],
             idempotency_key=row["idempotency_key"],
+            result=result,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -322,6 +372,24 @@ class RouterDB:
         )
         row = cur.fetchone()
         return self._task_from_row(row) if row else None
+
+    def list_tasks(
+        self,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[Task]:
+        """List tasks, optionally filtered by status. Ordered by created_at DESC."""
+        if status is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        return [self._task_from_row(row) for row in cur.fetchall()]
 
     @_retry_on_busy
     def update_task_status(

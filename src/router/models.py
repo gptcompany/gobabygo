@@ -83,6 +83,7 @@ class Task(BaseModel):
     rejection_count: int = 0
     review_timeout_at: str | None = None
     idempotency_key: str = Field(default_factory=_uuid4)
+    result: dict[str, Any] | None = None
     created_at: str = Field(default_factory=_utc_now)
     updated_at: str = Field(default_factory=_utc_now)
 
