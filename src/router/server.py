@@ -44,6 +44,14 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_metrics()
         elif path == "/tasks/next":
             self._handle_task_poll()
+        elif path == "/tasks":
+            self._handle_list_tasks()
+        elif path.startswith("/tasks/"):
+            task_id = path[len("/tasks/"):]
+            if task_id and task_id != "next":
+                self._handle_get_task(task_id)
+            elif not task_id:
+                self._send_json(404, {"error": "not_found"})
         elif path == "/workers":
             self._handle_list_workers()
         elif path == "/sessions":
@@ -333,12 +341,13 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             data = json.loads(body)
             task_id = data["task_id"]
             worker_id = data["worker_id"]
+            result = data.get("result")  # None if not present (backward compat)
             state = self.server.router_state  # type: ignore[attr-defined]
             db: RouterDB = state["db"]
             scheduler: Scheduler = state["scheduler"]
             # Get task before completion to calculate duration
             task = db.get_task(task_id)
-            ok = scheduler.complete_task(task_id, worker_id)
+            ok = scheduler.complete_task(task_id, worker_id, result=result)
             if ok:
                 # Observe task duration for Prometheus Summary
                 if task and task.created_at:
@@ -379,6 +388,36 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
         except KeyError as e:
             self._send_json(400, {"error": f"missing_field: {e}"})
+
+    # --- Task read endpoints ---
+
+    def _handle_get_task(self, task_id: str) -> None:
+        """GET /tasks/<id> — fetch a single task by ID."""
+        if not self._check_auth():
+            return
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        task = db.get_task(task_id)
+        if task is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+        self._send_json(200, task.model_dump(mode="json"))
+
+    def _handle_list_tasks(self) -> None:
+        """GET /tasks?status=...&limit=N — list tasks with optional filters."""
+        if not self._check_auth():
+            return
+        query = parse_qs(urlparse(self.path).query)
+        status = query.get("status", [None])[0]
+        limit_raw = query.get("limit", ["100"])[0]
+        try:
+            limit = max(1, min(1000, int(limit_raw)))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_limit"})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        tasks = db.list_tasks(status=status, limit=limit)
+        self._send_json(200, {"tasks": [t.model_dump(mode="json") for t in tasks]})
 
     # --- Session bus endpoints ---
 
