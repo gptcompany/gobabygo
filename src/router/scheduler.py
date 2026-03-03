@@ -14,6 +14,8 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from typing import Any
+
 from src.router.db import RouterDB
 from src.router.dependency import check_dependencies
 from src.router.fsm import TransitionRequest, apply_transition, validate_transition
@@ -216,22 +218,27 @@ class Scheduler:
                 conn=conn,
             )
 
-    def complete_task(self, task_id: str, worker_id: str) -> bool:
+    def complete_task(
+        self, task_id: str, worker_id: str, result: dict[str, Any] | None = None
+    ) -> bool:
         """Worker reports task completion.
 
         Critical tasks: running -> review (with review_timeout_at set).
         Non-critical tasks: running -> completed + cleanup.
+        Result (if provided) is sanitized and persisted in the same transaction.
         """
         task = self._db.get_task(task_id)
         if task is None or task.assigned_worker != worker_id:
             return False
 
         if self._verifier.should_review(task):
-            return self._route_to_review(task, worker_id)
+            return self._route_to_review(task, worker_id, result=result)
 
-        return self._route_to_completed(task, worker_id)
+        return self._route_to_completed(task, worker_id, result=result)
 
-    def _route_to_review(self, task: Task, worker_id: str) -> bool:
+    def _route_to_review(
+        self, task: Task, worker_id: str, result: dict[str, Any] | None = None
+    ) -> bool:
         """Route a critical task to review state."""
         review_timeout = (
             datetime.now(timezone.utc)
@@ -258,9 +265,14 @@ class Scheduler:
                 conn=conn,
             )
 
+            # Persist result in same transaction
+            update_fields: dict[str, str | int | None] = {"review_timeout_at": review_timeout}
+            if result is not None:
+                sanitized = self._db._sanitize_result(result)
+                update_fields["result_json"] = sanitized
             self._db.update_task_fields(
                 task.task_id,
-                {"review_timeout_at": review_timeout},
+                update_fields,
                 conn=conn,
             )
 
@@ -272,7 +284,9 @@ class Scheduler:
 
         return True
 
-    def _route_to_completed(self, task: Task, worker_id: str) -> bool:
+    def _route_to_completed(
+        self, task: Task, worker_id: str, result: dict[str, Any] | None = None
+    ) -> bool:
         """Route a non-critical task directly to completed."""
         with self._db.transaction() as conn:
             cas_ok = self._db.update_task_status(
@@ -289,6 +303,15 @@ class Scheduler:
                 ),
                 conn=conn,
             )
+
+            # Persist result in same transaction
+            if result is not None:
+                sanitized = self._db._sanitize_result(result)
+                self._db.update_task_fields(
+                    task.task_id,
+                    {"result_json": sanitized},
+                    conn=conn,
+                )
 
             lease = self._db.get_active_lease(task.task_id)
             if lease:
