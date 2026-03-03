@@ -248,12 +248,23 @@ class RouterDB:
         # Deep-copy via JSON round-trip and sanitize secrets in the string form
         raw = json.dumps(result)
         sanitized_str = self._SECRET_PATTERNS.sub("[REDACTED]", raw)
-        # Check size and truncate if needed
+        # Check size and truncate iteratively until under limit
         if len(sanitized_str.encode("utf-8")) > self._MAX_RESULT_BYTES:
             data = json.loads(sanitized_str)
-            self._truncate_strings(data)
-            data["_truncated"] = True
-            sanitized_str = json.dumps(data)
+            max_len = self._MAX_STRING_VALUE
+            for _ in range(3):
+                self._truncate_strings(data, max_len)
+                data["_truncated"] = True
+                sanitized_str = json.dumps(data)
+                if len(sanitized_str.encode("utf-8")) <= self._MAX_RESULT_BYTES:
+                    break
+                max_len //= 2
+            else:
+                # Hard cap: produce valid JSON under the limit
+                sanitized_str = json.dumps({
+                    "_hard_truncated": True,
+                    "_original_keys": list(data.keys())[:20],
+                })
         return sanitized_str
 
     @staticmethod

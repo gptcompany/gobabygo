@@ -240,3 +240,41 @@ class TestListTasks:
         assert resp.status_code == 200
         data = resp.json()
         assert data["tasks"] == []
+
+
+# -- Test: Invalid result type rejected --
+
+class TestResultTypeValidation:
+    def test_complete_with_non_dict_result_rejected(self, server_url, db):
+        """POST /tasks/complete with string result -> 400."""
+        _setup_running_task(db)
+        resp = requests.post(
+            f"{server_url}/tasks/complete",
+            json={"task_id": "t1", "worker_id": "w1", "result": "hello"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "result_must_be_object"
+        # Task should still be running (not transitioned)
+        task = db.get_task("t1")
+        assert task.status == TaskStatus.running
+
+    def test_complete_with_list_result_rejected(self, server_url, db):
+        """POST /tasks/complete with list result -> 400."""
+        _setup_running_task(db)
+        resp = requests.post(
+            f"{server_url}/tasks/complete",
+            json={"task_id": "t1", "worker_id": "w1", "result": [1, 2, 3]},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "result_must_be_object"
+
+
+# -- Test: Truncation enforces hard cap --
+
+class TestTruncationHardCap:
+    def test_truncation_enforces_hard_cap(self, db):
+        """Payload with many large strings must be <= 32KB after sanitization."""
+        big_result = {f"key_{i}": "x" * 2000 for i in range(50)}  # ~100KB
+        sanitized = db._sanitize_result(big_result)
+        assert sanitized is not None
+        assert len(sanitized.encode("utf-8")) <= 32768

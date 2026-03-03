@@ -342,6 +342,9 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             task_id = data["task_id"]
             worker_id = data["worker_id"]
             result = data.get("result")  # None if not present (backward compat)
+            if result is not None and not isinstance(result, dict):
+                self._send_json(400, {"error": "result_must_be_object"})
+                return
             state = self.server.router_state  # type: ignore[attr-defined]
             db: RouterDB = state["db"]
             scheduler: Scheduler = state["scheduler"]
@@ -393,6 +396,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
     def _handle_get_task(self, task_id: str) -> None:
         """GET /tasks/<id> — fetch a single task by ID."""
+        # TODO: enforce CommunicationPolicy.can_view_all_tasks() when per-token roles exist
         if not self._check_auth():
             return
         db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
@@ -404,6 +408,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
     def _handle_list_tasks(self) -> None:
         """GET /tasks?status=...&limit=N — list tasks with optional filters."""
+        # TODO: enforce CommunicationPolicy.can_view_all_tasks() when per-token roles exist
         if not self._check_auth():
             return
         query = parse_qs(urlparse(self.path).query)
