@@ -115,6 +115,20 @@ def test_add_step_missing_previous_step_rejected(db: RouterDB) -> None:
         add_step(db, thread.thread_id, _step_request("s1", 1))
 
 
+def test_add_step_to_missing_thread_raises(db: RouterDB) -> None:
+    req = _step_request("step", 0)
+    with pytest.raises(ValueError, match="not found"):
+        add_step(db, "no-such-id", req)
+
+
+def test_add_step_to_completed_thread_raises(db: RouterDB) -> None:
+    thread = create_thread(db, "done-thread")
+    db.update_thread(thread.thread_id, {"status": ThreadStatus.completed.value})
+    req = _step_request("step", 0)
+    with pytest.raises(ValueError, match="terminal state"):
+        add_step(db, thread.thread_id, req)
+
+
 def test_add_step_explicit_depends_on(db: RouterDB) -> None:
     thread = create_thread(db, "t1")
     step0 = add_step(db, thread.thread_id, _step_request("s0", 0))
@@ -149,6 +163,20 @@ def test_get_thread_context(db: RouterDB) -> None:
     assert ctx[0]["step_index"] == 0
     assert ctx[0]["repo"] == "backend"
     assert ctx[0]["result"] == {"output": "done"}
+
+
+def test_get_thread_context_with_skipped_step(db: RouterDB) -> None:
+    from src.router.models import OnFailurePolicy
+    thread = create_thread(db, "ctx-skip")
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0, repo="backend", on_failure=OnFailurePolicy.skip))
+    
+    # Step0 fails but on_failure=skip
+    db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.failed)
+    
+    ctx = get_thread_context(db, thread.thread_id, up_to_step_index=1)
+    assert len(ctx) == 1
+    assert ctx[0]["status"] == "skipped"
+    assert ctx[0]["result"] is None
 
 
 def test_get_thread_context_cap_32kb(db: RouterDB) -> None:
@@ -200,6 +228,15 @@ def test_compute_thread_status_failed(db: RouterDB) -> None:
     db.update_task_status(step0.task_id, TaskStatus.assigned, TaskStatus.running)
     db.update_task_status(step0.task_id, TaskStatus.running, TaskStatus.failed)
     assert compute_thread_status(db, thread.thread_id) == ThreadStatus.failed
+
+
+def test_compute_thread_status_failed_soft(db: RouterDB) -> None:
+    from src.router.models import OnFailurePolicy
+    thread = create_thread(db, "soft-fail")
+    # Step fails but with on_failure=skip -> thread stays completed
+    step0 = add_step(db, thread.thread_id, _step_request("s0", 0, on_failure=OnFailurePolicy.skip))
+    db.update_task_status(step0.task_id, TaskStatus.queued, TaskStatus.failed)
+    assert compute_thread_status(db, thread.thread_id) == ThreadStatus.completed
 
 
 # -- Scheduler integration --

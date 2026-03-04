@@ -71,6 +71,20 @@ class TestLoadTopology:
         with pytest.raises(TopologyError, match="expected YAML mapping"):
             load_topology(path)
 
+    def test_load_section_not_mapping(self, tmp_path):
+        data = _minimal_topology()
+        data["global"] = ["not", "a", "dict"]
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(TopologyError, match="'global' must be a mapping"):
+            load_topology(path)
+
+    def test_load_repo_not_mapping(self, tmp_path):
+        data = _minimal_topology()
+        data["repos"]["badrepo"] = "not-a-dict"
+        path = _write_yaml(tmp_path, data)
+        with pytest.raises(TopologyError, match="repo 'badrepo' must be a mapping"):
+            load_topology(path)
+
 
 class TestTopologyQueries:
     @pytest.fixture

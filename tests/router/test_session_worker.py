@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import requests
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
@@ -539,3 +540,99 @@ class TestAttachCleanupInExecuteTask:
         }
         # Should not raise, and no upterm involvement
         worker._execute_task(task)
+
+
+# ---------------------------------------------------------------------------
+# _deliver_inbound_messages
+# ---------------------------------------------------------------------------
+
+
+class TestDeliverInboundMessages:
+
+    def test_deliver_success(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "messages": [
+                {"seq": 10, "direction": "in", "content": "hello"},
+                {"seq": 11, "direction": "out", "content": "ignored"},
+                {"seq": 12, "direction": "in", "content": ""}, # empty ignored
+                {"seq": 13, "direction": "in", "content": "world"},
+            ]
+        }
+        worker._http.get.return_value = mock_resp
+        
+        with patch.object(worker, "_tmux_send_text") as mock_send:
+            new_seq = worker._deliver_inbound_messages("sid", "tsess", 9)
+            
+            assert new_seq == 13
+            assert mock_send.call_count == 2
+            mock_send.assert_has_calls([
+                call("tsess", "hello"),
+                call("tsess", "world"),
+            ])
+
+    def test_fetch_error_returns_old_seq(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        worker._http.get.side_effect = requests.RequestException("boom")
+        
+        new_seq = worker._deliver_inbound_messages("sid", "tsess", 5)
+        assert new_seq == 5
+
+    def test_tmux_send_error_continues(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "messages": [{"seq": 1, "direction": "in", "content": "msg"}]
+        }
+        worker._http.get.return_value = mock_resp
+        
+        with patch.object(worker, "_tmux_send_text", side_effect=subprocess.SubprocessError("fail")):
+            new_seq = worker._deliver_inbound_messages("sid", "tsess", 0)
+            assert new_seq == 1 # still advanced
+
+
+# ---------------------------------------------------------------------------
+# Tmux operations
+# ---------------------------------------------------------------------------
+
+
+class TestTmuxOperations:
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_send_text_multiline(self, mock_run: Mock) -> None:
+        worker = _make_worker()
+        worker._tmux_send_text("mysess", "line1\nline2")
+        
+        # line1, Enter, line2, Enter = 4 calls
+        assert mock_run.call_count == 4
+        args = [c[0][0] for c in mock_run.call_args_list]
+        assert args[0][4] == "line1"
+        assert args[1][4] == "Enter"
+        assert args[2][4] == "line2"
+        assert args[3][4] == "Enter"
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_send_text_empty(self, mock_run: Mock) -> None:
+        worker = _make_worker()
+        worker._tmux_send_text("mysess", "")
+        # splitlines() or [text] -> [""] -> 1 iteration -> if line: skip, then Enter
+        assert mock_run.call_count == 1
+        assert mock_run.call_args[0][0][4] == "Enter"
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_capture_pane_success(self, mock_run: Mock) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="hello world\n")
+        worker = _make_worker()
+        out = worker._tmux_capture_pane("mysess")
+        assert out == "hello world"
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_capture_pane_error(self, mock_run: Mock) -> None:
+        mock_run.return_value = MagicMock(returncode=1)
+        worker = _make_worker()
+        assert worker._tmux_capture_pane("mysess") == ""

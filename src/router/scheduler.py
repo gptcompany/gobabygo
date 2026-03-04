@@ -64,21 +64,36 @@ class Scheduler:
 
     def find_all_eligible_workers(self, task: Task) -> list[Worker]:
         """Find all eligible workers for a task, sorted by idle_since ASC."""
-        idle_workers = self._db.list_workers(status="idle")
         task_mode = task.execution_mode.value if hasattr(task.execution_mode, "value") else str(task.execution_mode)
-        eligible = [
-            w
-            for w in idle_workers
-            if w.cli_type == task.target_cli
-            and w.account_profile == task.target_account
-            and task_mode in (w.execution_modes or ["batch"])
-        ]
+
+        # Find workers with status in ('idle', 'busy') and matching type/account
+        cur = self._db._conn.execute(
+            "SELECT * FROM workers WHERE status IN ('idle', 'busy') AND cli_type = ? AND account_profile = ?",
+            (task.target_cli.value, task.target_account),
+        )
+        candidates = [self._db._worker_from_row(row) for row in cur.fetchall()]
+        
+        eligible: list[Worker] = []
+        for w in candidates:
+            # Check mode
+            if task_mode not in (w.execution_modes or ["batch"]):
+                continue
+            
+            # Check capacity
+            active_count = self._db.count_active_tasks_by_worker(w.worker_id)
+            if active_count >= w.concurrency:
+                continue
+            
+            eligible.append(w)
+
         # Topology-aware filter: restrict to repo worker pool if defined
         if self._topology and task.repo:
             pool = self._topology.get_repo_worker_pool(task.repo)
             if pool is not None:
                 pool_set = set(pool)
                 eligible = [w for w in eligible if w.worker_id in pool_set]
+        
+        # Sort by idle_since (oldest first)
         eligible.sort(key=lambda w: w.idle_since or "")
         return eligible
 
@@ -124,13 +139,25 @@ class Scheduler:
 
         try:
             with self._db.transaction() as conn:
-                # CAS: verify worker still idle
+                # CAS: verify worker still idle/busy and has capacity
+                active_count = self._db.count_active_tasks_by_worker(worker.worker_id, conn=conn)
+                if active_count >= worker.concurrency:
+                    raise _CASFailure("Worker capacity reached")
+                
+                cur = conn.execute("SELECT status FROM workers WHERE worker_id = ?", (worker.worker_id,))
+                row = cur.fetchone()
+                if not row or row["status"] not in ("idle", "busy"):
+                    raise _CASFailure("Worker status changed")
+                
+                new_status = "busy" if (active_count + 1) >= worker.concurrency else "idle"
+                
+                # Atomic update
                 cur = conn.execute(
-                    "UPDATE workers SET status = 'busy' WHERE worker_id = ? AND status = 'idle'",
-                    (worker.worker_id,),
+                    "UPDATE workers SET status = ?, idle_since = NULL WHERE worker_id = ? AND status IN ('idle', 'busy')",
+                    (new_status, worker.worker_id),
                 )
                 if cur.rowcount == 0:
-                    raise _CASFailure()
+                    raise _CASFailure("Worker status changed during update")
 
                 # CAS: task queued -> assigned
                 if not validate_transition(TaskStatus.queued, TaskStatus.assigned):
@@ -212,13 +239,18 @@ class Scheduler:
         self, worker_id: str, completed_task_id: str, conn, reason: str
     ) -> None:
         """After task finalization, either idle the worker or auto-retire if draining."""
-        worker = self._db.get_worker(worker_id)
-        if worker and worker.status == "draining":
-            remaining_running = self._db.get_tasks_by_worker(worker_id, status="running")
-            remaining_assigned = self._db.get_tasks_by_worker(worker_id, status="assigned")
+        # Query worker within transaction
+        cur = conn.execute("SELECT status FROM workers WHERE worker_id = ?", (worker_id,))
+        row = cur.fetchone()
+        if not row:
+            return
+        status = row["status"]
+
+        if status == "draining":
+            all_worker_tasks = self._db.get_tasks_by_worker(worker_id, conn=conn)
             remaining = [
-                t for t in remaining_running + remaining_assigned
-                if t.task_id != completed_task_id
+                t for t in all_worker_tasks
+                if t.task_id != completed_task_id and t.status in (TaskStatus.running, TaskStatus.assigned)
             ]
             if not remaining:
                 self._db.update_worker(worker_id, {"status": "offline"}, conn=conn)
@@ -231,9 +263,23 @@ class Scheduler:
                     worker_id, len(remaining),
                 )
         else:
+            # Recompute busy vs idle based on current active tasks
+            all_worker_tasks = self._db.get_tasks_by_worker(worker_id, conn=conn)
+            remaining = [
+                t for t in all_worker_tasks
+                if t.task_id != completed_task_id and t.status in (TaskStatus.running, TaskStatus.assigned)
+            ]
+            # Use the full worker object for concurrency check
+            worker = self._db.get_worker(worker_id)
+            new_status = "busy" if (worker and len(remaining) >= worker.concurrency) else "idle"
+            
+            update_fields: dict[str, Any] = {"status": new_status}
+            if new_status == "idle":
+                update_fields["idle_since"] = _utc_now()
+                
             self._db.update_worker(
                 worker_id,
-                {"status": "idle", "idle_since": _utc_now()},
+                update_fields,
                 conn=conn,
             )
 

@@ -844,19 +844,29 @@ class RouterDB:
             )
         return [self._task_from_row(row) for row in cur.fetchall()]
 
-    def get_tasks_by_worker(self, worker_id: str, status: str | None = None) -> list[Task]:
+    def get_tasks_by_worker(self, worker_id: str, status: str | None = None, conn: sqlite3.Connection | None = None) -> list[Task]:
         """Get tasks assigned to a worker, optionally filtered by status."""
+        c = conn or self._conn
         if status is not None:
-            cur = self._conn.execute(
+            cur = c.execute(
                 "SELECT * FROM tasks WHERE assigned_worker = ? AND status = ? ORDER BY created_at ASC",
                 (worker_id, status),
             )
         else:
-            cur = self._conn.execute(
+            cur = c.execute(
                 "SELECT * FROM tasks WHERE assigned_worker = ? ORDER BY created_at ASC",
                 (worker_id,),
             )
         return [self._task_from_row(row) for row in cur.fetchall()]
+
+    def count_active_tasks_by_worker(self, worker_id: str, conn: sqlite3.Connection | None = None) -> int:
+        """Count 'assigned' and 'running' tasks for a worker."""
+        c = conn or self._conn
+        cur = c.execute(
+            "SELECT COUNT(*) FROM tasks WHERE assigned_worker = ? AND status IN ('assigned', 'running')",
+            (worker_id,),
+        )
+        return cur.fetchone()[0]
 
     def count_tasks_by_status(self, status: str) -> int:
         """Count tasks with a given status."""

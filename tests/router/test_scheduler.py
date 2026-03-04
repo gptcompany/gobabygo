@@ -43,12 +43,14 @@ def _add_worker(
     status="idle",
     idle_since=None,
     execution_modes=None,
+    **kwargs,
 ):
     w = Worker(
         worker_id=worker_id, machine="ws1", cli_type=cli,
         account_profile=account, status=status,
         last_heartbeat=_now(), idle_since=idle_since or _now(),
         execution_modes=execution_modes or ["batch"],
+        **kwargs,
     )
     db.insert_worker(w)
     return w
@@ -80,7 +82,11 @@ class TestFindEligibleWorker:
         assert sched.find_all_eligible_workers(task) == []
 
     def test_busy_excluded(self, sched, db):
-        _add_worker(db, "w1", "work", CLIType.claude, status="busy")
+        # A busy worker WITH capacity is now eligible
+        _add_worker(db, "w1", "work", CLIType.claude, status="busy", concurrency=1)
+        # Add a task assigned to it to reach capacity
+        _add_task(db, "t_busy", assigned_worker="w1", status=TaskStatus.running)
+        
         task = Task(task_id="t1", target_cli=CLIType.claude, target_account="work")
         assert sched.find_all_eligible_workers(task) == []
 
@@ -166,19 +172,20 @@ class TestDispatch:
     def test_cas_failure_worker_busy(self, sched, db, monkeypatch: pytest.MonkeyPatch):
         _add_worker(db, "w1", "work")
         task = _add_task(db, "t1")
-        
-        # Manually set worker to busy right before dispatching
+
+        # Manually set worker to offline right before dispatching
         original_find = sched.find_all_eligible_workers
         def mock_find(t):
             workers = original_find(t)
-            # Make worker busy in DB behind scheduler's back
-            db._conn.execute("UPDATE workers SET status = 'busy'")
+            # Make worker offline in DB behind scheduler's back
+            db._conn.execute("UPDATE workers SET status = 'offline'")
             db._conn.commit()
             return workers
         monkeypatch.setattr(sched, "find_all_eligible_workers", mock_find)
 
-        result = sched.dispatch()
-        assert result is None
+        # Should fail atomic dispatch and return None
+        assert sched.dispatch() is None
+
 
     def test_cas_failure_validate_transition(self, sched, db, monkeypatch: pytest.MonkeyPatch):
         _add_worker(db, "w1", "work")
@@ -365,6 +372,98 @@ class TestDrainingAutoRetire:
         assert sched.complete_task("t1", "w1") is True
         w = db.get_worker("w1")
         assert w.status == "idle"
+
+
+class TestCriticalTaskReview:
+    def test_critical_task_routes_to_review(self, sched, db):
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1", critical=True)
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+        
+        # Manually set to running since ack does that
+        db.update_task_status("t1", TaskStatus.running, TaskStatus.running)
+        
+        assert sched.complete_task("t1", "w1", result={"ok": True}) is True
+        t = db.get_task("t1")
+        assert t.status == TaskStatus.review
+        assert t.review_timeout_at is not None
+        assert t.result == {"ok": True}
+        
+        # Worker should go idle (or draining->offline) after routing to review
+        w = db.get_worker("w1")
+        assert w.status == "idle"
+
+    def test_complete_task_wrong_worker(self, sched, db):
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+        sched.dispatch()
+        # Task assigned to w1, but w2 tries to complete it
+        assert sched.complete_task("t1", "w2") is False
+
+
+class TestTaskRetry:
+    def test_retry_policy_requeues_task(self, sched, db):
+        from src.router.models import OnFailurePolicy
+        _add_worker(db, "w1", "work")
+        # Task with retry policy
+        _add_task(db, "t1", on_failure=OnFailurePolicy.retry, attempt=1)
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+        
+        # Report failure -> should requeue
+        assert sched.report_failure("t1", "w1", "network error") is True
+        
+        t = db.get_task("t1")
+        assert t.status == TaskStatus.queued
+        assert t.attempt == 2
+        assert t.not_before is not None
+        assert t.assigned_worker is None
+        
+        # Worker should be idle
+        w = db.get_worker("w1")
+        assert w.status == "idle"
+
+    def test_retry_policy_exhausted_fails(self, sched, db):
+        from src.router.models import OnFailurePolicy
+        _add_worker(db, "w1", "work")
+        # Task already at attempt 3
+        _add_task(db, "t1", on_failure=OnFailurePolicy.retry, attempt=3)
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+        
+        assert sched.report_failure("t1", "w1", "final error") is True
+        t = db.get_task("t1")
+        assert t.status == TaskStatus.failed
+
+
+class TestWorkerPostTaskDraining:
+    def test_draining_worker_with_remaining_assigned_tasks_stays_draining(self, sched, db):
+        """Worker with assigned (but not yet running) tasks stays draining."""
+        _add_worker(db, "w1", "work", concurrency=2)
+
+        # Task 1: running
+
+        t1 = _add_task(db, "t1")
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+        
+        # Task 2: assigned (dispatched but not acked)
+        t2 = _add_task(db, "t2")
+        sched.dispatch()
+
+        # Transition to draining
+        db.update_worker("w1", {"status": "draining"})
+
+        # Complete T1 -> w1 has T2 assigned -> stays draining
+        sched.complete_task("t1", "w1")
+        w = db.get_worker("w1")
+        assert w.status == "draining"
+        
+        # Complete T2 -> now offline
+        sched.ack_task("t2", "w1")
+        sched.complete_task("t2", "w1")
+        assert db.get_worker("w1").status == "offline"
 
 
 class TestDispatchLongPollWakeup:
