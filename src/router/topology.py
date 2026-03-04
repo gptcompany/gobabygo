@@ -40,6 +40,8 @@ class Topology:
             return None
         if not isinstance(pool, list) or not all(isinstance(x, str) for x in pool):
             raise TopologyError(f"repo '{repo}' worker_pool must be a list of strings, got {type(pool).__name__}")
+        if not pool:
+            return None
         return list(pool)
 
     def get_repo_preferred_host(self, repo: str) -> str | None:
