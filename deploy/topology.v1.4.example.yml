@@ -2,6 +2,9 @@
 #
 # Runtime remains env-based per host and per worker.
 # This file adds cross-repo orchestration metadata only.
+# Scheduler rule:
+#   if task.repo is set, scheduler constrains eligible workers to repos.<repo>.worker_pool
+#   after applying existing cli/account/execution_mode filters.
 #
 # Attach target contract emitted at runtime into Session.metadata:
 #   attach_kind: upterm
