@@ -420,6 +420,19 @@ class Scheduler:
             if not cas_ok:
                 return False
 
+            self._db.insert_event(
+                TaskEvent(
+                    task_id=task.task_id,
+                    event_type="state_transition",
+                    payload={
+                        "from": "running",
+                        "to": "queued",
+                        "reason": f"retry_requeue: {reason}",
+                    },
+                ),
+                conn=conn,
+            )
+
             self._db.update_task_fields(
                 task.task_id,
                 {

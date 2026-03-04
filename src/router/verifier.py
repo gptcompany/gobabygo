@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from src.router.db import RouterDB
 from src.router.dependency import on_task_terminal
 from src.router.fsm import TransitionRequest, TransitionResult, apply_transition
-from src.router.models import Task, TaskEvent, TaskStatus
+from src.router.models import OnFailurePolicy, Task, TaskEvent, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,80 @@ _MAX_REJECTIONS = 3
 
 class VerifierGate:
     """Gate that enforces review for critical tasks."""
+
+    @staticmethod
+    def _update_thread_status(db: RouterDB, task: Task) -> None:
+        """Persist computed thread status after a step state change."""
+        if not task.thread_id:
+            return
+        from src.router.thread import compute_thread_status
+
+        new_thread_status = compute_thread_status(db, task.thread_id)
+        db.update_thread(
+            task.thread_id,
+            {"status": new_thread_status.value, "updated_at": _utc_now()},
+        )
+
+    def _retry_review_timeout(self, db: RouterDB, task: Task) -> bool:
+        """Requeue a reviewed task after timeout when on_failure=retry."""
+        from src.router.retry import RetryPolicy
+
+        retry_policy = RetryPolicy(db)
+        not_before = retry_policy.calculate_not_before(task)
+        new_attempt = task.attempt + 1
+
+        with db.transaction() as conn:
+            cas_ok = db.update_task_status(
+                task.task_id, TaskStatus.review, TaskStatus.queued, conn=conn,
+            )
+            if not cas_ok:
+                return False
+
+            db.insert_event(
+                TaskEvent(
+                    task_id=task.task_id,
+                    event_type="state_transition",
+                    payload={
+                        "from": "review",
+                        "to": "queued",
+                        "reason": "review_timeout_retry",
+                    },
+                ),
+                conn=conn,
+            )
+
+            db.update_task_fields(
+                task.task_id,
+                {
+                    "attempt": new_attempt,
+                    "not_before": not_before,
+                    "assigned_worker": None,
+                    "lease_expires_at": None,
+                    "review_timeout_at": None,
+                    "result_json": None,
+                },
+                conn=conn,
+            )
+
+            db.insert_event(
+                TaskEvent(
+                    task_id=task.task_id,
+                    event_type="step_retry_requeued",
+                    payload={
+                        "attempt": new_attempt,
+                        "reason": "retry: review_timeout",
+                        "not_before": not_before,
+                    },
+                ),
+                conn=conn,
+            )
+
+        self._update_thread_status(db, db.get_task(task.task_id) or task)
+        logger.info(
+            "review_timeout_retry task=%s attempt=%d/%d not_before=%s",
+            task.task_id, new_attempt, 3, not_before,
+        )
+        return True
 
     def should_review(self, task: Task) -> bool:
         """Returns True if the task requires verifier review."""
@@ -198,6 +272,18 @@ class VerifierGate:
         timed_out: list[str] = []
         for row in rows:
             task_id = row["task_id"]
+            task = db.get_task(task_id)
+            if task is None:
+                continue
+
+            if (
+                task.on_failure == OnFailurePolicy.retry
+                and task.attempt < 3
+            ):
+                if self._retry_review_timeout(db, task):
+                    timed_out.append(task_id)
+                continue
+
             request = TransitionRequest(
                 task_id=task_id,
                 from_status=TaskStatus.review,
@@ -207,6 +293,7 @@ class VerifierGate:
             result = apply_transition(db, request)
             if result.success:
                 timed_out.append(task_id)
+                self._update_thread_status(db, task)
                 on_task_terminal(db, task_id)
 
         return timed_out

@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Resolve version
+        id: version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          version = data["project"]["version"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"version={version}\n")
+              handle.write(f"tag=v{version}\n")
+          print(f"Resolved release version {version}")
+          PY
+
+      - name: Check existing tag
+        id: tag_check
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          tag="${{ steps.version.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${tag} already exists; skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install build backend
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Build distributions
+        if: steps.tag_check.outputs.exists == 'false'
+        run: python -m build
+
+      - name: Create and push tag
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Publish GitHub release
+        if: steps.tag_check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/*

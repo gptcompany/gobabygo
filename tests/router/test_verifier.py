@@ -7,8 +7,17 @@ import pytest
 import json
 
 from src.router.db import RouterDB
-from src.router.models import CLIType, Task, TaskStatus, Worker
+from src.router.models import (
+    CLIType,
+    OnFailurePolicy,
+    Task,
+    TaskStatus,
+    ThreadStatus,
+    ThreadStepRequest,
+    Worker,
+)
 from src.router.scheduler import Scheduler
+from src.router.thread import add_step, compute_thread_status, create_thread
 from src.router.verifier import VerifierGate, _MAX_REJECTIONS
 
 
@@ -257,6 +266,78 @@ class TestReviewTimeout:
         # No review_timeout_at set (None)
         timed_out = gate.check_review_timeout(db)
         assert timed_out == []
+
+    def test_retry_policy_requeues_review_timeout(self, gate, db, sched):
+        _add_worker(db, "w1")
+        thread = create_thread(db, "review-timeout-retry")
+        step0 = add_step(
+            db,
+            thread.thread_id,
+            ThreadStepRequest(
+                title="critical retry",
+                step_index=0,
+                critical=True,
+                on_failure=OnFailurePolicy.retry,
+            ),
+        )
+        step1 = add_step(
+            db,
+            thread.thread_id,
+            ThreadStepRequest(title="dependent", step_index=1),
+        )
+
+        dispatched = sched.dispatch()
+        assert dispatched is not None
+        assert sched.ack_task(step0.task_id, "w1") is True
+        assert sched.complete_task(step0.task_id, "w1", result={"draft": "ready"}) is True
+
+        db.update_task_fields(step0.task_id, {"review_timeout_at": _past(60)})
+        timed_out = gate.check_review_timeout(db)
+
+        assert step0.task_id in timed_out
+        retried = db.get_task(step0.task_id)
+        assert retried.status == TaskStatus.queued
+        assert retried.attempt == 2
+        assert retried.not_before is not None
+        assert retried.review_timeout_at is None
+        assert retried.result is None
+        assert db.get_task(step1.task_id).status == TaskStatus.blocked
+        assert compute_thread_status(db, thread.thread_id) == ThreadStatus.active
+        assert db.get_thread(thread.thread_id).status == ThreadStatus.active
+
+        events = db.get_events(step0.task_id)
+        transitions = [
+            e for e in events
+            if e.event_type == "state_transition"
+            and e.payload["from"] == "review"
+            and e.payload["to"] == "queued"
+        ]
+        assert len(transitions) == 1
+        assert transitions[0].payload["reason"] == "review_timeout_retry"
+        retry_events = [e for e in events if e.event_type == "step_retry_requeued"]
+        assert len(retry_events) == 1
+
+    def test_timeout_updates_persisted_thread_status(self, gate, db, sched):
+        _add_worker(db, "w1")
+        thread = create_thread(db, "review-timeout-fail")
+        step0 = add_step(
+            db,
+            thread.thread_id,
+            ThreadStepRequest(title="critical abort", step_index=0, critical=True),
+        )
+
+        dispatched = sched.dispatch()
+        assert dispatched is not None
+        assert sched.ack_task(step0.task_id, "w1") is True
+        assert sched.complete_task(step0.task_id, "w1", result={"draft": "ready"}) is True
+
+        db.update_task_fields(step0.task_id, {"review_timeout_at": _past(60)})
+        timed_out = gate.check_review_timeout(db)
+
+        assert step0.task_id in timed_out
+        assert db.get_task(step0.task_id).status == TaskStatus.timeout
+        assert compute_thread_status(db, thread.thread_id) == ThreadStatus.failed
+        assert db.get_thread(thread.thread_id).status == ThreadStatus.failed
 
     def test_timeout_unblocks_dependent_tasks(self, gate, db):
         """check_review_timeout calls on_task_terminal so blocked dependents get unblocked."""

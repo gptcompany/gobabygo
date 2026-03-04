@@ -102,7 +102,7 @@ class Task(BaseModel):
     step_index: int | None = None
     repo: str | None = None
     role: str | None = None
-    on_failure: str = "abort"  # abort|skip|retry — per-step failure policy
+    on_failure: OnFailurePolicy = OnFailurePolicy.abort
     created_at: str = Field(default_factory=_utc_now)
     updated_at: str = Field(default_factory=_utc_now)
 

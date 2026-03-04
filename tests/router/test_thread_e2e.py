@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from src.router.db import RouterDB
 from src.router.dependency import on_task_terminal
@@ -310,7 +311,7 @@ class TestOnFailureRetry:
         assert compute_thread_status(db, thread.thread_id) == ThreadStatus.failed
 
     def test_retry_event_logged(self, db: RouterDB, sched: Scheduler) -> None:
-        """Retry requeue creates a step_retry_requeued event."""
+        """Retry requeue logs both the transition and the retry event."""
         w = _add_worker(db, "w-claude")
         thread = create_thread(db, "retry-event-test")
         s0 = add_step(db, thread.thread_id, _step("Retryable", 0, on_failure=OnFailurePolicy.retry))
@@ -321,6 +322,14 @@ class TestOnFailureRetry:
         events = db.get_events(s0.task_id)
         event_types = [e.event_type for e in events]
         assert "step_retry_requeued" in event_types
+
+        transition = next(
+            e for e in events
+            if e.event_type == "state_transition"
+            and e.payload["from"] == "running"
+            and e.payload["to"] == "queued"
+        )
+        assert transition.payload["reason"] == "retry_requeue: oops"
 
         retry_event = next(e for e in events if e.event_type == "step_retry_requeued")
         assert retry_event.payload["attempt"] == 2
@@ -338,25 +347,30 @@ class TestOnFailureField:
         """Default on_failure is abort."""
         thread = create_thread(db, "default-test")
         task = add_step(db, thread.thread_id, _step("Default", 0))
-        assert task.on_failure == "abort"
+        assert task.on_failure == OnFailurePolicy.abort
 
     def test_skip_persisted(self, db: RouterDB) -> None:
         """on_failure=skip is persisted in DB."""
         thread = create_thread(db, "skip-persist")
         task = add_step(db, thread.thread_id, _step("Skip", 0, on_failure=OnFailurePolicy.skip))
-        assert task.on_failure == "skip"
+        assert task.on_failure == OnFailurePolicy.skip
 
         # Round-trip through DB
         loaded = db.get_task(task.task_id)
-        assert loaded.on_failure == "skip"
+        assert loaded.on_failure == OnFailurePolicy.skip
 
     def test_retry_persisted(self, db: RouterDB) -> None:
         """on_failure=retry is persisted in DB."""
         thread = create_thread(db, "retry-persist")
         task = add_step(db, thread.thread_id, _step("Retry", 0, on_failure=OnFailurePolicy.retry))
-        assert task.on_failure == "retry"
+        assert task.on_failure == OnFailurePolicy.retry
         loaded = db.get_task(task.task_id)
-        assert loaded.on_failure == "retry"
+        assert loaded.on_failure == OnFailurePolicy.retry
+
+    def test_invalid_policy_rejected(self) -> None:
+        """Task rejects invalid on_failure values."""
+        with pytest.raises(ValidationError):
+            Task(title="invalid", on_failure="not-a-policy")
 
 
 # =============================================================================
