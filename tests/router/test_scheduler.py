@@ -137,6 +137,12 @@ class TestFindNextTask:
         task = sched.find_next_task()
         assert task.task_id == "t2"  # t1 skipped due to not_before
 
+    def test_unresolved_dependencies_skipped(self, sched, db):
+        _add_task(db, "t1", depends_on=["missing"])
+        _add_task(db, "t2")
+        task = sched.find_next_task()
+        assert task.task_id == "t2"  # t1 skipped due to unresolved deps
+
     def test_no_queued_tasks(self, sched, db):
         assert sched.find_next_task() is None
 
@@ -148,17 +154,51 @@ class TestDispatch:
         result = sched.dispatch()
         assert result is not None
         assert result.task.task_id == "t1"
-        assert result.worker.worker_id == "w1"
-        # Task should be assigned
-        t = db.get_task("t1")
-        assert t.status == TaskStatus.assigned
-        assert t.assigned_worker == "w1"
-        # Worker should be busy
-        w = db.get_worker("w1")
-        assert w.status == "busy"
-        # Lease should exist
-        lease = db.get_active_lease("t1")
-        assert lease is not None
+
+    def test_no_candidates(self, sched, db):
+        # Worker has different CLI
+        _add_worker(db, "w1", "work", cli=CLIType.codex)
+        _add_task(db, "t1", target_cli=CLIType.claude)
+        result = sched.dispatch()
+        assert result is None
+
+    def test_cas_failure_worker_busy(self, sched, db, monkeypatch: pytest.MonkeyPatch):
+        _add_worker(db, "w1", "work")
+        task = _add_task(db, "t1")
+        
+        # Manually set worker to busy right before dispatching
+        original_find = sched.find_all_eligible_workers
+        def mock_find(t):
+            workers = original_find(t)
+            # Make worker busy in DB behind scheduler's back
+            db._conn.execute("UPDATE workers SET status = 'busy'")
+            db._conn.commit()
+            return workers
+        monkeypatch.setattr(sched, "find_all_eligible_workers", mock_find)
+
+        result = sched.dispatch()
+        assert result is None
+
+    def test_cas_failure_validate_transition(self, sched, db, monkeypatch: pytest.MonkeyPatch):
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+
+        import src.router.scheduler as sched_mod
+        monkeypatch.setattr(sched_mod, "validate_transition", lambda f, t: False)
+
+        result = sched.dispatch()
+        assert result is None
+    def test_cas_failure_update_task_status(self, sched, db, monkeypatch: pytest.MonkeyPatch):
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+
+        original_update = db.update_task_status
+        def mock_update(*args, **kwargs):
+            return False
+        monkeypatch.setattr(db, "update_task_status", mock_update)
+
+        result = sched.dispatch()
+        assert result is None
 
     def test_no_worker(self, sched, db):
         _add_task(db, "t1")

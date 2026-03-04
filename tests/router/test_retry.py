@@ -175,3 +175,54 @@ class TestUnschedulableTasks:
         _add_task(db, "t1", status=TaskStatus.queued, created_at=_now())
         rp = RetryPolicy(db=db)
         assert rp.find_unschedulable_tasks() == []
+
+
+class TestRetryEdgeCases:
+    def test_utc_now_and_uuid4(self) -> None:
+        from src.router.retry import _utc_now, _uuid4
+        assert isinstance(_utc_now(), str)
+        assert isinstance(_uuid4(), str)
+
+    def test_requeue_failed_concurrent_mod(self, db: RouterDB, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.router.retry import RetryPolicy
+        task = _add_task(db, "t1", attempt=1)
+
+        import src.router.retry as retry_mod
+        def mock_requeue(*args, **kwargs):
+            return False, False
+        monkeypatch.setattr(retry_mod, "requeue_task", mock_requeue)
+
+        policy = RetryPolicy(db=db)
+        result = policy.requeue_with_backoff(task.task_id, "test_reason")
+        assert result.retried is False
+        assert result.error == "requeue_failed"
+
+    def test_fail_failed_concurrent_mod(self, db: RouterDB, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.router.retry import RetryPolicy
+        task = _add_task(db, "t1", attempt=3)  # max attempts
+
+        import src.router.retry as retry_mod
+        def mock_requeue(*args, **kwargs):
+            return False, False
+        monkeypatch.setattr(retry_mod, "requeue_task", mock_requeue)
+
+        policy = RetryPolicy(db=db, max_attempts=3)
+        result = policy.requeue_with_backoff(task.task_id, "test_reason")
+        assert result.retried is False
+        assert result.escalated is False
+        assert result.error == "fail_failed"
+
+    def test_escalation_callback_exception_handled(self, db: RouterDB, caplog: pytest.LogCaptureFixture) -> None:
+        from src.router.retry import RetryPolicy
+
+        class BadCallback:
+            def on_escalation(self, task, last_worker_id, attempt, reason):
+                raise ValueError("Intentional callback error")
+
+        task = _add_task(db, "t1", attempt=3)
+
+        policy = RetryPolicy(db=db, max_attempts=3, escalation_callbacks=[BadCallback()])
+        result = policy.requeue_with_backoff(task.task_id, "test_reason")
+        
+        assert result.escalated is True
+        assert "Escalation callback error" in caplog.text

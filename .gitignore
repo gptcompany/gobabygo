@@ -13,6 +13,7 @@ __pycache__/
 .coverage.*
 /coverage.json
 /coverage.xml
+*.cover
 htmlcov/
 
 # Build artifacts
