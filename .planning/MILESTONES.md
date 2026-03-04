@@ -24,6 +24,7 @@
 - `.planning/milestones/v1.4-ROADMAP.md`
 - `.planning/milestones/v1.4-REQUIREMENTS.md`
 - `.planning/milestones/v1.4-PHASE-17-18-BREAKDOWN.md`
+- `.planning/milestones/v1.4-PHASE-19-BREAKDOWN.md`
 - `deploy/topology.v1.4.example.yml`
 
 ---
