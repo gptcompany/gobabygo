@@ -353,7 +353,8 @@ class MeshSessionWorker:
             self._report_failure(task_id, f"unexpected: {e}")
         finally:
             if upterm_proc is not None:
-                self._stop_upterm(upterm_proc)
+                socket_path = f"/tmp/upterm-{tmux_session_name}.sock" if tmux_session_name else None
+                self._stop_upterm(upterm_proc, socket_path)
 
     def _tmux_session_name(self, task_id: str) -> str:
         base = f"{self.config.tmux_session_prefix}-{self.config.cli_type}-{self.config.account_profile}-{task_id[:8]}"
@@ -500,7 +501,7 @@ class MeshSessionWorker:
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
                 text=True,
             )
         except (OSError, FileNotFoundError):
@@ -512,7 +513,7 @@ class MeshSessionWorker:
             return proc, target
 
         logger.warning("upterm started but failed to provide session URL")
-        self._stop_upterm(proc)
+        self._stop_upterm(proc, socket_path)
         return None, None
 
     def _poll_upterm_target(self, socket_path: str) -> str | None:
@@ -542,19 +543,25 @@ class MeshSessionWorker:
         return None
 
     @staticmethod
-    def _stop_upterm(proc: subprocess.Popen) -> None:
-        """Terminate an upterm child process (SIGTERM then SIGKILL)."""
-        if proc.poll() is not None:
-            return
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+    def _stop_upterm(proc: subprocess.Popen, socket_path: str | None = None) -> None:
+        """Terminate an upterm child process (SIGTERM then SIGKILL) and cleanup socket."""
+        if proc.poll() is None:
+            proc.terminate()
             try:
-                proc.wait(timeout=2)
+                proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                pass
+                proc.kill()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+
+        if socket_path and os.path.exists(socket_path):
+            try:
+                os.remove(socket_path)
+                logger.info("Cleaned up upterm admin socket: %s", socket_path)
+            except OSError as e:
+                logger.warning("Failed to remove upterm admin socket %s: %s", socket_path, e)
 
     def _ack_task(self, task_id: str) -> bool:
         try:

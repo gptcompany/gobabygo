@@ -257,7 +257,7 @@ class TestStartUpterm:
 
         assert p is None
         assert target is None
-        mock_stop.assert_called_once_with(proc)
+        mock_stop.assert_called_once_with(proc, "/tmp/upterm-mesh-sess.sock")
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +289,15 @@ class TestStopUpterm:
         MeshSessionWorker._stop_upterm(proc)
         proc.terminate.assert_called_once()
         proc.kill.assert_called_once()
+
+    @patch("src.router.session_worker.os.path.exists", return_value=True)
+    @patch("src.router.session_worker.os.remove")
+    def test_socket_cleanup(self, mock_remove: Mock, mock_exists: Mock) -> None:
+        proc = MagicMock(spec=subprocess.Popen)
+        proc.poll.return_value = 0
+        MeshSessionWorker._stop_upterm(proc, "/tmp/test.sock")
+        mock_exists.assert_called_once_with("/tmp/test.sock")
+        mock_remove.assert_called_once_with("/tmp/test.sock")
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +457,8 @@ class TestAttachCleanupInExecuteTask:
         }
         worker._execute_task(task)
 
-        mock_stop.assert_called_once_with(upterm_proc)
+        # tmux_session_name: mesh-claude-work-t-001
+        mock_stop.assert_called_once_with(upterm_proc, "/tmp/upterm-mesh-claude-work-t-001.sock")
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_create_attach_handle")
@@ -511,7 +521,8 @@ class TestAttachCleanupInExecuteTask:
         }
         worker._execute_task(task)
 
-        mock_stop.assert_called_once_with(upterm_proc)
+        # tmux_session_name: mesh-claude-work-t-003
+        mock_stop.assert_called_once_with(upterm_proc, "/tmp/upterm-mesh-claude-work-t-003.sock")
 
     def test_no_cleanup_when_no_attach(self) -> None:
         """Early returns (bad mode) skip attach entirely; no cleanup needed."""
