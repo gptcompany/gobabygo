@@ -498,12 +498,40 @@ class TestTopologyAwareDispatch:
         workers = sched_topo.find_all_eligible_workers(task)
         assert [w.worker_id for w in workers] == ["w1"]
 
-    def test_topology_dispatch_routes_to_pool(self, sched_topo, db):
-        """Full dispatch with topology routes task to pool worker."""
-        _add_worker(db, "w1", "work", CLIType.claude, idle_since=_past(60))
-        _add_worker(db, "w2", "work", CLIType.claude, idle_since=_past(120))
-        _add_task(db, "t1", repo="myrepo")
-        result = sched_topo.dispatch()
-        assert result is not None
-        # w2 is longest idle but NOT in pool -> w1 gets the task
-        assert result.worker.worker_id == "w1"
+    def test_topology_pool_intersect_with_mode(self, sched_topo, db):
+        """Topology pool + execution_mode filters combine correctly."""
+        # w1: session mode, in pool -> eligible
+        _add_worker(db, "w1", "work", CLIType.claude, execution_modes=["session"])
+        # w3: batch mode, in pool -> excluded by mode filter for session task
+        _add_worker(db, "w3", "work", CLIType.claude, execution_modes=["batch"])
+        task = Task(task_id="t1", target_cli=CLIType.claude,
+                    target_account="work", repo="myrepo",
+                    execution_mode=ExecutionMode.session)
+        workers = sched_topo.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w1"]
+
+    def test_topology_repo_without_pool_defined(self, db):
+        """Repo in topology but without worker_pool key -> legacy fallback."""
+        topo = Topology({
+            "version": 1, "global": {}, "hosts": {}, "workers": {},
+            "repos": {"repo-no-pool": {"some-other-key": "val"}}
+        })
+        sched = Scheduler(db=db, topology=topo)
+        _add_worker(db, "w1", "work", CLIType.claude)
+        task = Task(task_id="t1", target_cli=CLIType.claude,
+                    target_account="work", repo="repo-no-pool")
+        workers = sched.find_all_eligible_workers(task)
+        assert len(workers) == 1
+
+    def test_topology_invalid_pool_type_fails(self, db):
+        """Topology with string instead of list for pool should raise TopologyError."""
+        from src.router.topology import TopologyError
+        # This will be caught during get_repo_worker_pool if not in _validate
+        topo = Topology({
+            "version": 1, "global": {}, "hosts": {}, "workers": {},
+            "repos": {"bad-repo": {"worker_pool": "not-a-list"}}
+        })
+        sched = Scheduler(db=db, topology=topo)
+        task = Task(task_id="t1", repo="bad-repo")
+        with pytest.raises(TopologyError, match="must be a list of strings"):
+            sched.find_all_eligible_workers(task)

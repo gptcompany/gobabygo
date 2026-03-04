@@ -36,8 +36,10 @@ class Topology:
         if repo_cfg is None:
             return None
         pool = repo_cfg.get("worker_pool")
-        if not pool:
+        if pool is None:
             return None
+        if not isinstance(pool, list) or not all(isinstance(x, str) for x in pool):
+            raise TopologyError(f"repo '{repo}' worker_pool must be a list of strings, got {type(pool).__name__}")
         return list(pool)
 
     def get_repo_preferred_host(self, repo: str) -> str | None:
@@ -69,6 +71,22 @@ def _validate(data: Any, path: str) -> dict[str, Any]:
         raise TopologyError(
             f"Topology file {path}: missing required keys: {', '.join(sorted(missing))}"
         )
+
+    for key in ["global", "hosts", "workers", "repos"]:
+        val = data.get(key)
+        if not isinstance(val, dict):
+            raise TopologyError(f"Topology file {path}: '{key}' must be a mapping, got {type(val).__name__}")
+    
+    # Deep validation of repos
+    repos = data.get("repos") or {}
+    for repo, cfg in repos.items():
+        if not isinstance(cfg, dict):
+            raise TopologyError(f"Topology file {path}: repo '{repo}' must be a mapping")
+        pool = cfg.get("worker_pool")
+        if pool is not None:
+            if not isinstance(pool, list) or not all(isinstance(x, str) for x in pool):
+                raise TopologyError(f"Topology file {path}: repo '{repo}' worker_pool must be a list of strings")
+
     return data
 
 
