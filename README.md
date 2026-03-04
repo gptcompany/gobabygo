@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="AI Mesh Router Logo" width="800">
+</p>
+
 # AI Mesh Router
 
 ![CI](https://github.com/gptcompany/gobabygo/actions/workflows/ci.yml/badge.svg)
