@@ -146,7 +146,7 @@ Plans:
 ### v1.3 Cross-Repo Orchestration
 
 - [x] **Phase 14: Result Persistence + Read Path** - Persist worker results server-side, add GET /tasks/{id} and GET /tasks?status=...
-- [ ] **Phase 15: Thread Model + Cross-Repo Context** - Thread as ordered task group with context propagation, session spawn, meshctl thread CLI
+- [x] **Phase 15: Thread Model + Cross-Repo Context** - Thread as ordered task group with runtime `thread_context`, worker-owned session runtime, meshctl thread CLI
 - [ ] **Phase 16: Aggregator + Error Handling** - Fan-in aggregation, per-step on_failure (skip/retry/abort), E2E cross-repo test
 
 ### Phase 14: Result Persistence + Read Path
@@ -172,12 +172,16 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. `meshctl thread create --name "..."` crea thread
   2. `meshctl thread add-step` aggiunge step come Task con thread_id, step_index, repo
-  3. Quando step diventa attivo, il router spawna sessione tmux interattiva per la CLI specificata
+  3. Per step `session`, il runtime interattivo resta worker-owned; il router non duplica sessioni tmux
   4. Step usano `depends_on` esistente -- dependency.py li sblocca automaticamente
-  5. Al complete di step N, `result` di step N viene iniettato come contesto in `payload` di step N+1
+  5. Al dispatch di step N+1, i `result` precedenti sono esposti come `thread_context` top-level (runtime enrichment, non mutazione del payload)
   6. `meshctl thread context {name}` mostra result aggregati
   7. `meshctl thread status {name}` mostra tabella con stato per step
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [x] 15-01-PLAN.md -- Thread model, thread endpoints, meshctl thread CLI, context aggregation
+- [x] 15-02-PLAN.md -- Follow-up implementation pass and verification of Phase 15 runtime hooks
 
 ### Phase 16: Aggregator + Error Handling
 **Goal**: Aggregazione automatica dei risultati e gestione errori nei thread.
@@ -212,5 +216,5 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 12. POST /tasks | v1.2 | 1/1 | Done | 2026-02-23 |
 | 13. CLI Invocation | v1.2 | 1/1 | Done | 2026-02-23 |
 | 14. Result Persistence | v1.3 | 1/1 | Done | 2026-03-03 |
-| 15. Thread + Cross-Repo | v1.3 | 0/? | Ready | - |
-| 16. Aggregator + Error | v1.3 | 0/? | Blocked (15) | - |
+| 15. Thread + Cross-Repo | v1.3 | 2/2 | Done | 2026-03-04 |
+| 16. Aggregator + Error | v1.3 | 0/? | Ready | - |

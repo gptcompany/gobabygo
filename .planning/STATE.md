@@ -5,18 +5,19 @@
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.3 Cross-Repo Orchestration -- Phase 15 Thread Model
+**Current focus:** v1.3 Cross-Repo Orchestration -- Phase 16 Aggregator + Error Handling
 
 ## Current Position
 
 Milestone: v1.3 Cross-Repo Orchestration -- IN PROGRESS
-Phase: 14 Result Persistence + Read Path -- COMPLETE
-Status: Phase 14 complete (1/1 plans), ready for Phase 15
-Last activity: 2026-03-03 -- Phase 14 executed: result persistence + read endpoints
+Phase: 15 Thread Model + Cross-Repo Context -- COMPLETE
+Status: Phase 15 complete (2/2 plans), ready for Phase 16
+Last activity: 2026-03-04 -- Phase 15 completed and hardened (thread ordering, worker-owned runtime, API conflict handling)
 
-Progress: [=========                   ] 33% v1.3 (1/3 phases)
+Progress: [=============               ] 67% v1.3 (2/3 phases)
 v1.3:    Phase 14 [====================] COMPLETE
-         Phase 15 [>                   ] next
+         Phase 15 [====================] COMPLETE
+         Phase 16 [>                   ] next
 
 ## Performance Metrics
 
@@ -52,12 +53,14 @@ v1.3:    Phase 14 [====================] COMPLETE
 | 13    | 01   | 7min     | 3     | 3     |
 
 **v1.3 Velocity:**
-- Total plans completed: 1
+- Total plans completed: 3
 - Started: 2026-03-03
 
 | Phase | Plan | Duration | Tasks | Files |
 |-------|------|----------|-------|-------|
 | 14    | 01   | 10min    | 4     | 5     |
+| 15    | 01   | -        | -     | -     |
+| 15    | 02   | -        | -     | -     |
 
 ## Accumulated Context
 
@@ -129,6 +132,7 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 ### Completed Phases (v1.3)
 
 - **Phase 14: Result Persistence** (2026-03-03): 1 plan, 10 new tests (467 total), confidence 95%
+- **Phase 15: Thread Model + Cross-Repo Context** (2026-03-04): 2 plans, follow-up hardening complete, targeted verification 40/40
 
 ### Deploy Status (2026-02-24)
 
@@ -177,11 +181,11 @@ None
 
 ## Session Continuity
 
-Last session: 2026-03-03
-Stopped at: Completed 14-01-PLAN.md (Phase 14 Result Persistence)
-Resume with: `/pipeline:gsd 15` per continuare Phase 15
+Last session: 2026-03-04
+Stopped at: Completed Phase 15 follow-up fix `d235b64` (thread ordering + runtime ownership)
+Resume with: `/pipeline:gsd 16` per iniziare Phase 16
 
 ## Prossimi Passi
 
-### Next: v1.3 Phase 15 — Thread Model + Cross-Repo Context
-### Dopo Phase 15: Phase 16 — Aggregator + Error Handling
+### Next: v1.3 Phase 16 — Aggregator + Error Handling
+### Dopo Phase 16: v1.3 milestone complete

@@ -65,14 +65,14 @@
 
 ## v1.3 Cross-Repo Orchestration (In Progress)
 
-**Phases:** 3 | **Plans:** TBD | **Tests:** TBD
+**Phases:** 3 | **Plans:** 3 complete, Phase 16 next | **Tests:** see phase verification reports
 **Timeline:** Started 2026-03-03
 **Source:** `CROSS_VERIFICATION_BRIEF.md` (cross-verified with Codex)
 **Estimated LOC:** ~1,395
 
 **Key objectives:**
 1. Result persistence: workers already send results, server must persist and expose them
-2. Thread model: ordered task groups with cross-repo context propagation and session spawn
+2. Thread model: ordered task groups with cross-repo context propagation and worker-owned session runtime
 3. Aggregator: fan-in result aggregation with per-step error handling (skip/retry/abort)
 
 **Design decisions (from cross-verification):**
@@ -80,7 +80,6 @@
 - Thread step = normal Task row con thread_id aggiuntivo (riusa dependency.py)
 - GoBabyGo unico orchestratore (Agent Teams non supporta cross-CLI)
 - Router su WS (.111), session worker default, batch fallback
-- Spawn dinamico tmux on-demand per thread steps
+- Session runtime is worker-owned: router exposes thread state/context, workers own tmux lifecycle
 
 ---
-
