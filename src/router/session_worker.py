@@ -33,6 +33,15 @@ def _sanitize_session_name(value: str) -> str:
     return (s or "mesh-session")[:64]
 
 
+def _parse_upterm_ssh_url(output: str) -> str | None:
+    """Extract ssh:// URL from ``upterm session current`` output."""
+    for line in output.splitlines():
+        m = re.search(r"ssh://\S+", line)
+        if m:
+            return m.group(0)
+    return None
+
+
 def _compute_output_emit(
     previous_capture: str,
     current_capture: str,
@@ -91,6 +100,11 @@ class SessionWorkerConfig:
     tmux_session_prefix: str = "mesh"
     task_timeout: int = 7200  # Hard ceiling for interactive sessions (2h)
     auto_complete_on_exit: bool = True
+    upterm_bin: str = "upterm"
+    upterm_server: str = ""
+    upterm_ready_timeout: float = 10.0
+    ssh_tmux_user: str = ""
+    ssh_tmux_host: str = ""
 
     @classmethod
     def from_env(cls) -> SessionWorkerConfig:
@@ -114,6 +128,11 @@ class SessionWorkerConfig:
             tmux_session_prefix=os.environ.get("MESH_TMUX_SESSION_PREFIX", "mesh"),
             task_timeout=int(os.environ.get("MESH_TASK_TIMEOUT_S", "7200")),
             auto_complete_on_exit=os.environ.get("MESH_AUTO_COMPLETE_ON_EXIT", "1").strip() != "0",
+            upterm_bin=os.environ.get("MESH_UPTERM_BIN", "upterm"),
+            upterm_server=os.environ.get("MESH_UPTERM_SERVER", ""),
+            upterm_ready_timeout=float(os.environ.get("MESH_UPTERM_READY_TIMEOUT", "10.0")),
+            ssh_tmux_user=os.environ.get("MESH_SSH_TMUX_USER", ""),
+            ssh_tmux_host=os.environ.get("MESH_SSH_TMUX_HOST", ""),
         )
 
 
@@ -217,6 +236,7 @@ class MeshSessionWorker:
 
         session_id: str | None = None
         tmux_session_name: str | None = None
+        upterm_proc: subprocess.Popen | None = None
         final_snapshot = ""
 
         try:
@@ -232,7 +252,9 @@ class MeshSessionWorker:
             tmux_session_name = self._tmux_session_name(task_id)
             self._tmux_new_session(tmux_session_name, work_dir, cmd_base)
 
-            session_id = self._open_session(task, tmux_session_name, work_dir)
+            attach_meta, upterm_proc = self._create_attach_handle(tmux_session_name)
+
+            session_id = self._open_session(task, tmux_session_name, work_dir, attach_meta)
             self._send_session_message(
                 session_id,
                 direction="system",
@@ -329,6 +351,9 @@ class MeshSessionWorker:
                 except Exception:  # pragma: no cover
                     pass
             self._report_failure(task_id, f"unexpected: {e}")
+        finally:
+            if upterm_proc is not None:
+                self._stop_upterm(upterm_proc)
 
     def _tmux_session_name(self, task_id: str) -> str:
         base = f"{self.config.tmux_session_prefix}-{self.config.cli_type}-{self.config.account_profile}-{task_id[:8]}"
@@ -423,6 +448,114 @@ class MeshSessionWorker:
             return previous_emitted_capture
         return current_capture
 
+    # ------------------------------------------------------------------
+    # Attach handle lifecycle
+    # ------------------------------------------------------------------
+
+    def _create_attach_handle(
+        self, tmux_session: str
+    ) -> tuple[dict | None, subprocess.Popen | None]:
+        """Try to create an attach handle for *tmux_session*.
+
+        Returns ``(metadata_dict, upterm_process)`` on success or
+        ``(None, None)`` when no attach is available.
+        """
+        proc, target = self._start_upterm(tmux_session)
+        if proc is not None and target is not None:
+            return {"attach_kind": "upterm", "attach_target": target}, proc
+
+        # Fallback: ssh_tmux (static pointer to the tmux session).
+        if self.config.ssh_tmux_user and self.config.ssh_tmux_host:
+            target = (
+                f"ssh://{self.config.ssh_tmux_user}@{self.config.ssh_tmux_host}:22"
+                f"?tmux_session={tmux_session}"
+            )
+            logger.info("Attach fallback ssh_tmux for %s", tmux_session)
+            return {"attach_kind": "ssh_tmux", "attach_target": target}, None
+
+        logger.info("No attach handle available for %s, continuing without", tmux_session)
+        return None, None
+
+    def _start_upterm(
+        self, tmux_session: str
+    ) -> tuple[subprocess.Popen | None, str | None]:
+        """Launch ``upterm host`` for *tmux_session*.
+
+        Returns ``(process, ssh_url)`` or ``(None, None)`` on failure.
+        """
+        socket_path = f"/tmp/upterm-{tmux_session}.sock"
+        cmd: list[str] = [
+            self.config.upterm_bin,
+            "host",
+            "--force-command",
+            f"{self.config.tmux_bin} attach -t {tmux_session}",
+            "--admin-socket",
+            socket_path,
+        ]
+        if self.config.upterm_server:
+            cmd.extend(["--server", self.config.upterm_server])
+        cmd.extend(["--", "bash"])
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except (OSError, FileNotFoundError):
+            logger.warning("upterm binary not found at %s", self.config.upterm_bin)
+            return None, None
+
+        target = self._poll_upterm_target(socket_path)
+        if target:
+            return proc, target
+
+        logger.warning("upterm started but failed to provide session URL")
+        self._stop_upterm(proc)
+        return None, None
+
+    def _poll_upterm_target(self, socket_path: str) -> str | None:
+        """Poll ``upterm session current`` until an SSH URL appears."""
+        deadline = time.monotonic() + self.config.upterm_ready_timeout
+        while time.monotonic() < deadline:
+            try:
+                result = subprocess.run(
+                    [
+                        self.config.upterm_bin,
+                        "session",
+                        "current",
+                        "--admin-socket",
+                        socket_path,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                if result.returncode == 0:
+                    target = _parse_upterm_ssh_url(result.stdout)
+                    if target:
+                        return target
+            except (subprocess.SubprocessError, OSError):
+                pass
+            time.sleep(0.5)
+        return None
+
+    @staticmethod
+    def _stop_upterm(proc: subprocess.Popen) -> None:
+        """Terminate an upterm child process (SIGTERM then SIGKILL)."""
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
+
     def _ack_task(self, task_id: str) -> bool:
         try:
             resp = self._http.post(
@@ -460,17 +593,26 @@ class MeshSessionWorker:
         except requests.RequestException as e:
             logger.error("Failed to report failure for task %s: %s", task_id, e)
 
-    def _open_session(self, task: dict, tmux_session: str, work_dir: str) -> str:
+    def _open_session(
+        self,
+        task: dict,
+        tmux_session: str,
+        work_dir: str,
+        attach_meta: dict | None = None,
+    ) -> str:
+        metadata: dict = {
+            "tmux_session": tmux_session,
+            "working_dir": work_dir,
+            "task_title": task.get("title", ""),
+        }
+        if attach_meta:
+            metadata.update(attach_meta)
         body = {
             "worker_id": self.config.worker_id,
             "cli_type": self.config.cli_type,
             "account_profile": self.config.account_profile,
             "task_id": task["task_id"],
-            "metadata": {
-                "tmux_session": tmux_session,
-                "working_dir": work_dir,
-                "task_title": task.get("title", ""),
-            },
+            "metadata": metadata,
         }
         resp = self._http.post(f"{self.config.router_url}/sessions/open", json=body, timeout=5)
         resp.raise_for_status()
