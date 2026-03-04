@@ -2,54 +2,19 @@
 
 ## What This Is
 
-A distributed multi-agent orchestration system that coordinates AI CLI workers (Claude, Codex, Gemini) across VPN-connected machines. A hybrid architecture uses Claude Agent Teams for strategic coordination (BOSS/PRESIDENT) and an external router/scheduler with SQLite persistence as the authoritative execution state. Built for a solo developer operating from MacBook, with VPS as control plane and Workstation as execution node.
+A distributed multi-agent orchestration system that coordinates AI CLI workers (Claude, Codex, Gemini) across VPN-connected machines and repositories. A hybrid architecture uses Claude Agent Teams for strategic coordination (BOSS/PRESIDENT) and an external router/scheduler with SQLite persistence as the authoritative execution state. Supports cross-repo thread orchestration with automatic context propagation, per-step error handling, and full audit trail. Built for a solo developer operating from MacBook, with VPS as control plane and Workstation as execution node.
 
 ## Core Value
 
 Reliable, deterministic task orchestration across distributed AI workers — router/DB is the single source of truth, not terminal state.
 
-## Current Milestone: v1.3 Cross-Repo Orchestration -- IN PROGRESS
-
-**Goal:** Permettere orchestrazione di thread di lavoro cross-repo e multi-CLI da un singolo punto di controllo, eliminando il copia-incolla manuale e tracciando contesto e risultati in modo persistente.
-
-**Planned features:**
-- Result persistence: server persiste result che worker gia' inviano, espone via GET API
-- Thread model: gruppi ordinati di task cross-repo con contesto condiviso
-- Session spawner: creazione on-demand di sessioni tmux per thread steps
-- Aggregator: fan-in result aggregation con error handling per-step
-- meshctl thread CLI: create, add-step, status, context
-
-**Source:** `CROSS_VERIFICATION_BRIEF.md` (cross-verified with Codex, 2026-03-03)
-
-## Previous Milestone: v1.2 Operational Readiness -- SHIPPED 2026-02-23
-
-**Goal:** Close the 3 critical gaps blocking real-world use: automatic dispatch, HTTP task submission, and real CLI execution.
-
-**Delivered features:**
-- Periodic dispatch loop (daemon thread, configurable interval, drains all tasks per cycle)
-- POST /tasks endpoint (TaskCreateRequest DTO, idempotency, eager dispatch)
-- meshctl submit command (CLI task submission)
-- Real CLI invocation via subprocess (dry-run, failure semantics, output truncation)
-- Full env-based configuration (MESH_CLI_COMMAND, MESH_DRY_RUN, MESH_WORK_DIR, etc.)
-
-## Previous Milestone: v1.1 Production Readiness -- SHIPPED 2026-02-21
-
-**Goal:** Make the mesh reliable enough for daily unattended production operation and provide operator CLI tooling.
-
-**Delivered features:**
-- Long-polling transport (replace 2s short-polling)
-- Self-healing workers (auto-reregister on unknown_worker)
-- Deterministic event replay triggers (periodic + on-next-emit)
-- Smart watchdog (DB health check in watchdog thread)
-- Operator CLI (`meshctl status`, `meshctl drain`)
-- Critical tech debt fixes (register validation, YAML mapping, mypy)
-
 ## Current State
 
-**Active:** v1.3 Cross-Repo Orchestration (started 2026-03-03)
-**Last shipped:** v1.2 Operational Readiness (2026-02-23)
-**Test suite:** 436 tests, all passing
+**Last shipped:** v1.3 Cross-Repo Orchestration (2026-03-04)
+**Test suite:** 548 tests, all passing
+**Production LOC:** 6,742 Python
 **Tech stack:** Python 3.11+, SQLite (WAL), Pydantic, CloudEvents, prometheus-client
+**Current focus:** Planning next milestone
 
 ## Requirements
 
@@ -70,29 +35,29 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 - One active account per worker (CCS isolation) — v1.0
 - Append-only event log with idempotency key dedup — v1.0
 - Fallback buffer with replay on reconnect — v1.0
+- Long-polling transport for worker task dispatch — v1.1
+- Worker auto-reregister on unknown_worker heartbeat response — v1.1
+- Buffer replay trigger mechanism (periodic + on-next-emit) — v1.1
+- Smart watchdog with DB health check — v1.1
+- check_review_timeout integration into periodic event loop — v1.1
+- Operator CLI (meshctl) for status inspection and worker drain — v1.1
+- WorkerManager validation on registration — v1.1
+- YAML semantic mapping for gsd:implement-* commands — v1.1
+- Automatic dispatch loop (periodic daemon thread) — v1.2
+- POST /tasks HTTP endpoint with TaskCreateRequest DTO — v1.2
+- meshctl submit command — v1.2
+- Real CLI invocation via subprocess (dry-run + failure semantics) — v1.2
+- Result persistence with secret sanitization and 32KB truncation — v1.3
+- GET /tasks/{id} and GET /tasks?status=... read endpoints — v1.3
+- Thread model: ordered task groups with cross-repo context propagation — v1.3
+- Thread step chaining via depends_on with automatic context injection — v1.3
+- meshctl thread CLI (create, add-step, status, context) — v1.3
+- Per-step on_failure policies (abort/skip/retry with backoff) — v1.3
+- Full audit trail per step (input, output, timestamps, worker, repo) — v1.3
 
 ### Active
 
-None -- v1.2 complete
-
-### Delivered in v1.1
-
-- Long-polling transport for worker task dispatch
-- Worker auto-reregister on unknown_worker heartbeat response
-- Buffer replay trigger mechanism (periodic + on-next-emit)
-- Smart watchdog with DB health check
-- check_review_timeout integration into periodic event loop
-- Operator CLI (meshctl) for status inspection and worker drain
-- Fix server._handle_register() to use WorkerManager validation
-- Complete YAML semantic mapping for gsd:implement-* commands
-- Fix heartbeat.py Worker type annotation for mypy
-
-### Delivered in v1.2
-
-- Automatic dispatch loop (periodic daemon thread)
-- POST /tasks HTTP endpoint with TaskCreateRequest DTO
-- meshctl submit command
-- Real CLI invocation via subprocess (dry-run + failure semantics)
+None — v1.3 complete
 
 ### Out of Scope
 
@@ -102,6 +67,42 @@ None -- v1.2 complete
 - Worker-to-worker direct communication — strict hierarchy enforced by design
 - Auto-scaling workers — fixed worker pool, manual provisioning
 - Offline mode — VPN-connected design assumes network availability
+- WebSocket/SSE transport — long-polling sufficient for current worker count
+- /metrics auth — WireGuard-only network provides sufficient isolation
+
+## Milestones
+
+<details>
+<summary>v1.0 MVP — SHIPPED 2026-02-19</summary>
+
+6 phases, 15 plans, 291 tests, 3829 LOC.
+Router core, worker lifecycle, communication, event bridge, deployment, monitoring.
+
+</details>
+
+<details>
+<summary>v1.1 Production Readiness — SHIPPED 2026-02-21</summary>
+
+4 phases, 9 plans, 404 tests.
+Long-polling, self-healing, smart watchdog, operator CLI (meshctl).
+
+</details>
+
+<details>
+<summary>v1.2 Operational Readiness — SHIPPED 2026-02-23</summary>
+
+3 phases, 3 plans, 436 tests.
+Dispatch loop, POST /tasks, CLI invocation.
+
+</details>
+
+<details>
+<summary>v1.3 Cross-Repo Orchestration — SHIPPED 2026-03-04</summary>
+
+3 phases, 4 plans, 548 tests (+2560 lines).
+Result persistence, thread model, on_failure policies, audit trail, E2E cross-repo.
+
+</details>
 
 ## Context
 
@@ -113,12 +114,9 @@ None -- v1.2 complete
 - **Alerting**: 7 base rules + 5 mesh-specific rules, Grafana Cloud -> Discord
 
 ### Known Issues / Tech Debt
-- `/tasks/ack` HTTP endpoint — FIXED in v1.0 post-release (commit 7e9d605)
-- `server._handle_register()` bypasses WorkerManager validation — targeted for v1.1
-- YAML mapping incomplete for `gsd:implement-*` — targeted for v1.1
-- `heartbeat.py` Worker type annotation — targeted for v1.1
-- Worker short-polling (2s) — long-polling targeted for v1.1
-- Buffer replay trigger mechanism — targeted for v1.1
+- session_spawner.py exists but unused in production (sessions are worker-owned by design)
+- on_failure uses string-vs-enum comparisons (safe due to str-Enum, minor inconsistency)
+- /metrics endpoint has no auth (acceptable: WireGuard-only network)
 
 ## Constraints
 
@@ -129,6 +127,7 @@ None -- v1.2 complete
 - **Heartbeat timing**: 5s interval, 35s stale threshold (WireGuard keepalive-aware)
 - **Dispatch latency SLO**: p95 < 3s
 - **Task success SLO**: >= 95% (excluding deterministic test failures)
+- **Result size**: 32KB max per task result (truncation + hard fallback)
 
 ## Key Decisions
 
@@ -140,22 +139,22 @@ None -- v1.2 complete
 | GSD as tracking layer, not orchestrator | GSD provides workflow UX; router FSM is transition authority | Good |
 | Auto-instrumentation + YAML mapping (not per-command hardcoding) | High coverage with low maintenance; new commands auto-tracked | Good |
 | Stale threshold 35s (not 20s) | Must exceed WireGuard keepalive 25s to avoid false stale detection | Good |
-| PoC code archived, fresh implementation | PoC had syntax errors, in-memory only — not suitable as base | Good |
 | stdlib ThreadingHTTPServer (no Flask/uvicorn) | Zero external deps for HTTP serving, sufficient for MVP | Good |
-| prometheus-client for metrics (not manual text format) | OpenMetrics compliant, standard | Good |
-| Summary for task duration (not SQLite percentile) | Efficient, standard approach | Good |
 | Transport adapter pattern: InProcess + HTTP | Clean separation for test vs production | Good |
 | SHA-256 idempotency keys (not built-in hash()) | Stable across Python sessions | Good |
-| Recovery uses direct CAS (not FSM) | Recovery transitions outside FSM table, needs atomic compound ops | Good |
-| Worker short-polling 2s (not long-polling) | Simple, deferred long-polling to v2 | Fixed v1.1 |
-| No /metrics auth | WireGuard-only network, same as /health | Revisit |
 | Dispatch loop drains all tasks per cycle | Maximizes throughput; CAS prevents double-dispatch | Good |
 | TaskCreateRequest DTO separates public/internal fields | Prevents clients from setting status/assigned_worker | Good |
 | Eager dispatch on POST /tasks (best-effort) | Reduces latency; dispatch loop is backup | Good |
-| Dry-run mode for CLI invocation | Safe deployment validation before real execution | Good |
 | subprocess.run without shell=True | Prevents command injection; safe for user prompts | Good |
-| Output truncation (4KB stdout, 2KB stderr) | Prevents oversized task results in DB | Good |
-| shlex.split() for CLI command tokenization | Multi-word commands (e.g. "ccs work") must be split for subprocess with shell=False | Bugfix |
+| result_json as inline TEXT column (not separate table) | YAGNI; single table query for task + result | Good |
+| Sanitize + persist result in same DB transaction | Atomicity: no partial state on crash | Good |
+| Secret patterns filtered via regex before persistence | Lightweight, no external deps (sk-, ghp_, xoxb-) | Good |
+| Thread step = normal Task row with thread_id | Reuses dependency.py, scheduler, FSM — no parallel system | Good |
+| thread_context as runtime enrichment (not persisted) | Computed on-the-fly from completed steps; no stale data | Good |
+| Sessions are worker-owned (not router-managed) | Router stays stateless for tmux; workers own their runtime | Good |
+| on_failure per-step (not per-thread) | Granular control; each step can have different policy | Good |
+| Retry uses existing RetryPolicy for backoff | No new backoff implementation; consistent with task retry | Good |
+| No /metrics auth | WireGuard-only network, same as /health | Revisit |
 
 ---
-*Last updated: 2026-02-23 after v1.2 milestone + shlex.split bugfix*
+*Last updated: 2026-03-04 after v1.3 milestone*

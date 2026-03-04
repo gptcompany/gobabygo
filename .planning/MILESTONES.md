@@ -2,10 +2,25 @@
 
 ## v1.3 Cross-Repo Orchestration (Shipped: 2026-03-04)
 
-**Phases completed:** 10 phases, 16 plans, 0 tasks
+**Phases:** 3 | **Plans:** 4 | **Tests:** 548 | **New tests:** 112
+**Production LOC:** 6,742 Python (+2,560 lines added)
+**Timeline:** 2026-03-03 -> 2026-03-04 (2 days)
+**Commits:** 12
+**Git range:** `bfc355c..b18cb22`
 
 **Key accomplishments:**
-- (none recorded)
+1. Result persistence with secret sanitization (sk-, ghp_, xoxb-) and 32KB truncation with hard fallback
+2. Thread model: ordered task groups with cross-repo context propagation and automatic step chaining via depends_on
+3. Context injection: step N result automatically available as thread_context in step N+1 (runtime enrichment, not payload mutation)
+4. Per-step error policies: on_failure abort/skip/retry with exponential backoff (max 3 attempts)
+5. Full audit trail per step: input, output, timestamps, worker, repo in DB
+6. GET /tasks read path for result retrieval and debugging
+
+**Known gaps (tech debt):**
+- THRD-04: session_spawner.py exists but unused — sessions are worker-owned (intentional architectural decision)
+- Missing VERIFICATION.md for phases 14 and 16 (implementation verified by integration checker + 548 tests)
+
+**Archives:** `.planning/milestones/v1.3-ROADMAP.md`, `.planning/milestones/v1.3-REQUIREMENTS.md`
 
 ---
 
@@ -72,23 +87,3 @@
 
 ---
 
-## v1.3 Cross-Repo Orchestration (In Progress)
-
-**Phases:** 3 | **Plans:** 3 complete, Phase 16 next | **Tests:** see phase verification reports
-**Timeline:** Started 2026-03-03
-**Source:** `CROSS_VERIFICATION_BRIEF.md` (cross-verified with Codex)
-**Estimated LOC:** ~1,395
-
-**Key objectives:**
-1. Result persistence: workers already send results, server must persist and expose them
-2. Thread model: ordered task groups with cross-repo context propagation and worker-owned session runtime
-3. Aggregator: fan-in result aggregation with per-step error handling (skip/retry/abort)
-
-**Design decisions (from cross-verification):**
-- Worker GIA' inviano result — gap e' solo server-side persistence
-- Thread step = normal Task row con thread_id aggiuntivo (riusa dependency.py)
-- GoBabyGo unico orchestratore (Agent Teams non supporta cross-CLI)
-- Router su WS (.111), session worker default, batch fallback
-- Session runtime is worker-owned: router exposes thread state/context, workers own tmux lifecycle
-
----

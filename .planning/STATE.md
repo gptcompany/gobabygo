@@ -1,36 +1,37 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Production Readiness -- SHIPPED 2026-02-21
-status: unknown
-last_updated: "2026-03-04T13:37:36.700Z"
+milestone: v1.3
+milestone_name: Cross-Repo Orchestration -- SHIPPED 2026-03-04
+status: milestone_complete
+last_updated: "2026-03-04"
 progress:
-  total_phases: 10
-  completed_phases: 7
-  total_plans: 16
-  completed_plans: 12
+  total_phases: 16
+  completed_phases: 16
+  total_plans: 30
+  completed_plans: 30
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-02-23)
+See: .planning/PROJECT.md (updated 2026-03-04)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.3 Cross-Repo Orchestration -- COMPLETE
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Milestone: v1.3 Cross-Repo Orchestration -- COMPLETE
-Phase: 16 Aggregator + Error Handling -- COMPLETE
-Status: v1.3 milestone complete, all 3 phases done
-Last activity: 2026-03-04 -- Phase 16 implemented (on_failure policies, retry, skip, E2E cross-repo test)
+Milestone: v1.3 Cross-Repo Orchestration -- SHIPPED 2026-03-04
+Status: All milestones through v1.3 complete
 
-Progress: [============================] 100% v1.3 (3/3 phases)
-v1.3:    Phase 14 [====================] COMPLETE
-         Phase 15 [====================] COMPLETE
-         Phase 16 [====================] COMPLETE
+Progress: [============================] 100% all milestones
+v1.0 MVP:              6 phases, 15 plans -- SHIPPED 2026-02-19
+v1.1 Production:       4 phases, 9 plans  -- SHIPPED 2026-02-21
+v1.2 Operational:      3 phases, 3 plans  -- SHIPPED 2026-02-23
+v1.3 Cross-Repo:       3 phases, 4 plans  -- SHIPPED 2026-03-04
+
+Total: 16 phases, 31 plans, 548 tests, 6742 production LOC
 
 ## Performance Metrics
 
@@ -66,7 +67,7 @@ v1.3:    Phase 14 [====================] COMPLETE
 | 13    | 01   | 7min     | 3     | 3     |
 
 **v1.3 Velocity:**
-- Total plans completed: 3
+- Total plans completed: 4
 - Started: 2026-03-03
 
 | Phase | Plan | Duration | Tasks | Files |
@@ -80,9 +81,12 @@ v1.3:    Phase 14 [====================] COMPLETE
 
 ### Decisions
 
-All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Good, 2 Revisit).
+All decisions logged in PROJECT.md Key Decisions table.
+Full decision history per milestone in Accumulated Context sections below.
 
-**v1.1 decisions:**
+<details>
+<summary>v1.1 decisions (22 items)</summary>
+
 - DEBT-01: fail-closed registration (MESH_DEV_MODE=1 required for open registration)
 - DEBT-01: WorkerManager handles register auth; _check_auth() guards other endpoints
 - DEBT-01: 200 for re-registration, 201 for new; case-insensitive Bearer parsing
@@ -105,7 +109,11 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - OPSC-02: Worker IDs truncated to 8 chars in table display; queue summary uses only /health data
 - OPSC-02: Drain polling at 2s intervals with configurable --timeout; drained_immediately short-circuits
 
-**v1.2 decisions:**
+</details>
+
+<details>
+<summary>v1.2 decisions (11 items)</summary>
+
 - OPRDY-01: Dispatch loop drains all tasks per cycle (inner while True) for throughput; CAS prevents double-dispatch
 - OPRDY-01: Sleep-first daemon thread pattern; no stop hook (consistent with review_check_loop)
 - OPRDY-03: TaskCreateRequest DTO separates public/internal Task fields; client cannot set status/assigned_worker
@@ -118,7 +126,11 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - OPRDY-08: Global try/except in _execute_task guarantees _report_failure on any error
 - FIX-01: shlex.split() for multi-word cli_command tokenization (subprocess requires list of args, not single string)
 
-**v1.3 decisions:**
+</details>
+
+<details>
+<summary>v1.3 decisions (9 items)</summary>
+
 - RPER-01: result_json as inline TEXT column on tasks (not separate table) -- YAGNI
 - RPER-01: Sanitize + persist in same DB transaction as state change for atomicity
 - RPER-01: Secret patterns filtered via regex before persistence (sk-, ghp_, xoxb-)
@@ -129,30 +141,14 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - AGG-01: compute_thread_status ignores failed steps with on_failure=skip (thread completed not failed)
 - AGG-01: get_thread_context includes skipped markers for downstream step awareness
 
+</details>
+
 ### Completed Milestones
 
 - **v1.0 MVP** (2026-02-19): 6 phases, 15 plans, 291 tests -- see `.planning/milestones/`
 - **v1.1 Production Readiness** (2026-02-21): 4 phases, 9 plans, 404 tests
 - **v1.2 Operational Readiness** (2026-02-23): 3 phases, 3 plans, 436 tests
-
-### Completed Phases (v1.1)
-
-- **Phase 7: Tech Debt Cleanup** (2026-02-20): 2 plans, 11 new tests (302 total), confidence 92%
-- **Phase 8: Long-Polling Transport** (2026-02-20): 2 plans, 25 new tests (327 total), confidence 95%
-- **Phase 9: Self-Healing & Resilience** (2026-02-21): 3 plans, 30 new tests (357 total), confidence 95%
-- **Phase 10: Operator CLI** (2026-02-21): 2 plans, 47 new tests (404 total), confidence 95%
-
-### Completed Phases (v1.2)
-
-- **Phase 11: Dispatch Loop** (2026-02-23): 1 plan, 2 new tests (406 total + E2E updated), confidence 95%
-- **Phase 12: POST /tasks** (2026-02-23): 1 plan, 16 new tests (422 total), confidence 95%
-- **Phase 13: CLI Invocation** (2026-02-23): 1 plan, 12 new tests (436 total), confidence 95%
-
-### Completed Phases (v1.3)
-
-- **Phase 14: Result Persistence** (2026-03-03): 1 plan, 10 new tests (467 total), confidence 95%
-- **Phase 15: Thread Model + Cross-Repo Context** (2026-03-04): 2 plans, follow-up hardening complete, targeted verification 40/40
-- **Phase 16: Aggregator + Error Handling** (2026-03-04): 1 plan, 16 new tests (518 total), confidence 90%
+- **v1.3 Cross-Repo Orchestration** (2026-03-04): 3 phases, 4 plans, 548 tests
 
 ### Deploy Status (2026-02-24)
 
@@ -165,32 +161,6 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 | Worker codex | Workstation 10.0.0.2 | `mesh-worker@codex-work.service` | active, idle |
 | Worker gemini | Workstation 10.0.0.2 | `mesh-worker@gemini-work.service` | active, idle |
 
-**Token:** `<ROTATE-TOKEN-BEFORE-PUBLIC>`
-
-**Comandi utili:**
-```bash
-# Health check
-curl -sf http://10.0.0.1:8780/health | python3 -m json.tool
-
-# Status completo
-MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="<ROTATE-TOKEN-BEFORE-PUBLIC>" python3 -m src.meshctl status --json
-
-# Submit task
-MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="<ROTATE-TOKEN-BEFORE-PUBLIC>" python3 -m src.meshctl submit --title "Test" --payload '{"prompt":"hello"}'
-
-# Logs
-ssh root@10.0.0.1 journalctl -u mesh-router -f
-journalctl -u mesh-worker@claude-work -f
-```
-
-**Bug fixati durante deploy (6):**
-1. `setuptools.backends._legacy` → `setuptools.build_meta` (pyproject.toml)
-2. FallbackBuffer path `~/.mesh` inaccessibile → env var `MESH_BUFFER_PATH`
-3. Worker crash su 409 register → trattato come "already registered"
-4. `account_in_use` con profile condiviso → profile unici per-worker
-5. Python 3.10 su Workstation → uv managed Python 3.12 in `/opt/mesh-worker/.python/`
-6. venv symlink a `/root/.local/` → Python locale in path accessibile
-
 ### Pending Todos
 
 None
@@ -202,9 +172,9 @@ None
 ## Session Continuity
 
 Last session: 2026-03-04
-Stopped at: Completed Phase 16 — v1.3 milestone complete
-Resume with: `/gsd:complete-milestone` per archiviare v1.3
+Stopped at: v1.3 milestone archived and tagged
+Resume with: `/gsd:new-milestone` per pianificare v2.0 o v1.4
 
 ## Prossimi Passi
 
-### Next: v1.3 milestone complete — archive with `/gsd:complete-milestone`
+### Next: Plan next milestone with `/gsd:new-milestone`
