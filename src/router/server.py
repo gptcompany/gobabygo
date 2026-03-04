@@ -35,6 +35,7 @@ from src.router.models import (
 )
 from src.router.recovery import recover_on_startup
 from src.router.scheduler import Scheduler
+from src.router.topology import TopologyError, load_topology
 from src.router.thread import add_step, compute_thread_status, create_thread, get_thread_context
 from src.router.verifier import VerifierGate
 from src.router.worker_manager import WorkerManager
@@ -954,7 +955,9 @@ def run_server(
     worker_manager = WorkerManager(db, tokens=wm_tokens, dev_mode=dev_mode, longpoll_registry=longpoll_registry)
 
     heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
-    scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+    topology_path = os.environ.get("MESH_TOPOLOGY_PATH")
+    topology = load_topology(topology_path)
+    scheduler = Scheduler(db, longpoll_registry=longpoll_registry, topology=topology)
     transport = InProcessTransport(db)
     buffer_path = os.environ.get("MESH_BUFFER_PATH", "~/.mesh/events-buffer.jsonl")
     buffer = FallbackBuffer(buffer_path=buffer_path)

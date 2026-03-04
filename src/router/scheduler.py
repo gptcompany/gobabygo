@@ -21,6 +21,7 @@ from src.router.dependency import check_dependencies
 from src.router.fsm import TransitionRequest, apply_transition, validate_transition
 from src.router.longpoll import LongPollRegistry
 from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
+from src.router.topology import Topology
 from src.router.verifier import VerifierGate
 
 logger = logging.getLogger(__name__)
@@ -52,12 +53,14 @@ class Scheduler:
         lease_duration_s: int = 300,
         review_timeout_s: int = 3600,
         longpoll_registry: LongPollRegistry | None = None,
+        topology: Topology | None = None,
     ) -> None:
         self._db = db
         self._lease_duration_s = lease_duration_s
         self._review_timeout_s = review_timeout_s
         self._verifier = VerifierGate()
         self._longpoll_registry = longpoll_registry
+        self._topology = topology
 
     def find_all_eligible_workers(self, task: Task) -> list[Worker]:
         """Find all eligible workers for a task, sorted by idle_since ASC."""
@@ -70,6 +73,12 @@ class Scheduler:
             and w.account_profile == task.target_account
             and task_mode in (w.execution_modes or ["batch"])
         ]
+        # Topology-aware filter: restrict to repo worker pool if defined
+        if self._topology and task.repo:
+            pool = self._topology.get_repo_worker_pool(task.repo)
+            if pool is not None:
+                pool_set = set(pool)
+                eligible = [w for w in eligible if w.worker_id in pool_set]
         eligible.sort(key=lambda w: w.idle_since or "")
         return eligible
 

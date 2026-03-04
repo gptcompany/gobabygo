@@ -8,6 +8,7 @@ from src.router.db import RouterDB
 from src.router.longpoll import LongPollRegistry
 from src.router.models import CLIType, ExecutionMode, Task, TaskStatus, Worker
 from src.router.scheduler import Scheduler
+from src.router.topology import Topology
 
 
 @pytest.fixture
@@ -425,3 +426,84 @@ class TestDispatchLongPollWakeup:
         assert registry._slots["w1"].task_available is True
         # w2's slot should NOT be notified
         assert registry._slots["w2"].task_available is False
+
+
+class TestTopologyAwareDispatch:
+    """Tests for topology-aware worker filtering in find_all_eligible_workers."""
+
+    @pytest.fixture
+    def topo(self):
+        """Create a Topology with repo 'myrepo' -> pool ['w1', 'w3']."""
+        return Topology({
+            "version": 1,
+            "global": {"cross_repo_policy": {"require_president_handoff": True}},
+            "hosts": {"h1": {"address": "10.0.0.1"}},
+            "workers": {"w1": {}, "w3": {}},
+            "repos": {
+                "myrepo": {"worker_pool": ["w1", "w3"]},
+            },
+        })
+
+    @pytest.fixture
+    def sched_topo(self, db, topo):
+        return Scheduler(db=db, lease_duration_s=300, topology=topo)
+
+    def test_topology_filters_by_repo_pool(self, sched_topo, db):
+        """Only workers in the repo's pool are eligible when task.repo is set."""
+        _add_worker(db, "w1", "work", CLIType.claude)
+        _add_worker(db, "w2", "work", CLIType.claude)
+        _add_worker(db, "w3", "work", CLIType.claude)
+        task = Task(task_id="t1", target_cli=CLIType.claude,
+                    target_account="work", repo="myrepo")
+        workers = sched_topo.find_all_eligible_workers(task)
+        ids = [w.worker_id for w in workers]
+        assert "w1" in ids
+        assert "w3" in ids
+        assert "w2" not in ids
+
+    def test_topology_no_repo_on_task(self, sched_topo, db):
+        """Without task.repo, all eligible workers pass (legacy behavior)."""
+        _add_worker(db, "w1", "work", CLIType.claude)
+        _add_worker(db, "w2", "work", CLIType.claude)
+        task = Task(task_id="t1", target_cli=CLIType.claude,
+                    target_account="work")
+        workers = sched_topo.find_all_eligible_workers(task)
+        assert len(workers) == 2
+
+    def test_topology_unknown_repo(self, sched_topo, db):
+        """Repo not in topology -> legacy fallback (all eligible)."""
+        _add_worker(db, "w1", "work", CLIType.claude)
+        _add_worker(db, "w2", "work", CLIType.claude)
+        task = Task(task_id="t1", target_cli=CLIType.claude,
+                    target_account="work", repo="unknown-repo")
+        workers = sched_topo.find_all_eligible_workers(task)
+        assert len(workers) == 2
+
+    def test_topology_disabled(self, sched, db):
+        """Scheduler without topology -> legacy behavior for tasks with repo."""
+        _add_worker(db, "w1", "work", CLIType.claude)
+        task = Task(task_id="t1", target_cli=CLIType.claude,
+                    target_account="work", repo="myrepo")
+        workers = sched.find_all_eligible_workers(task)
+        assert len(workers) == 1  # w1 passes normal filters
+
+    def test_topology_pool_intersect_with_existing_filters(self, sched_topo, db):
+        """Topology pool + cli/account filters combine correctly."""
+        # w1: right cli, right account, in pool -> eligible
+        _add_worker(db, "w1", "work", CLIType.claude)
+        # w3: wrong cli, in pool -> excluded by cli filter
+        _add_worker(db, "w3", "work", CLIType.codex)
+        task = Task(task_id="t1", target_cli=CLIType.claude,
+                    target_account="work", repo="myrepo")
+        workers = sched_topo.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w1"]
+
+    def test_topology_dispatch_routes_to_pool(self, sched_topo, db):
+        """Full dispatch with topology routes task to pool worker."""
+        _add_worker(db, "w1", "work", CLIType.claude, idle_since=_past(60))
+        _add_worker(db, "w2", "work", CLIType.claude, idle_since=_past(120))
+        _add_task(db, "t1", repo="myrepo")
+        result = sched_topo.dispatch()
+        assert result is not None
+        # w2 is longest idle but NOT in pool -> w1 gets the task
+        assert result.worker.worker_id == "w1"
