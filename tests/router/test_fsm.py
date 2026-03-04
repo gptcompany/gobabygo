@@ -89,7 +89,7 @@ def test_invalid_transitions() -> None:
         (TaskStatus.queued, TaskStatus.completed),
         (TaskStatus.queued, TaskStatus.running),
         (TaskStatus.queued, TaskStatus.review),
-        (TaskStatus.running, TaskStatus.queued),
+        # running -> queued is now valid (step retry with on_failure=retry)
         (TaskStatus.running, TaskStatus.assigned),
         (TaskStatus.completed, TaskStatus.queued),
         (TaskStatus.completed, TaskStatus.running),

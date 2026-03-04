@@ -5,19 +5,19 @@
 See: .planning/PROJECT.md (updated 2026-02-23)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.3 Cross-Repo Orchestration -- Phase 16 Aggregator + Error Handling
+**Current focus:** v1.3 Cross-Repo Orchestration -- COMPLETE
 
 ## Current Position
 
-Milestone: v1.3 Cross-Repo Orchestration -- IN PROGRESS
-Phase: 15 Thread Model + Cross-Repo Context -- COMPLETE
-Status: Phase 15 complete (2/2 plans), ready for Phase 16
-Last activity: 2026-03-04 -- Phase 15 completed and hardened (thread ordering, worker-owned runtime, API conflict handling)
+Milestone: v1.3 Cross-Repo Orchestration -- COMPLETE
+Phase: 16 Aggregator + Error Handling -- COMPLETE
+Status: v1.3 milestone complete, all 3 phases done
+Last activity: 2026-03-04 -- Phase 16 implemented (on_failure policies, retry, skip, E2E cross-repo test)
 
-Progress: [=============               ] 67% v1.3 (2/3 phases)
+Progress: [============================] 100% v1.3 (3/3 phases)
 v1.3:    Phase 14 [====================] COMPLETE
          Phase 15 [====================] COMPLETE
-         Phase 16 [>                   ] next
+         Phase 16 [====================] COMPLETE
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ v1.3:    Phase 14 [====================] COMPLETE
 | 14    | 01   | 10min    | 4     | 5     |
 | 15    | 01   | -        | -     | -     |
 | 15    | 02   | -        | -     | -     |
+| 16    | 01   | -        | 6     | 9     |
 
 ## Accumulated Context
 
@@ -109,6 +110,11 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 - RPER-01: Sanitize + persist in same DB transaction as state change for atomicity
 - RPER-01: Secret patterns filtered via regex before persistence (sk-, ghp_, xoxb-)
 - RPER-01: 32KB size limit with recursive string truncation + `_truncated`; fallback compact summary with `_hard_truncated` if still oversized
+- AGG-01: on_failure field on Task model (abort/skip/retry) -- thread-only enforcement via dependency.py
+- AGG-01: Non-thread tasks preserve legacy behavior (failed = unblocks dependents)
+- AGG-01: Retry uses existing RetryPolicy.calculate_not_before() for backoff; running->queued FSM transition added
+- AGG-01: compute_thread_status ignores failed steps with on_failure=skip (thread completed not failed)
+- AGG-01: get_thread_context includes skipped markers for downstream step awareness
 
 ### Completed Milestones
 
@@ -133,6 +139,7 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 
 - **Phase 14: Result Persistence** (2026-03-03): 1 plan, 10 new tests (467 total), confidence 95%
 - **Phase 15: Thread Model + Cross-Repo Context** (2026-03-04): 2 plans, follow-up hardening complete, targeted verification 40/40
+- **Phase 16: Aggregator + Error Handling** (2026-03-04): 1 plan, 16 new tests (518 total), confidence 90%
 
 ### Deploy Status (2026-02-24)
 
@@ -182,10 +189,9 @@ None
 ## Session Continuity
 
 Last session: 2026-03-04
-Stopped at: Completed Phase 15 follow-up fix `d235b64` (thread ordering + runtime ownership)
-Resume with: `/pipeline:gsd 16` per iniziare Phase 16
+Stopped at: Completed Phase 16 — v1.3 milestone complete
+Resume with: `/gsd:complete-milestone` per archiviare v1.3
 
 ## Prossimi Passi
 
-### Next: v1.3 Phase 16 — Aggregator + Error Handling
-### Dopo Phase 16: v1.3 milestone complete
+### Next: v1.3 milestone complete — archive with `/gsd:complete-milestone`

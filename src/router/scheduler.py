@@ -356,10 +356,18 @@ class Scheduler:
     def report_failure(
         self, task_id: str, worker_id: str, reason: str = ""
     ) -> bool:
-        """Worker reports task failure: running -> failed + cleanup."""
+        """Worker reports task failure: running -> failed + cleanup.
+
+        If the task has on_failure=retry and attempts remain, the task is
+        requeued with backoff instead of transitioning to failed.
+        """
         task = self._db.get_task(task_id)
         if task is None or task.assigned_worker != worker_id:
             return False
+
+        # Retry policy: requeue instead of failing if retries remain
+        if task.on_failure == "retry" and task.attempt < 3:
+            return self._retry_step(task, worker_id, reason)
 
         with self._db.transaction() as conn:
             cas_ok = self._db.update_task_status(
@@ -395,4 +403,66 @@ class Scheduler:
 
         from src.router.dependency import on_task_terminal
         on_task_terminal(self._db, task_id)
+        return True
+
+    def _retry_step(self, task: Task, worker_id: str, reason: str) -> bool:
+        """Requeue a step for retry with backoff. Task stays non-terminal."""
+        from src.router.retry import RetryPolicy
+        retry_policy = RetryPolicy(self._db)
+        not_before = retry_policy.calculate_not_before(task)
+        new_attempt = task.attempt + 1
+
+        with self._db.transaction() as conn:
+            # running -> queued (requeue for retry)
+            cas_ok = self._db.update_task_status(
+                task.task_id, TaskStatus.running, TaskStatus.queued, conn=conn
+            )
+            if not cas_ok:
+                return False
+
+            self._db.update_task_fields(
+                task.task_id,
+                {
+                    "attempt": new_attempt,
+                    "not_before": not_before,
+                    "assigned_worker": None,
+                    "lease_expires_at": None,
+                },
+                conn=conn,
+            )
+
+            self._db.insert_event(
+                TaskEvent(
+                    task_id=task.task_id,
+                    event_type="step_retry_requeued",
+                    payload={
+                        "attempt": new_attempt,
+                        "reason": f"retry: {reason}",
+                        "not_before": not_before,
+                    },
+                ),
+                conn=conn,
+            )
+
+            # Thread stays active (task is not terminal)
+            if task.thread_id:
+                from src.router.thread import compute_thread_status
+                new_thread_status = compute_thread_status(self._db, task.thread_id)
+                self._db.update_thread(
+                    task.thread_id,
+                    {"status": new_thread_status.value, "updated_at": _utc_now()},
+                    conn=conn,
+                )
+
+            lease = self._db.get_active_lease(task.task_id)
+            if lease:
+                self._db.expire_lease(lease.lease_id, conn=conn)
+
+            self._update_worker_post_task(worker_id, task.task_id, conn, "step retrying")
+
+        # Do NOT call on_task_terminal — task is not terminal (requeued)
+        logger.info(
+            "step_retry task=%s attempt=%d/%d not_before=%s",
+            task.task_id, new_attempt, 3, not_before,
+        )
         return True

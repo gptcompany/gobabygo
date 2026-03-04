@@ -232,6 +232,7 @@ class RouterDB:
         self._ensure_column("tasks", "step_index", "INTEGER DEFAULT NULL")
         self._ensure_column("tasks", "repo", "TEXT DEFAULT NULL")
         self._ensure_column("tasks", "role", "TEXT DEFAULT NULL")
+        self._ensure_column("tasks", "on_failure", "TEXT NOT NULL DEFAULT 'abort'")
         self._conn.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_thread_step
             ON tasks(thread_id, step_index) WHERE thread_id IS NOT NULL"""
@@ -356,6 +357,7 @@ class RouterDB:
             step_index=row["step_index"] if "step_index" in keys else None,
             repo=row["repo"] if "repo" in keys else None,
             role=row["role"] if "role" in keys else None,
+            on_failure=row["on_failure"] if "on_failure" in keys else "abort",
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -370,9 +372,9 @@ class RouterDB:
                 target_account, execution_mode, priority, deadline_ts, depends_on, status,
                 assigned_worker, session_id, lease_expires_at, attempt, not_before,
                 created_by, critical, rejection_count, review_timeout_at,
-                idempotency_key, thread_id, step_index, repo, role,
+                idempotency_key, thread_id, step_index, repo, role, on_failure,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 task.task_id,
                 task.parent_task_id,
@@ -400,6 +402,7 @@ class RouterDB:
                 task.step_index,
                 task.repo,
                 task.role,
+                task.on_failure,
                 task.created_at,
                 task.updated_at,
             ),

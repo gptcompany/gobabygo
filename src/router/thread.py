@@ -56,6 +56,8 @@ def add_step(
 
     initial_status = TaskStatus.blocked if depends_on else TaskStatus.queued
 
+    on_failure_val = step_request.on_failure.value if hasattr(step_request.on_failure, "value") else str(step_request.on_failure)
+
     task = Task(
         title=step_request.title,
         target_cli=step_request.target_cli,
@@ -70,6 +72,7 @@ def add_step(
         step_index=step_request.step_index,
         repo=step_request.repo or None,
         role=None,
+        on_failure=on_failure_val,
     )
 
     return db.insert_task(task)
@@ -80,14 +83,19 @@ def get_thread_context(
     thread_id: str,
     up_to_step_index: int,
 ) -> list[dict[str, Any]]:
-    """Get aggregated context from completed steps up to (exclusive) a step index.
+    """Get aggregated context from completed and skipped steps up to (exclusive) a step index.
 
-    Returns list of dicts: [{"step_index": N, "repo": "...", "result": {...}}, ...]
+    Returns list of dicts:
+    - Completed: {"step_index": N, "repo": "...", "result": {...}}
+    - Skipped:   {"step_index": N, "repo": "...", "status": "skipped", "result": null}
     Applies 32KB cap: if aggregate JSON > 32KB, drops oldest results first.
     """
+    # Completed steps with results
     cur = db._conn.execute(
-        """SELECT step_index, repo, result_json FROM tasks
-           WHERE thread_id = ? AND step_index < ? AND status = 'completed'
+        """SELECT step_index, repo, result_json, status, on_failure FROM tasks
+           WHERE thread_id = ? AND step_index < ?
+           AND (status = 'completed'
+                OR (status IN ('failed', 'timeout', 'canceled') AND on_failure = 'skip'))
            ORDER BY step_index ASC""",
         (thread_id, up_to_step_index),
     )
@@ -95,12 +103,21 @@ def get_thread_context(
 
     context: list[dict[str, Any]] = []
     for row in rows:
-        result = json.loads(row["result_json"]) if row["result_json"] else None
-        context.append({
-            "step_index": row["step_index"],
-            "repo": row["repo"],
-            "result": result,
-        })
+        if row["status"] == "completed":
+            result = json.loads(row["result_json"]) if row["result_json"] else None
+            context.append({
+                "step_index": row["step_index"],
+                "repo": row["repo"],
+                "result": result,
+            })
+        else:
+            # Skipped step — failed but on_failure=skip
+            context.append({
+                "step_index": row["step_index"],
+                "repo": row["repo"],
+                "status": "skipped",
+                "result": None,
+            })
 
     # Apply 32KB cap, dropping oldest results first
     max_bytes = 32768
@@ -119,8 +136,8 @@ def compute_thread_status(db: RouterDB, thread_id: str) -> ThreadStatus:
     """Compute the current status of a thread based on its steps.
 
     - No steps: pending
-    - Any step failed/timeout/canceled: failed
-    - All steps completed: completed
+    - Any step failed/timeout/canceled WITH on_failure != skip: failed
+    - All steps in terminal state (completed or failed-with-skip): completed
     - Otherwise (any step running/assigned/queued/blocked): active
     """
     steps = db.list_thread_steps(thread_id)
@@ -129,12 +146,20 @@ def compute_thread_status(db: RouterDB, thread_id: str) -> ThreadStatus:
         return ThreadStatus.pending
 
     terminal_fail = {TaskStatus.failed, TaskStatus.timeout, TaskStatus.canceled}
-    statuses = [s.status for s in steps]
 
-    if any(s in terminal_fail for s in statuses):
-        return ThreadStatus.failed
+    # Check for hard failures (on_failure != "skip")
+    for s in steps:
+        if s.status in terminal_fail and s.on_failure != "skip":
+            return ThreadStatus.failed
 
-    if all(s == TaskStatus.completed for s in statuses):
+    # Check if all steps are in a terminal-ok state
+    # (completed, or failed/timeout/canceled with on_failure=skip)
+    terminal_ok = {TaskStatus.completed}
+    all_done = all(
+        s.status in terminal_ok or (s.status in terminal_fail and s.on_failure == "skip")
+        for s in steps
+    )
+    if all_done:
         return ThreadStatus.completed
 
     return ThreadStatus.active

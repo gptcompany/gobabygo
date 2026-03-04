@@ -768,12 +768,22 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         steps = db.list_thread_steps(thread_id)
         steps_list = []
         for s in steps:
+            result_summary = None
+            if s.result:
+                raw = str(s.result)
+                result_summary = raw[:100] + "..." if len(raw) > 100 else raw
             steps_list.append({
                 "step_index": s.step_index,
                 "task_id": s.task_id,
                 "status": s.status.value if hasattr(s.status, "value") else str(s.status),
                 "repo": s.repo or "",
                 "title": s.title,
+                "assigned_worker": s.assigned_worker or "",
+                "created_at": s.created_at,
+                "updated_at": s.updated_at,
+                "attempt": s.attempt,
+                "on_failure": s.on_failure,
+                "result_summary": result_summary,
             })
 
         self._send_json(200, {"thread": thread_dict, "steps": steps_list})

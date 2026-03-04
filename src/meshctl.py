@@ -416,6 +416,7 @@ def cmd_thread_add_step(args: argparse.Namespace) -> None:
         "repo": args.repo or "",
         "target_cli": args.cli or "claude",
         "target_account": args.account or "work",
+        "on_failure": args.on_failure or "abort",
     }
     if args.payload:
         try:
@@ -465,13 +466,16 @@ def cmd_thread_status(args: argparse.Namespace) -> None:
         return
 
     print(f"THREAD: {thread.get('name', '?')} [{thread.get('status', '?')}]")
-    print(f"{'STEP':<6} {'STATUS':<12} {'REPO':<20} TITLE")
+    print(f"{'STEP':<6} {'STATUS':<12} {'REPO':<16} {'WORKER':<10} {'ATTEMPT':<9} {'POLICY':<8} TITLE")
     for s in steps:
         idx = s.get("step_index", "?")
         status = str(s.get("status", "?"))[:12]
-        repo = (s.get("repo", "") or "")[:20]
-        title = s.get("title", "")[:40]
-        print(f"{idx:<6} {status:<12} {repo:<20} {title}")
+        repo = (s.get("repo", "") or "")[:16]
+        worker = (s.get("assigned_worker", "") or "")[:8]
+        attempt = f"{s.get('attempt', 1)}/3"
+        on_failure = (s.get("on_failure", "abort") or "abort")[:8]
+        title = s.get("title", "")[:30]
+        print(f"{idx:<6} {status:<12} {repo:<16} {worker:<10} {attempt:<9} {on_failure:<8} {title}")
 
 
 def cmd_thread_context(args: argparse.Namespace) -> None:
@@ -543,6 +547,11 @@ thread_add_step_parser.add_argument("--repo", default="", help="Repository path"
 thread_add_step_parser.add_argument("--cli", default=None, help="Target CLI")
 thread_add_step_parser.add_argument("--account", default=None, help="Target account")
 thread_add_step_parser.add_argument("--payload", default=None, help="JSON payload")
+thread_add_step_parser.add_argument(
+    "--on-failure", default="abort", dest="on_failure",
+    choices=["abort", "skip", "retry"],
+    help="Failure policy: abort (default), skip, retry",
+)
 
 thread_status_parser = thread_sub.add_parser("status", help="Show thread status")
 thread_status_parser.add_argument("thread", help="Thread ID or name")

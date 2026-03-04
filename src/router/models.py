@@ -67,6 +67,12 @@ class ExecutionMode(str, Enum):
     session = "session"
 
 
+class OnFailurePolicy(str, Enum):
+    abort = "abort"
+    skip = "skip"
+    retry = "retry"
+
+
 class Task(BaseModel):
     task_id: str = Field(default_factory=_uuid4)
     parent_task_id: str | None = None
@@ -96,6 +102,7 @@ class Task(BaseModel):
     step_index: int | None = None
     repo: str | None = None
     role: str | None = None
+    on_failure: str = "abort"  # abort|skip|retry — per-step failure policy
     created_at: str = Field(default_factory=_utc_now)
     updated_at: str = Field(default_factory=_utc_now)
 
@@ -125,6 +132,7 @@ class ThreadStepRequest(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     priority: int = 1
     critical: bool = False
+    on_failure: OnFailurePolicy = OnFailurePolicy.abort
 
 
 class TaskCreateRequest(BaseModel):

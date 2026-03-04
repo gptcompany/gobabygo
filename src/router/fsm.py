@@ -25,6 +25,7 @@ ALLOWED_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.assigned: {TaskStatus.blocked, TaskStatus.running, TaskStatus.canceled},
     TaskStatus.blocked: {TaskStatus.queued, TaskStatus.canceled},
     TaskStatus.running: {
+        TaskStatus.queued,  # step retry (on_failure=retry)
         TaskStatus.review,
         TaskStatus.failed,
         TaskStatus.timeout,

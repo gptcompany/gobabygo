@@ -90,10 +90,12 @@ def resolve_blocked_tasks(db: RouterDB) -> int:
     resolution. This function exists for recovery scenarios where events may
     have been missed.
 
+    Respects on_failure policies: a failed dep with on_failure=abort blocks dependents.
+
     Returns count of tasks unblocked.
     """
     blocked_rows = db._conn.execute(
-        "SELECT task_id FROM tasks WHERE status = ?",
+        "SELECT task_id, depends_on FROM tasks WHERE status = ?",
         (TaskStatus.blocked.value,),
     ).fetchall()
 
@@ -101,8 +103,11 @@ def resolve_blocked_tasks(db: RouterDB) -> int:
 
     for row in blocked_rows:
         task_id = row["task_id"]
-        all_resolved, _ = check_dependencies(db, task_id)
-        if all_resolved:
+        depends_on = json.loads(row["depends_on"]) if row["depends_on"] else []
+        if not depends_on:
+            continue
+        all_allow = all(_dep_allows_unblock(db, dep_id) for dep_id in depends_on)
+        if all_allow:
             transitioned = _apply_blocked_to_queued(db, task_id)
             if transitioned:
                 unblocked += 1
@@ -110,12 +115,39 @@ def resolve_blocked_tasks(db: RouterDB) -> int:
     return unblocked
 
 
+def _dep_allows_unblock(db: RouterDB, dep_task_id: str) -> bool:
+    """Check if a dependency task allows its dependents to proceed.
+
+    For thread steps (thread_id set):
+    - Completed: always allows
+    - Failed/timeout/canceled with on_failure=skip: allows
+    - Failed/timeout/canceled with on_failure=abort/retry: blocks
+
+    For non-thread tasks (legacy behavior):
+    - Any terminal state allows unblocking (completed, failed, timeout, canceled)
+    """
+    dep = db.get_task(dep_task_id)
+    if dep is None:
+        return False
+    status = dep.status.value if hasattr(dep.status, "value") else str(dep.status)
+    if status not in TERMINAL_STATES:
+        return False
+    if status == TaskStatus.completed.value:
+        return True
+    # Non-thread tasks: legacy behavior — failed is terminal and allows unblock
+    if not dep.thread_id:
+        return True
+    # Thread steps: failed only allows unblock if on_failure=skip
+    return dep.on_failure == "skip"
+
+
 def on_task_terminal(db: RouterDB, completed_task_id: str) -> int:
     """Event-driven dependency resolution — called when a task reaches terminal state.
 
     Finds all tasks that have completed_task_id in their depends_on list
-    AND are in blocked status. For each, checks if ALL dependencies are
-    now resolved. If yes, transitions blocked -> queued.
+    AND are in blocked status. For each, checks if ALL dependencies allow
+    unblocking (completed, or failed with on_failure=skip). If yes,
+    transitions blocked -> queued.
 
     This is the primary mechanism — no polling needed.
 
@@ -141,9 +173,9 @@ def on_task_terminal(db: RouterDB, completed_task_id: str) -> int:
         if completed_task_id not in depends_on:
             continue
 
-        # Check if ALL dependencies are now resolved
-        all_resolved, _ = check_dependencies(db, task_id)
-        if all_resolved:
+        # Check if ALL dependencies allow unblocking
+        all_allow = all(_dep_allows_unblock(db, dep_id) for dep_id in depends_on)
+        if all_allow:
             transitioned = _apply_blocked_to_queued(db, task_id)
             if transitioned:
                 unblocked += 1
