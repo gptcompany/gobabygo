@@ -171,7 +171,7 @@ class Worker(BaseModel):
     role: str = CommunicationRole.worker.value
     status: str = "idle"
     last_heartbeat: str = Field(default_factory=_utc_now)
-    idle_since: str | None = Field(default_factory=_utc_now)
+    idle_since: str = Field(default_factory=_utc_now)
     stale_since: str | None = None
     concurrency: int = 1
 

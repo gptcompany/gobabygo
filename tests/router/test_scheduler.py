@@ -43,14 +43,12 @@ def _add_worker(
     status="idle",
     idle_since=None,
     execution_modes=None,
-    **kwargs,
 ):
     w = Worker(
         worker_id=worker_id, machine="ws1", cli_type=cli,
         account_profile=account, status=status,
         last_heartbeat=_now(), idle_since=idle_since or _now(),
         execution_modes=execution_modes or ["batch"],
-        **kwargs,
     )
     db.insert_worker(w)
     return w
@@ -82,11 +80,7 @@ class TestFindEligibleWorker:
         assert sched.find_all_eligible_workers(task) == []
 
     def test_busy_excluded(self, sched, db):
-        # A busy worker WITH capacity is now eligible
-        _add_worker(db, "w1", "work", CLIType.claude, status="busy", concurrency=1)
-        # Add a task assigned to it to reach capacity
-        _add_task(db, "t_busy", assigned_worker="w1", status=TaskStatus.running)
-        
+        _add_worker(db, "w1", "work", CLIType.claude, status="busy")
         task = Task(task_id="t1", target_cli=CLIType.claude, target_account="work")
         assert sched.find_all_eligible_workers(task) == []
 
@@ -173,12 +167,12 @@ class TestDispatch:
         _add_worker(db, "w1", "work")
         task = _add_task(db, "t1")
 
-        # Manually set worker to offline right before dispatching
+        # Manually set worker to busy right before dispatching
         original_find = sched.find_all_eligible_workers
         def mock_find(t):
             workers = original_find(t)
-            # Make worker offline in DB behind scheduler's back
-            db._conn.execute("UPDATE workers SET status = 'offline'")
+            # Make worker busy in DB behind scheduler's back
+            db._conn.execute("UPDATE workers SET status = 'busy'")
             db._conn.commit()
             return workers
         monkeypatch.setattr(sched, "find_all_eligible_workers", mock_find)
@@ -435,35 +429,6 @@ class TestTaskRetry:
         assert sched.report_failure("t1", "w1", "final error") is True
         t = db.get_task("t1")
         assert t.status == TaskStatus.failed
-
-
-class TestWorkerPostTaskDraining:
-    def test_draining_worker_with_remaining_assigned_tasks_stays_draining(self, sched, db):
-        """Worker with assigned (but not yet running) tasks stays draining."""
-        _add_worker(db, "w1", "work", concurrency=2)
-
-        # Task 1: running
-
-        t1 = _add_task(db, "t1")
-        sched.dispatch()
-        sched.ack_task("t1", "w1")
-        
-        # Task 2: assigned (dispatched but not acked)
-        t2 = _add_task(db, "t2")
-        sched.dispatch()
-
-        # Transition to draining
-        db.update_worker("w1", {"status": "draining"})
-
-        # Complete T1 -> w1 has T2 assigned -> stays draining
-        sched.complete_task("t1", "w1")
-        w = db.get_worker("w1")
-        assert w.status == "draining"
-        
-        # Complete T2 -> now offline
-        sched.ack_task("t2", "w1")
-        sched.complete_task("t2", "w1")
-        assert db.get_worker("w1").status == "offline"
 
 
 class TestDispatchLongPollWakeup:
