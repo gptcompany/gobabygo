@@ -1,5 +1,33 @@
 # Milestones
 
+## v1.4 Native Cross-Repo Handoff (Planned: 2026-03-04)
+
+**Phases:** 5 | **Plans:** 5 | **Status:** PLANNED
+**Execution order:** 17 -> 18 -> 19 -> 20 -> 21
+
+**Planned outcomes:**
+1. Formalize cross-repo operational hierarchy: `BOSS_GLOBAL -> PRESIDENT_GLOBAL -> REPO_LEAD -> WORKER`
+2. Add manual topology wiring (`repo -> lead -> worker -> host -> notification room`) without replacing existing env-based deployment
+3. Declassify the current session bus to control-plane only; stop treating it as the primary interactive transport
+4. Add native attach handles for interactive sessions via `upterm` (or `ssh+tmux` fallback)
+5. Add Matrix notification bridge for approval and intervention flows
+6. Add structured cross-repo handoff records without creating a second orchestration system
+7. Add shared memory via `OpenMemory` server + MCP as a sidecar, not as operational source of truth
+
+**Key constraints:**
+- The current `/sessions/*` bus remains useful for audit, output streaming, and quick text only
+- The primary interactive data-plane moves to `upterm` or `ssh+tmux`
+- `OpenMemory` is memory only; it is not a message bus, scheduler, or task authority
+- All initial routing remains manually configurable
+
+**Planning docs:**
+- `.planning/milestones/v1.4-ROADMAP.md`
+- `.planning/milestones/v1.4-REQUIREMENTS.md`
+- `.planning/milestones/v1.4-PHASE-17-18-BREAKDOWN.md`
+- `deploy/topology.v1.4.example.yml`
+
+---
+
 ## v1.3 Cross-Repo Orchestration (Shipped: 2026-03-04)
 
 **Phases:** 3 | **Plans:** 4 | **Tests:** 548 | **New tests:** 112
@@ -86,4 +114,3 @@
 **Archives:** `.planning/phases/11-dispatch-loop/` through `.planning/phases/13-cli-invocation/`
 
 ---
-

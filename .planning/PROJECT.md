@@ -14,7 +14,7 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 **Test suite:** 548 tests, all passing
 **Production LOC:** 6,742 Python
 **Tech stack:** Python 3.11+, SQLite (WAL), Pydantic, CloudEvents, prometheus-client
-**Current focus:** Planning next milestone
+**Current focus:** v1.4 Native Cross-Repo Handoff planning
 
 ## Requirements
 
@@ -57,7 +57,9 @@ Reliable, deterministic task orchestration across distributed AI workers — rou
 
 ### Active
 
-None — v1.3 complete
+- v1.4 planning: formalize role topology and manual cross-repo wiring
+- v1.4 planning: move primary interactive control from session bus to `upterm` / `ssh+tmux`
+- v1.4 planning: add shared memory via `OpenMemory` server + MCP without changing operational authority
 
 ### Out of Scope
 
@@ -104,6 +106,14 @@ Result persistence, thread model, on_failure policies, audit trail, E2E cross-re
 
 </details>
 
+<details>
+<summary>v1.4 Native Cross-Repo Handoff — PLANNED 2026-03-04</summary>
+
+5 phases, 5 plans (planned).
+Role topology, native session attach, Matrix approval bridge, structured handoff, OpenMemory via MCP.
+
+</details>
+
 ## Context
 
 ### Infrastructure (operational)
@@ -117,6 +127,7 @@ Result persistence, thread model, on_failure policies, audit trail, E2E cross-re
 - session_spawner.py exists but unused in production (sessions are worker-owned by design)
 - on_failure uses string-vs-enum comparisons (safe due to str-Enum, minor inconsistency)
 - /metrics endpoint has no auth (acceptable: WireGuard-only network)
+- current `/sessions/*` bus is line-based control-plane only and is not suitable as the primary interactive transport
 
 ## Constraints
 
@@ -152,6 +163,9 @@ Result persistence, thread model, on_failure policies, audit trail, E2E cross-re
 | Thread step = normal Task row with thread_id | Reuses dependency.py, scheduler, FSM — no parallel system | Good |
 | thread_context as runtime enrichment (not persisted) | Computed on-the-fly from completed steps; no stale data | Good |
 | Sessions are worker-owned (not router-managed) | Router stays stateless for tmux; workers own their runtime | Good |
+| Current session bus is control-plane only | `/sessions/send` injects line-based text with auto-Enter; not a PTY | Planned follow-up in v1.4 |
+| Primary interactive data-plane uses `upterm` or `ssh+tmux` | Reuse real tmux sessions instead of extending custom bus into a pseudo-terminal | Planned in v1.4 |
+| Shared memory uses OpenMemory via MCP | Standard memory layer for MCP-aware CLI clients; router remains operational truth | Planned in v1.4 |
 | on_failure per-step (not per-thread) | Granular control; each step can have different policy | Good |
 | Retry uses existing RetryPolicy for backoff | No new backoff implementation; consistent with task retry | Good |
 | No /metrics auth | WireGuard-only network, same as /health | Revisit |

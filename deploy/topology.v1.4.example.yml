@@ -1,0 +1,78 @@
+# v1.4 manual topology seed
+#
+# Runtime remains env-based per host and per worker.
+# This file adds cross-repo orchestration metadata only.
+#
+# Attach target contract emitted at runtime into Session.metadata:
+#   attach_kind: upterm
+#   attach_target: ssh://TOKEN@HOST:PORT
+#
+#   attach_kind: ssh_tmux
+#   attach_target: ssh://USER@HOST:22?tmux_session=SESSION_NAME
+
+version: 1
+
+global:
+  boss_role: boss_global
+  president_role: president_global
+  boss_notify_room: "!boss:matrix.example"
+  cross_repo_policy:
+    require_president_handoff: true
+    allow_direct_repo_lead_to_repo_lead: false
+  memory:
+    provider: openmemory_mcp
+    mcp_server_name: openmemory
+    write_policy: best_effort
+    required: false
+
+hosts:
+  mac-112:
+    address: 10.0.0.112
+    transport: vpn
+    operator_terminal: iterm2
+    attach_mode: upterm
+  ws-111:
+    address: 10.0.0.111
+    transport: vpn
+    operator_terminal: tmux
+    attach_mode: upterm
+
+workers:
+  ws-claude-session-01:
+    host: mac-112
+    env_file: deploy/mesh-session-claude-work.env
+    cli_type: claude
+    execution_modes: [session]
+  ws-codex-session-01:
+    host: mac-112
+    env_file: deploy/mesh-session-codex-work.env
+    cli_type: codex
+    execution_modes: [session]
+  ws-claude-session-02:
+    host: ws-111
+    env_file: deploy/mesh-session-claude-work.env
+    cli_type: claude
+    execution_modes: [session]
+  ws-codex-session-02:
+    host: ws-111
+    env_file: deploy/mesh-session-codex-work.env
+    cli_type: codex
+    execution_modes: [session]
+
+repos:
+  rektslug:
+    lead_role: repo_lead
+    preferred_host: mac-112
+    worker_pool:
+      - ws-claude-session-01
+      - ws-codex-session-01
+    notify_room: "!rektslug:matrix.example"
+    attach_mode: upterm
+  ccxt-data-pipeline:
+    lead_role: repo_lead
+    preferred_host: ws-111
+    worker_pool:
+      - ws-claude-session-02
+      - ws-codex-session-02
+    notify_room: "!ccxt:matrix.example"
+    attach_mode: upterm

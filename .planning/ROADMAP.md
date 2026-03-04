@@ -6,6 +6,7 @@
 - v1.1 Production Readiness -- Phases 7-10 (shipped 2026-02-21)
 - v1.2 Operational Readiness -- Phases 11-13 (shipped 2026-02-23)
 - v1.3 Cross-Repo Orchestration -- Phases 14-16 (shipped 2026-03-04)
+- v1.4 Native Cross-Repo Handoff -- Phases 17-21 (planned 2026-03-04)
 
 ## Phases
 
@@ -53,6 +54,19 @@ Full details: `.planning/milestones/v1.3-ROADMAP.md`
 
 </details>
 
+<details>
+<summary>v1.4 Native Cross-Repo Handoff (Phases 17-21) -- PLANNED</summary>
+
+- [ ] Phase 17: Role Topology + Manual Wiring
+- [ ] Phase 18: Native Session Attach
+- [ ] Phase 19: Approval + Notification Bridge
+- [ ] Phase 20: Structured Cross-Repo Handoff
+- [ ] Phase 21: Shared Memory Layer (OpenMemory via MCP)
+
+Full details: `.planning/milestones/v1.4-ROADMAP.md`
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -73,3 +87,8 @@ Full details: `.planning/milestones/v1.3-ROADMAP.md`
 | 14. Result Persistence | v1.3 | 1/1 | Done | 2026-03-03 |
 | 15. Thread + Cross-Repo | v1.3 | 2/2 | Done | 2026-03-04 |
 | 16. Aggregator + Error | v1.3 | 1/1 | Done | 2026-03-04 |
+| 17. Role Topology + Manual Wiring | v1.4 | 0/1 | Planned | - |
+| 18. Native Session Attach | v1.4 | 0/1 | Planned | - |
+| 19. Approval + Notification Bridge | v1.4 | 0/1 | Planned | - |
+| 20. Structured Cross-Repo Handoff | v1.4 | 0/1 | Planned | - |
+| 21. Shared Memory Layer | v1.4 | 0/1 | Planned | - |
