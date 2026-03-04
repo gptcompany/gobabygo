@@ -205,9 +205,17 @@ class TestCreateAttachHandle:
 
 class TestStartUpterm:
 
+    @patch("src.router.session_worker.os.path.exists", return_value=True)
+    @patch("src.router.session_worker.os.remove")
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
     @patch("src.router.session_worker.subprocess.Popen")
-    def test_success(self, mock_popen: Mock, mock_poll: Mock) -> None:
+    def test_success(
+        self,
+        mock_popen: Mock,
+        mock_poll: Mock,
+        mock_remove: Mock,
+        mock_exists: Mock,
+    ) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
         mock_poll.return_value = "ssh://tok@host:22"
@@ -222,6 +230,31 @@ class TestStartUpterm:
         assert "--force-command" in popen_args
         fc_idx = popen_args.index("--force-command")
         assert "tmux attach -t mesh-sess" in popen_args[fc_idx + 1]
+        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.sock")
+        mock_remove.assert_called_once_with("/tmp/upterm-mesh-sess.sock")
+
+    @patch("src.router.session_worker.os.path.exists", return_value=False)
+    @patch("src.router.session_worker.os.remove")
+    @patch.object(MeshSessionWorker, "_poll_upterm_target")
+    @patch("src.router.session_worker.subprocess.Popen")
+    def test_success_without_stale_socket(
+        self,
+        mock_popen: Mock,
+        mock_poll: Mock,
+        mock_remove: Mock,
+        mock_exists: Mock,
+    ) -> None:
+        proc = MagicMock(spec=subprocess.Popen)
+        mock_popen.return_value = proc
+        mock_poll.return_value = "ssh://tok@host:22"
+        worker = _make_worker()
+
+        p, target = worker._start_upterm("mesh-sess")
+
+        assert p is proc
+        assert target == "ssh://tok@host:22"
+        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.sock")
+        mock_remove.assert_not_called()
 
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
     @patch("src.router.session_worker.subprocess.Popen")

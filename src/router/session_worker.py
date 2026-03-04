@@ -485,6 +485,12 @@ class MeshSessionWorker:
         Returns ``(process, ssh_url)`` or ``(None, None)`` on failure.
         """
         socket_path = f"/tmp/upterm-{tmux_session}.sock"
+        if os.path.exists(socket_path):
+            try:
+                os.remove(socket_path)
+                logger.info("Removed stale upterm admin socket before start: %s", socket_path)
+            except OSError as e:
+                logger.warning("Failed to remove stale upterm admin socket %s: %s", socket_path, e)
         cmd: list[str] = [
             self.config.upterm_bin,
             "host",
