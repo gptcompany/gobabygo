@@ -152,7 +152,7 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 | Worker codex | Workstation 10.0.0.2 | `mesh-worker@codex-work.service` | active, idle |
 | Worker gemini | Workstation 10.0.0.2 | `mesh-worker@gemini-work.service` | active, idle |
 
-**Token:** `***REDACTED***`
+**Token:** `<ROTATE-TOKEN-BEFORE-PUBLIC>`
 
 **Comandi utili:**
 ```bash
@@ -160,10 +160,10 @@ All v1.0 decisions logged in PROJECT.md Key Decisions table (15 decisions, 13 Go
 curl -sf http://10.0.0.1:8780/health | python3 -m json.tool
 
 # Status completo
-MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="***REDACTED***" python3 -m src.meshctl status --json
+MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="<ROTATE-TOKEN-BEFORE-PUBLIC>" python3 -m src.meshctl status --json
 
 # Submit task
-MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="***REDACTED***" python3 -m src.meshctl submit --title "Test" --payload '{"prompt":"hello"}'
+MESH_ROUTER_URL=http://10.0.0.1:8780 MESH_AUTH_TOKEN="<ROTATE-TOKEN-BEFORE-PUBLIC>" python3 -m src.meshctl submit --title "Test" --payload '{"prompt":"hello"}'
 
 # Logs
 ssh root@10.0.0.1 journalctl -u mesh-router -f
