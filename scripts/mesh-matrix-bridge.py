@@ -1,0 +1,544 @@
+#!/usr/bin/env python3
+"""
+Matrix notification bridge for AI Mesh Network.
+
+Out-of-process service that polls the router HTTP API and emits
+Matrix notifications when human intervention is needed.
+
+Designed to run on muletto (or any host with network access to the router).
+Bridge crash does NOT affect task execution.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import signal
+import time
+from dataclasses import dataclass, field
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+logger = logging.getLogger("mesh-matrix-bridge")
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class BridgeConfig:
+    router_url: str
+    auth_token: str
+    matrix_homeserver: str
+    matrix_access_token: str
+    matrix_default_room: str
+    poll_interval_s: float = 10.0
+    matrix_boss_room: str | None = None
+    input_patterns: list[re.Pattern[str]] = field(default_factory=list)
+    request_timeout_s: float = 10.0
+    topology_path: str | None = None
+
+    @classmethod
+    def from_env(cls) -> BridgeConfig:
+        def req(key: str) -> str:
+            val = os.environ.get(key)
+            if not val:
+                raise SystemExit(f"Missing required env var: {key}")
+            return val
+
+        raw_patterns = os.environ.get(
+            "MESH_MATRIX_INPUT_PATTERNS",
+            r"approve|continue|press enter|y/n|\by\b/\bn\b|select|confirm|proceed",
+        )
+        combined = re.compile(raw_patterns, re.IGNORECASE)
+
+        return cls(
+            router_url=req("MESH_ROUTER_URL").rstrip("/"),
+            auth_token=req("MESH_AUTH_TOKEN"),
+            matrix_homeserver=req("MESH_MATRIX_HOMESERVER").rstrip("/"),
+            matrix_access_token=req("MESH_MATRIX_ACCESS_TOKEN"),
+            matrix_default_room=req("MESH_MATRIX_DEFAULT_ROOM"),
+            poll_interval_s=float(os.environ.get("MESH_MATRIX_POLL_INTERVAL_S", "10")),
+            matrix_boss_room=os.environ.get("MESH_MATRIX_BOSS_ROOM"),
+            input_patterns=[combined],
+            request_timeout_s=float(os.environ.get("MESH_MATRIX_REQUEST_TIMEOUT_S", "10")),
+            topology_path=os.environ.get("MESH_TOPOLOGY_PATH"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Local state (rebuildable on restart)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class BridgeState:
+    """Lightweight local state, rebuilt from scratch on restart."""
+
+    # session_id -> last seen message seq
+    session_seqs: dict[str, int] = field(default_factory=dict)
+    # set of task_ids currently known to be in review
+    review_task_ids: set[str] = field(default_factory=set)
+    # thread_id -> last known status
+    thread_statuses: dict[str, str] = field(default_factory=dict)
+    # set of open session_ids from last poll
+    open_sessions: set[str] = field(default_factory=set)
+
+
+# ---------------------------------------------------------------------------
+# Topology helper (optional)
+# ---------------------------------------------------------------------------
+
+def load_repo_rooms(topology_path: str | None) -> dict[str, str]:
+    """Load repo -> notify_room mapping from topology file."""
+    if not topology_path or not os.path.isfile(topology_path):
+        return {}
+    try:
+        import yaml  # optional dep
+        with open(topology_path) as f:
+            topo = yaml.safe_load(f)
+        rooms: dict[str, str] = {}
+        for repo_name, repo_cfg in (topo.get("repos") or {}).items():
+            room = repo_cfg.get("notify_room")
+            if room:
+                rooms[repo_name] = room
+        boss_room = (topo.get("global") or {}).get("boss_notify_room")
+        if boss_room:
+            rooms["__boss__"] = boss_room
+        return rooms
+    except Exception as exc:
+        logger.warning("Failed to load topology rooms: %s", exc)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Router HTTP client
+# ---------------------------------------------------------------------------
+
+class RouterClient:
+    """Minimal HTTP client for router read endpoints."""
+
+    def __init__(self, config: BridgeConfig) -> None:
+        self._base = config.router_url
+        self._token = config.auth_token
+        self._timeout = config.request_timeout_s
+
+    def _get(self, path: str, params: dict[str, str] | None = None) -> Any:
+        url = f"{self._base}{path}"
+        if params:
+            qs = "&".join(f"{k}={v}" for k, v in params.items() if v is not None)
+            if qs:
+                url = f"{url}?{qs}"
+        req = Request(url, method="GET")
+        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Accept", "application/json")
+        try:
+            with urlopen(req, timeout=self._timeout) as resp:
+                return json.loads(resp.read())
+        except HTTPError as exc:
+            logger.error("Router HTTP %s %s: %s", exc.code, url, exc.reason)
+            return None
+        except (URLError, TimeoutError) as exc:
+            logger.error("Router unreachable %s: %s", url, exc)
+            return None
+
+    def get_sessions(self, state: str | None = None) -> list[dict]:
+        params = {}
+        if state:
+            params["state"] = state
+        data = self._get("/sessions", params)
+        return (data or {}).get("sessions", [])
+
+    def get_session_messages(
+        self, session_id: str, after_seq: int = 0, limit: int = 200
+    ) -> list[dict]:
+        data = self._get(
+            "/sessions/messages",
+            {"session_id": session_id, "after_seq": str(after_seq), "limit": str(limit)},
+        )
+        return (data or {}).get("messages", [])
+
+    def get_tasks(self, status: str | None = None) -> list[dict]:
+        params = {}
+        if status:
+            params["status"] = status
+        data = self._get("/tasks", params)
+        return (data or {}).get("tasks", [])
+
+    def get_threads(self, status: str | None = None) -> list[dict]:
+        params = {}
+        if status:
+            params["status"] = status
+        data = self._get("/threads", params)
+        return (data or {}).get("threads", [])
+
+
+# ---------------------------------------------------------------------------
+# Matrix client (minimal, no SDK dependency)
+# ---------------------------------------------------------------------------
+
+class MatrixClient:
+    """Minimal Matrix client using client-server API directly."""
+
+    def __init__(self, homeserver: str, access_token: str, timeout: float = 10.0) -> None:
+        self._base = homeserver
+        self._token = access_token
+        self._timeout = timeout
+        self._txn_id = int(time.time() * 1000)
+
+    def send_message(self, room_id: str, body: str, html: str | None = None) -> bool:
+        """Send a text message (with optional HTML) to a Matrix room."""
+        self._txn_id += 1
+        url = (
+            f"{self._base}/_matrix/client/v3/rooms/{room_id}"
+            f"/send/m.room.message/{self._txn_id}"
+        )
+        content: dict[str, str] = {
+            "msgtype": "m.text",
+            "body": body,
+        }
+        if html:
+            content["format"] = "org.matrix.custom.html"
+            content["formatted_body"] = html
+        payload = json.dumps(content).encode()
+        req = Request(url, data=payload, method="PUT")
+        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urlopen(req, timeout=self._timeout) as resp:
+                if resp.status in (200, 201):
+                    return True
+                logger.error("Matrix send failed: HTTP %s", resp.status)
+                return False
+        except (HTTPError, URLError, TimeoutError) as exc:
+            logger.error("Matrix send error: %s", exc)
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Notification rendering
+# ---------------------------------------------------------------------------
+
+def render_attach_command(session: dict) -> str:
+    """Render a human-friendly attach command from session metadata."""
+    meta = session.get("metadata") or {}
+    kind = meta.get("attach_kind")
+    target = meta.get("attach_target")
+    if kind == "upterm" and target:
+        return f"ssh {target.replace('ssh://', '')}"
+    if kind == "ssh_tmux" and target:
+        return f"ssh -t {target.replace('ssh://', '')} (tmux attach)"
+    tmux = meta.get("tmux_session")
+    if tmux:
+        return f"tmux attach -t {tmux} (local only)"
+    return "(no attach handle available)"
+
+
+def render_notification(
+    trigger: str,
+    *,
+    repo: str | None = None,
+    session: dict | None = None,
+    task: dict | None = None,
+    thread: dict | None = None,
+    excerpt: str | None = None,
+) -> tuple[str, str]:
+    """Return (plain_text, html) notification pair."""
+    emoji = {
+        "input_requested": "\u2753",       # ❓
+        "approval_needed": "\u2705",       # ✅
+        "thread_blocked": "\u26a0\ufe0f",  # ⚠️
+        "thread_failed": "\u274c",         # ❌
+        "thread_completed": "\U0001f389",  # 🎉
+    }.get(trigger, "\U0001f514")           # 🔔
+
+    lines: list[str] = [f"{emoji} **{trigger.replace('_', ' ').title()}**"]
+    html_lines: list[str] = [f"{emoji} <b>{trigger.replace('_', ' ').title()}</b>"]
+
+    if repo:
+        lines.append(f"Repo: `{repo}`")
+        html_lines.append(f"Repo: <code>{repo}</code>")
+
+    if session:
+        sid = session.get("session_id", "?")[:12]
+        lines.append(f"Session: `{sid}`")
+        html_lines.append(f"Session: <code>{sid}</code>")
+        attach = render_attach_command(session)
+        lines.append(f"Attach: `{attach}`")
+        html_lines.append(f"Attach: <code>{attach}</code>")
+
+    if task:
+        tid = task.get("task_id", "?")[:12]
+        title = task.get("title", "")
+        lines.append(f"Task: `{tid}` {title}")
+        html_lines.append(f"Task: <code>{tid}</code> {title}")
+
+    if thread:
+        thid = thread.get("thread_id", "?")[:12]
+        name = thread.get("name", "")
+        status = thread.get("status", "?")
+        lines.append(f"Thread: `{thid}` {name} [{status}]")
+        html_lines.append(f"Thread: <code>{thid}</code> {name} [{status}]")
+
+    if excerpt:
+        short = excerpt[:200]
+        lines.append(f"Excerpt: {short}")
+        html_lines.append(f"Excerpt: {short}")
+
+    if trigger == "input_requested":
+        lines.append("_Quick text reply for simple input only; full control requires terminal attach._")
+        html_lines.append("<em>Quick text reply for simple input only; full control requires terminal attach.</em>")
+
+    plain = "\n".join(lines)
+    html = "<br>".join(html_lines)
+    return plain, html
+
+
+# ---------------------------------------------------------------------------
+# Trigger detection
+# ---------------------------------------------------------------------------
+
+class TriggerDetector:
+    """Detect notification triggers from router state changes."""
+
+    def __init__(
+        self,
+        config: BridgeConfig,
+        router: RouterClient,
+        state: BridgeState,
+    ) -> None:
+        self._config = config
+        self._router = router
+        self._state = state
+
+    def poll(self) -> list[dict[str, Any]]:
+        """Run one poll cycle. Returns list of notification dicts."""
+        notifications: list[dict[str, Any]] = []
+
+        # --- Session messages: detect input_requested ---
+        sessions = self._router.get_sessions(state="open")
+        current_open = {s["session_id"] for s in sessions}
+        session_map = {s["session_id"]: s for s in sessions}
+
+        for session in sessions:
+            sid = session["session_id"]
+            last_seq = self._state.session_seqs.get(sid, 0)
+            messages = self._router.get_session_messages(sid, after_seq=last_seq)
+            if not messages:
+                continue
+
+            max_seq = max(m.get("seq", 0) for m in messages)
+            self._state.session_seqs[sid] = max_seq
+
+            # Check outbound messages for input patterns
+            for msg in messages:
+                direction = msg.get("direction", "")
+                if direction != "out":
+                    continue
+                content = msg.get("content", "")
+                for pattern in self._config.input_patterns:
+                    if pattern.search(content):
+                        notifications.append({
+                            "trigger": "input_requested",
+                            "repo": self._task_repo(session),
+                            "session": session,
+                            "excerpt": content,
+                        })
+                        break  # one notification per message
+
+        # Clean up closed sessions
+        closed = self._state.open_sessions - current_open
+        for sid in closed:
+            self._state.session_seqs.pop(sid, None)
+        self._state.open_sessions = current_open
+
+        # --- Tasks in review: detect approval_needed ---
+        review_tasks = self._router.get_tasks(status="review")
+        current_review_ids = {t["task_id"] for t in review_tasks}
+        new_review = current_review_ids - self._state.review_task_ids
+
+        for task in review_tasks:
+            if task["task_id"] in new_review:
+                # Find associated session if any
+                session_for_task = None
+                task_session_id = task.get("session_id")
+                if task_session_id and task_session_id in session_map:
+                    session_for_task = session_map[task_session_id]
+
+                notifications.append({
+                    "trigger": "approval_needed",
+                    "repo": task.get("repo"),
+                    "task": task,
+                    "session": session_for_task,
+                })
+
+        self._state.review_task_ids = current_review_ids
+
+        # --- Thread status transitions ---
+        threads = self._router.get_threads()
+        for thread in threads:
+            tid = thread["thread_id"]
+            new_status = thread.get("status", "")
+            old_status = self._state.thread_statuses.get(tid)
+
+            if old_status != new_status and new_status in ("failed", "completed", "blocked"):
+                notifications.append({
+                    "trigger": f"thread_{new_status}",
+                    "thread": thread,
+                })
+
+            self._state.thread_statuses[tid] = new_status
+
+        return notifications
+
+    def _task_repo(self, session: dict) -> str | None:
+        """Extract repo from session's task if available."""
+        task_id = session.get("task_id")
+        if not task_id:
+            return None
+        tasks = self._router.get_tasks()
+        for t in tasks:
+            if t.get("task_id") == task_id:
+                return t.get("repo")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Bridge main loop
+# ---------------------------------------------------------------------------
+
+class MatrixBridge:
+    """Main bridge orchestrator."""
+
+    def __init__(self, config: BridgeConfig) -> None:
+        self.config = config
+        self.state = BridgeState()
+        self.router = RouterClient(config)
+        self.matrix = MatrixClient(
+            config.matrix_homeserver,
+            config.matrix_access_token,
+            config.request_timeout_s,
+        )
+        self.detector = TriggerDetector(config, self.router, self.state)
+        self.repo_rooms = load_repo_rooms(config.topology_path)
+        self._running = True
+
+    def _resolve_room(self, repo: str | None) -> str:
+        """Pick the right Matrix room for a notification."""
+        if repo and repo in self.repo_rooms:
+            return self.repo_rooms[repo]
+        return self.config.matrix_default_room
+
+    def run_once(self) -> int:
+        """Run one poll cycle. Returns count of notifications sent."""
+        notifications = self.detector.poll()
+        sent = 0
+        for notif in notifications:
+            trigger = notif["trigger"]
+            repo = notif.get("repo")
+            room = self._resolve_room(repo)
+
+            plain, html = render_notification(
+                trigger,
+                repo=repo,
+                session=notif.get("session"),
+                task=notif.get("task"),
+                thread=notif.get("thread"),
+                excerpt=notif.get("excerpt"),
+            )
+
+            if self.matrix.send_message(room, plain, html):
+                sent += 1
+                logger.info("Sent %s to %s", trigger, room)
+
+                # Also notify boss room for critical triggers
+                if trigger in ("thread_failed", "approval_needed") and self.config.matrix_boss_room:
+                    self.matrix.send_message(self.config.matrix_boss_room, plain, html)
+            else:
+                logger.warning("Failed to send %s to %s", trigger, room)
+
+        return sent
+
+    def run(self) -> None:
+        """Main loop. Runs until SIGINT/SIGTERM."""
+        logger.info(
+            "Bridge started: router=%s interval=%.1fs rooms=%d",
+            self.config.router_url,
+            self.config.poll_interval_s,
+            len(self.repo_rooms) + 1,
+        )
+
+        # Seed state on first poll (no notifications emitted for existing state)
+        self._seed_state()
+
+        while self._running:
+            try:
+                count = self.run_once()
+                if count:
+                    logger.info("Cycle: %d notifications sent", count)
+            except Exception:
+                logger.exception("Poll cycle error (non-fatal)")
+            time.sleep(self.config.poll_interval_s)
+
+        logger.info("Bridge stopped")
+
+    def _seed_state(self) -> None:
+        """Snapshot current state to avoid spurious notifications on startup."""
+        logger.info("Seeding state from router...")
+
+        sessions = self.router.get_sessions(state="open")
+        self.state.open_sessions = {s["session_id"] for s in sessions}
+        for s in sessions:
+            # Mark current seq as seen
+            msgs = self.router.get_session_messages(s["session_id"], after_seq=0, limit=1)
+            if msgs:
+                self.state.session_seqs[s["session_id"]] = max(
+                    m.get("seq", 0) for m in msgs
+                )
+
+        review_tasks = self.router.get_tasks(status="review")
+        self.state.review_task_ids = {t["task_id"] for t in review_tasks}
+
+        threads = self.router.get_threads()
+        for t in threads:
+            self.state.thread_statuses[t["thread_id"]] = t.get("status", "")
+
+        logger.info(
+            "Seeded: %d sessions, %d review tasks, %d threads",
+            len(self.state.open_sessions),
+            len(self.state.review_task_ids),
+            len(self.state.thread_statuses),
+        )
+
+    def stop(self) -> None:
+        self._running = False
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    config = BridgeConfig.from_env()
+    bridge = MatrixBridge(config)
+
+    def _shutdown(signum: int, _frame: Any) -> None:
+        logger.info("Signal %s received, shutting down", signum)
+        bridge.stop()
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    bridge.run()
+
+
+if __name__ == "__main__":
+    main()

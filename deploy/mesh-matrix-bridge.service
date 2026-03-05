@@ -1,0 +1,21 @@
+[Unit]
+Description=Mesh Matrix Notification Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mesh
+WorkingDirectory=/opt/mesh
+EnvironmentFile=/opt/mesh/deploy/mesh-matrix-bridge.env
+ExecStart=/usr/bin/python3 /opt/mesh/scripts/mesh-matrix-bridge.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Bridge crash must NOT affect router
+# No dependency on mesh-router.service by design
+
+[Install]
+WantedBy=multi-user.target
