@@ -1,8 +1,8 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: Native Cross-Repo Handoff -- IN PROGRESS
-status: execution_in_progress
+milestone_name: Native Cross-Repo Handoff -- SHIPPED
+status: execution_completed
 last_updated: "2026-03-05"
 progress:
   total_phases: 21
@@ -18,19 +18,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-04)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.4 post-deploy monitoring (OpenMemory su muletto operativo, MCP operator profiles allineati).
+**Current focus:** v1.4 closeout complete (audit PASS, release docs aligned).
 
 ## Current Position
 
-Milestone: v1.4 Native Cross-Repo Handoff -- IN PROGRESS
-Status: Phase 17-21 complete; OpenMemory deploy eseguito su muletto, MCP configurato per operator Claude/Codex/Gemini, monitoraggio attivo
+Milestone: v1.4 Native Cross-Repo Handoff -- SHIPPED (2026-03-05)
+Status: Phase 17-21 complete; OpenMemory deploy operativo; MCP operator-only configurato (Claude/Codex/Gemini); audit Phase 21 PASS (11/11 test)
 
-Progress: [======================------] v1.4 active
+Progress: [============================] v1.4 shipped
 v1.0 MVP:              6 phases, 15 plans -- SHIPPED 2026-02-19
 v1.1 Production:       4 phases, 9 plans  -- SHIPPED 2026-02-21
 v1.2 Operational:      3 phases, 3 plans  -- SHIPPED 2026-02-23
 v1.3 Cross-Repo:       3 phases, 4 plans  -- SHIPPED 2026-03-04
-v1.4 Native Handoff:   5 phases, 5 plans  -- IN PROGRESS (17-21 done, stabilization window)
+v1.4 Native Handoff:   5 phases, 5 plans  -- SHIPPED 2026-03-05
 
 Total: 21 phases planned, 32 plans completed, 548+ tests, 6742+ production LOC
 
@@ -173,9 +173,9 @@ Full decision history per milestone in Accumulated Context sections below.
 ## Session Continuity
 
 Last session: 2026-03-05
-Stopped at: v1.4 phase 21 deployed on muletto; post-deploy monitoring in progress
+Stopped at: v1.4 milestone closed and shipped after Phase 21 audit PASS
 Resume with: `.planning/RESUME.md`
 
 ## Prossimi Passi
 
-### Next: Continue monitoring OpenMemory health/logs, then close v1.4 milestone
+### Next: Define and plan next milestone scope (post-v1.4)
