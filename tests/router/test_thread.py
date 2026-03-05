@@ -377,6 +377,37 @@ def test_add_step_cross_repo_handoff_with_president_role(db: RouterDB) -> None:
     assert task.payload["handoff"]["target_repo"] == "platform"
 
 
+def test_add_step_cross_repo_handoff_infers_repo_for_scheduler(db: RouterDB) -> None:
+    """When step.repo is omitted, task.repo is inferred from handoff.target_repo."""
+    _add_worker(db, "w-backend")
+    _add_worker(db, "w-platform")
+    topo = _make_topology({
+        "backend": {"worker_pool": ["w-backend"]},
+        "platform": {"worker_pool": ["w-platform"]},
+    })
+    sched = Scheduler(db=db, topology=topo)
+
+    thread = create_thread(db, "handoff-infer-repo")
+    payload = _handoff_payload(source_repo="backend", target_repo="platform")
+    task = add_step(
+        db,
+        thread.thread_id,
+        _step_request(
+            "h0",
+            0,
+            repo="",  # intentionally omitted
+            role=CROSS_REPO_HANDOFF_ROLE,
+            payload=payload,
+        ),
+        topology=topo,
+    )
+    assert task.repo == "platform"
+
+    dispatch = sched.dispatch()
+    assert dispatch is not None
+    assert dispatch.worker.worker_id == "w-platform"
+
+
 def test_add_step_same_repo_handoff_no_role_check(db: RouterDB) -> None:
     """Same-repo handoff succeeds without role restriction."""
     thread = create_thread(db, "handoff-samerc")

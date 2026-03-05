@@ -58,15 +58,20 @@ def add_step(
     if thread.status in (ThreadStatus.completed, ThreadStatus.failed):
         raise ValueError(f"Thread {thread_id} is in terminal state: {thread.status.value}")
 
+    step_repo = step_request.repo or ""
+
     # Validate handoff payload if present
     handoff = validate_handoff(step_request.payload)
     if handoff is not None:
         # Cross-check: handoff.target_repo must match step.repo (if step.repo is set)
-        step_repo = step_request.repo or ""
         if step_repo and handoff.target_repo != step_repo:
             raise HandoffRepoError(
                 f"handoff.target_repo '{handoff.target_repo}' does not match step repo '{step_repo}'"
             )
+        # If repo is omitted on the step, inherit target_repo from the handoff packet
+        # so scheduler topology constraints are enforced on dispatch.
+        if not step_repo and handoff.target_repo:
+            step_repo = handoff.target_repo
 
         # Enforce PRESIDENT_GLOBAL role for cross-repo handoffs
         is_cross_repo = handoff.source_repo != handoff.target_repo
@@ -123,7 +128,7 @@ def add_step(
         status=initial_status,
         thread_id=thread_id,
         step_index=step_request.step_index,
-        repo=step_request.repo or None,
+        repo=step_repo or None,
         role=getattr(step_request, "role", None) or None,
         on_failure=on_failure_val,
     )
