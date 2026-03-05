@@ -20,7 +20,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
-from src.router.models import Lease, Session, SessionMessage, Task, TaskEvent, TaskStatus, Thread, Worker
+from src.router.models import (
+    Lease,
+    NotificationLedgerEntry,
+    Session,
+    SessionMessage,
+    Task,
+    TaskEvent,
+    TaskStatus,
+    Thread,
+    Worker,
+)
 
 _BUSY_RETRIES = 3
 _BUSY_BACKOFFS_MS = [50, 100, 200]
@@ -139,6 +149,28 @@ CREATE TABLE IF NOT EXISTS session_messages (
 
 CREATE INDEX IF NOT EXISTS idx_session_messages_session_seq
 ON session_messages(session_id, seq);
+
+CREATE TABLE IF NOT EXISTS notification_ledger (
+    notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id        TEXT NOT NULL,
+    trigger         TEXT NOT NULL,
+    room_id         TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    repo            TEXT,
+    task_id         TEXT,
+    thread_id       TEXT,
+    session_id      TEXT,
+    error           TEXT,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_ledger_trace_id
+ON notification_ledger(trace_id);
+CREATE INDEX IF NOT EXISTS idx_notification_ledger_trace_room
+ON notification_ledger(trace_id, room_id);
+CREATE INDEX IF NOT EXISTS idx_notification_ledger_created_at
+ON notification_ledger(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS threads (
     thread_id   TEXT PRIMARY KEY,
@@ -649,6 +681,127 @@ class RouterDB:
             (session_id, after_seq, limit),
         )
         return [self._session_message_from_row(row) for row in cur.fetchall()]
+
+    # -- Notification ledger --
+
+    def _notification_from_row(self, row: sqlite3.Row) -> NotificationLedgerEntry:
+        return NotificationLedgerEntry(
+            trace_id=row["trace_id"],
+            trigger=row["trigger"],
+            room_id=row["room_id"],
+            status=row["status"],
+            repo=row["repo"],
+            task_id=row["task_id"],
+            thread_id=row["thread_id"],
+            session_id=row["session_id"],
+            error=row["error"],
+            metadata=json.loads(row["metadata"]),
+            created_at=row["created_at"],
+        )
+
+    @_retry_on_busy
+    def insert_notification_ledger_once(
+        self,
+        entry: NotificationLedgerEntry,
+        conn: sqlite3.Connection | None = None,
+    ) -> tuple[bool, int | None]:
+        """Insert notification record ONLY if (trace_id, room_id) doesn't exist.
+
+        Returns (True, notification_id) if created, (False, None) if duplicate.
+        """
+        c = conn or self._conn
+        sql = """
+            INSERT INTO notification_ledger (
+                trace_id, trigger, room_id, status, repo,
+                task_id, thread_id, session_id, error, metadata, created_at
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM notification_ledger
+                WHERE trace_id = ? AND room_id = ?
+            )
+        """
+        status_val = entry.status.value if hasattr(entry.status, "value") else str(entry.status)
+        cur = c.execute(
+            sql,
+            (
+                entry.trace_id,
+                entry.trigger,
+                entry.room_id,
+                status_val,
+                entry.repo,
+                entry.task_id,
+                entry.thread_id,
+                entry.session_id,
+                entry.error,
+                json.dumps(entry.metadata),
+                entry.created_at,
+                entry.trace_id,
+                entry.room_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            if conn is None:
+                self._conn.commit()
+            return False, None
+
+        if conn is None:
+            self._conn.commit()
+        return True, int(cur.lastrowid)
+
+    @_retry_on_busy
+    def insert_notification_ledger(
+        self,
+        entry: NotificationLedgerEntry,
+        conn: sqlite3.Connection | None = None,
+    ) -> int:
+        c = conn or self._conn
+        cur = c.execute(
+            """INSERT INTO notification_ledger (
+                trace_id, trigger, room_id, status, repo, task_id, thread_id,
+                session_id, error, metadata, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                entry.trace_id,
+                entry.trigger,
+                entry.room_id,
+                entry.status.value if hasattr(entry.status, "value") else str(entry.status),
+                entry.repo,
+                entry.task_id,
+                entry.thread_id,
+                entry.session_id,
+                entry.error,
+                json.dumps(entry.metadata),
+                entry.created_at,
+            ),
+        )
+        if conn is None:
+            self._conn.commit()
+        return int(cur.lastrowid)
+
+    @_retry_on_busy
+    def list_notification_ledger(
+        self,
+        *,
+        trace_id: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[NotificationLedgerEntry]:
+        sql = "SELECT * FROM notification_ledger"
+        params: list[object] = []
+        clauses: list[str] = []
+        if trace_id is not None:
+            clauses.append("trace_id = ?")
+            params.append(trace_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY notification_id DESC LIMIT ?"
+        params.append(limit)
+        cur = self._conn.execute(sql, params)
+        return [self._notification_from_row(row) for row in cur.fetchall()]
 
     # -- Workers --
 

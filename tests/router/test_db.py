@@ -13,6 +13,7 @@ from src.router.models import (
     CLIType,
     ExecutionMode,
     Lease,
+    NotificationLedgerEntry,
     Session,
     SessionMessage,
     Task,
@@ -302,6 +303,59 @@ def test_session_crud_and_messages(db: RouterDB, sample_worker: Worker) -> None:
     assert str(getattr(closed.state, "value", closed.state)) == "closed"
 
 
+def test_notification_ledger_roundtrip(db: RouterDB) -> None:
+    entry = NotificationLedgerEntry(
+        trace_id="ntf_1234567890abcdef0123",
+        trigger="approval_needed",
+        room_id="!room:matrix.example",
+        status="sent",
+        repo="rektslug",
+        task_id="task-1",
+        metadata={"source": "bridge"},
+    )
+    notification_id = db.insert_notification_ledger(entry)
+    assert notification_id >= 1
+
+    rows = db.list_notification_ledger(trace_id="ntf_1234567890abcdef0123")
+    assert len(rows) == 1
+    assert rows[0].trigger == "approval_needed"
+    assert rows[0].room_id == "!room:matrix.example"
+    assert rows[0].status.value == "sent"
+    assert rows[0].metadata["source"] == "bridge"
+
+
+def test_notification_ledger_duplicate_dedup(db: RouterDB) -> None:
+    trace = "ntf_abc1234567890abcdef0123"
+    entry1 = NotificationLedgerEntry(
+        trace_id=trace, trigger="approval_needed", room_id="!r1", status="sent"
+    )
+    # Different trigger or metadata but same trace+room
+    entry2 = NotificationLedgerEntry(
+        trace_id=trace, trigger="thread_failed", room_id="!r1", status="failed"
+    )
+    # Same trace, different room
+    entry3 = NotificationLedgerEntry(
+        trace_id=trace, trigger="approval_needed", room_id="!r2", status="sent"
+    )
+
+    ok1, id1 = db.insert_notification_ledger_once(entry1)
+    assert ok1 is True
+    assert id1 is not None
+
+    ok2, id2 = db.insert_notification_ledger_once(entry2)
+    assert ok2 is False
+    assert id2 is None
+
+    ok3, id3 = db.insert_notification_ledger_once(entry3)
+    assert ok3 is True
+    assert id3 is not None
+
+    rows = db.list_notification_ledger(trace_id=trace)
+    assert len(rows) == 2
+    room_ids = {r.room_id for r in rows}
+    assert room_ids == {"!r1", "!r2"}
+
+
 # -- Transaction context manager --
 
 
@@ -351,3 +405,38 @@ def test_transaction_rollback(db: RouterDB, sample_task: Task, sample_worker: Wo
     assert task is not None
     assert task.status == TaskStatus.queued
     assert db.get_active_lease(sample_task.task_id) is None
+
+
+def test_insert_notification_ledger_once_duplicate_does_not_leave_open_transaction(db: RouterDB) -> None:
+    trace = "ntf_abc1234567890abcdef0124"
+    # Use NotificationLedgerEntry directly for test (lenient)
+    entry = NotificationLedgerEntry(
+        trace_id=trace, trigger="approval_needed", room_id="!r1", status="sent"
+    )
+    # First insert
+    ok, _ = db.insert_notification_ledger_once(entry)
+    assert ok is True
+    assert db._conn.in_transaction is False
+
+    # Second insert (duplicate)
+    ok, _ = db.insert_notification_ledger_once(entry)
+    assert ok is False
+    # This check confirms BLOCKER-1 fix: no open transaction left after duplicate return
+    assert db._conn.in_transaction is False
+
+
+def test_list_notification_ledger_lenient_read_legacy_data(db: RouterDB) -> None:
+    # Directly insert legacy data that would fail strict validation
+    legacy_trace = "legacy_bad_trace"
+    legacy_trigger = "old_unknown_trigger"
+    db._conn.execute(
+        "INSERT INTO notification_ledger (trace_id, trigger, room_id, status, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?)",
+        (legacy_trace, legacy_trigger, "!r1", "sent", "2026-01-01T00:00:00Z", "{}")
+    )
+    db._conn.commit()
+
+    # Reading should NOT raise ValidationError (BLOCKER-2 fix)
+    rows = db.list_notification_ledger(trace_id=legacy_trace)
+    assert len(rows) == 1
+    assert rows[0].trace_id == legacy_trace
+    assert rows[0].trigger == legacy_trigger

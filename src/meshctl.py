@@ -414,6 +414,7 @@ def cmd_thread_add_step(args: argparse.Namespace) -> None:
         "title": args.title,
         "step_index": args.step_index,
         "repo": args.repo or "",
+        "role": args.role or "",
         "target_cli": args.cli or "claude",
         "target_account": args.account or "work",
         "on_failure": args.on_failure or "abort",
@@ -475,7 +476,85 @@ def cmd_thread_status(args: argparse.Namespace) -> None:
         attempt = f"{s.get('attempt', 1)}/3"
         on_failure = (s.get("on_failure", "abort") or "abort")[:8]
         title = s.get("title", "")[:30]
+        if s.get("has_handoff"):
+            title = f"[HANDOFF] {title}"[:40]
         print(f"{idx:<6} {status:<12} {repo:<16} {worker:<10} {attempt:<9} {on_failure:<8} {title}")
+
+
+def cmd_thread_handoff(args: argparse.Namespace) -> None:
+    """Show handoff details for a specific thread step."""
+    base = _base_url()
+    headers = _headers()
+    thread_id = _resolve_thread_id(args.thread)
+
+    # Get thread status to find the task_id for the step
+    try:
+        resp = requests.get(
+            f"{base}/threads/{thread_id}/status", headers=headers, timeout=10
+        )
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code != 200:
+        print(f"Error: {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    data = resp.json()
+    steps = data["steps"]
+    target_step = None
+    for s in steps:
+        if s.get("step_index") == args.step_index:
+            target_step = s
+            break
+
+    if target_step is None:
+        print(f"Error: step {args.step_index} not found in thread", file=sys.stderr)
+        sys.exit(1)
+
+    if not target_step.get("has_handoff"):
+        print(f"Step {args.step_index} does not carry handoff data.", file=sys.stderr)
+        sys.exit(1)
+
+    # Fetch full task to get payload
+    task_id = target_step["task_id"]
+    try:
+        resp = requests.get(f"{base}/tasks/{task_id}", headers=headers, timeout=10)
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code != 200:
+        print(f"Error: {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    task_data = resp.json()
+    payload = task_data.get("payload") or {}
+    handoff = payload.get("handoff")
+    if not handoff:
+        print("No handoff data found in task payload.", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json_output:
+        print(json.dumps(handoff, indent=2))
+        return
+
+    src = handoff.get("source_repo", "?")
+    tgt = handoff.get("target_repo", "?")
+    print(f"HANDOFF: {src} -> {tgt}")
+    if handoff.get("summary"):
+        print(f"Summary: {handoff['summary']}")
+    if handoff.get("question"):
+        print(f"Question: {handoff['question']}")
+    for key in ("decisions", "artifacts", "open_risks"):
+        items = handoff.get(key, [])
+        if items:
+            print(f"{key.replace('_', ' ').title()}: ({len(items)})")
+            for item in items:
+                print(f"  - {item}")
+    sessions = handoff.get("related_session_ids", [])
+    if sessions:
+        print(f"Related Sessions: {', '.join(sessions)}")
 
 
 def cmd_thread_context(args: argparse.Namespace) -> None:
@@ -544,6 +623,7 @@ thread_add_step_parser.add_argument(
     "--step-index", type=int, required=True, dest="step_index", help="Step index (0-based)"
 )
 thread_add_step_parser.add_argument("--repo", default="", help="Repository path")
+thread_add_step_parser.add_argument("--role", default="", help="Step role (e.g. PRESIDENT_GLOBAL for cross-repo handoff)")
 thread_add_step_parser.add_argument("--cli", default=None, help="Target CLI")
 thread_add_step_parser.add_argument("--account", default=None, help="Target account")
 thread_add_step_parser.add_argument("--payload", default=None, help="JSON payload")
@@ -559,6 +639,11 @@ thread_status_parser.add_argument("--json", action="store_true", dest="json_outp
 
 thread_context_parser = thread_sub.add_parser("context", help="Show thread context")
 thread_context_parser.add_argument("thread", help="Thread ID or name")
+
+thread_handoff_parser = thread_sub.add_parser("handoff", help="Show handoff details for a step")
+thread_handoff_parser.add_argument("thread", help="Thread ID or name")
+thread_handoff_parser.add_argument("step_index", type=int, help="Step index (0-based)")
+thread_handoff_parser.add_argument("--json", action="store_true", dest="json_output")
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -581,6 +666,8 @@ if __name__ == "__main__":
             cmd_thread_status(parsed_args)
         elif parsed_args.thread_command == "context":
             cmd_thread_context(parsed_args)
+        elif parsed_args.thread_command == "handoff":
+            cmd_thread_handoff(parsed_args)
         else:
             thread_parser.print_help()
             sys.exit(1)

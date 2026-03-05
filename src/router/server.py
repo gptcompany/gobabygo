@@ -25,6 +25,10 @@ from src.router.heartbeat import HeartbeatManager
 from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
 from src.router.models import (
+    HandoffRepoError,
+    HandoffRoleError,
+    NotificationLedgerEntry,
+    NotificationLedgerWriteRequest,
     Session,
     SessionMessage,
     Task,
@@ -82,6 +86,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "not_found"})
         elif path == "/threads":
             self._handle_list_threads()
+        elif path == "/notifications":
+            self._handle_list_notifications()
         elif path.startswith("/threads/"):
             parts = path[len("/threads/"):].split("/")
             thread_id = parts[0]
@@ -120,6 +126,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._handle_task_fail()
         elif path == "/threads":
             self._handle_create_thread()
+        elif path == "/notifications":
+            self._handle_create_notification()
         elif path.startswith("/threads/") and path.endswith("/steps"):
             thread_id = path[len("/threads/"):-len("/steps")]
             if thread_id:
@@ -615,6 +623,60 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         messages = db.list_session_messages(session_id, after_seq=after_seq, limit=limit)
         self._send_json(200, {"messages": [m.model_dump(mode="json") for m in messages]})
 
+    def _handle_create_notification(self) -> None:
+        """POST /notifications — persist notification delivery attempt."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        try:
+            # Use NotificationLedgerWriteRequest for strict input validation
+            write_req = NotificationLedgerWriteRequest(**data)
+            # Convert to storage/read model
+            entry = NotificationLedgerEntry(**write_req.model_dump())
+        except (ValidationError, ValueError, TypeError) as e:
+            self._send_json(400, {"error": "invalid_notification", "detail": str(e)})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        created, notification_id = db.insert_notification_ledger_once(entry)
+        if not created:
+            self._send_json(
+                200,
+                {"status": "duplicate", "trace_id": entry.trace_id, "room_id": entry.room_id},
+            )
+            return
+
+        self._send_json(
+            201,
+            {"status": "created", "notification_id": notification_id, "trace_id": entry.trace_id},
+        )
+
+    def _handle_list_notifications(self) -> None:
+        """GET /notifications?trace_id=...&status=...&limit=N."""
+        if not self._check_auth():
+            return
+        query = parse_qs(urlparse(self.path).query)
+        trace_id = query.get("trace_id", [None])[0]
+        status = query.get("status", [None])[0]
+        limit_raw = query.get("limit", ["200"])[0]
+        try:
+            limit = max(1, min(1000, int(limit_raw)))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_limit"})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        entries = db.list_notification_ledger(trace_id=trace_id, status=status, limit=limit)
+        self._send_json(200, {"notifications": [e.model_dump(mode="json") for e in entries]})
+
     # --- Worker management endpoints ---
 
     def _handle_list_workers(self) -> None:
@@ -773,6 +835,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             if s.result:
                 raw = str(s.result)
                 result_summary = raw[:100] + "..." if len(raw) > 100 else raw
+            has_handoff = bool(s.payload and s.payload.get("handoff"))
             steps_list.append({
                 "step_index": s.step_index,
                 "task_id": s.task_id,
@@ -785,6 +848,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 "attempt": s.attempt,
                 "on_failure": s.on_failure,
                 "result_summary": result_summary,
+                "has_handoff": has_handoff,
             })
 
         self._send_json(200, {"thread": thread_dict, "steps": steps_list})
@@ -854,8 +918,18 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             return
 
         db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        topology = self.server.router_state.get("topology")  # type: ignore[attr-defined]
         try:
-            task = add_step(db, thread_id, step_request)
+            task = add_step(db, thread_id, step_request, topology=topology)
+        except HandoffRoleError as e:
+            self._send_json(403, {"error": "handoff_role_required", "detail": str(e)})
+            return
+        except HandoffRepoError as e:
+            self._send_json(400, {"error": "invalid_handoff_repo", "detail": str(e)})
+            return
+        except ValidationError as e:
+            self._send_json(400, {"error": "invalid_handoff", "detail": str(e)})
+            return
         except ValueError as e:
             detail = str(e)
             if detail.endswith("not found"):
@@ -991,6 +1065,7 @@ def run_server(
         "longpoll_timeout": longpoll_timeout,
         "auth_token": auth_token,
         "start_time": start_time,
+        "topology": topology,
         "verifier_gate": verifier_gate,
         "review_check_interval": review_check_interval,
         "db_health_config": {

@@ -1371,3 +1371,75 @@ class TestSessionBusEndpoints:
         # Session open should persist linkage when task_id is provided.
         assert refreshed_task is not None
         assert refreshed_task.session_id == session_id
+
+
+class TestNotificationLedgerEndpoints:
+    def test_create_and_list_notification(self, server_url):
+        create_resp = requests.post(
+            f"{server_url}/notifications",
+            json={
+                "trace_id": "ntf_0123456789abcdef0123",
+                "trigger": "approval_needed",
+                "room_id": "!ops:matrix.example",
+                "status": "sent",
+                "repo": "rektslug",
+                "task_id": "task-1",
+                "metadata": {"source": "bridge"},
+            },
+        )
+        assert create_resp.status_code == 201
+        assert create_resp.json()["trace_id"] == "ntf_0123456789abcdef0123"
+
+        list_resp = requests.get(
+            f"{server_url}/notifications",
+            params={"trace_id": "ntf_0123456789abcdef0123", "status": "sent"},
+        )
+        assert list_resp.status_code == 200
+        rows = list_resp.json()["notifications"]
+        assert len(rows) == 1
+        assert rows[0]["room_id"] == "!ops:matrix.example"
+        assert rows[0]["metadata"]["source"] == "bridge"
+
+    def test_create_notification_duplicate(self, server_url):
+        trace = "ntf_fedcba98765432109876"
+        payload = {
+            "trace_id": trace,
+            "trigger": "thread_failed",
+            "room_id": "!r1",
+            "status": "failed",
+        }
+        # First creation
+        resp1 = requests.post(f"{server_url}/notifications", json=payload)
+        assert resp1.status_code == 201
+
+        # Second creation (duplicate)
+        resp2 = requests.post(f"{server_url}/notifications", json=payload)
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "duplicate"
+        assert resp2.json()["trace_id"] == trace
+
+    def test_create_notification_validation_error(self, server_url):
+        resp = requests.post(
+            f"{server_url}/notifications",
+            json={"trigger": "approval_needed"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_notification"
+
+    def test_create_notification_invalid_trace_id(self, server_url):
+        resp = requests.post(
+            f"{server_url}/notifications",
+            json={
+                "trace_id": "not_valid_trace",
+                "trigger": "approval_needed",
+                "room_id": "!ops:matrix.example",
+                "status": "sent",
+            },
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_notification"
+
+    def test_list_notifications_invalid_limit(self, server_url):
+        resp = requests.get(f"{server_url}/notifications", params={"limit": "oops"})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_limit"

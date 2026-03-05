@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,6 +25,7 @@ MatrixBridge = bridge_mod.MatrixBridge
 render_attach_command = bridge_mod.render_attach_command
 render_notification = bridge_mod.render_notification
 load_repo_rooms = bridge_mod.load_repo_rooms
+build_trace_id = bridge_mod.build_trace_id
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +39,7 @@ def make_config(**overrides: Any) -> BridgeConfig:
         matrix_homeserver="https://matrix.example.com",
         matrix_access_token="syt_test",
         matrix_default_room="!default:matrix.example",
+        matrix_unrouted_room="!unrouted:matrix.example",
         poll_interval_s=1.0,
         matrix_boss_room="!boss:matrix.example",
         input_patterns=[re.compile(r"approve|continue|press enter|y/n|select", re.IGNORECASE)],
@@ -193,6 +195,22 @@ class TestRenderNotification:
         thread = make_thread(status="completed")
         plain, _html = render_notification("thread_completed", thread=thread)
         assert "Thread Completed" in plain
+
+    def test_includes_trace_id(self):
+        plain, _html = render_notification("approval_needed", trace_id="ntf_abc123")
+        assert "ntf_abc123" in plain
+
+
+class TestTraceId:
+    def test_deterministic_for_same_payload(self):
+        a = build_trace_id("input_requested", session_id="s1", message_seq=7)
+        b = build_trace_id("input_requested", session_id="s1", message_seq=7)
+        assert a == b
+
+    def test_changes_when_payload_changes(self):
+        a = build_trace_id("input_requested", session_id="s1", message_seq=7)
+        b = build_trace_id("input_requested", session_id="s1", message_seq=8)
+        assert a != b
 
 
 # ===========================================================================
@@ -439,6 +457,7 @@ class TestBridgeRunOnce:
     def test_full_cycle_with_input_requested(self):
         bridge = self._make_bridge()
         bridge.matrix.send_message.return_value = True
+        bridge.router.record_notification.return_value = True
 
         session = make_session()
         bridge.router.get_sessions.return_value = [session]
@@ -452,12 +471,50 @@ class TestBridgeRunOnce:
         assert sent == 1
         bridge.matrix.send_message.assert_called_once()
         call_args = bridge.matrix.send_message.call_args
-        assert call_args[0][0] == "!default:matrix.example"  # default room
+        assert call_args[0][0] == "!unrouted:matrix.example"  # repo missing => unrouted
         assert "Input Requested" in call_args[0][1]
+        assert "Trace:" in call_args[0][1]
+        bridge.router.record_notification.assert_called_once()
+
+    def test_repo_specific_room_is_used_when_available(self):
+        bridge = self._make_bridge()
+        bridge.matrix.send_message.return_value = True
+        bridge.router.record_notification.return_value = True
+        bridge.repo_rooms = {"rektslug": "!rektslug:matrix.example"}
+
+        session = make_session(task_id="task-001")
+        bridge.router.get_sessions.return_value = [session]
+        bridge.router.get_session_messages.return_value = [make_message(1, "Do you approve? (y/n)")]
+        bridge.router.get_tasks.side_effect = lambda status=None: (
+            [] if status == "review" else [make_task(task_id="task-001", repo="rektslug", status="queued")]
+        )
+        bridge.router.get_threads.return_value = []
+
+        sent = bridge.run_once()
+        assert sent == 1
+        room = bridge.matrix.send_message.call_args[0][0]
+        assert room == "!rektslug:matrix.example"
+
+    def test_unknown_repo_routes_to_unrouted_room(self):
+        bridge = self._make_bridge()
+        bridge.matrix.send_message.return_value = True
+        bridge.router.record_notification.return_value = True
+        bridge.repo_rooms = {"known": "!known:matrix.example"}
+
+        bridge.router.get_sessions.return_value = []
+        bridge.router.get_session_messages.return_value = []
+        bridge.router.get_tasks.return_value = [make_task(task_id="t-new", repo="unknown")]
+        bridge.router.get_threads.return_value = []
+
+        sent = bridge.run_once()
+        assert sent == 1
+        rooms_called = [c[0][0] for c in bridge.matrix.send_message.call_args_list]
+        assert rooms_called[0] == "!unrouted:matrix.example"
 
     def test_boss_room_receives_critical_notifications(self):
         bridge = self._make_bridge()
         bridge.matrix.send_message.return_value = True
+        bridge.router.record_notification.return_value = True
 
         bridge.router.get_sessions.return_value = []
         bridge.router.get_session_messages.return_value = []
@@ -485,6 +542,7 @@ class TestBridgeRunOnce:
         # Now poll: same state -> no notifications
         bridge.router.get_session_messages.return_value = []  # no new messages after seed
         bridge.matrix.send_message.return_value = True
+        bridge.router.record_notification.return_value = True
         sent = bridge.run_once()
         assert sent == 0
 
@@ -505,6 +563,7 @@ class TestLoadRepoRooms:
             "version: 1\n"
             "global:\n"
             "  boss_notify_room: '!boss:m'\n"
+            "  unrouted_notify_room: '!unrouted:m'\n"
             "repos:\n"
             "  myrepo:\n"
             "    notify_room: '!myrepo:m'\n"
@@ -512,6 +571,7 @@ class TestLoadRepoRooms:
         rooms = load_repo_rooms(str(topo))
         assert rooms["myrepo"] == "!myrepo:m"
         assert rooms["__boss__"] == "!boss:m"
+        assert rooms["__unrouted__"] == "!unrouted:m"
 
 
 # ===========================================================================
@@ -531,6 +591,7 @@ class TestBridgeConfigFromEnv:
             "MESH_MATRIX_HOMESERVER": "https://matrix.example.com",
             "MESH_MATRIX_ACCESS_TOKEN": "syt_test",
             "MESH_MATRIX_DEFAULT_ROOM": "!room:example",
+            "MESH_MATRIX_UNROUTED_ROOM": "!unrouted:example",
             "MESH_MATRIX_POLL_INTERVAL_S": "5",
         }
         for k, v in env.items():
@@ -538,6 +599,7 @@ class TestBridgeConfigFromEnv:
         cfg = BridgeConfig.from_env()
         assert cfg.router_url == "http://router:8080"
         assert cfg.poll_interval_s == 5.0
+        assert cfg.matrix_unrouted_room == "!unrouted:example"
         assert cfg.matrix_boss_room is None
 
 
@@ -550,3 +612,58 @@ class TestSmoke:
     def test_bridge_module_imports(self):
         assert hasattr(bridge_mod, "MatrixBridge")
         assert hasattr(bridge_mod, "main")
+
+
+# ===========================================================================
+# Unit: RouterClient record_notification (Hardening)
+# ===========================================================================
+
+
+class TestRouterClientRecordNotification:
+    def test_record_notification_success_first_try(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            mock_post.return_value = {"status": "created"}
+            
+            ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+            assert ok is True
+            assert mock_post.call_count == 1
+
+    def test_record_notification_retry_on_failure(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            # Fail first, succeed second
+            mock_post.side_effect = [None, {"status": "created"}]
+            
+            with MagicMock() as mock_sleep:
+                import time
+                # Patch time.sleep in the bridge module's RouterClient
+                with patch("mesh-matrix-bridge.time.sleep", mock_sleep):
+                    ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+                    assert ok is True
+                    assert mock_post.call_count == 2
+                    mock_sleep.assert_called_once_with(0.2)
+
+    def test_record_notification_duplicate_is_success(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            mock_post.return_value = {"status": "duplicate"}
+            
+            ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+            assert ok is True
+            assert mock_post.call_count == 1
+
+    def test_record_notification_exhaust_retries(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            mock_post.return_value = None
+            
+            with MagicMock() as mock_sleep:
+                with patch("mesh-matrix-bridge.time.sleep", mock_sleep):
+                    ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+                    assert ok is False
+                    assert mock_post.call_count == 2
