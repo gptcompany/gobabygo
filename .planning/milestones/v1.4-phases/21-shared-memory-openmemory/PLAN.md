@@ -160,8 +160,8 @@ Plans 21-01 and 21-03 can execute in parallel. Plan 21-02 follows.
 
 ## UAT Criteria
 
-- [ ] `deploy/openmemory/compose.yml` is valid and documented
-- [ ] Topology example includes finalized memory config with endpoint
-- [ ] MCP config snippet is documented for operator sessions
-- [ ] Smoke test for MEM-04 passes (router independent of OpenMemory)
-- [ ] No router code changes required (MCP is client-side only)
+- [x] `deploy/openmemory/compose.yml` is valid and documented
+- [x] Topology example includes finalized memory config with endpoint
+- [x] MCP config snippet is documented for operator sessions
+- [x] Smoke test for MEM-04 passes (router independent of OpenMemory)
+- [x] No router code changes required (MCP is client-side only)

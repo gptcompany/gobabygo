@@ -2,7 +2,7 @@
 
 ## v1.4 Native Cross-Repo Handoff (Planned: 2026-03-04)
 
-**Phases:** 5 | **Plans:** 5 | **Status:** PLANNED
+**Phases:** 5 | **Plans:** 5 | **Status:** IN PROGRESS (phase 21 deploy pending)
 **Execution order:** 17 -> 18 -> 19 -> 20 -> 21
 
 **Planned outcomes:**
@@ -33,6 +33,13 @@
 - `.planning/milestones/v1.4-phases/19-approval-notification-bridge/CONTEXT.md`
 - `.planning/milestones/v1.4-phases/20-structured-cross-repo-handoff/CONTEXT.md`
 - `.planning/milestones/v1.4-phases/21-shared-memory-openmemory/CONTEXT.md`
+
+**Execution status (2026-03-05):**
+1. Phase 17 complete
+2. Phase 18 complete
+3. Phase 19 complete
+4. Phase 20 complete
+5. Phase 21 implementation complete (`deploy/openmemory` + smoke tests), production deploy/monitoring in progress
 
 ---
 

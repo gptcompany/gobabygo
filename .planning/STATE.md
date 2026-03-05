@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Native Cross-Repo Handoff -- IN PROGRESS
 status: execution_in_progress
-last_updated: "2026-03-04"
+last_updated: "2026-03-05"
 progress:
   total_phases: 21
-  completed_phases: 18
+  completed_phases: 20
   total_plans: 32
   completed_plans: 31
 ---
@@ -18,19 +18,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-04)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** Production deploy hardening with Docker multi-worker (Phase 19/20/21 paused)
+**Current focus:** v1.4 Phase 21 deploy su muletto + monitoring operativo.
 
 ## Current Position
 
 Milestone: v1.4 Native Cross-Repo Handoff -- IN PROGRESS
-Status: Phase 17 + Phase 18A completed, production deploy focus active
+Status: Phase 17-20 complete; Phase 21 implementazione completata, deploy in corso
 
 Progress: [======================------] v1.4 active
 v1.0 MVP:              6 phases, 15 plans -- SHIPPED 2026-02-19
 v1.1 Production:       4 phases, 9 plans  -- SHIPPED 2026-02-21
 v1.2 Operational:      3 phases, 3 plans  -- SHIPPED 2026-02-23
 v1.3 Cross-Repo:       3 phases, 4 plans  -- SHIPPED 2026-03-04
-v1.4 Native Handoff:   5 phases, 5 plans  -- IN PROGRESS (17/18A done)
+v1.4 Native Handoff:   5 phases, 5 plans  -- IN PROGRESS (17-20 done, 21 deploy pending)
 
 Total: 21 phases planned, 31 plans completed, 548+ tests, 6742+ production LOC
 
@@ -172,10 +172,10 @@ Full decision history per milestone in Accumulated Context sections below.
 
 ## Session Continuity
 
-Last session: 2026-03-04
-Stopped at: v1.4 phase 17+18A merged; production deployment focus
+Last session: 2026-03-05
+Stopped at: v1.4 phase 21 implemented on branch; deploy+monitor pending on muletto
 Resume with: `.planning/RESUME.md`
 
 ## Prossimi Passi
 
-### Next: Execute production Docker multi-worker deploy, then resume Phase 19
+### Next: Deploy OpenMemory on muletto, monitor health/logs, then close v1.4
