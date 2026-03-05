@@ -18,12 +18,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-04)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.4 post-deploy monitoring (OpenMemory su muletto operativo).
+**Current focus:** v1.4 post-deploy monitoring (OpenMemory su muletto operativo, MCP operator profiles allineati).
 
 ## Current Position
 
 Milestone: v1.4 Native Cross-Repo Handoff -- IN PROGRESS
-Status: Phase 17-21 complete; OpenMemory deploy eseguito su muletto, monitoraggio attivo
+Status: Phase 17-21 complete; OpenMemory deploy eseguito su muletto, MCP configurato per operator Claude/Codex/Gemini, monitoraggio attivo
 
 Progress: [======================------] v1.4 active
 v1.0 MVP:              6 phases, 15 plans -- SHIPPED 2026-02-19

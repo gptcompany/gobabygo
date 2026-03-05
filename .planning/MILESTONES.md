@@ -39,7 +39,7 @@
 2. Phase 18 complete
 3. Phase 19 complete
 4. Phase 20 complete
-5. Phase 21 implementation complete (`deploy/openmemory` + smoke tests) and deployed on muletto (`openmemory` healthy)
+5. Phase 21 implementation complete (`deploy/openmemory` + smoke tests), deployed on muletto (`openmemory` healthy), and operator MCP profiles configured (Claude/Codex/Gemini)
 
 ---
 

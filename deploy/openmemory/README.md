@@ -51,6 +51,10 @@ docker compose up -d --build
 Only BOSS/PRESIDENT operator sessions connect to OpenMemory via MCP.
 Workers do NOT get OpenMemory MCP access in v1.
 
+Use `OM_API_KEY` from `.env` as the MCP auth key for all clients.
+
+### Claude Code
+
 Add to operator's `~/.claude.json` (replace `REPLACE_WITH_OM_API_KEY` with the value from `.env`):
 
 ```json
@@ -69,6 +73,43 @@ Add to operator's `~/.claude.json` (replace `REPLACE_WITH_OM_API_KEY` with the v
 
 Or via CLI: `claude mcp add --transport http openmemory http://192.168.1.100:8080/mcp`
 (Note: CLI method may not pass auth headers; use JSON config above for authenticated access.)
+
+### Codex CLI
+
+Codex streamable HTTP MCP supports bearer auth via env var:
+
+```bash
+codex mcp add openmemory --url http://192.168.1.100:8080/mcp --bearer-token-env-var OPENMEMORY_API_KEY
+export OPENMEMORY_API_KEY="REPLACE_WITH_OM_API_KEY"
+codex mcp list
+```
+
+`OPENMEMORY_API_KEY` value must match `OM_API_KEY`.
+
+### Gemini CLI
+
+Add to operator's `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "openmemory": {
+      "type": "http",
+      "url": "http://192.168.1.100:8080/mcp",
+      "headers": {
+        "X-API-Key": "REPLACE_WITH_OM_API_KEY"
+      }
+    }
+  },
+  "mcp": {
+    "allowed": [
+      "openmemory"
+    ]
+  }
+}
+```
+
+If `mcp.allowed` already exists, append `"openmemory"` to the array.
 
 ## Available MCP Tools
 
