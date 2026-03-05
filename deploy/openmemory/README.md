@@ -51,20 +51,24 @@ docker compose up -d --build
 Only BOSS/PRESIDENT operator sessions connect to OpenMemory via MCP.
 Workers do NOT get OpenMemory MCP access in v1.
 
-Add to operator's `~/.claude.json`:
+Add to operator's `~/.claude.json` (replace `REPLACE_WITH_OM_API_KEY` with the value from `.env`):
 
 ```json
 {
   "mcpServers": {
     "openmemory": {
       "type": "http",
-      "url": "http://192.168.1.100:8080/mcp"
+      "url": "http://192.168.1.100:8080/mcp",
+      "headers": {
+        "X-API-Key": "REPLACE_WITH_OM_API_KEY"
+      }
     }
   }
 }
 ```
 
 Or via CLI: `claude mcp add --transport http openmemory http://192.168.1.100:8080/mcp`
+(Note: CLI method may not pass auth headers; use JSON config above for authenticated access.)
 
 ## Available MCP Tools
 
