@@ -10,14 +10,17 @@ Self-hosted shared memory layer for the mesh (Phase 21).
 
 ## Setup
 
+All commands run from `deploy/openmemory/` on muletto.
+
 ```bash
+cd deploy/openmemory   # or wherever you placed this directory
+
 # 1. Clone OpenMemory source (pinned to v1.2.3)
-cd /opt  # or your preferred location on muletto
 git clone --branch v1.2.3 --depth 1 https://github.com/CaviraOSS/OpenMemory.git openmemory-src
 
 # 2. Copy env and configure
 cp .env.example .env
-# Edit .env if needed (Ollama defaults should work)
+# Edit .env: set OM_API_KEY to a random secret, verify OLLAMA_URL
 
 # 3. Start
 dotenvx run -f .env -- docker compose up -d --build
@@ -73,10 +76,11 @@ Or via CLI: `claude mcp add --transport http openmemory http://192.168.1.100:808
 | `openmemory_get` | Fetch a specific memory by ID |
 | `openmemory_reinforce` | Strengthen a memory's retention weight |
 
-## Network
+## Security
 
 - LAN/VPN only (0.0.0.0:8080, no public exposure)
-- No built-in auth (network isolation is the auth model for v1)
+- API key auth via `OM_API_KEY` env var (required, set in `.env`)
+- All MCP requests authenticated by OpenMemory's built-in auth middleware
 - Workers on mac-112 and ws-111 do NOT connect in v1
 
 ## Data

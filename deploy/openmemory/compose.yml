@@ -1,18 +1,22 @@
 # OpenMemory — standalone deployment for muletto (192.168.1.100)
 # Phase 21: Shared Memory Layer
 #
+# Prerequisites:
+#   git clone --branch v1.2.3 --depth 1 \
+#     https://github.com/CaviraOSS/OpenMemory.git openmemory-src
+#
 # Usage:
 #   dotenvx run -f .env -- docker compose up -d --build
 #   docker compose down
 #
 # Pinned to v1.2.3 (latest stable as of 2026-03-05).
-# Update: git fetch && git checkout v1.X.Y && docker compose up -d --build
+# Upgrade: cd openmemory-src && git fetch && git checkout v1.X.Y && cd .. \
+#           && docker compose up -d --build
 
 services:
   openmemory:
     build:
-      context: ./openmemory-src
-      dockerfile: backend/Dockerfile
+      context: ./openmemory-src/backend
     container_name: openmemory
     restart: unless-stopped
     ports:
@@ -23,10 +27,11 @@ services:
       OM_PORT: "8080"
       OM_DB_PATH: /data/openmemory.db
       OM_MODE: production
-      # Embeddings: Ollama primary, OpenAI fallback
-      OM_EMBEDDING_PROVIDER: ${OM_EMBEDDING_PROVIDER:-ollama}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OM_API_KEY: ${OM_API_KEY:?Set OM_API_KEY for auth}
+      # Embeddings: Ollama primary, synthetic fallback
+      OM_EMBEDDINGS: ${OM_EMBEDDINGS:-ollama}
+      OM_EMBEDDING_FALLBACK: ${OM_EMBEDDING_FALLBACK:-synthetic}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]

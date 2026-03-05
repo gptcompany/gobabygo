@@ -8,7 +8,8 @@ Configure MCP access for operator sessions only. Verify graceful degradation (ME
 ## Decisions Applied
 
 See DECISIONS.md: muletto standalone Docker, BOSS/PRESIDENT only, manual writes,
-on-demand reads, OpenAI embeddings, LAN-only, smoke test for MEM-04.
+on-demand reads, Ollama embeddings (OpenAI fallback), LAN-only with API key auth,
+smoke test for MEM-04.
 
 ---
 
