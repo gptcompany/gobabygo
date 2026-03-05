@@ -123,17 +123,19 @@ class TestRouterWithoutOpenMemory:
         # Dispatch
         lp.register("mem04-w1")
         dispatch_running = True
+        dispatch_error: list[Exception] = []
 
         def dispatch_loop():
             while dispatch_running:
                 time.sleep(0.1)
-                try:
-                    while True:
+                while True:
+                    try:
                         result = scheduler.dispatch()
-                        if result is None:
-                            break
-                except Exception:
-                    pass
+                    except Exception as exc:
+                        dispatch_error.append(exc)
+                        return
+                    if result is None:
+                        break
 
         dt = threading.Thread(target=dispatch_loop, daemon=True)
         dt.start()
@@ -162,6 +164,8 @@ class TestRouterWithoutOpenMemory:
         assert resp.status_code == 200
 
         dispatch_running = False
+        dt.join(timeout=2)
+        assert not dispatch_error, f"unexpected scheduler dispatch error: {dispatch_error[0]!r}"
         assert db.get_task("mem04-t1").status == TaskStatus.completed
 
 

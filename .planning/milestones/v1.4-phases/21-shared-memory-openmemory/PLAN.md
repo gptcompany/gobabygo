@@ -27,21 +27,23 @@ smoke test for MEM-04.
    - Service `openmemory` pinned to a specific version tag (NOT `:latest`)
    - Port `8080` bound to `0.0.0.0:8080` (LAN accessible, no public exposure)
    - Volume `openmemory_data:/data` for persistent SQLite storage
-   - Environment: `OM_PORT=8080`, `OM_DB_PATH=/data/openmemory.db`
+   - Environment: `OM_PORT=8080`, `OM_DB_PATH=/data/openmemory.db`, `OM_API_KEY=...`
    - Embedding provider: Ollama locale (modello embeddings già disponibile su muletto)
-     Env: `OM_EMBEDDING_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://host.docker.internal:11434` (o IP muletto)
-   - Fallback: `OPENAI_API_KEY` (from dotenvx) se Ollama non disponibile
+     Env: `OM_EMBEDDINGS=ollama`, `OLLAMA_URL=http://host.docker.internal:11434` (o IP muletto)
+   - Fallback: `OM_EMBEDDING_FALLBACK=synthetic` (OpenAI optional via `OPENAI_API_KEY`)
    - Healthcheck on `http://localhost:8080/health`
    - Restart policy: `unless-stopped`
    - Logging: json-file, 10m max, 3 files (consistent with router compose)
-   - **Auth model**: LAN/VPN isolation only (no built-in auth). Documented as acceptable for v1.
+   - **Auth model**: API key auth via `OM_API_KEY` + LAN/VPN isolation in v1.
 
 2. Create `deploy/openmemory/.env.example` documenting required env vars:
+   - `OM_API_KEY` (required)
    - `OM_PORT` (default 8080)
    - `OM_DB_PATH` (default /data/openmemory.db)
-   - `OM_EMBEDDING_PROVIDER` (default `ollama`)
-   - `OLLAMA_BASE_URL` (default `http://host.docker.internal:11434`)
-   - `OPENAI_API_KEY` (optional fallback if Ollama unavailable)
+   - `OM_EMBEDDINGS` (default `ollama`)
+   - `OM_EMBEDDING_FALLBACK` (default `synthetic`)
+   - `OLLAMA_URL` (default `http://host.docker.internal:11434`)
+   - `OPENAI_API_KEY` (optional alternative provider)
 
 3. Create `deploy/openmemory/README.md` with start/stop/upgrade commands.
 
@@ -76,18 +78,21 @@ smoke test for MEM-04.
      "mcpServers": {
        "openmemory": {
          "type": "http",
-         "url": "http://OPENMEMORY_HOST:8080/mcp"
+         "url": "http://OPENMEMORY_HOST:8080/mcp",
+         "headers": {
+           "X-API-Key": "REPLACE_WITH_OM_API_KEY"
+         }
        }
      }
    }
    ```
-   Note: Replace `OPENMEMORY_HOST` with the actual muletto IP (192.168.1.100) or a DNS hostname.
+   Note: Replace `OPENMEMORY_HOST` with the actual muletto IP (192.168.1.100) or a DNS hostname, and set the API key from `.env`.
 
 3. Document in README that only BOSS/PRESIDENT sessions get this MCP config.
    Workers do NOT get OpenMemory MCP access in v1.
 
 **Verification:**
-- `claude mcp add --transport http openmemory http://192.168.1.100:8080/mcp` succeeds (when server is running)
+- Operator `.claude.json` MCP entry loads with auth header
 - MCP tools `openmemory_query`, `openmemory_store`, `openmemory_list` appear in tool list
 
 ---
@@ -108,10 +113,11 @@ smoke test for MEM-04.
    ```python
    def test_router_operates_without_openmemory():
        """MEM-04: Router dispatch/ack/complete works when OpenMemory is down."""
-       # POST /tasks → 200
-       # GET /tasks/{id}/poll → task assigned
-       # POST /tasks/{id}/ack → 200
-       # POST /tasks/{id}/complete → 200
+       # POST /register → 201
+       # Scheduler dispatches queued task
+       # GET /tasks/next?worker_id=... → task assigned
+       # POST /tasks/ack → 200
+       # POST /tasks/complete → 200
        # No dependency on OpenMemory anywhere in this flow
 
    def test_topology_memory_not_required():
