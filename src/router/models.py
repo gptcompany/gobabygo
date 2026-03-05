@@ -232,6 +232,8 @@ class NotificationLedgerEntry(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_utc_now)
 
+
+class NotificationLedgerWriteRequest(NotificationLedgerEntry):
     @field_validator("trigger")
     @classmethod
     def validate_trigger(cls, v: str) -> str:
@@ -249,9 +251,7 @@ class NotificationLedgerEntry(BaseModel):
     @field_validator("trace_id")
     @classmethod
     def validate_trace_id(cls, v: str) -> str:
-        # Pattern: ntf_ followed by at least 20 hex chars (permissively ntf_.* to avoid blocking old data if any)
-        # But instructions said ntf_[a-f0-9]{20} specifically or broader.
-        # Let's use exactly ntf_[a-f0-9]{20} to follow instruction D.
+        # Pattern: ntf_ followed by at least 20 hex chars
         if not re.match(r"^ntf_[a-f0-9]{20,}$", v):
             raise ValueError(f"trace_id must match ntf_[a-f0-9]{{20,}}, got {v}")
         return v

@@ -28,6 +28,7 @@ from src.router.models import (
     HandoffRepoError,
     HandoffRoleError,
     NotificationLedgerEntry,
+    NotificationLedgerWriteRequest,
     Session,
     SessionMessage,
     Task,
@@ -636,7 +637,10 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            entry = NotificationLedgerEntry(**data)
+            # Use NotificationLedgerWriteRequest for strict input validation
+            write_req = NotificationLedgerWriteRequest(**data)
+            # Convert to storage/read model
+            entry = NotificationLedgerEntry(**write_req.model_dump())
         except (ValidationError, ValueError, TypeError) as e:
             self._send_json(400, {"error": "invalid_notification", "detail": str(e)})
             return

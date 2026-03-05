@@ -741,6 +741,8 @@ class RouterDB:
             ),
         )
         if cur.rowcount == 0:
+            if conn is None:
+                self._conn.commit()
             return False, None
 
         if conn is None:
