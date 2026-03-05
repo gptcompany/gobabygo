@@ -51,98 +51,105 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
     """HTTP request handler for mesh router endpoints."""
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
-        if path == "/health":
-            self._handle_health()
-        elif path == "/metrics":
-            self._handle_metrics()
-        elif path == "/tasks/next":
-            self._handle_task_poll()
-        elif path == "/tasks":
-            self._handle_list_tasks()
-        elif path.startswith("/tasks/"):
-            task_id = path[len("/tasks/"):]
-            if task_id and task_id != "next":
-                self._handle_get_task(task_id)
-            elif not task_id:
-                self._send_json(404, {"error": "not_found"})
-        elif path == "/workers":
-            self._handle_list_workers()
-        elif path == "/sessions":
-            self._handle_list_sessions()
-        elif path == "/sessions/messages":
-            self._handle_list_session_messages()
-        elif path.startswith("/sessions/"):
-            session_id = path[len("/sessions/"):]
-            if session_id:
-                self._handle_get_session(session_id)
+        try:
+            path = urlparse(self.path).path
+            if path == "/health":
+                self._handle_health()
+            elif path == "/metrics":
+                self._handle_metrics()
+            elif path == "/tasks/next":
+                self._handle_task_poll()
+            elif path == "/tasks":
+                self._handle_list_tasks()
+            elif path.startswith("/tasks/"):
+                task_id = path[len("/tasks/"):]
+                if task_id and task_id != "next":
+                    self._handle_get_task(task_id)
+                elif not task_id:
+                    self._send_json(404, {"error": "not_found"})
+            elif path == "/workers":
+                self._handle_list_workers()
+            elif path == "/sessions":
+                self._handle_list_sessions()
+            elif path == "/sessions/messages":
+                self._handle_list_session_messages()
+            elif path.startswith("/sessions/"):
+                session_id = path[len("/sessions/"):]
+                if session_id:
+                    self._handle_get_session(session_id)
+                else:
+                    self._send_json(404, {"error": "not_found"})
+            elif path.startswith("/workers/"):
+                worker_id = path[len("/workers/"):]
+                if worker_id:
+                    self._handle_get_worker(worker_id)
+                else:
+                    self._send_json(404, {"error": "not_found"})
+            elif path == "/threads":
+                self._handle_list_threads()
+            elif path == "/notifications":
+                self._handle_list_notifications()
+            elif path.startswith("/threads/"):
+                parts = path[len("/threads/"):].split("/")
+                thread_id = parts[0]
+                if len(parts) == 1:
+                    self._handle_get_thread(thread_id)
+                elif len(parts) == 2 and parts[1] == "status":
+                    self._handle_thread_status(thread_id)
+                elif len(parts) == 2 and parts[1] == "context":
+                    self._handle_thread_context(thread_id)
+                else:
+                    self._send_json(404, {"error": "not_found"})
             else:
                 self._send_json(404, {"error": "not_found"})
-        elif path.startswith("/workers/"):
-            worker_id = path[len("/workers/"):]
-            if worker_id:
-                self._handle_get_worker(worker_id)
-            else:
-                self._send_json(404, {"error": "not_found"})
-        elif path == "/threads":
-            self._handle_list_threads()
-        elif path == "/notifications":
-            self._handle_list_notifications()
-        elif path.startswith("/threads/"):
-            parts = path[len("/threads/"):].split("/")
-            thread_id = parts[0]
-            if len(parts) == 1:
-                self._handle_get_thread(thread_id)
-            elif len(parts) == 2 and parts[1] == "status":
-                self._handle_thread_status(thread_id)
-            elif len(parts) == 2 and parts[1] == "context":
-                self._handle_thread_context(thread_id)
-            else:
-                self._send_json(404, {"error": "not_found"})
-        else:
-            self._send_json(404, {"error": "not_found"})
+
+        except Exception as e:
+            self._send_json(500, {"error": "internal_error", "details": str(e)})
 
     def do_POST(self) -> None:
-        path = urlparse(self.path).path
-        if path == "/tasks":
-            self._handle_create_task()
-        elif path == "/events":
-            self._handle_events()
-        elif path == "/heartbeat":
-            self._handle_heartbeat()
-        elif path == "/register":
-            self._handle_register()
-        elif path == "/sessions/open":
-            self._handle_open_session()
-        elif path == "/sessions/send":
-            self._handle_send_session_message()
-        elif path == "/sessions/close":
-            self._handle_close_session()
-        elif path == "/tasks/ack":
-            self._handle_task_ack()
-        elif path == "/tasks/complete":
-            self._handle_task_complete()
-        elif path == "/tasks/fail":
-            self._handle_task_fail()
-        elif path == "/threads":
-            self._handle_create_thread()
-        elif path == "/notifications":
-            self._handle_create_notification()
-        elif path.startswith("/threads/") and path.endswith("/steps"):
-            thread_id = path[len("/threads/"):-len("/steps")]
-            if thread_id:
-                self._handle_add_step(thread_id)
+        try:
+            path = urlparse(self.path).path
+            if path == "/tasks":
+                self._handle_create_task()
+            elif path == "/events":
+                self._handle_events()
+            elif path == "/heartbeat":
+                self._handle_heartbeat()
+            elif path == "/register":
+                self._handle_register()
+            elif path == "/sessions/open":
+                self._handle_open_session()
+            elif path == "/sessions/send":
+                self._handle_send_session_message()
+            elif path == "/sessions/close":
+                self._handle_close_session()
+            elif path == "/tasks/ack":
+                self._handle_task_ack()
+            elif path == "/tasks/complete":
+                self._handle_task_complete()
+            elif path == "/tasks/fail":
+                self._handle_task_fail()
+            elif path == "/threads":
+                self._handle_create_thread()
+            elif path == "/notifications":
+                self._handle_create_notification()
+            elif path.startswith("/threads/") and path.endswith("/steps"):
+                thread_id = path[len("/threads/"):-len("/steps")]
+                if thread_id:
+                    self._handle_add_step(thread_id)
+                else:
+                    self._send_json(404, {"error": "not_found"})
+            elif path.endswith("/drain") and path.startswith("/workers/"):
+                # Extract worker_id from /workers/<id>/drain
+                worker_id = path[len("/workers/"):-len("/drain")]
+                if worker_id:
+                    self._handle_drain_worker(worker_id)
+                else:
+                    self._send_json(404, {"error": "not_found"})
             else:
                 self._send_json(404, {"error": "not_found"})
-        elif path.endswith("/drain") and path.startswith("/workers/"):
-            # Extract worker_id from /workers/<id>/drain
-            worker_id = path[len("/workers/"):-len("/drain")]
-            if worker_id:
-                self._handle_drain_worker(worker_id)
-            else:
-                self._send_json(404, {"error": "not_found"})
-        else:
-            self._send_json(404, {"error": "not_found"})
+        except Exception as e:
+            self._send_json(500, {"error": "internal_error", "details": str(e)})
 
     # --- Endpoint implementations ---
 

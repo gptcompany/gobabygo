@@ -52,18 +52,19 @@ def test_env_example_completeness():
     assert compose_path.exists(), "compose.yml is missing"
     assert env_example_path.exists(), ".env.example is missing"
 
-    # Find all mandatory variables using ${VAR:?msg} syntax
+    # Find all mandatory variables using ${VAR:?msg} or ${VAR?msg} syntax
     content = compose_path.read_text()
-    required_vars = re.findall(r"\$\{([A-Z0-9_]+):\?", content)
+    required_vars = re.findall(r"\$\{([A-Z0-9_]+)(?::\?|\?)[^}]*\}", content)
 
-    # Find all variables with defaults using ${VAR:-default} syntax
-    optional_vars = re.findall(r"\$\{([A-Z0-9_]+):-", content)
+    # Find all variables with defaults using ${VAR:-default} or ${VAR-default} syntax
+    optional_vars = re.findall(r"\$\{([A-Z0-9_]+)(?::-|-)[^}]*\}", content)
+
+    # Find simple variables ${VAR} without modifiers
+    simple_vars = re.findall(r"\$\{([A-Z0-9_]+)\}", content)
+
+    all_found_vars = set(required_vars + optional_vars + simple_vars)
 
     env_content = env_example_path.read_text()
 
-    for var in required_vars:
-        assert var in env_content, f"Required variable {var} missing from .env.example"
-
-    for var in optional_vars:
-        # Check if it's present (even if commented out)
-        assert var in env_content, f"Variable {var} with default in compose.yml missing from .env.example"
+    for var in all_found_vars:
+        assert var in env_content, f"Variable {var} found in compose.yml missing from .env.example"

@@ -32,6 +32,7 @@ from src.router.bridge.transport import InProcessTransport
 def mesh(tmp_path):
     """Boot a complete mesh stack (router + DB) on a random port."""
     db_path = str(tmp_path / "degradation.db")
+    # Use check_same_thread=False for multi-threaded HTTP server access
     db = RouterDB(db_path, check_same_thread=False)
     db.init_schema()
 
@@ -120,30 +121,41 @@ class TestRouterWithoutOpenMemory:
         db.insert_task(task)
         assert db.get_task("mem04-t1").status == TaskStatus.queued
 
-        # Dispatch
-        lp.register("mem04-w1")
-        dispatch_running = True
-        dispatch_error: list[Exception] = []
+        # Deterministic Poll & Dispatch
+        # Use a thread for the blocking long-poll call
+        poll_results: list[requests.Response | Exception] = []
+        def do_poll():
+            try:
+                r = requests.get(f"{url}/tasks/next?worker_id=mem04-w1", timeout=5)
+                poll_results.append(r)
+            except Exception as e:
+                poll_results.append(e)
 
-        def dispatch_loop():
-            while dispatch_running:
-                time.sleep(0.1)
-                while True:
-                    try:
-                        result = scheduler.dispatch()
-                    except Exception as exc:
-                        dispatch_error.append(exc)
-                        return
-                    if result is None:
-                        break
+        pt = threading.Thread(target=do_poll, daemon=True)
+        pt.start()
 
-        dt = threading.Thread(target=dispatch_loop, daemon=True)
-        dt.start()
+        # Wait for the worker to be registered as "polling" in the registry
+        start = time.monotonic()
+        waiting = False
+        while time.monotonic() - start < 2.0:
+            if lp.waiting_count() > 0:
+                waiting = True
+                break
+            time.sleep(0.05)
+        
+        if not waiting:
+            pytest.fail("Worker never entered long-poll wait state")
 
-        # Poll for assignment (long-poll)
-        resp = requests.get(
-            f"{url}/tasks/next?worker_id=mem04-w1", timeout=5,
-        )
+        # Now trigger exactly one dispatch cycle manually
+        scheduler.dispatch()
+
+        # Wait for poll thread to complete
+        pt.join(timeout=3)
+        assert poll_results, "Poll thread produced no result"
+        resp = poll_results[0]
+        if isinstance(resp, Exception):
+            raise resp
+
         assert resp.status_code == 200
         assert resp.json()["task_id"] == "mem04-t1"
 
@@ -162,10 +174,6 @@ class TestRouterWithoutOpenMemory:
             timeout=5,
         )
         assert resp.status_code == 200
-
-        dispatch_running = False
-        dt.join(timeout=2)
-        assert not dispatch_error, f"unexpected scheduler dispatch error: {dispatch_error[0]!r}"
         assert db.get_task("mem04-t1").status == TaskStatus.completed
 
 
