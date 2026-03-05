@@ -316,6 +316,13 @@ class TriggerDetector:
     def poll(self) -> list[dict[str, Any]]:
         """Run one poll cycle. Returns list of notification dicts."""
         notifications: list[dict[str, Any]] = []
+        # Build once per cycle to avoid N x /tasks calls for open sessions.
+        all_tasks = self._router.get_tasks()
+        task_repo_map = {
+            t.get("task_id"): t.get("repo")
+            for t in all_tasks
+            if t.get("task_id")
+        }
 
         # --- Session messages: detect input_requested ---
         sessions = self._router.get_sessions(state="open")
@@ -342,7 +349,7 @@ class TriggerDetector:
                     if pattern.search(content):
                         notifications.append({
                             "trigger": "input_requested",
-                            "repo": self._task_repo(session),
+                            "repo": self._task_repo(session, task_repo_map),
                             "session": session,
                             "excerpt": content,
                         })
@@ -393,16 +400,12 @@ class TriggerDetector:
 
         return notifications
 
-    def _task_repo(self, session: dict) -> str | None:
+    def _task_repo(self, session: dict, task_repo_map: dict[str, str | None]) -> str | None:
         """Extract repo from session's task if available."""
         task_id = session.get("task_id")
         if not task_id:
             return None
-        tasks = self._router.get_tasks()
-        for t in tasks:
-            if t.get("task_id") == task_id:
-                return t.get("repo")
-        return None
+        return task_repo_map.get(task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +438,7 @@ class MatrixBridge:
         """Run one poll cycle. Returns count of notifications sent."""
         notifications = self.detector.poll()
         sent = 0
+        boss_room = self.config.matrix_boss_room or self.repo_rooms.get("__boss__")
         for notif in notifications:
             trigger = notif["trigger"]
             repo = notif.get("repo")
@@ -454,8 +458,8 @@ class MatrixBridge:
                 logger.info("Sent %s to %s", trigger, room)
 
                 # Also notify boss room for critical triggers
-                if trigger in ("thread_failed", "approval_needed") and self.config.matrix_boss_room:
-                    self.matrix.send_message(self.config.matrix_boss_room, plain, html)
+                if trigger in ("thread_failed", "approval_needed") and boss_room:
+                    self.matrix.send_message(boss_room, plain, html)
             else:
                 logger.warning("Failed to send %s to %s", trigger, room)
 
@@ -491,12 +495,10 @@ class MatrixBridge:
         sessions = self.router.get_sessions(state="open")
         self.state.open_sessions = {s["session_id"] for s in sessions}
         for s in sessions:
-            # Mark current seq as seen
-            msgs = self.router.get_session_messages(s["session_id"], after_seq=0, limit=1)
-            if msgs:
-                self.state.session_seqs[s["session_id"]] = max(
-                    m.get("seq", 0) for m in msgs
-                )
+            # Mark latest seq as seen (drain pages to avoid startup spam).
+            latest_seq = self._get_latest_session_seq(s["session_id"])
+            if latest_seq > 0:
+                self.state.session_seqs[s["session_id"]] = latest_seq
 
         review_tasks = self.router.get_tasks(status="review")
         self.state.review_task_ids = {t["task_id"] for t in review_tasks}
@@ -511,6 +513,21 @@ class MatrixBridge:
             len(self.state.review_task_ids),
             len(self.state.thread_statuses),
         )
+
+    def _get_latest_session_seq(self, session_id: str) -> int:
+        """Return latest known message seq for a session."""
+        cursor = 0
+        while True:
+            msgs = self.router.get_session_messages(session_id, after_seq=cursor, limit=1000)
+            if not msgs:
+                return cursor
+            max_seq = max(m.get("seq", 0) for m in msgs)
+            if max_seq <= cursor:
+                return cursor
+            cursor = max_seq
+            # Final page.
+            if len(msgs) < 1000:
+                return cursor
 
     def stop(self) -> None:
         self._running = False
