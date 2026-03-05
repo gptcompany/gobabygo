@@ -17,6 +17,7 @@ import os
 import re
 import signal
 import time
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -35,6 +36,7 @@ class BridgeConfig:
     matrix_homeserver: str
     matrix_access_token: str
     matrix_default_room: str
+    matrix_unrouted_room: str
     poll_interval_s: float = 10.0
     matrix_boss_room: str | None = None
     input_patterns: list[re.Pattern[str]] = field(default_factory=list)
@@ -61,6 +63,7 @@ class BridgeConfig:
             matrix_homeserver=req("MESH_MATRIX_HOMESERVER").rstrip("/"),
             matrix_access_token=req("MESH_MATRIX_ACCESS_TOKEN"),
             matrix_default_room=req("MESH_MATRIX_DEFAULT_ROOM"),
+            matrix_unrouted_room=req("MESH_MATRIX_UNROUTED_ROOM"),
             poll_interval_s=float(os.environ.get("MESH_MATRIX_POLL_INTERVAL_S", "10")),
             matrix_boss_room=os.environ.get("MESH_MATRIX_BOSS_ROOM"),
             input_patterns=[combined],
@@ -107,6 +110,9 @@ def load_repo_rooms(topology_path: str | None) -> dict[str, str]:
         boss_room = (topo.get("global") or {}).get("boss_notify_room")
         if boss_room:
             rooms["__boss__"] = boss_room
+        unrouted_room = (topo.get("global") or {}).get("unrouted_notify_room")
+        if unrouted_room:
+            rooms["__unrouted__"] = unrouted_room
         return rooms
     except Exception as exc:
         logger.warning("Failed to load topology rooms: %s", exc)
@@ -133,6 +139,22 @@ class RouterClient:
                 url = f"{url}?{qs}"
         req = Request(url, method="GET")
         req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Accept", "application/json")
+        try:
+            with urlopen(req, timeout=self._timeout) as resp:
+                return json.loads(resp.read())
+        except HTTPError as exc:
+            logger.error("Router HTTP %s %s: %s", exc.code, url, exc.reason)
+            return None
+        except (URLError, TimeoutError) as exc:
+            logger.error("Router unreachable %s: %s", url, exc)
+            return None
+
+    def _post(self, path: str, payload: dict[str, Any]) -> Any:
+        url = f"{self._base}{path}"
+        req = Request(url, data=json.dumps(payload).encode("utf-8"), method="POST")
+        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Content-Type", "application/json")
         req.add_header("Accept", "application/json")
         try:
             with urlopen(req, timeout=self._timeout) as resp:
@@ -173,6 +195,10 @@ class RouterClient:
             params["status"] = status
         data = self._get("/threads", params)
         return (data or {}).get("threads", [])
+
+    def record_notification(self, payload: dict[str, Any]) -> bool:
+        data = self._post("/notifications", payload)
+        return bool(data and data.get("status") == "created")
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +265,7 @@ def render_attach_command(session: dict) -> str:
 def render_notification(
     trigger: str,
     *,
+    trace_id: str | None = None,
     repo: str | None = None,
     session: dict | None = None,
     task: dict | None = None,
@@ -260,6 +287,10 @@ def render_notification(
     if repo:
         lines.append(f"Repo: `{repo}`")
         html_lines.append(f"Repo: <code>{repo}</code>")
+
+    if trace_id:
+        lines.append(f"Trace: `{trace_id}`")
+        html_lines.append(f"Trace: <code>{trace_id}</code>")
 
     if session:
         sid = session.get("session_id", "?")[:12]
@@ -294,6 +325,29 @@ def render_notification(
     plain = "\n".join(lines)
     html = "<br>".join(html_lines)
     return plain, html
+
+
+def build_trace_id(
+    trigger: str,
+    *,
+    session_id: str | None = None,
+    message_seq: int | None = None,
+    task_id: str | None = None,
+    thread_id: str | None = None,
+    thread_status: str | None = None,
+) -> str:
+    """Build deterministic trace id for notification events."""
+    payload = {
+        "trigger": trigger,
+        "session_id": session_id,
+        "message_seq": message_seq,
+        "task_id": task_id,
+        "thread_id": thread_id,
+        "thread_status": thread_status,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+    return f"ntf_{digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +403,11 @@ class TriggerDetector:
                     if pattern.search(content):
                         notifications.append({
                             "trigger": "input_requested",
+                            "trace_id": build_trace_id(
+                                "input_requested",
+                                session_id=sid,
+                                message_seq=msg.get("seq"),
+                            ),
                             "repo": self._task_repo(session, task_repo_map),
                             "session": session,
                             "excerpt": content,
@@ -376,6 +435,10 @@ class TriggerDetector:
 
                 notifications.append({
                     "trigger": "approval_needed",
+                    "trace_id": build_trace_id(
+                        "approval_needed",
+                        task_id=task.get("task_id"),
+                    ),
                     "repo": task.get("repo"),
                     "task": task,
                     "session": session_for_task,
@@ -393,6 +456,11 @@ class TriggerDetector:
             if old_status != new_status and new_status in ("failed", "completed", "blocked"):
                 notifications.append({
                     "trigger": f"thread_{new_status}",
+                    "trace_id": build_trace_id(
+                        f"thread_{new_status}",
+                        thread_id=tid,
+                        thread_status=new_status,
+                    ),
                     "thread": thread,
                 })
 
@@ -432,7 +500,39 @@ class MatrixBridge:
         """Pick the right Matrix room for a notification."""
         if repo and repo in self.repo_rooms:
             return self.repo_rooms[repo]
-        return self.config.matrix_default_room
+        return self.repo_rooms.get("__unrouted__", self.config.matrix_unrouted_room)
+
+    def _record_notification(
+        self,
+        *,
+        notif: dict[str, Any],
+        room_id: str,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        task = notif.get("task") or {}
+        thread = notif.get("thread") or {}
+        session = notif.get("session") or {}
+        payload = {
+            "trace_id": notif.get("trace_id"),
+            "trigger": notif.get("trigger"),
+            "room_id": room_id,
+            "status": status,
+            "repo": notif.get("repo"),
+            "task_id": task.get("task_id"),
+            "thread_id": thread.get("thread_id"),
+            "session_id": session.get("session_id"),
+            "error": error,
+            "metadata": {
+                "excerpt": (notif.get("excerpt") or "")[:200],
+            },
+        }
+        if not self.router.record_notification(payload):
+            logger.warning(
+                "Failed to persist notification trace=%s trigger=%s",
+                notif.get("trace_id"),
+                notif.get("trigger"),
+            )
 
     def run_once(self) -> int:
         """Run one poll cycle. Returns count of notifications sent."""
@@ -441,11 +541,13 @@ class MatrixBridge:
         boss_room = self.config.matrix_boss_room or self.repo_rooms.get("__boss__")
         for notif in notifications:
             trigger = notif["trigger"]
+            trace_id = notif.get("trace_id")
             repo = notif.get("repo")
             room = self._resolve_room(repo)
 
             plain, html = render_notification(
                 trigger,
+                trace_id=trace_id,
                 repo=repo,
                 session=notif.get("session"),
                 task=notif.get("task"),
@@ -455,13 +557,26 @@ class MatrixBridge:
 
             if self.matrix.send_message(room, plain, html):
                 sent += 1
-                logger.info("Sent %s to %s", trigger, room)
+                logger.info("Sent %s trace=%s to %s", trigger, trace_id, room)
+                self._record_notification(notif=notif, room_id=room, status="sent")
 
                 # Also notify boss room for critical triggers
                 if trigger in ("thread_failed", "approval_needed") and boss_room:
-                    self.matrix.send_message(boss_room, plain, html)
+                    boss_ok = self.matrix.send_message(boss_room, plain, html)
+                    self._record_notification(
+                        notif=notif,
+                        room_id=boss_room,
+                        status="sent" if boss_ok else "failed",
+                        error=None if boss_ok else "matrix_send_failed",
+                    )
             else:
-                logger.warning("Failed to send %s to %s", trigger, room)
+                logger.warning("Failed to send %s trace=%s to %s", trigger, trace_id, room)
+                self._record_notification(
+                    notif=notif,
+                    room_id=room,
+                    status="failed",
+                    error="matrix_send_failed",
+                )
 
         return sent
 

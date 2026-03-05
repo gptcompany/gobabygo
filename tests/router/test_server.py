@@ -1371,3 +1371,44 @@ class TestSessionBusEndpoints:
         # Session open should persist linkage when task_id is provided.
         assert refreshed_task is not None
         assert refreshed_task.session_id == session_id
+
+
+class TestNotificationLedgerEndpoints:
+    def test_create_and_list_notification(self, server_url):
+        create_resp = requests.post(
+            f"{server_url}/notifications",
+            json={
+                "trace_id": "ntf_test_1",
+                "trigger": "approval_needed",
+                "room_id": "!ops:matrix.example",
+                "status": "sent",
+                "repo": "rektslug",
+                "task_id": "task-1",
+                "metadata": {"source": "bridge"},
+            },
+        )
+        assert create_resp.status_code == 201
+        assert create_resp.json()["trace_id"] == "ntf_test_1"
+
+        list_resp = requests.get(
+            f"{server_url}/notifications",
+            params={"trace_id": "ntf_test_1", "status": "sent"},
+        )
+        assert list_resp.status_code == 200
+        rows = list_resp.json()["notifications"]
+        assert len(rows) == 1
+        assert rows[0]["room_id"] == "!ops:matrix.example"
+        assert rows[0]["metadata"]["source"] == "bridge"
+
+    def test_create_notification_validation_error(self, server_url):
+        resp = requests.post(
+            f"{server_url}/notifications",
+            json={"trigger": "approval_needed"},
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_notification"
+
+    def test_list_notifications_invalid_limit(self, server_url):
+        resp = requests.get(f"{server_url}/notifications", params={"limit": "oops"})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_limit"

@@ -13,6 +13,7 @@ from src.router.models import (
     CLIType,
     ExecutionMode,
     Lease,
+    NotificationLedgerEntry,
     Session,
     SessionMessage,
     Task,
@@ -300,6 +301,27 @@ def test_session_crud_and_messages(db: RouterDB, sample_worker: Worker) -> None:
     closed = db.get_session(session.session_id)
     assert closed is not None
     assert str(getattr(closed.state, "value", closed.state)) == "closed"
+
+
+def test_notification_ledger_roundtrip(db: RouterDB) -> None:
+    entry = NotificationLedgerEntry(
+        trace_id="ntf_123",
+        trigger="approval_needed",
+        room_id="!room:matrix.example",
+        status="sent",
+        repo="rektslug",
+        task_id="task-1",
+        metadata={"source": "bridge"},
+    )
+    notification_id = db.insert_notification_ledger(entry)
+    assert notification_id >= 1
+
+    rows = db.list_notification_ledger(trace_id="ntf_123")
+    assert len(rows) == 1
+    assert rows[0].trigger == "approval_needed"
+    assert rows[0].room_id == "!room:matrix.example"
+    assert rows[0].status.value == "sent"
+    assert rows[0].metadata["source"] == "bridge"
 
 
 # -- Transaction context manager --
