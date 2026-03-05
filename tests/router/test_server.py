@@ -1426,6 +1426,19 @@ class TestNotificationLedgerEndpoints:
         assert resp.status_code == 400
         assert resp.json()["error"] == "invalid_notification"
 
+    def test_create_notification_invalid_trace_id(self, server_url):
+        resp = requests.post(
+            f"{server_url}/notifications",
+            json={
+                "trace_id": "not_valid_trace",
+                "trigger": "approval_needed",
+                "room_id": "!ops:matrix.example",
+                "status": "sent",
+            },
+        )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_notification"
+
     def test_list_notifications_invalid_limit(self, server_url):
         resp = requests.get(f"{server_url}/notifications", params={"limit": "oops"})
         assert resp.status_code == 400
