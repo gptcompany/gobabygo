@@ -1,0 +1,44 @@
+# OpenMemory — standalone deployment for muletto (192.168.1.100)
+# Phase 21: Shared Memory Layer
+#
+# Usage:
+#   dotenvx run -f .env -- docker compose up -d --build
+#   docker compose down
+#
+# Pinned to v1.2.3 (latest stable as of 2026-03-05).
+# Update: git fetch && git checkout v1.X.Y && docker compose up -d --build
+
+services:
+  openmemory:
+    build:
+      context: ./openmemory-src
+      dockerfile: backend/Dockerfile
+    container_name: openmemory
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:8080:8080"
+    volumes:
+      - openmemory_data:/data
+    environment:
+      OM_PORT: "8080"
+      OM_DB_PATH: /data/openmemory.db
+      OM_MODE: production
+      # Embeddings: Ollama primary, OpenAI fallback
+      OM_EMBEDDING_PROVIDER: ${OM_EMBEDDING_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  openmemory_data:
