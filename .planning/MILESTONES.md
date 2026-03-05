@@ -2,7 +2,7 @@
 
 ## v1.4 Native Cross-Repo Handoff (Planned: 2026-03-04)
 
-**Phases:** 5 | **Plans:** 5 | **Status:** IN PROGRESS (phase 21 deploy pending)
+**Phases:** 5 | **Plans:** 5 | **Status:** IN PROGRESS (implemented + deployed, stabilization)
 **Execution order:** 17 -> 18 -> 19 -> 20 -> 21
 
 **Planned outcomes:**
@@ -39,7 +39,7 @@
 2. Phase 18 complete
 3. Phase 19 complete
 4. Phase 20 complete
-5. Phase 21 implementation complete (`deploy/openmemory` + smoke tests), production deploy/monitoring in progress
+5. Phase 21 implementation complete (`deploy/openmemory` + smoke tests) and deployed on muletto (`openmemory` healthy)
 
 ---
 

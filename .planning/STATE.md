@@ -6,9 +6,9 @@ status: execution_in_progress
 last_updated: "2026-03-05"
 progress:
   total_phases: 21
-  completed_phases: 20
+  completed_phases: 21
   total_plans: 32
-  completed_plans: 31
+  completed_plans: 32
 ---
 
 # Project State
@@ -18,21 +18,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-04)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** v1.4 Phase 21 deploy su muletto + monitoring operativo.
+**Current focus:** v1.4 post-deploy monitoring (OpenMemory su muletto operativo).
 
 ## Current Position
 
 Milestone: v1.4 Native Cross-Repo Handoff -- IN PROGRESS
-Status: Phase 17-20 complete; Phase 21 implementazione completata, deploy in corso
+Status: Phase 17-21 complete; OpenMemory deploy eseguito su muletto, monitoraggio attivo
 
 Progress: [======================------] v1.4 active
 v1.0 MVP:              6 phases, 15 plans -- SHIPPED 2026-02-19
 v1.1 Production:       4 phases, 9 plans  -- SHIPPED 2026-02-21
 v1.2 Operational:      3 phases, 3 plans  -- SHIPPED 2026-02-23
 v1.3 Cross-Repo:       3 phases, 4 plans  -- SHIPPED 2026-03-04
-v1.4 Native Handoff:   5 phases, 5 plans  -- IN PROGRESS (17-20 done, 21 deploy pending)
+v1.4 Native Handoff:   5 phases, 5 plans  -- IN PROGRESS (17-21 done, stabilization window)
 
-Total: 21 phases planned, 31 plans completed, 548+ tests, 6742+ production LOC
+Total: 21 phases planned, 32 plans completed, 548+ tests, 6742+ production LOC
 
 ## Performance Metrics
 
@@ -173,9 +173,9 @@ Full decision history per milestone in Accumulated Context sections below.
 ## Session Continuity
 
 Last session: 2026-03-05
-Stopped at: v1.4 phase 21 implemented on branch; deploy+monitor pending on muletto
+Stopped at: v1.4 phase 21 deployed on muletto; post-deploy monitoring in progress
 Resume with: `.planning/RESUME.md`
 
 ## Prossimi Passi
 
-### Next: Deploy OpenMemory on muletto, monitor health/logs, then close v1.4
+### Next: Continue monitoring OpenMemory health/logs, then close v1.4 milestone
