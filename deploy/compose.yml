@@ -29,5 +29,27 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  matrix-bridge:
+    build:
+      context: ..
+      dockerfile: deploy/router.Dockerfile
+    container_name: mesh-matrix-bridge
+    restart: unless-stopped
+    depends_on:
+      router:
+        condition: service_healthy
+    env_file:
+      - ./mesh-matrix-bridge.docker.env
+    environment:
+      MESH_ROUTER_URL: "http://router:8780"
+      MESH_AUTH_TOKEN: ${MESH_AUTH_TOKEN:?Set MESH_AUTH_TOKEN}
+      MESH_MATRIX_ACCESS_TOKEN: ${MESH_MATRIX_ACCESS_TOKEN:?Set MESH_MATRIX_ACCESS_TOKEN}
+    command: ["python", "/app/scripts/mesh-matrix-bridge.py"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   router-data:

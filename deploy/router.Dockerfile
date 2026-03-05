@@ -6,6 +6,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src/ src/
 COPY schemas/ schemas/
+COPY scripts/ scripts/
 RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim-bookworm
@@ -16,6 +17,7 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY --from=build /app/src /app/src
 COPY --from=build /app/schemas /app/schemas
+COPY --from=build /app/scripts /app/scripts
 
 RUN mkdir -p /data && chown mesh:mesh /data
 
