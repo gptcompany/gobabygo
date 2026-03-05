@@ -5,6 +5,7 @@
 - Ultimi commit chiave:
   - `e4ce673` fix upterm socket + piano fase 19
   - `158b810` revert chirurgico della falsa concurrency scheduler
+- Incident report: `.planning/INCIDENT-2026-03-04-SCHEDULER-CONCURRENCY.md`
 - Test mirati verdi:
   - `tests/router/test_topology.py`
   - `tests/router/test_scheduler.py`

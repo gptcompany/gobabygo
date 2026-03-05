@@ -1,14 +1,14 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Cross-Repo Orchestration -- SHIPPED 2026-03-04
-status: milestone_complete
+milestone: v1.4
+milestone_name: Native Cross-Repo Handoff -- IN PROGRESS
+status: execution_in_progress
 last_updated: "2026-03-04"
 progress:
-  total_phases: 16
-  completed_phases: 16
-  total_plans: 30
-  completed_plans: 30
+  total_phases: 21
+  completed_phases: 18
+  total_plans: 32
+  completed_plans: 31
 ---
 
 # Project State
@@ -18,20 +18,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-04)
 
 **Core value:** Reliable, deterministic task orchestration across distributed AI workers -- router/DB is the single source of truth.
-**Current focus:** Planning next milestone
+**Current focus:** Production deploy hardening with Docker multi-worker (Phase 19/20/21 paused)
 
 ## Current Position
 
-Milestone: v1.3 Cross-Repo Orchestration -- SHIPPED 2026-03-04
-Status: All milestones through v1.3 complete
+Milestone: v1.4 Native Cross-Repo Handoff -- IN PROGRESS
+Status: Phase 17 + Phase 18A completed, production deploy focus active
 
-Progress: [============================] 100% all milestones
+Progress: [======================------] v1.4 active
 v1.0 MVP:              6 phases, 15 plans -- SHIPPED 2026-02-19
 v1.1 Production:       4 phases, 9 plans  -- SHIPPED 2026-02-21
 v1.2 Operational:      3 phases, 3 plans  -- SHIPPED 2026-02-23
 v1.3 Cross-Repo:       3 phases, 4 plans  -- SHIPPED 2026-03-04
+v1.4 Native Handoff:   5 phases, 5 plans  -- IN PROGRESS (17/18A done)
 
-Total: 16 phases, 31 plans, 548 tests, 6742 production LOC
+Total: 21 phases planned, 31 plans completed, 548+ tests, 6742+ production LOC
 
 ## Performance Metrics
 
@@ -163,18 +164,18 @@ Full decision history per milestone in Accumulated Context sections below.
 
 ### Pending Todos
 
-None
+- PROD-DEPLOY-01: Docker multi-worker rollout (capacity via replicas, no router concurrency)
 
 ### Blockers/Concerns
 
-None
+- Account-profile uniqueness blocks same-profile replicas (`account_in_use`) unless explicitly handled.
 
 ## Session Continuity
 
 Last session: 2026-03-04
-Stopped at: v1.3 milestone archived and tagged
-Resume with: `/gsd:new-milestone` per pianificare v2.0 o v1.4
+Stopped at: v1.4 phase 17+18A merged; production deployment focus
+Resume with: `.planning/RESUME.md`
 
 ## Prossimi Passi
 
-### Next: Plan next milestone with `/gsd:new-milestone`
+### Next: Execute production Docker multi-worker deploy, then resume Phase 19

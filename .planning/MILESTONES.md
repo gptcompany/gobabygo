@@ -27,6 +27,13 @@
 - `.planning/milestones/v1.4-PHASE-19-BREAKDOWN.md`
 - `deploy/topology.v1.4.example.yml`
 
+**Phase contexts:**
+- `.planning/milestones/v1.4-phases/17-role-topology/CONTEXT.md`
+- `.planning/milestones/v1.4-phases/18-native-session-attach/CONTEXT.md`
+- `.planning/milestones/v1.4-phases/19-approval-notification-bridge/CONTEXT.md`
+- `.planning/milestones/v1.4-phases/20-structured-cross-repo-handoff/CONTEXT.md`
+- `.planning/milestones/v1.4-phases/21-shared-memory-openmemory/CONTEXT.md`
+
 ---
 
 ## v1.3 Cross-Repo Orchestration (Shipped: 2026-03-04)
