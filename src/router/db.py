@@ -167,6 +167,8 @@ CREATE TABLE IF NOT EXISTS notification_ledger (
 
 CREATE INDEX IF NOT EXISTS idx_notification_ledger_trace_id
 ON notification_ledger(trace_id);
+CREATE INDEX IF NOT EXISTS idx_notification_ledger_trace_room
+ON notification_ledger(trace_id, room_id);
 CREATE INDEX IF NOT EXISTS idx_notification_ledger_created_at
 ON notification_ledger(created_at DESC);
 
@@ -698,6 +700,54 @@ class RouterDB:
         )
 
     @_retry_on_busy
+    def insert_notification_ledger_once(
+        self,
+        entry: NotificationLedgerEntry,
+        conn: sqlite3.Connection | None = None,
+    ) -> tuple[bool, int | None]:
+        """Insert notification record ONLY if (trace_id, room_id) doesn't exist.
+
+        Returns (True, notification_id) if created, (False, None) if duplicate.
+        """
+        c = conn or self._conn
+        sql = """
+            INSERT INTO notification_ledger (
+                trace_id, trigger, room_id, status, repo,
+                task_id, thread_id, session_id, error, metadata, created_at
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM notification_ledger
+                WHERE trace_id = ? AND room_id = ?
+            )
+        """
+        status_val = entry.status.value if hasattr(entry.status, "value") else str(entry.status)
+        cur = c.execute(
+            sql,
+            (
+                entry.trace_id,
+                entry.trigger,
+                entry.room_id,
+                status_val,
+                entry.repo,
+                entry.task_id,
+                entry.thread_id,
+                entry.session_id,
+                entry.error,
+                json.dumps(entry.metadata),
+                entry.created_at,
+                entry.trace_id,
+                entry.room_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            return False, None
+
+        if conn is None:
+            self._conn.commit()
+        return True, int(cur.lastrowid)
+
+    @_retry_on_busy
     def insert_notification_ledger(
         self,
         entry: NotificationLedgerEntry,
@@ -727,6 +777,7 @@ class RouterDB:
             self._conn.commit()
         return int(cur.lastrowid)
 
+    @_retry_on_busy
     def list_notification_ledger(
         self,
         *,

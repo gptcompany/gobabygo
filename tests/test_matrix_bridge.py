@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -612,3 +612,58 @@ class TestSmoke:
     def test_bridge_module_imports(self):
         assert hasattr(bridge_mod, "MatrixBridge")
         assert hasattr(bridge_mod, "main")
+
+
+# ===========================================================================
+# Unit: RouterClient record_notification (Hardening)
+# ===========================================================================
+
+
+class TestRouterClientRecordNotification:
+    def test_record_notification_success_first_try(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            mock_post.return_value = {"status": "created"}
+            
+            ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+            assert ok is True
+            assert mock_post.call_count == 1
+
+    def test_record_notification_retry_on_failure(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            # Fail first, succeed second
+            mock_post.side_effect = [None, {"status": "created"}]
+            
+            with MagicMock() as mock_sleep:
+                import time
+                # Patch time.sleep in the bridge module's RouterClient
+                with patch("mesh-matrix-bridge.time.sleep", mock_sleep):
+                    ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+                    assert ok is True
+                    assert mock_post.call_count == 2
+                    mock_sleep.assert_called_once_with(0.2)
+
+    def test_record_notification_duplicate_is_success(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            mock_post.return_value = {"status": "duplicate"}
+            
+            ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+            assert ok is True
+            assert mock_post.call_count == 1
+
+    def test_record_notification_exhaust_retries(self):
+        client = RouterClient(make_config())
+        with MagicMock() as mock_post:
+            client._post = mock_post
+            mock_post.return_value = None
+            
+            with MagicMock() as mock_sleep:
+                with patch("mesh-matrix-bridge.time.sleep", mock_sleep):
+                    ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
+                    assert ok is False
+                    assert mock_post.call_count == 2

@@ -1378,7 +1378,7 @@ class TestNotificationLedgerEndpoints:
         create_resp = requests.post(
             f"{server_url}/notifications",
             json={
-                "trace_id": "ntf_test_1",
+                "trace_id": "ntf_0123456789abcdef0123",
                 "trigger": "approval_needed",
                 "room_id": "!ops:matrix.example",
                 "status": "sent",
@@ -1388,17 +1388,35 @@ class TestNotificationLedgerEndpoints:
             },
         )
         assert create_resp.status_code == 201
-        assert create_resp.json()["trace_id"] == "ntf_test_1"
+        assert create_resp.json()["trace_id"] == "ntf_0123456789abcdef0123"
 
         list_resp = requests.get(
             f"{server_url}/notifications",
-            params={"trace_id": "ntf_test_1", "status": "sent"},
+            params={"trace_id": "ntf_0123456789abcdef0123", "status": "sent"},
         )
         assert list_resp.status_code == 200
         rows = list_resp.json()["notifications"]
         assert len(rows) == 1
         assert rows[0]["room_id"] == "!ops:matrix.example"
         assert rows[0]["metadata"]["source"] == "bridge"
+
+    def test_create_notification_duplicate(self, server_url):
+        trace = "ntf_fedcba98765432109876"
+        payload = {
+            "trace_id": trace,
+            "trigger": "thread_failed",
+            "room_id": "!r1",
+            "status": "failed",
+        }
+        # First creation
+        resp1 = requests.post(f"{server_url}/notifications", json=payload)
+        assert resp1.status_code == 201
+
+        # Second creation (duplicate)
+        resp2 = requests.post(f"{server_url}/notifications", json=payload)
+        assert resp2.status_code == 200
+        assert resp2.json()["status"] == "duplicate"
+        assert resp2.json()["trace_id"] == trace
 
     def test_create_notification_validation_error(self, server_url):
         resp = requests.post(

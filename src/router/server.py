@@ -642,7 +642,14 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             return
 
         db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
-        notification_id = db.insert_notification_ledger(entry)
+        created, notification_id = db.insert_notification_ledger_once(entry)
+        if not created:
+            self._send_json(
+                200,
+                {"status": "duplicate", "trace_id": entry.trace_id, "room_id": entry.room_id},
+            )
+            return
+
         self._send_json(
             201,
             {"status": "created", "notification_id": notification_id, "trace_id": entry.trace_id},

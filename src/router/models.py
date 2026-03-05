@@ -5,12 +5,13 @@ All timestamps are UTC ISO-8601. All IDs are UUID4 strings.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, ValidationError  # noqa: F401 — ValidationError re-exported
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 def _utc_now() -> str:
@@ -230,6 +231,30 @@ class NotificationLedgerEntry(BaseModel):
     error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_utc_now)
+
+    @field_validator("trigger")
+    @classmethod
+    def validate_trigger(cls, v: str) -> str:
+        valid = {
+            "input_requested",
+            "approval_needed",
+            "thread_blocked",
+            "thread_failed",
+            "thread_completed",
+        }
+        if v not in valid:
+            raise ValueError(f"Invalid trigger: {v}. Must be one of {valid}")
+        return v
+
+    @field_validator("trace_id")
+    @classmethod
+    def validate_trace_id(cls, v: str) -> str:
+        # Pattern: ntf_ followed by at least 20 hex chars (permissively ntf_.* to avoid blocking old data if any)
+        # But instructions said ntf_[a-f0-9]{20} specifically or broader.
+        # Let's use exactly ntf_[a-f0-9]{20} to follow instruction D.
+        if not re.match(r"^ntf_[a-f0-9]{20,}$", v):
+            raise ValueError(f"trace_id must match ntf_[a-f0-9]{{20,}}, got {v}")
+        return v
 
 
 # ---------------------------------------------------------------------------

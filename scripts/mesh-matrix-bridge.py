@@ -197,8 +197,24 @@ class RouterClient:
         return (data or {}).get("threads", [])
 
     def record_notification(self, payload: dict[str, Any]) -> bool:
-        data = self._post("/notifications", payload)
-        return bool(data and data.get("status") == "created")
+        """Record notification in router ledger with retry logic."""
+        for attempt in range(2):
+            data = self._post("/notifications", payload)
+            if not data:
+                if attempt == 0:
+                    time.sleep(0.2)
+                    continue
+                return False
+
+            status = data.get("status")
+            if status in ("created", "duplicate"):
+                return True
+
+            if attempt == 0:
+                time.sleep(0.2)
+                continue
+
+        return False
 
 
 # ---------------------------------------------------------------------------
