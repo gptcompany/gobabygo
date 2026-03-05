@@ -10,7 +10,19 @@ import json
 from typing import Any
 
 from src.router.db import RouterDB
-from src.router.models import Task, TaskStatus, Thread, ThreadStatus, _utc_now, _uuid4
+from src.router.models import (
+    CROSS_REPO_HANDOFF_ROLE,
+    HandoffRepoError,
+    HandoffRoleError,
+    Task,
+    TaskStatus,
+    Thread,
+    ThreadStatus,
+    _utc_now,
+    _uuid4,
+    validate_handoff,
+)
+from src.router.topology import Topology
 
 
 def create_thread(db: RouterDB, name: str) -> Thread:
@@ -25,18 +37,59 @@ def add_step(
     db: RouterDB,
     thread_id: str,
     step_request,
+    topology: Topology | None = None,
 ) -> Task:
     """Add a step to a thread. Returns the created Task.
 
     - Validates thread exists and is not in a terminal state.
+    - If payload contains 'handoff', validates structure and enforces role/topology.
     - If step_index > 0 and no explicit depends_on, auto-depends on previous step.
     - Sets initial status to blocked if depends_on is non-empty, queued otherwise.
+
+    Raises:
+        ValueError: thread not found or terminal, invalid step order.
+        pydantic.ValidationError: malformed handoff payload.
+        HandoffRoleError: cross-repo handoff without PRESIDENT_GLOBAL role.
+        HandoffRepoError: handoff references unknown repo in topology.
     """
     thread = db.get_thread(thread_id)
     if thread is None:
         raise ValueError(f"Thread {thread_id} not found")
     if thread.status in (ThreadStatus.completed, ThreadStatus.failed):
         raise ValueError(f"Thread {thread_id} is in terminal state: {thread.status.value}")
+
+    # Validate handoff payload if present
+    handoff = validate_handoff(step_request.payload)
+    if handoff is not None:
+        # Cross-check: handoff.target_repo must match step.repo (if step.repo is set)
+        step_repo = step_request.repo or ""
+        if step_repo and handoff.target_repo != step_repo:
+            raise HandoffRepoError(
+                f"handoff.target_repo '{handoff.target_repo}' does not match step repo '{step_repo}'"
+            )
+
+        # Enforce PRESIDENT_GLOBAL role for cross-repo handoffs
+        is_cross_repo = handoff.source_repo != handoff.target_repo
+        if is_cross_repo:
+            step_role = getattr(step_request, "role", None) or ""
+            if step_role != CROSS_REPO_HANDOFF_ROLE:
+                raise HandoffRoleError(
+                    f"cross-repo handoff requires {CROSS_REPO_HANDOFF_ROLE} role, "
+                    f"got '{step_role}'"
+                )
+
+        # Validate repos against topology if loaded
+        if topology is not None:
+            known_repos = set(topology._repos.keys())
+            if known_repos:
+                if handoff.target_repo and handoff.target_repo not in known_repos:
+                    raise HandoffRepoError(
+                        f"unknown target_repo '{handoff.target_repo}' in topology"
+                    )
+                if handoff.source_repo and handoff.source_repo not in known_repos:
+                    raise HandoffRepoError(
+                        f"unknown source_repo '{handoff.source_repo}' in topology"
+                    )
 
     depends_on = list(step_request.depends_on)
 
@@ -71,7 +124,7 @@ def add_step(
         thread_id=thread_id,
         step_index=step_request.step_index,
         repo=step_request.repo or None,
-        role=None,
+        role=getattr(step_request, "role", None) or None,
         on_failure=on_failure_val,
     )
 

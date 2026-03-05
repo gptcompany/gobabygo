@@ -6,10 +6,15 @@ import json
 
 import pytest
 
+from pydantic import ValidationError
+
 from src.router.db import RouterDB
 from src.router.models import (
+    CROSS_REPO_HANDOFF_ROLE,
     CLIType,
     ExecutionMode,
+    HandoffRepoError,
+    HandoffRoleError,
     Task,
     TaskStatus,
     Thread,
@@ -19,6 +24,7 @@ from src.router.models import (
 )
 from src.router.scheduler import Scheduler
 from src.router.thread import add_step, compute_thread_status, create_thread, get_thread_context
+from src.router.topology import Topology
 
 
 @pytest.fixture
@@ -287,3 +293,149 @@ def test_compute_thread_status_blocked_is_active(db: RouterDB) -> None:
     assert step1.status == TaskStatus.blocked
     # Thread has steps (one queued, one blocked) -> active
     assert compute_thread_status(db, thread.thread_id) == ThreadStatus.active
+
+
+# -- Handoff tests (Phase 20) --
+
+def _handoff_payload(
+    source_repo: str = "backend",
+    target_repo: str = "platform",
+    summary: str = "Migrate auth module to platform",
+    **kwargs,
+) -> dict:
+    handoff = {"source_repo": source_repo, "target_repo": target_repo, "summary": summary}
+    handoff.update(kwargs)
+    return {"handoff": handoff}
+
+
+def _make_topology(repos: dict | None = None) -> Topology:
+    """Create a Topology with given repos (or sensible defaults)."""
+    if repos is None:
+        repos = {
+            "backend": {"worker_pool": ["w1"]},
+            "platform": {"worker_pool": ["w2"]},
+        }
+    return Topology({
+        "version": "1",
+        "global": {"cross_repo_policy": {"require_president_handoff": True}},
+        "hosts": {},
+        "workers": {},
+        "repos": repos,
+    })
+
+
+def test_add_step_with_valid_handoff(db: RouterDB) -> None:
+    """Step creation succeeds with valid handoff payload (same-repo, no role needed)."""
+    thread = create_thread(db, "handoff-valid")
+    payload = _handoff_payload(source_repo="backend", target_repo="backend")
+    task = add_step(db, thread.thread_id, _step_request("h0", 0, repo="backend", payload=payload))
+    assert task.payload["handoff"]["source_repo"] == "backend"
+    assert task.payload["handoff"]["target_repo"] == "backend"
+
+
+def test_add_step_with_invalid_handoff_missing_fields(db: RouterDB) -> None:
+    """400 on missing required handoff fields."""
+    thread = create_thread(db, "handoff-missing")
+    payload = {"handoff": {"source_repo": "backend"}}  # missing target_repo, summary
+    with pytest.raises(ValidationError):
+        add_step(db, thread.thread_id, _step_request("h0", 0, payload=payload))
+
+
+def test_add_step_with_handoff_summary_too_long(db: RouterDB) -> None:
+    """400 on oversized summary."""
+    thread = create_thread(db, "handoff-long")
+    payload = _handoff_payload(summary="x" * 5000)
+    with pytest.raises(ValidationError):
+        add_step(db, thread.thread_id, _step_request("h0", 0, payload=payload))
+
+
+def test_add_step_with_handoff_list_too_many_items(db: RouterDB) -> None:
+    """400 on list exceeding max items."""
+    thread = create_thread(db, "handoff-many")
+    payload = _handoff_payload(decisions=["d"] * 25)
+    with pytest.raises(ValidationError):
+        add_step(db, thread.thread_id, _step_request("h0", 0, payload=payload))
+
+
+def test_add_step_cross_repo_handoff_requires_president(db: RouterDB) -> None:
+    """403 when cross-repo handoff without PRESIDENT_GLOBAL role."""
+    thread = create_thread(db, "handoff-norole")
+    payload = _handoff_payload(source_repo="backend", target_repo="platform")
+    with pytest.raises(HandoffRoleError, match="PRESIDENT_GLOBAL"):
+        add_step(db, thread.thread_id, _step_request("h0", 0, repo="platform", payload=payload))
+
+
+def test_add_step_cross_repo_handoff_with_president_role(db: RouterDB) -> None:
+    """Cross-repo handoff succeeds with PRESIDENT_GLOBAL role."""
+    thread = create_thread(db, "handoff-president")
+    payload = _handoff_payload(source_repo="backend", target_repo="platform")
+    task = add_step(
+        db, thread.thread_id,
+        _step_request("h0", 0, repo="platform", role=CROSS_REPO_HANDOFF_ROLE, payload=payload),
+    )
+    assert task.role == CROSS_REPO_HANDOFF_ROLE
+    assert task.payload["handoff"]["target_repo"] == "platform"
+
+
+def test_add_step_same_repo_handoff_no_role_check(db: RouterDB) -> None:
+    """Same-repo handoff succeeds without role restriction."""
+    thread = create_thread(db, "handoff-samerc")
+    payload = _handoff_payload(source_repo="backend", target_repo="backend")
+    task = add_step(db, thread.thread_id, _step_request("h0", 0, repo="backend", payload=payload))
+    assert task.payload["handoff"]["source_repo"] == "backend"
+
+
+def test_add_step_handoff_unknown_target_repo(db: RouterDB) -> None:
+    """400 when topology loaded and repo unknown."""
+    thread = create_thread(db, "handoff-unknownrepo")
+    topo = _make_topology()
+    payload = _handoff_payload(source_repo="backend", target_repo="nonexistent")
+    with pytest.raises(HandoffRepoError, match="unknown target_repo"):
+        add_step(
+            db, thread.thread_id,
+            _step_request("h0", 0, repo="nonexistent", role=CROSS_REPO_HANDOFF_ROLE, payload=payload),
+            topology=topo,
+        )
+
+
+def test_add_step_handoff_no_topology_skips_repo_check(db: RouterDB) -> None:
+    """Step creation succeeds when no topology file — backward compat."""
+    thread = create_thread(db, "handoff-notopo")
+    payload = _handoff_payload(source_repo="backend", target_repo="anything")
+    # Cross-repo requires president role, but no topology check
+    task = add_step(
+        db, thread.thread_id,
+        _step_request("h0", 0, repo="anything", role=CROSS_REPO_HANDOFF_ROLE, payload=payload),
+        topology=None,
+    )
+    assert task.payload["handoff"]["target_repo"] == "anything"
+
+
+def test_thread_context_includes_handoff_step_result(db: RouterDB) -> None:
+    """Completed handoff step result appears in thread_context."""
+    thread = create_thread(db, "handoff-ctx")
+    payload = _handoff_payload(source_repo="backend", target_repo="backend")
+    task = add_step(db, thread.thread_id, _step_request("h0", 0, repo="backend", payload=payload))
+
+    # Complete the step with a result
+    result = {"output": "auth module migrated", "files_changed": 3}
+    db.update_task_status(task.task_id, TaskStatus.queued, TaskStatus.completed)
+    db.update_task_fields(task.task_id, {"result_json": json.dumps(result)})
+
+    # Add step 1 and check context
+    add_step(db, thread.thread_id, _step_request("h1", 1, repo="backend"))
+    context = get_thread_context(db, thread.thread_id, up_to_step_index=1)
+    assert len(context) == 1
+    assert context[0]["step_index"] == 0
+    assert context[0]["result"]["output"] == "auth module migrated"
+
+
+def test_add_step_handoff_target_repo_mismatch(db: RouterDB) -> None:
+    """400 when handoff.target_repo differs from step.repo."""
+    thread = create_thread(db, "handoff-mismatch")
+    payload = _handoff_payload(source_repo="backend", target_repo="platform")
+    with pytest.raises(HandoffRepoError, match="does not match step repo"):
+        add_step(
+            db, thread.thread_id,
+            _step_request("h0", 0, repo="frontend", role=CROSS_REPO_HANDOFF_ROLE, payload=payload),
+        )
