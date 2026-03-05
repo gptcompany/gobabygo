@@ -1,0 +1,33 @@
+services:
+  router:
+    build:
+      context: ..
+      dockerfile: deploy/router.Dockerfile
+    container_name: mesh-router
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8780:8780"
+    volumes:
+      - router-data:/data
+    environment:
+      MESH_ROUTER_PORT: "8780"
+      MESH_DB_PATH: /data/router.db
+      MESH_BUFFER_PATH: /data/events-buffer.jsonl
+      MESH_AUTH_TOKEN: ${MESH_AUTH_TOKEN:?Set MESH_AUTH_TOKEN}
+      MESH_DEV_MODE: "0"
+      MESH_DISPATCH_INTERVAL_S: "5"
+      MESH_LONGPOLL_TIMEOUT_S: "25"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8780/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  router-data:
