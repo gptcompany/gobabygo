@@ -2,16 +2,16 @@
 
 ## Decisione
 
-Router in Docker per stabilita, restart automatico, build riproducibile.
+Router + Matrix bridge in Docker per stabilita, restart automatico, build riproducibile.
 Worker restano systemd — i CLI (claude/codex/gemini) richiedono host diretto.
 
 ## Architettura
 
 ```
 CF Tunnel --> 127.0.0.1:8780 --> [Docker: mesh-router]
-                                       ^
-                                       |  HTTP
-                     [systemd: mesh-worker@claude-work]
+                                       ^            ^
+                                       |  HTTP      |  HTTP API polling
+                     [systemd: mesh-worker@claude-work]   [Docker: mesh-matrix-bridge]
                      [systemd: mesh-worker@codex-work]
                      [systemd: mesh-worker@gemini-work]
 ```
@@ -29,7 +29,8 @@ CF Tunnel --> 127.0.0.1:8780 --> [Docker: mesh-router]
 | File | Scopo |
 |------|-------|
 | `deploy/router.Dockerfile` | Multi-stage build, uv + Python 3.12 |
-| `deploy/compose.yml` | Router + volume + healthcheck + restart |
+| `deploy/compose.yml` | Router + Matrix bridge + volume + healthcheck + restart |
+| `deploy/mesh-matrix-bridge.docker.env` | Matrix bridge runtime config |
 | `deploy/smoke-docker.sh` | Verifica container + health + workers |
 | `uv.lock` | Lockfile per build deterministica |
 
@@ -37,13 +38,14 @@ CF Tunnel --> 127.0.0.1:8780 --> [Docker: mesh-router]
 
 ```bash
 # Build e start
-cd deploy && MESH_AUTH_TOKEN=xxx docker compose up -d --build
+cd deploy && MESH_AUTH_TOKEN=xxx MESH_MATRIX_ACCESS_TOKEN=yyy docker compose up -d --build
 
 # Verifica
 ./deploy/smoke-docker.sh
 
 # Logs
 docker logs mesh-router -f
+docker logs mesh-matrix-bridge -f
 
 # Restart
 docker compose -f deploy/compose.yml restart
