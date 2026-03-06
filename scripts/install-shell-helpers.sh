@@ -61,7 +61,7 @@ if ! alias wss >/dev/null 2>&1 && ! typeset -f wss >/dev/null 2>&1 && ! command 
       return $?
     fi
 
-    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
     repo_base="${MESH_WS_REPO_BASE:-/home/sam}"
     if [[ $# -eq 0 ]]; then
       command ssh "$ws_host"

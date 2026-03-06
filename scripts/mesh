@@ -193,10 +193,10 @@ case "$cmd" in
     run_meshctl thread status "$thread_name"
     ;;
   bootstrap)
-    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
     ws_env_dir="${MESH_WS_ENV_DIR:-/etc/mesh-worker}"
     stop_batch="${MESH_BOOTSTRAP_STOP_BATCH:-0}"
-    ssh -o ConnectTimeout=10 "$ws_host" "bash -s" -- "$ws_env_dir" "$stop_batch" <<'EOF'
+    ssh -tt -o ConnectTimeout=10 "$ws_host" "bash -s" -- "$ws_env_dir" "$stop_batch" <<'EOF'
 set -euo pipefail
 
 env_dir="${1:?missing env_dir}"
@@ -251,14 +251,14 @@ echo "     mesh run <phase>"
 EOF
     ;;
   deploy)
-    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
     ws_repo_dir="${MESH_WS_REPO_DIR:-/opt/mesh-router}"
     branch="${MESH_DEPLOY_BRANCH:-master}"
     restart_router="${MESH_DEPLOY_RESTART_ROUTER:-1}"
     restart_batch="${MESH_DEPLOY_RESTART_BATCH:-0}"
     restart_session="${MESH_DEPLOY_RESTART_SESSION:-1}"
-    ssh -o ConnectTimeout=10 "$ws_host" "bash -s" -- \
-      "$ws_repo_dir" "$branch" "$restart_router" "$restart_batch" "$restart_session" <<'EOF'
+    deploy_mode="${MESH_DEPLOY_MODE:-auto}" # auto|remote|local
+    deploy_script="$(cat <<'EOF'
 set -euo pipefail
 
 repo_dir="${1:?missing repo_dir}"
@@ -267,10 +267,29 @@ restart_router="${3:-1}"
 restart_batch="${4:-0}"
 restart_session="${5:-1}"
 
-if [[ ! -d "$repo_dir/.git" ]]; then
-  echo "Error: repo not found at $repo_dir"
+resolve_repo_dir() {
+  local preferred="$1"
+  local candidates=(
+    "$preferred"
+    "/opt/mesh-router"
+    "$HOME/gobabygo"
+  )
+  local d
+  for d in "${candidates[@]}"; do
+    if [[ -d "$d/.git" ]]; then
+      printf '%s' "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolved_repo="$(resolve_repo_dir "$repo_dir" || true)"
+if [[ -z "$resolved_repo" ]]; then
+  echo "Error: repo not found. tried: $repo_dir, /opt/mesh-router, $HOME/gobabygo"
   exit 2
 fi
+repo_dir="$resolved_repo"
 
 echo "[deploy] repo=$repo_dir branch=$branch"
 cd "$repo_dir"
@@ -313,6 +332,39 @@ fi
 
 echo "[deploy] done"
 EOF
+)"
+
+    run_local_deploy() {
+      bash -s -- "$ws_repo_dir" "$branch" "$restart_router" "$restart_batch" "$restart_session" <<<"$deploy_script"
+    }
+
+    run_remote_deploy() {
+      ssh -tt -o ConnectTimeout=10 "$ws_host" "bash -s" -- \
+        "$ws_repo_dir" "$branch" "$restart_router" "$restart_batch" "$restart_session" <<<"$deploy_script"
+    }
+
+    case "$deploy_mode" in
+      local)
+        run_local_deploy
+        ;;
+      remote)
+        run_remote_deploy
+        ;;
+      auto)
+        if command -v systemctl >/dev/null 2>&1 && [[ -d /etc/mesh-worker ]]; then
+          run_local_deploy
+        else
+          run_remote_deploy || {
+            echo "Error: remote deploy failed. Set MESH_WS_HOST correctly (current: $ws_host)." >&2
+            exit 1
+          }
+        fi
+        ;;
+      *)
+        echo "Error: invalid MESH_DEPLOY_MODE='$deploy_mode' (use auto|remote|local)" >&2
+        exit 1
+        ;;
+    esac
     ;;
   start|new)
     feature="${*:2}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WS_HOST="${MESH_WS_HOST:-sam@10.0.0.2}"
+WS_HOST="${MESH_WS_HOST:-sam@192.168.1.111}"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/home/sam}"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -11,7 +11,7 @@ Usage:
   ./scripts/ws <repo-name>    # ssh on WS and cd into /home/sam/<repo-name>
 
 Env:
-  MESH_WS_HOST       default: sam@10.0.0.2
+  MESH_WS_HOST       default: sam@192.168.1.111
   MESH_WS_REPO_BASE  default: /home/sam
 EOF
   exit 0
@@ -24,4 +24,3 @@ fi
 repo="$1"
 target_dir="${WS_REPO_BASE}/${repo}"
 exec ssh -t "$WS_HOST" "cd '$target_dir' && exec \$SHELL -l"
-
