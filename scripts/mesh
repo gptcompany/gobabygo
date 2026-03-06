@@ -8,13 +8,13 @@ FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 PIPELINE_TEMPLATE="${MESH_PIPELINE_TEMPLATE:-speckit}"
 MESH_ENV_SOURCES=(
-  "${ENV_FILE}"
-  "${FALLBACK_EXPORTS}"
   "/etc/mesh-worker/mesh-session-claude-work.env"
   "/etc/mesh-worker/mesh-session-codex-work.env"
   "/etc/mesh-worker/mesh-worker-claude-work.env"
   "/etc/mesh-worker/mesh-worker-codex-work.env"
   "/etc/mesh-worker/mesh-worker-gemini-work.env"
+  "${ENV_FILE}"
+  "${FALLBACK_EXPORTS}"
 )
 
 detect_python() {
@@ -33,9 +33,14 @@ detect_python() {
 run_meshctl() {
   ensure_router_env
 
+  local use_dotenvx=0
+  if [[ -z "${MESH_ROUTER_URL:-}" || -z "${MESH_AUTH_TOKEN:-}" ]]; then
+    use_dotenvx=1
+  fi
+
   # Prefer uv-managed environment when available.
   if command -v uv >/dev/null 2>&1 && [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
-    if command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
+    if [[ "$use_dotenvx" == "1" ]] && command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
       (cd "$REPO_ROOT" && exec dotenvx run -f "$ENV_FILE" -- uv run -- python -m src.meshctl "$@")
     elif [[ -f "$FALLBACK_EXPORTS" ]]; then
       # shellcheck source=/dev/null
@@ -47,7 +52,7 @@ run_meshctl() {
   fi
 
   py_bin="$(detect_python)" || exit $?
-  if command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
+  if [[ "$use_dotenvx" == "1" ]] && command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
     (cd "$REPO_ROOT" && exec dotenvx run -f "$ENV_FILE" -- "$py_bin" -m src.meshctl "$@")
   elif [[ -f "$FALLBACK_EXPORTS" ]]; then
     # shellcheck source=/dev/null
