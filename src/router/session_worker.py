@@ -90,8 +90,9 @@ class SessionWorkerConfig:
     heartbeat_interval: float = 5.0
     longpoll_timeout: float = 25.0
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor", "interactive"])
+    allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
     execution_modes: list[str] = field(default_factory=lambda: ["session"])
-    cli_command: str = "claude"
+    cli_command: str = "claude"  # supports {target_account}, {account_profile}, {worker_account_profile}
     work_dir: str = "/tmp/mesh-tasks"
     session_poll_interval_s: float = 1.0
     tmux_bin: str = "tmux"
@@ -108,12 +109,22 @@ class SessionWorkerConfig:
 
     @classmethod
     def from_env(cls) -> SessionWorkerConfig:
+        raw_caps = os.environ.get("MESH_CAPABILITIES", "").strip()
+        capabilities = (
+            [c.strip() for c in raw_caps.split(",") if c.strip()]
+            if raw_caps
+            else ["code", "tests", "refactor", "interactive"]
+        )
+        raw_allowed = os.environ.get("MESH_ALLOWED_ACCOUNTS", "").strip()
+        allowed_accounts = [a.strip() for a in raw_allowed.split(",") if a.strip()]
         return cls(
             worker_id=os.environ.get("MESH_WORKER_ID", "ws-unknown-session-01"),
             router_url=os.environ.get("MESH_ROUTER_URL", "http://localhost:8780"),
             cli_type=os.environ.get("MESH_CLI_TYPE", "claude"),
             account_profile=os.environ.get("MESH_ACCOUNT_PROFILE", "work"),
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
+            capabilities=capabilities,
+            allowed_accounts=allowed_accounts,
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
             execution_modes=[
@@ -134,6 +145,17 @@ class SessionWorkerConfig:
             ssh_tmux_user=os.environ.get("MESH_SSH_TMUX_USER", ""),
             ssh_tmux_host=os.environ.get("MESH_SSH_TMUX_HOST", ""),
         )
+
+    def registration_capabilities(self) -> list[str]:
+        """Capabilities sent to router during register (with optional account allowlist)."""
+        caps = list(self.capabilities)
+        if self.allowed_accounts:
+            for account in self.allowed_accounts:
+                if account == "*":
+                    caps.append("account:*")
+                else:
+                    caps.append(f"account:{account}")
+        return list(dict.fromkeys(caps))
 
 
 class MeshSessionWorker:
@@ -166,7 +188,7 @@ class MeshSessionWorker:
             "machine": os.environ.get("HOSTNAME", "unknown"),
             "cli_type": self.config.cli_type,
             "account_profile": self.config.account_profile,
-            "capabilities": self.config.capabilities,
+            "capabilities": self.config.registration_capabilities(),
             "execution_modes": self.config.execution_modes,
             "status": "idle",
             "concurrency": 1,
@@ -227,6 +249,7 @@ class MeshSessionWorker:
         payload = task.get("payload", {})
         prompt = str(payload.get("prompt", ""))
         execution_mode = str(task.get("execution_mode", "batch")).strip() or "batch"
+        target_account = str(task.get("target_account") or self.config.account_profile).strip() or self.config.account_profile
         work_dir = payload.get("working_dir", self.config.work_dir)
 
         logger.info("Starting interactive task %s (%s)", task_id, task.get("title", "untitled"))
@@ -248,13 +271,18 @@ class MeshSessionWorker:
                 return
 
             os.makedirs(work_dir, exist_ok=True)
-            cmd_base = self.config.cli_command.replace("{account_profile}", self.config.account_profile)
-            tmux_session_name = self._tmux_session_name(task_id)
+            cmd_base = (
+                self.config.cli_command
+                .replace("{target_account}", target_account)
+                .replace("{account_profile}", target_account)
+                .replace("{worker_account_profile}", self.config.account_profile)
+            )
+            tmux_session_name = self._tmux_session_name(task_id, target_account)
             self._tmux_new_session(tmux_session_name, work_dir, cmd_base)
 
             attach_meta, upterm_proc = self._create_attach_handle(tmux_session_name)
 
-            session_id = self._open_session(task, tmux_session_name, work_dir, attach_meta)
+            session_id = self._open_session(task, tmux_session_name, work_dir, target_account, attach_meta)
             self._send_session_message(
                 session_id,
                 direction="system",
@@ -356,8 +384,9 @@ class MeshSessionWorker:
                 socket_path = f"/tmp/upterm-{tmux_session_name}.sock" if tmux_session_name else None
                 self._stop_upterm(upterm_proc, socket_path)
 
-    def _tmux_session_name(self, task_id: str) -> str:
-        base = f"{self.config.tmux_session_prefix}-{self.config.cli_type}-{self.config.account_profile}-{task_id[:8]}"
+    def _tmux_session_name(self, task_id: str, target_account: str | None = None) -> str:
+        account = (target_account or self.config.account_profile or "work").strip() or "work"
+        base = f"{self.config.tmux_session_prefix}-{self.config.cli_type}-{account}-{task_id[:8]}"
         return _sanitize_session_name(base)
 
     def _tmux_new_session(self, session_name: str, work_dir: str, cli_command: str) -> None:
@@ -638,6 +667,7 @@ class MeshSessionWorker:
         task: dict,
         tmux_session: str,
         work_dir: str,
+        target_account: str,
         attach_meta: dict | None = None,
     ) -> str:
         metadata: dict = {
@@ -650,7 +680,7 @@ class MeshSessionWorker:
         body = {
             "worker_id": self.config.worker_id,
             "cli_type": self.config.cli_type,
-            "account_profile": self.config.account_profile,
+            "account_profile": target_account,
             "task_id": task["task_id"],
             "metadata": metadata,
         }

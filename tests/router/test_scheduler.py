@@ -43,12 +43,14 @@ def _add_worker(
     status="idle",
     idle_since=None,
     execution_modes=None,
+    capabilities=None,
 ):
     w = Worker(
         worker_id=worker_id, machine="ws1", cli_type=cli,
         account_profile=account, status=status,
         last_heartbeat=_now(), idle_since=idle_since or _now(),
         execution_modes=execution_modes or ["batch"],
+        capabilities=capabilities or [],
     )
     db.insert_worker(w)
     return w
@@ -77,6 +79,41 @@ class TestFindEligibleWorker:
     def test_wrong_account(self, sched, db):
         _add_worker(db, "w1", "work", CLIType.claude)
         task = Task(task_id="t1", target_cli=CLIType.claude, target_account="clientA")
+        assert sched.find_all_eligible_workers(task) == []
+
+    def test_account_capability_exact_match(self, sched, db):
+        _add_worker(
+            db,
+            "w1",
+            account="dynamic-claude",
+            cli=CLIType.claude,
+            capabilities=["account:clientA"],
+        )
+        task = Task(task_id="t1", target_cli=CLIType.claude, target_account="clientA")
+        workers = sched.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w1"]
+
+    def test_account_capability_wildcard_match(self, sched, db):
+        _add_worker(
+            db,
+            "w1",
+            account="dynamic-claude",
+            cli=CLIType.claude,
+            capabilities=["account:*"],
+        )
+        task = Task(task_id="t1", target_cli=CLIType.claude, target_account="any-account")
+        workers = sched.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w1"]
+
+    def test_account_capability_mismatch(self, sched, db):
+        _add_worker(
+            db,
+            "w1",
+            account="dynamic-claude",
+            cli=CLIType.claude,
+            capabilities=["account:clientA"],
+        )
+        task = Task(task_id="t1", target_cli=CLIType.claude, target_account="clientB")
         assert sched.find_all_eligible_workers(task) == []
 
     def test_busy_excluded(self, sched, db):

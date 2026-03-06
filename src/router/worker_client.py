@@ -38,8 +38,9 @@ class WorkerConfig:
     poll_interval: float = 2.0
     longpoll_timeout: float = 25.0  # Must match server MESH_LONGPOLL_TIMEOUT_S
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor"])
+    allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
     execution_modes: list[str] = field(default_factory=lambda: ["batch"])
-    cli_command: str = "claude"  # Template: "ccs {account_profile}" for multi-account
+    cli_command: str = "claude"  # Template supports {target_account}, {account_profile}, {worker_account_profile}
     dry_run: bool = False  # MESH_DRY_RUN=1 logs without executing
     work_dir: str = "/tmp/mesh-tasks"  # MESH_WORK_DIR
     task_timeout: int = 1800  # MESH_TASK_TIMEOUT_S (30 min)
@@ -47,12 +48,22 @@ class WorkerConfig:
     @classmethod
     def from_env(cls) -> WorkerConfig:
         """Create config from environment variables."""
+        raw_caps = os.environ.get("MESH_CAPABILITIES", "").strip()
+        capabilities = (
+            [c.strip() for c in raw_caps.split(",") if c.strip()]
+            if raw_caps
+            else ["code", "tests", "refactor"]
+        )
+        raw_allowed = os.environ.get("MESH_ALLOWED_ACCOUNTS", "").strip()
+        allowed_accounts = [a.strip() for a in raw_allowed.split(",") if a.strip()]
         return cls(
             worker_id=os.environ.get("MESH_WORKER_ID", "ws-unknown-01"),
             router_url=os.environ.get("MESH_ROUTER_URL", "http://localhost:8780"),
             cli_type=os.environ.get("MESH_CLI_TYPE", "claude"),
             account_profile=os.environ.get("MESH_ACCOUNT_PROFILE", "work"),
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
+            capabilities=capabilities,
+            allowed_accounts=allowed_accounts,
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
             execution_modes=[
@@ -63,6 +74,18 @@ class WorkerConfig:
             work_dir=os.environ.get("MESH_WORK_DIR", "/tmp/mesh-tasks"),
             task_timeout=int(os.environ.get("MESH_TASK_TIMEOUT_S", "1800")),
         )
+
+    def registration_capabilities(self) -> list[str]:
+        """Capabilities sent to router during register (with optional account allowlist)."""
+        caps = list(self.capabilities)
+        if self.allowed_accounts:
+            for account in self.allowed_accounts:
+                if account == "*":
+                    caps.append("account:*")
+                else:
+                    caps.append(f"account:{account}")
+        # Preserve order, drop duplicates
+        return list(dict.fromkeys(caps))
 
 
 class MeshWorker:
@@ -99,7 +122,7 @@ class MeshWorker:
             "machine": os.environ.get("HOSTNAME", "unknown"),
             "cli_type": self.config.cli_type,
             "account_profile": self.config.account_profile,
-            "capabilities": self.config.capabilities,
+            "capabilities": self.config.registration_capabilities(),
             "execution_modes": self.config.execution_modes,
             "status": "idle",
             "concurrency": 1,
@@ -201,6 +224,7 @@ class MeshWorker:
         payload = task.get("payload", {})
         prompt = payload.get("prompt", "")
         execution_mode = str(task.get("execution_mode", "batch")).strip() or "batch"
+        target_account = str(task.get("target_account") or self.config.account_profile).strip() or self.config.account_profile
 
         logger.info("Executing task %s: %s", task_id, task.get("title", "untitled"))
 
@@ -220,10 +244,16 @@ class MeshWorker:
                 self._report_failure(task_id, "missing payload.prompt")
                 return
 
-            # Build command — shlex.split tokenizes multi-word commands
-            # e.g. "ccs {account_profile}" → ["ccs", "work"]
-            cmd_base = self.config.cli_command.replace(
-                "{account_profile}", self.config.account_profile
+            # Build command — shlex.split tokenizes multi-word commands.
+            # Placeholder resolution:
+            # - {target_account}: account requested by current task
+            # - {account_profile}: alias of task account (for backward compatibility)
+            # - {worker_account_profile}: static worker registration profile
+            cmd_base = (
+                self.config.cli_command
+                .replace("{target_account}", target_account)
+                .replace("{account_profile}", target_account)
+                .replace("{worker_account_profile}", self.config.account_profile)
             )
             cmd_parts = shlex.split(cmd_base)
             full_cmd = cmd_parts + ["--print", "-p", prompt]
@@ -261,9 +291,10 @@ class MeshWorker:
             self._report_failure(task_id, f"timeout after {self.config.task_timeout}s")
         except FileNotFoundError:
             cmd_name = shlex.split(
-                self.config.cli_command.replace(
-                    "{account_profile}", self.config.account_profile
-                )
+                self.config.cli_command
+                .replace("{target_account}", target_account)
+                .replace("{account_profile}", target_account)
+                .replace("{worker_account_profile}", self.config.account_profile)
             )[0]
             self._report_failure(task_id, f"command not found: {cmd_name}")
         except Exception as e:

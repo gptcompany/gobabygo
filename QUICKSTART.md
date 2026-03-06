@@ -70,6 +70,9 @@ python -m src.router.worker_client
 ```
 
 The worker registers itself, then long-polls `/tasks/next` waiting for work.
+Account routing matches by:
+- exact `MESH_ACCOUNT_PROFILE == task.target_account`
+- or capability allowlist from `MESH_ALLOWED_ACCOUNTS` (`account:<name>` / `account:*`).
 
 ## 2b. Start an Interactive Session Worker (Claude/Codex)
 
@@ -243,7 +246,8 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 | `MESH_WORKER_ID` | `ws-unknown-01` | Unique worker identifier |
 | `MESH_ROUTER_URL` | `http://localhost:8780` | Router URL (worker + meshctl) |
 | `MESH_CLI_TYPE` | `claude` | Worker CLI type: `claude\|codex\|gemini` |
-| `MESH_ACCOUNT_PROFILE` | `work` | Account profile for task matching |
+| `MESH_ACCOUNT_PROFILE` | `work` | Worker default account/profile identifier (still valid for exact-match routing) |
+| `MESH_ALLOWED_ACCOUNTS` | `""` | Optional CSV allowlist published as capabilities (`foo,bar,*` -> `account:foo`, `account:bar`, `account:*`) for dynamic target account routing |
 | `MESH_LONGPOLL_TIMEOUT_S` | `25` | Long-poll block duration (seconds) |
 | `MESH_DEFAULT_EXECUTION_MODE` | `batch` | Router code default when task omits execution mode (`batch\|session`). Deploy template sets `session` in `deploy/mesh-router.env`. |
 | `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | Router code default. If `1`, session tasks may fallback to batch workers when no session worker is available. Deploy template keeps `0` for session-first hard mode. |

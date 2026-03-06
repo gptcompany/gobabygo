@@ -139,6 +139,8 @@ class TestWorkerConfig:
             "MESH_ACCOUNT_PROFILE": "clientA",
             "MESH_AUTH_TOKEN": "tok-123",
             "MESH_EXECUTION_MODES": "session,batch",
+            "MESH_CAPABILITIES": "code,review",
+            "MESH_ALLOWED_ACCOUNTS": "clientA,clientB,*",
         }
         with patch.dict(os.environ, env):
             config = WorkerConfig.from_env()
@@ -148,6 +150,19 @@ class TestWorkerConfig:
             assert config.account_profile == "clientA"
             assert config.auth_token == "tok-123"
             assert config.execution_modes == ["session", "batch"]
+            assert config.capabilities == ["code", "review"]
+            assert config.allowed_accounts == ["clientA", "clientB", "*"]
+
+    def test_registration_capabilities_includes_allowed_accounts(self):
+        config = WorkerConfig(
+            capabilities=["code"],
+            allowed_accounts=["clientA", "*", "clientA"],
+        )
+        caps = config.registration_capabilities()
+        assert "code" in caps
+        assert "account:clientA" in caps
+        assert "account:*" in caps
+        assert caps.count("account:clientA") == 1
 
 
 class TestMeshWorkerRegistration:
@@ -157,6 +172,8 @@ class TestMeshWorkerRegistration:
             router_url=mock_router,
             cli_type="claude",
             account_profile="work",
+            capabilities=["code"],
+            allowed_accounts=["work", "review-codex"],
         )
         worker = MeshWorker(config)
         worker._register()
@@ -168,6 +185,8 @@ class TestMeshWorkerRegistration:
         assert call["account_profile"] == "work"
         assert call["execution_modes"] == ["batch"]
         assert call["status"] == "idle"
+        assert "account:work" in call["capabilities"]
+        assert "account:review-codex" in call["capabilities"]
 
     def test_register_includes_auth_header(self, mock_router):
         config = WorkerConfig(
@@ -704,6 +723,38 @@ class TestCLIExecution:
         output = MockRouterHandler.complete_calls[0].get("result", {}).get("output", "")
         assert "ccs" in output
         assert "work" in output
+
+    def test_cli_command_interpolation_uses_task_target_account(self, mock_router):
+        """{target_account} must resolve from task (not static worker profile)."""
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-target-account",
+            "title": "target account interpolation",
+            "target_account": "review-codex",
+            "payload": {"prompt": "Hello"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            cli_command="ccs {target_account} --worker {worker_account_profile}",
+            account_profile="work-claude",
+            dry_run=True,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.complete_calls) == 1
+        output = MockRouterHandler.complete_calls[0].get("result", {}).get("output", "")
+        assert "review-codex" in output
+        assert "work-claude" in output
 
     @patch("src.router.worker_client.subprocess.run")
     def test_multiword_command_tokenized(self, mock_run, mock_router):

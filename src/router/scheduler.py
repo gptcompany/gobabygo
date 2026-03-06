@@ -1,7 +1,7 @@
 """Deterministic task scheduler with TOCTOU-safe dispatch.
 
 Routes queued tasks to idle workers using strict selection order:
-target_cli -> target_account -> longest idle (idle_since ASC).
+target_cli -> target_account capability/profile -> longest idle (idle_since ASC).
 
 Uses direct CAS + event insert for compound operations that need
 multiple state changes in a single transaction (dispatch, complete, fail).
@@ -72,7 +72,7 @@ class Scheduler:
             w
             for w in idle_workers
             if w.cli_type == task.target_cli
-            and w.account_profile == task.target_account
+            and self._worker_matches_account(w, task.target_account)
             and task_mode in (w.execution_modes or ["batch"])
         ]
         eligible = self._apply_topology_filter(task, eligible)
@@ -86,7 +86,7 @@ class Scheduler:
                 w
                 for w in idle_workers
                 if w.cli_type == task.target_cli
-                and w.account_profile == task.target_account
+                and self._worker_matches_account(w, task.target_account)
                 and "batch" in (w.execution_modes or ["batch"])
             ]
             fallback = self._apply_topology_filter(task, fallback)
@@ -101,6 +101,25 @@ class Scheduler:
             return self._sort_by_idle(fallback)
 
         return []
+
+    @staticmethod
+    def _worker_matches_account(worker: Worker, target_account: str) -> bool:
+        """Return True when worker can execute tasks for target_account.
+
+        Compatibility order:
+        1) exact profile match
+        2) explicit capability allowlist: account:<name>
+        3) wildcard capability: account:*
+        """
+        if worker.account_profile == target_account:
+            return True
+
+        caps = set(worker.capabilities or [])
+        if f"account:{target_account}" in caps:
+            return True
+        if "account:*" in caps:
+            return True
+        return False
 
     def _apply_topology_filter(self, task: Task, workers: list[Worker]) -> list[Worker]:
         """Restrict workers to repo-specific pool when topology provides one."""

@@ -37,6 +37,8 @@ def test_session_worker_config_from_env() -> None:
         "MESH_AUTH_TOKEN": "tok-123",
         "MESH_EXECUTION_MODES": "session",
         "MESH_CLI_COMMAND": "claude",
+        "MESH_CAPABILITIES": "interactive,code",
+        "MESH_ALLOWED_ACCOUNTS": "work-claude,review-codex,*",
         "MESH_SESSION_POLL_INTERVAL_S": "0.5",
         "MESH_TMUX_SESSION_PREFIX": "meshx",
     }
@@ -49,8 +51,22 @@ def test_session_worker_config_from_env() -> None:
     assert cfg.auth_token == "tok-123"
     assert cfg.execution_modes == ["session"]
     assert cfg.cli_command == "claude"
+    assert cfg.capabilities == ["interactive", "code"]
+    assert cfg.allowed_accounts == ["work-claude", "review-codex", "*"]
     assert cfg.session_poll_interval_s == 0.5
     assert cfg.tmux_session_prefix == "meshx"
+
+
+def test_session_worker_registration_capabilities_with_allowed_accounts() -> None:
+    cfg = SessionWorkerConfig(
+        capabilities=["interactive"],
+        allowed_accounts=["work-claude", "*", "work-claude"],
+    )
+    caps = cfg.registration_capabilities()
+    assert "interactive" in caps
+    assert "account:work-claude" in caps
+    assert "account:*" in caps
+    assert caps.count("account:work-claude") == 1
 
 
 def test_compute_output_emit_delta() -> None:
@@ -352,7 +368,7 @@ class TestOpenSessionMetadata:
         task = {"task_id": "t-abc", "title": "test task"}
         attach_meta = {"attach_kind": "upterm", "attach_target": "ssh://tok@host:22"}
 
-        sid = worker._open_session(task, "mesh-sess", "/tmp/work", attach_meta)
+        sid = worker._open_session(task, "mesh-sess", "/tmp/work", "review-codex", attach_meta)
 
         assert sid == "s-123"
         posted = worker._http.post.call_args
@@ -363,6 +379,7 @@ class TestOpenSessionMetadata:
         assert meta["task_title"] == "test task"
         assert meta["attach_kind"] == "upterm"
         assert meta["attach_target"] == "ssh://tok@host:22"
+        assert body["account_profile"] == "review-codex"
 
     def test_metadata_without_attach(self) -> None:
         worker = _make_worker()
@@ -373,7 +390,7 @@ class TestOpenSessionMetadata:
 
         task = {"task_id": "t-def", "title": "no attach"}
 
-        sid = worker._open_session(task, "mesh-sess", "/tmp/work", None)
+        sid = worker._open_session(task, "mesh-sess", "/tmp/work", "work-claude", None)
 
         assert sid == "s-456"
         posted = worker._http.post.call_args
@@ -384,6 +401,7 @@ class TestOpenSessionMetadata:
         # Core fields still present
         assert meta["tmux_session"] == "mesh-sess"
         assert meta["working_dir"] == "/tmp/work"
+        assert body["account_profile"] == "work-claude"
 
 
 # ---------------------------------------------------------------------------
