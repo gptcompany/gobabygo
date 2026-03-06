@@ -27,16 +27,21 @@ _mesh_resolve_home() {
     printf '%s' "${MESH_HOME}"
     return 0
   fi
-  if [[ -d "$HOME/gobabygo/scripts" ]]; then
-    printf '%s' "$HOME/gobabygo"
-    return 0
-  fi
   if [[ -d "/media/sam/1TB/gobabygo/scripts" ]]; then
     printf '%s' "/media/sam/1TB/gobabygo"
     return 0
   fi
+  if [[ -d "$HOME/gobabygo/scripts" ]]; then
+    printf '%s' "$HOME/gobabygo"
+    return 0
+  fi
   return 1
 }
+
+# Prefer explicit MESH_HOME, otherwise pin to 1TB workspace when available.
+if [[ -z "${MESH_HOME:-}" && -d "/media/sam/1TB/gobabygo/scripts" ]]; then
+  export MESH_HOME="/media/sam/1TB/gobabygo"
+fi
 
 lfcd() {
   command -v lf >/dev/null 2>&1 || { echo "lf not found"; return 127; }
