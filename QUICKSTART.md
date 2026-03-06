@@ -35,6 +35,27 @@ Token bootstrap helper (router + workers + local operator env):
   --router-url http://10.0.0.1:8780
 ```
 
+iTerm2 auto-start (Mac `.112`, optional):
+
+1. Create dotenv file for operator shell (`~/.mesh/.env.mesh`):
+
+```bash
+mkdir -p ~/.mesh
+cat > ~/.mesh/.env.mesh <<'EOF'
+MESH_ROUTER_URL=http://10.0.0.1:8780
+MESH_AUTH_TOKEN=REPLACE_WITH_REAL_TOKEN
+EOF
+chmod 600 ~/.mesh/.env.mesh
+```
+
+2. In iTerm2 profile settings: General -> Command -> Command:
+
+```bash
+/media/sam/1TB/gobabygo/scripts/iterm-mesh-shell.sh
+```
+
+Every new tab in that profile opens in `gobabygo` with mesh env loaded.
+
 Note: repository deploy templates already enable this policy in
 `deploy/mesh-router.env` (`MESH_DEFAULT_EXECUTION_MODE=session`,
 `MESH_SESSION_FALLBACK_TO_BATCH=0`, `MESH_ENFORCE_SESSION_ONLY=1`).
