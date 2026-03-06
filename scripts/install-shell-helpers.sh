@@ -98,26 +98,14 @@ wss() {
     fi
     return 1
   }
-  mesh_home="$(_mesh_resolve_home || true)"
-  ws_script="${mesh_home}/scripts/ws"
-  if [[ -x "$ws_script" ]]; then
-    command "$ws_script" "$@"
-    return $?
-  fi
-
   ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
-  if [[ $# -eq 0 ]]; then
-    if _is_local_ws_host "$ws_host"; then
-      exec "${SHELL:-/bin/bash}" -l
-    fi
-    command ssh "$ws_host"
-    return $?
-  fi
-
-  repo="$1"
-  target_dir="${repo_base}/${repo}"
   if _is_local_ws_host "$ws_host"; then
+    if [[ $# -eq 0 ]]; then
+      return 0
+    fi
+    repo="$1"
+    target_dir="${repo_base}/${repo}"
     if [[ -d "$target_dir" ]]; then
       builtin cd -- "$target_dir"
     else
@@ -126,6 +114,21 @@ wss() {
     fi
     return $?
   fi
+
+  mesh_home="$(_mesh_resolve_home || true)"
+  ws_script="${mesh_home}/scripts/ws"
+  if [[ -x "$ws_script" ]]; then
+    command "$ws_script" "$@"
+    return $?
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    command ssh "$ws_host"
+    return $?
+  fi
+
+  repo="$1"
+  target_dir="${repo_base}/${repo}"
   command ssh -t "$ws_host" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[wss] missing repo: $target_dir'; cd '$repo_base'; fi; exec \$SHELL -l"
 }
 
