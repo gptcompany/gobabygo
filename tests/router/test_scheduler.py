@@ -225,6 +225,18 @@ class TestDispatch:
         result = sched.dispatch()
         assert result is None
 
+    def test_head_of_line_blocking_is_avoided(self, sched, db):
+        """A non-dispatchable queued task must not block later dispatchable tasks."""
+        _add_worker(db, "w1", "work", cli=CLIType.claude)
+        # First task cannot be dispatched (account mismatch).
+        _add_task(db, "t1", target_account="missing-account")
+        # Second task is dispatchable.
+        _add_task(db, "t2", target_account="work")
+
+        result = sched.dispatch()
+        assert result is not None
+        assert result.task.task_id == "t2"
+
     def test_cas_failure_worker_busy(self, sched, db, monkeypatch: pytest.MonkeyPatch):
         _add_worker(db, "w1", "work")
         task = _add_task(db, "t1")

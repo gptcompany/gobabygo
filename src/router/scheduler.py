@@ -150,19 +150,31 @@ class Scheduler:
         return None
 
     def dispatch(self) -> DispatchResult | None:
-        """Dispatch a queued task to an idle worker."""
-        task = self.find_next_task()
-        if task is None:
-            return None
+        """Dispatch the first schedulable queued task that has an eligible worker.
 
-        candidates = self.find_all_eligible_workers(task)
-        if not candidates:
-            return None
+        Important behavior:
+        - Do not block the whole queue behind a single non-dispatchable task.
+        - Iterate queued tasks in deterministic order and dispatch the first
+          one with at least one eligible worker.
+        """
+        now = _utc_now()
+        queued = self._db.list_queued_tasks()
+        for task in queued:
+            if task.not_before and task.not_before > now:
+                continue
+            if task.depends_on:
+                resolved, _ = check_dependencies(self._db, task.task_id)
+                if not resolved:
+                    continue
 
-        for candidate in candidates:
-            result = self._try_dispatch(task, candidate)
-            if result is not None:
-                return result
+            candidates = self.find_all_eligible_workers(task)
+            if not candidates:
+                continue
+
+            for candidate in candidates:
+                result = self._try_dispatch(task, candidate)
+                if result is not None:
+                    return result
 
         return None
 
