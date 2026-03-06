@@ -68,10 +68,10 @@ sudo systemctl stop mesh-worker@claude-work
 sudo systemctl status mesh-worker@claude-work
 journalctl -u mesh-worker@claude-work -f
 
-# All workers
+# Batch workers (optional fallback only)
 sudo systemctl start mesh-worker@claude-work mesh-worker@codex-work mesh-worker@gemini-work
 
-# Interactive session workers (tmux-backed)
+# Interactive session workers (tmux-backed, primary)
 sudo systemctl start mesh-session-worker@mesh-session-claude-work
 sudo systemctl start mesh-session-worker@mesh-session-codex-work
 

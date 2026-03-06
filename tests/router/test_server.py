@@ -401,6 +401,99 @@ class TestDefaultExecutionMode:
 
         server.shutdown()
 
+    def test_create_task_rejects_batch_when_session_only_enabled(self, db):
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 0.1,
+            "default_execution_mode": "session",
+            "enforce_session_only": True,
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+        resp = requests.post(
+            f"{url}/tasks",
+            json={"title": "should fail", "execution_mode": "batch"},
+        )
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["error"] == "session_only_mode"
+
+        server.shutdown()
+
+    def test_add_step_rejects_batch_when_session_only_enabled(self, db):
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 0.1,
+            "default_execution_mode": "session",
+            "enforce_session_only": True,
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+        create_resp = requests.post(f"{url}/threads", json={"name": "session-only-thread"})
+        assert create_resp.status_code == 201
+        thread_id = create_resp.json()["thread_id"]
+
+        step_resp = requests.post(
+            f"{url}/threads/{thread_id}/steps",
+            json={
+                "title": "batch step",
+                "step_index": 0,
+                "target_cli": "claude",
+                "target_account": "work-claude",
+                "execution_mode": "batch",
+            },
+        )
+        assert step_resp.status_code == 400
+        assert step_resp.json()["error"] == "session_only_mode"
+
+        server.shutdown()
+
 
 class TestTaskPollLongPoll:
     """Tests for long-poll specific behavior through the server."""
@@ -1621,6 +1714,106 @@ class TestSessionBusEndpoints:
         # Session open should persist linkage when task_id is provided.
         assert refreshed_task is not None
         assert refreshed_task.session_id == session_id
+
+    def test_session_control_endpoints_append_control_messages(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+        task = Task(
+            title="Interactive task controls",
+            phase="implement",
+            target_cli="claude",
+            target_account="work",
+            execution_mode="session",
+            idempotency_key="session-bus-controls-1",
+        )
+        db.insert_task(task)
+
+        open_resp = requests.post(
+            f"{server_url}/sessions/open",
+            json={
+                "worker_id": "w1",
+                "cli_type": "claude",
+                "account_profile": "work",
+                "task_id": task.task_id,
+                "metadata": {"tmux_session": "mesh-claude-test"},
+            },
+        )
+        assert open_resp.status_code == 201
+        session_id = open_resp.json()["session"]["session_id"]
+
+        send_key = requests.post(
+            f"{server_url}/sessions/send-key",
+            json={"session_id": session_id, "key": "Up", "repeat": 2},
+        )
+        assert send_key.status_code == 201
+        assert send_key.json()["control"] == "send_key"
+
+        resize = requests.post(
+            f"{server_url}/sessions/resize",
+            json={"session_id": session_id, "cols": 120, "rows": 40},
+        )
+        assert resize.status_code == 201
+        assert resize.json()["control"] == "resize"
+
+        signal_resp = requests.post(
+            f"{server_url}/sessions/signal",
+            json={"session_id": session_id, "signal": "interrupt"},
+        )
+        assert signal_resp.status_code == 201
+        assert signal_resp.json()["control"] == "signal"
+
+        msg_resp = requests.get(
+            f"{server_url}/sessions/messages",
+            params={"session_id": session_id, "after_seq": 0},
+        )
+        assert msg_resp.status_code == 200
+        controls = [m.get("metadata", {}).get("control") for m in msg_resp.json()["messages"]]
+        assert controls == ["send_key", "resize", "signal"]
+
+    def test_session_control_endpoints_validate_payloads(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="idle")
+        db.insert_worker(worker)
+        task = Task(
+            title="Interactive task controls invalid",
+            phase="implement",
+            target_cli="claude",
+            target_account="work",
+            execution_mode="session",
+            idempotency_key="session-bus-controls-2",
+        )
+        db.insert_task(task)
+        open_resp = requests.post(
+            f"{server_url}/sessions/open",
+            json={
+                "worker_id": "w1",
+                "cli_type": "claude",
+                "account_profile": "work",
+                "task_id": task.task_id,
+                "metadata": {"tmux_session": "mesh-claude-test"},
+            },
+        )
+        session_id = open_resp.json()["session"]["session_id"]
+
+        bad_repeat = requests.post(
+            f"{server_url}/sessions/send-key",
+            json={"session_id": session_id, "key": "Up", "repeat": 0},
+        )
+        assert bad_repeat.status_code == 400
+        assert bad_repeat.json()["error"] == "invalid_repeat"
+
+        bad_resize = requests.post(
+            f"{server_url}/sessions/resize",
+            json={"session_id": session_id, "cols": 10, "rows": 2},
+        )
+        assert bad_resize.status_code == 400
+        assert bad_resize.json()["error"] == "invalid_resize"
+
+        bad_signal = requests.post(
+            f"{server_url}/sessions/signal",
+            json={"session_id": session_id, "signal": "stop"},
+        )
+        assert bad_signal.status_code == 400
+        assert bad_signal.json()["error"] == "invalid_signal"
 
 
 class TestNotificationLedgerEndpoints:

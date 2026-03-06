@@ -623,10 +623,83 @@ class TestDeliverInboundMessages:
             "messages": [{"seq": 1, "direction": "in", "content": "msg"}]
         }
         worker._http.get.return_value = mock_resp
-        
+
         with patch.object(worker, "_tmux_send_text", side_effect=subprocess.SubprocessError("fail")):
             new_seq = worker._deliver_inbound_messages("sid", "tsess", 0)
             assert new_seq == 1 # still advanced
+
+    def test_deliver_send_key_control(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "messages": [
+                {
+                    "seq": 2,
+                    "direction": "in",
+                    "content": "",
+                    "metadata": {"control": "send_key", "key": "Up", "repeat": 3},
+                }
+            ]
+        }
+        worker._http.get.return_value = mock_resp
+
+        with patch.object(worker, "_tmux_send_key") as mock_send_key:
+            new_seq = worker._deliver_inbound_messages("sid", "tsess", 1)
+            assert new_seq == 2
+            mock_send_key.assert_called_once_with("tsess", "Up", repeat=3)
+
+    def test_deliver_resize_control(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "messages": [
+                {
+                    "seq": 3,
+                    "direction": "in",
+                    "content": "",
+                    "metadata": {"control": "resize", "cols": 120, "rows": 40},
+                }
+            ]
+        }
+        worker._http.get.return_value = mock_resp
+
+        with patch.object(worker, "_tmux_resize") as mock_resize:
+            new_seq = worker._deliver_inbound_messages("sid", "tsess", 2)
+            assert new_seq == 3
+            mock_resize.assert_called_once_with("tsess", cols=120, rows=40)
+
+    def test_deliver_signal_controls(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "messages": [
+                {
+                    "seq": 4,
+                    "direction": "in",
+                    "content": "",
+                    "metadata": {"control": "signal", "signal": "interrupt"},
+                },
+                {
+                    "seq": 5,
+                    "direction": "in",
+                    "content": "",
+                    "metadata": {"control": "signal", "signal": "terminate"},
+                },
+            ]
+        }
+        worker._http.get.return_value = mock_resp
+
+        with (
+            patch.object(worker, "_tmux_send_key") as mock_send_key,
+            patch.object(worker, "_tmux_kill_session") as mock_kill,
+        ):
+            new_seq = worker._deliver_inbound_messages("sid", "tsess", 3)
+            assert new_seq == 5
+            mock_send_key.assert_called_once_with("tsess", "C-c", repeat=1)
+            mock_kill.assert_called_once_with("tsess")
 
 
 # ---------------------------------------------------------------------------
@@ -656,6 +729,21 @@ class TestTmuxOperations:
         # splitlines() or [text] -> [""] -> 1 iteration -> if line: skip, then Enter
         assert mock_run.call_count == 1
         assert mock_run.call_args[0][0][4] == "Enter"
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_send_key_repeat(self, mock_run: Mock) -> None:
+        worker = _make_worker()
+        worker._tmux_send_key("mysess", "Up", repeat=3)
+        args = mock_run.call_args[0][0]
+        assert args[:4] == [worker.config.tmux_bin, "send-keys", "-t", "mysess:0.0"]
+        assert args[4:] == ["Up", "Up", "Up"]
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_resize(self, mock_run: Mock) -> None:
+        worker = _make_worker()
+        worker._tmux_resize("mysess", cols=140, rows=50)
+        args = mock_run.call_args[0][0]
+        assert args == [worker.config.tmux_bin, "resize-window", "-t", "mysess", "-x", "140", "-y", "50"]
 
     @patch("src.router.session_worker.subprocess.run")
     def test_capture_pane_success(self, mock_run: Mock) -> None:

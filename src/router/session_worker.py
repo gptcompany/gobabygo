@@ -403,6 +403,33 @@ class MeshSessionWorker:
                 text=True,
             )
 
+    def _tmux_send_key(self, session_name: str, key: str, repeat: int = 1) -> None:
+        target = f"{session_name}:0.0"
+        n = max(1, min(50, int(repeat)))
+        subprocess.run(
+            [self.config.tmux_bin, "send-keys", "-t", target, *([key] * n)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _tmux_resize(self, session_name: str, cols: int, rows: int) -> None:
+        subprocess.run(
+            [
+                self.config.tmux_bin,
+                "resize-window",
+                "-t",
+                session_name,
+                "-x",
+                str(int(cols)),
+                "-y",
+                str(int(rows)),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def _tmux_capture_pane(self, session_name: str) -> str:
         target = f"{session_name}:0.0"
         proc = subprocess.run(
@@ -684,13 +711,35 @@ class MeshSessionWorker:
             if msg.get("direction") != "in":
                 continue
             content = str(msg.get("content", ""))
+            metadata = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+            control = str((metadata or {}).get("control", "")).strip().lower()
             # Skip empty inputs to avoid accidental extra Enter spam.
-            if not content:
-                continue
             try:
+                if control == "send_key":
+                    key = str((metadata or {}).get("key", "")).strip()
+                    if key:
+                        repeat = int((metadata or {}).get("repeat", 1))
+                        self._tmux_send_key(tmux_session, key, repeat=repeat)
+                    continue
+                if control == "resize":
+                    cols = int((metadata or {}).get("cols"))
+                    rows = int((metadata or {}).get("rows"))
+                    self._tmux_resize(tmux_session, cols=cols, rows=rows)
+                    continue
+                if control == "signal":
+                    signal_name = str((metadata or {}).get("signal", "")).strip().lower()
+                    if signal_name == "interrupt":
+                        self._tmux_send_key(tmux_session, "C-c", repeat=1)
+                    elif signal_name == "terminate":
+                        self._tmux_kill_session(tmux_session)
+                    continue
+                if not content:
+                    continue
                 self._tmux_send_text(tmux_session, content)
             except subprocess.SubprocessError as e:
                 logger.warning("Failed to deliver message seq=%s to tmux session %s: %s", seq, tmux_session, e)
+            except (TypeError, ValueError) as e:
+                logger.warning("Invalid control payload seq=%s for tmux session %s: %s", seq, tmux_session, e)
         return max_seq
 
 

@@ -129,6 +129,12 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._handle_open_session()
             elif path == "/sessions/send":
                 self._handle_send_session_message()
+            elif path == "/sessions/send-key":
+                self._handle_send_session_key()
+            elif path == "/sessions/resize":
+                self._handle_resize_session()
+            elif path == "/sessions/signal":
+                self._handle_signal_session()
             elif path == "/sessions/close":
                 self._handle_close_session()
             elif path == "/tasks/ack":
@@ -269,6 +275,9 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         default_mode = str(state.get("default_execution_mode", "batch")).strip()
         if "execution_mode" not in data and default_mode in {"batch", "session"}:
             data["execution_mode"] = default_mode
+        if self._enforce_session_only_and_reject_if_needed(data):
+            metrics.tasks_create_errors.labels(reason="session_only").inc()
+            return
 
         try:
             request = TaskCreateRequest(**data)
@@ -693,6 +702,147 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
         self._send_json(201, {"status": "accepted", "seq": seq, "session_id": message.session_id})
 
+    def _append_session_control_message(
+        self,
+        *,
+        session_id: str,
+        control: str,
+        metadata: dict,
+        content: str = "",
+    ) -> bool:
+        """Append a validated control message to an open session."""
+        state = self.server.router_state  # type: ignore[attr-defined]
+        db: RouterDB = state["db"]
+        session = db.get_session(session_id)
+        if session is None:
+            self._send_json(404, {"error": "session_not_found"})
+            return False
+        session_state = session.state.value if hasattr(session.state, "value") else str(session.state)
+        if session_state in {"closed", "errored"}:
+            self._send_json(409, {"error": "session_closed"})
+            return False
+
+        message = SessionMessage(
+            session_id=session_id,
+            direction="in",
+            role="operator",
+            content=content,
+            metadata={"control": control, **metadata},
+        )
+        try:
+            seq = db.append_session_message(message)
+        except sqlite3.IntegrityError:
+            self._send_json(404, {"error": "session_not_found"})
+            return False
+        self._send_json(
+            201,
+            {
+                "status": "accepted",
+                "seq": seq,
+                "session_id": session_id,
+                "control": control,
+            },
+        )
+        return True
+
+    def _handle_send_session_key(self) -> None:
+        """POST /sessions/send-key — send a tmux key event via session bus."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        session_id = str(data.get("session_id", "")).strip()
+        key = str(data.get("key", "")).strip()
+        repeat_raw = data.get("repeat", 1)
+        if not session_id:
+            self._send_json(400, {"error": "missing_session_id"})
+            return
+        if not key:
+            self._send_json(400, {"error": "missing_key"})
+            return
+        try:
+            repeat = int(repeat_raw)
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_repeat"})
+            return
+        if repeat < 1 or repeat > 50:
+            self._send_json(400, {"error": "invalid_repeat"})
+            return
+
+        self._append_session_control_message(
+            session_id=session_id,
+            control="send_key",
+            metadata={"key": key, "repeat": repeat},
+        )
+
+    def _handle_resize_session(self) -> None:
+        """POST /sessions/resize — request tmux window resize via session bus."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        session_id = str(data.get("session_id", "")).strip()
+        if not session_id:
+            self._send_json(400, {"error": "missing_session_id"})
+            return
+        try:
+            cols = int(data.get("cols"))
+            rows = int(data.get("rows"))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_resize"})
+            return
+        if cols < 20 or cols > 500 or rows < 5 or rows > 200:
+            self._send_json(400, {"error": "invalid_resize"})
+            return
+
+        self._append_session_control_message(
+            session_id=session_id,
+            control="resize",
+            metadata={"cols": cols, "rows": rows},
+        )
+
+    def _handle_signal_session(self) -> None:
+        """POST /sessions/signal — request control signal for active session."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+
+        session_id = str(data.get("session_id", "")).strip()
+        signal_name = str(data.get("signal", "")).strip().lower()
+        if not session_id:
+            self._send_json(400, {"error": "missing_session_id"})
+            return
+        if signal_name not in {"interrupt", "terminate"}:
+            self._send_json(400, {"error": "invalid_signal"})
+            return
+
+        self._append_session_control_message(
+            session_id=session_id,
+            control="signal",
+            metadata={"signal": signal_name},
+        )
+
     def _handle_close_session(self) -> None:
         """POST /sessions/close — mark a session as closed/errored."""
         if not self._check_auth():
@@ -1068,6 +1218,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         default_mode = str(state.get("default_execution_mode", "batch")).strip()
         if "execution_mode" not in data and default_mode in {"batch", "session"}:
             data["execution_mode"] = default_mode
+        if self._enforce_session_only_and_reject_if_needed(data):
+            return
 
         try:
             step_request = ThreadStepRequest(**data)
@@ -1121,6 +1273,25 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             return True
         self._send_json(401, {"error": "unauthorized"})
         return False
+
+    def _enforce_session_only_and_reject_if_needed(self, data: dict) -> bool:
+        """Reject non-session tasks/steps when session-only mode is enabled."""
+        state = self.server.router_state  # type: ignore[attr-defined]
+        enforce = bool(state.get("enforce_session_only", False))
+        if not enforce:
+            return False
+        mode = str(data.get("execution_mode", "batch")).strip() or "batch"
+        if mode == "session":
+            return False
+        self._send_json(
+            400,
+            {
+                "error": "session_only_mode",
+                "detail": "execution_mode must be 'session' when MESH_ENFORCE_SESSION_ONLY=1",
+                "execution_mode": mode,
+            },
+        )
+        return True
 
     def _read_body(self) -> str | None:
         """Read request body. Returns None on error (already sent response)."""
@@ -1194,6 +1365,7 @@ def run_server(
         logger.warning("Invalid MESH_DEFAULT_EXECUTION_MODE=%r, using 'batch'", default_execution_mode)
         default_execution_mode = "batch"
     session_fallback_to_batch = os.environ.get("MESH_SESSION_FALLBACK_TO_BATCH", "").strip() == "1"
+    enforce_session_only = os.environ.get("MESH_ENFORCE_SESSION_ONLY", "").strip().lower() in {"1", "true", "yes"}
     scheduler = Scheduler(
         db,
         longpoll_registry=longpoll_registry,
@@ -1233,6 +1405,7 @@ def run_server(
         "longpoll_timeout": longpoll_timeout,
         "default_execution_mode": default_execution_mode,
         "session_fallback_to_batch": session_fallback_to_batch,
+        "enforce_session_only": enforce_session_only,
         "auth_token": auth_token,
         "start_time": start_time,
         "topology": topology,

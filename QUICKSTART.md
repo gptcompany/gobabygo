@@ -19,7 +19,8 @@ Session-first routing policy (optional):
 
 ```bash
 MESH_DEFAULT_EXECUTION_MODE=session
-MESH_SESSION_FALLBACK_TO_BATCH=1   # only fallback session->batch when no session worker is available
+MESH_SESSION_FALLBACK_TO_BATCH=0   # session-first hard (no batch fallback)
+MESH_ENFORCE_SESSION_ONLY=1        # reject batch tasks/steps at API level
 ```
 
 With `MESH_DEFAULT_EXECUTION_MODE=session`, tasks created without explicit `execution_mode`
@@ -27,7 +28,7 @@ default to interactive session workers.
 
 Note: repository deploy templates already enable this policy in
 `deploy/mesh-router.env` (`MESH_DEFAULT_EXECUTION_MODE=session`,
-`MESH_SESSION_FALLBACK_TO_BATCH=1`).
+`MESH_SESSION_FALLBACK_TO_BATCH=0`, `MESH_ENFORCE_SESSION_ONLY=1`).
 
 ## 2. Start a Worker
 
@@ -111,6 +112,24 @@ db.insert_task(task)
 
 The scheduler dispatches it to the next eligible idle worker.
 
+Who executes commands in mesh:
+- `BOSS` (human operator): starts orchestration (`meshctl pipeline create`, manual task/thread API calls).
+- `PRESIDENT` (logical coordinator): authors/supervises interactive prompts inside session workflows.
+- `session workers`: execute CLI commands in tmux/upterm for `execution_mode=session`.
+- `review worker`: approves/rejects critical tasks in `review` state.
+
+Pipeline orchestration example (from BOSS terminal):
+
+```bash
+python -m src.meshctl pipeline create \
+  --template gsd \
+  --thread-name "gsd-phase-17" \
+  --repo /media/sam/1TB/gobabygo \
+  --phase 17 \
+  --project "AI Mesh Router" \
+  --feature "session-first hard mode"
+```
+
 Interactive task example (`execution_mode=session`):
 
 ```bash
@@ -151,6 +170,22 @@ curl -s -X POST http://localhost:8780/tasks/review/reject \
   -d '{"task_id":"<TASK_ID>","verifier_id":"review-codex","reason":"missing tests"}'
 ```
 
+Session control API examples (PTY bridge via bus):
+
+```bash
+curl -s -X POST http://localhost:8780/sessions/send-key \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<SESSION_ID>","key":"Up","repeat":1}'
+
+curl -s -X POST http://localhost:8780/sessions/resize \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<SESSION_ID>","cols":120,"rows":40}'
+
+curl -s -X POST http://localhost:8780/sessions/signal \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"<SESSION_ID>","signal":"interrupt"}'
+```
+
 ## 5. Run the Smoke Test
 
 ```bash
@@ -174,7 +209,8 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 | `MESH_ACCOUNT_PROFILE` | `work` | Account profile for task matching |
 | `MESH_LONGPOLL_TIMEOUT_S` | `25` | Long-poll block duration (seconds) |
 | `MESH_DEFAULT_EXECUTION_MODE` | `batch` | Router code default when task omits execution mode (`batch\|session`). Deploy template sets `session` in `deploy/mesh-router.env`. |
-| `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | Router code default. If `1`, session tasks may fallback to batch workers when no session worker is available. Deploy template sets `1` in `deploy/mesh-router.env`. |
+| `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | Router code default. If `1`, session tasks may fallback to batch workers when no session worker is available. Deploy template keeps `0` for session-first hard mode. |
+| `MESH_ENFORCE_SESSION_ONLY` | `0` | If `1`, router rejects any task/step with `execution_mode != session` (`400 session_only_mode`). Deploy template sets `1`. |
 | `MESH_REVIEWER_ID` | `verifier-codex` | Verifier identity written to review events |
 | `MESH_REVIEW_CLI_COMMAND` | `ccs codex --effort xhigh` | CLI command used by `review_worker` |
 | `MESH_REVIEW_POLL_INTERVAL_S` | `8` | Review worker polling interval |

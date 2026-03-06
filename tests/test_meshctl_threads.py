@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.meshctl import (
+    cmd_pipeline_create,
     cmd_thread_add_step,
     cmd_thread_context,
     cmd_thread_create,
@@ -66,6 +68,38 @@ def _thread_status_args(thread: str = "thread-123", json_output: bool = False) -
 
 def _thread_context_args(thread: str = "thread-123") -> argparse.Namespace:
     return argparse.Namespace(command="thread", thread_command="context", thread=thread)
+
+
+def _pipeline_create_args(
+    template: str = "gsd",
+    thread_name: str = "pipeline-demo",
+    repo: str = "/tmp/repo",
+    phase: str = "17",
+    project: str = "Demo Project",
+    feature: str = "Feature X",
+    template_file: str = "/tmp/pipeline_templates.yaml",
+    account_claude: str = "work-claude",
+    account_codex: str = "work-codex",
+    account_gemini: str = "work-gemini",
+    dry_run: bool = False,
+    json_output: bool = False,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="pipeline",
+        pipeline_command="create",
+        template=template,
+        thread_name=thread_name,
+        repo=repo,
+        phase=phase,
+        project=project,
+        feature=feature,
+        template_file=template_file,
+        account_claude=account_claude,
+        account_codex=account_codex,
+        account_gemini=account_gemini,
+        dry_run=dry_run,
+        json_output=json_output,
+    )
 
 
 class TestThreadCommands:
@@ -176,6 +210,150 @@ class TestThreadCommands:
             cmd_thread_context(_thread_context_args(thread="ambiguous"))
         err = capsys.readouterr().err
         assert "Ambiguous" in err
+
+
+class TestPipelineCommands:
+    @patch("src.meshctl.requests.post")
+    def test_pipeline_create_dry_run(
+        self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text(
+            """version: 1
+templates:
+  gsd:
+    steps:
+      - name: gsd:plan-phase
+        title: "Plan {phase}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        critical: true
+        on_failure: abort
+        review_policy: codex_review
+        prompt: "Run /gsd:plan-phase {phase} in {repo}"
+""",
+            encoding="utf-8",
+        )
+        args = _pipeline_create_args(
+            dry_run=True,
+            template_file=str(template_file),
+            phase="5",
+            repo="/repo/demo",
+        )
+        cmd_pipeline_create(args)
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert data["template"] == "gsd"
+        assert data["steps"][0]["execution_mode"] == "session"
+        assert data["steps"][0]["critical"] is True
+        assert "Run /gsd:plan-phase 5 in /repo/demo" in data["steps"][0]["prompt"]
+        mock_post.assert_not_called()
+
+    @patch("src.meshctl.requests.post")
+    def test_pipeline_create_success_maps_dependency_to_task_id(
+        self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text(
+            """version: 1
+templates:
+  gsd:
+    steps:
+      - name: step-a
+        title: "A"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        critical: true
+        on_failure: abort
+        review_policy: codex_review
+        prompt: "Prompt A {repo}"
+      - name: step-b
+        title: "B"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: batch
+        critical: false
+        on_failure: retry
+        depends_on_steps: [0]
+        review_policy: none
+        prompt: "Prompt B {repo}"
+""",
+            encoding="utf-8",
+        )
+
+        mock_post.side_effect = [
+            _mock_response(201, {"thread_id": "t-1"}),
+            _mock_response(201, {"task_id": "task-1"}),
+            _mock_response(201, {"task_id": "task-2"}),
+        ]
+        args = _pipeline_create_args(
+            template_file=str(template_file),
+            repo="/repo/demo",
+            thread_name="pipeline-1",
+        )
+        cmd_pipeline_create(args)
+        out = capsys.readouterr().out
+        assert "Pipeline thread created: t-1 (pipeline-1)" in out
+
+        # 1) create thread
+        create_thread_call = mock_post.call_args_list[0]
+        assert create_thread_call.kwargs["json"] == {"name": "pipeline-1"}
+
+        # 2) first step carries execution_mode/critical
+        step_a_call = mock_post.call_args_list[1]
+        step_a_body = step_a_call.kwargs["json"]
+        assert step_a_body["step_index"] == 0
+        assert step_a_body["execution_mode"] == "session"
+        assert step_a_body["critical"] is True
+
+        # 3) second step depends on first created task id
+        step_b_call = mock_post.call_args_list[2]
+        step_b_body = step_b_call.kwargs["json"]
+        assert step_b_body["step_index"] == 1
+        assert step_b_body["depends_on"] == ["task-1"]
+        assert step_b_body["on_failure"] == "retry"
+
+    def test_pipeline_create_unknown_template_exits(
+        self, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text("version: 1\ntemplates:\n  gsd: {steps: []}\n", encoding="utf-8")
+        with pytest.raises(SystemExit):
+            cmd_pipeline_create(_pipeline_create_args(template="speckit", template_file=str(template_file)))
+        err = capsys.readouterr().err
+        assert "unknown template" in err
+
+    @patch.dict(os.environ, {"MESH_ENFORCE_SESSION_ONLY": "1"}, clear=False)
+    @patch("src.meshctl.requests.post")
+    def test_pipeline_create_respects_session_only_env(
+        self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text(
+            """version: 1
+templates:
+  gsd:
+    steps:
+      - name: step-batch
+        title: "B"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: batch
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Prompt {repo}"
+""",
+            encoding="utf-8",
+        )
+        args = _pipeline_create_args(dry_run=True, template_file=str(template_file))
+        cmd_pipeline_create(args)
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert data["policy"]["enforce_session_only"] is True
+        assert data["steps"][0]["execution_mode"] == "session"
 
 
 # -- Handoff tests (Phase 20) --

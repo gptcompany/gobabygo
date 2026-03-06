@@ -13,8 +13,10 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
+import yaml
 
 # ---------------------------------------------------------------------------
 # Configuration helpers
@@ -333,6 +335,323 @@ def cmd_submit(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Pipeline commands
+# ---------------------------------------------------------------------------
+
+
+def _default_pipeline_template_file() -> Path:
+    """Default YAML path for pipeline templates."""
+    return Path(__file__).resolve().parent.parent / "mapping" / "pipeline_templates.yaml"
+
+
+def _load_pipeline_templates(path: str) -> dict:
+    """Load pipeline templates YAML from disk."""
+    file_path = Path(path).expanduser()
+    if not file_path.exists():
+        raise FileNotFoundError(f"Template file not found: {file_path}")
+    with file_path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError("Template YAML root must be a mapping")
+    templates = data.get("templates")
+    if not isinstance(templates, dict):
+        raise ValueError("Template YAML must contain 'templates' mapping")
+    return data
+
+
+class _StrictFormatDict(dict):
+    """str.format_map dict that fails for missing keys."""
+
+    def __missing__(self, key: str) -> str:
+        raise KeyError(key)
+
+
+def _render_text(template: str, variables: dict[str, str]) -> str:
+    """Render a format string with strict placeholder validation."""
+    return template.format_map(_StrictFormatDict(variables))
+
+
+def _pipeline_execution_policy_from_env() -> tuple[str, bool]:
+    """Return (default_execution_mode, enforce_session_only) from env."""
+    default_mode = os.environ.get("MESH_DEFAULT_EXECUTION_MODE", "batch").strip()
+    if default_mode not in {"batch", "session"}:
+        default_mode = "batch"
+    enforce_session_only = os.environ.get("MESH_ENFORCE_SESSION_ONLY", "").strip().lower() in {
+        "1", "true", "yes",
+    }
+    return default_mode, enforce_session_only
+
+
+def cmd_pipeline_create(args: argparse.Namespace) -> None:
+    """Create a thread and all steps from a named pipeline template."""
+    base = _base_url()
+    headers = _headers()
+    headers["Content-Type"] = "application/json"
+
+    template_file = args.template_file or str(_default_pipeline_template_file())
+    try:
+        loaded = _load_pipeline_templates(template_file)
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
+        print(f"Error: cannot load template file -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    templates = loaded["templates"]
+    template = templates.get(args.template)
+    if not isinstance(template, dict):
+        known = ", ".join(sorted(templates.keys()))
+        print(
+            f"Error: unknown template '{args.template}'. Known templates: {known}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    raw_steps = template.get("steps")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        print(
+            f"Error: template '{args.template}' has no steps",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    variables = {
+        "repo": args.repo,
+        "phase": args.phase,
+        "project": args.project,
+        "feature": args.feature,
+        "claude_account": args.account_claude,
+        "codex_account": args.account_codex,
+        "gemini_account": args.account_gemini,
+    }
+
+    prepared_steps: list[dict[str, object]] = []
+    valid_cli = {"claude", "codex", "gemini"}
+    valid_modes = {"batch", "session"}
+    valid_failure = {"abort", "skip", "retry"}
+    default_mode_from_env, enforce_session_only = _pipeline_execution_policy_from_env()
+    default_account_template = {
+        "claude": "{claude_account}",
+        "codex": "{codex_account}",
+        "gemini": "{gemini_account}",
+    }
+
+    for idx, raw in enumerate(raw_steps):
+        if not isinstance(raw, dict):
+            print(f"Error: template step #{idx} is not a mapping", file=sys.stderr)
+            sys.exit(1)
+
+        name = str(raw.get("name", f"step-{idx}")).strip()
+        title_template = str(raw.get("title", "")).strip()
+        prompt_template = str(raw.get("prompt", "")).strip()
+        target_cli = str(raw.get("target_cli", "claude")).strip()
+        execution_mode_raw = raw.get("execution_mode")
+        if execution_mode_raw is None or not str(execution_mode_raw).strip():
+            execution_mode = default_mode_from_env
+        else:
+            execution_mode = str(execution_mode_raw).strip()
+        if enforce_session_only:
+            execution_mode = "session"
+        on_failure = str(raw.get("on_failure", "abort")).strip()
+        role = str(raw.get("role", "")).strip()
+        critical = bool(raw.get("critical", False))
+        review_policy = str(raw.get("review_policy", "none")).strip()
+
+        if target_cli not in valid_cli:
+            print(
+                f"Error: invalid target_cli '{target_cli}' in step '{name}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if execution_mode not in valid_modes:
+            print(
+                f"Error: invalid execution_mode '{execution_mode}' in step '{name}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if on_failure not in valid_failure:
+            print(
+                f"Error: invalid on_failure '{on_failure}' in step '{name}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not title_template or not prompt_template:
+            print(
+                f"Error: step '{name}' requires non-empty title and prompt",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        account_template = str(
+            raw.get("target_account", default_account_template[target_cli])
+        ).strip()
+
+        depends_on_steps_raw = raw.get("depends_on_steps", [])
+        if depends_on_steps_raw is None:
+            depends_on_steps_raw = []
+        if not isinstance(depends_on_steps_raw, list):
+            print(
+                f"Error: depends_on_steps must be a list in step '{name}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        depends_on_steps: list[int] = []
+        for dep in depends_on_steps_raw:
+            try:
+                dep_idx = int(dep)
+            except (TypeError, ValueError):
+                print(
+                    f"Error: invalid depends_on_steps value '{dep}' in step '{name}'",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            depends_on_steps.append(dep_idx)
+
+        try:
+            title = _render_text(title_template, variables)
+            prompt = _render_text(prompt_template, variables)
+            target_account = _render_text(account_template, variables)
+        except KeyError as e:
+            print(
+                f"Error: missing template variable '{e.args[0]}' in step '{name}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        prepared_steps.append({
+            "index": idx,
+            "name": name,
+            "title": title,
+            "prompt": prompt,
+            "target_cli": target_cli,
+            "target_account": target_account,
+            "execution_mode": execution_mode,
+            "critical": critical,
+            "on_failure": on_failure,
+            "role": role,
+            "review_policy": review_policy,
+            "depends_on_steps": depends_on_steps,
+        })
+
+    if args.dry_run:
+        output = {
+            "template": args.template,
+            "thread_name": args.thread_name,
+            "repo": args.repo,
+            "policy": {
+                "default_execution_mode": default_mode_from_env,
+                "enforce_session_only": enforce_session_only,
+            },
+            "steps": prepared_steps,
+        }
+        print(json.dumps(output, indent=2))
+        return
+
+    try:
+        thread_resp = requests.post(
+            f"{base}/threads",
+            headers=headers,
+            json={"name": args.thread_name},
+            timeout=10,
+        )
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+    if thread_resp.status_code != 201:
+        print(
+            f"Error: cannot create thread ({thread_resp.status_code}) -- {thread_resp.text}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    thread_data = thread_resp.json()
+    thread_id = thread_data.get("thread_id", "")
+    if not thread_id:
+        print("Error: thread create response missing thread_id", file=sys.stderr)
+        sys.exit(1)
+
+    step_task_ids: dict[int, str] = {}
+    created = 0
+    for step in prepared_steps:
+        depends_on_steps = step["depends_on_steps"]
+        depends_on_task_ids: list[str] = []
+        for dep_idx in depends_on_steps:
+            dep_task_id = step_task_ids.get(dep_idx)
+            if not dep_task_id:
+                print(
+                    f"Error: step '{step['name']}' references unknown dependency index {dep_idx}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            depends_on_task_ids.append(dep_task_id)
+
+        body: dict[str, object] = {
+            "title": step["title"],
+            "step_index": step["index"],
+            "repo": args.repo,
+            "role": step["role"],
+            "target_cli": step["target_cli"],
+            "target_account": step["target_account"],
+            "execution_mode": step["execution_mode"],
+            "critical": step["critical"],
+            "on_failure": step["on_failure"],
+            "payload": {
+                "prompt": step["prompt"],
+                "pipeline_template": args.template,
+                "pipeline_step": step["name"],
+                "review_policy": step["review_policy"],
+            },
+        }
+        if depends_on_task_ids:
+            body["depends_on"] = depends_on_task_ids
+
+        try:
+            step_resp = requests.post(
+                f"{base}/threads/{thread_id}/steps",
+                headers=headers,
+                json=body,
+                timeout=10,
+            )
+        except requests.ConnectionError as e:
+            print(
+                f"Error: Cannot connect to mesh router at {base} while creating steps -- {e}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        if step_resp.status_code != 201:
+            print(
+                f"Error: cannot create step {step['index']} ({step_resp.status_code}) -- {step_resp.text}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        data = step_resp.json()
+        task_id = str(data.get("task_id", "")).strip()
+        if not task_id:
+            print(
+                f"Error: step create response missing task_id for step {step['index']}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        step_task_ids[int(step["index"])] = task_id
+        created += 1
+
+    if args.json_output:
+        print(json.dumps({
+            "thread_id": thread_id,
+            "thread_name": args.thread_name,
+            "template": args.template,
+            "steps_created": created,
+            "step_task_ids": step_task_ids,
+        }, indent=2))
+        return
+
+    print(f"Pipeline thread created: {thread_id} ({args.thread_name})")
+    print(f"Template: {args.template} | Steps: {created}")
+    for idx in sorted(step_task_ids.keys()):
+        print(f"  step {idx}: task_id={step_task_ids[idx]}")
+
+
+# ---------------------------------------------------------------------------
 # Thread helper
 # ---------------------------------------------------------------------------
 
@@ -610,6 +929,40 @@ submit_parser.add_argument("--phase", default=None, help="Task phase")
 submit_parser.add_argument("--priority", type=int, default=None, help="Priority (higher = first)")
 submit_parser.add_argument("--payload", default=None, help="JSON payload string")
 
+pipeline_parser = sub.add_parser("pipeline", help="Pipeline template orchestration")
+pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_command")
+
+pipeline_create_parser = pipeline_sub.add_parser(
+    "create",
+    help="Create thread + ordered steps from YAML template",
+)
+pipeline_create_parser.add_argument("--template", required=True, help="Template name (e.g. gsd, speckit)")
+pipeline_create_parser.add_argument("--thread-name", required=True, help="Thread name to create")
+pipeline_create_parser.add_argument("--repo", required=True, help="Repository path")
+pipeline_create_parser.add_argument("--phase", default="", help="Pipeline phase label/number")
+pipeline_create_parser.add_argument("--project", default="", help="Project name for prompt rendering")
+pipeline_create_parser.add_argument("--feature", default="", help="Feature name for prompt rendering")
+pipeline_create_parser.add_argument(
+    "--template-file",
+    default=str(_default_pipeline_template_file()),
+    help="YAML template file path",
+)
+pipeline_create_parser.add_argument(
+    "--account-claude", default="work-claude", help="Account profile placeholder for Claude steps",
+)
+pipeline_create_parser.add_argument(
+    "--account-codex", default="work-codex", help="Account profile placeholder for Codex steps",
+)
+pipeline_create_parser.add_argument(
+    "--account-gemini", default="work-gemini", help="Account profile placeholder for Gemini steps",
+)
+pipeline_create_parser.add_argument(
+    "--dry-run", action="store_true", help="Render and print pipeline plan without API calls",
+)
+pipeline_create_parser.add_argument(
+    "--json", action="store_true", dest="json_output", help="Machine-readable output",
+)
+
 thread_parser = sub.add_parser("thread", help="Thread management")
 thread_sub = thread_parser.add_subparsers(dest="thread_command")
 
@@ -657,6 +1010,12 @@ if __name__ == "__main__":
         cmd_drain(parsed_args)
     elif parsed_args.command == "submit":
         cmd_submit(parsed_args)
+    elif parsed_args.command == "pipeline":
+        if parsed_args.pipeline_command == "create":
+            cmd_pipeline_create(parsed_args)
+        else:
+            pipeline_parser.print_help()
+            sys.exit(1)
     elif parsed_args.command == "thread":
         if parsed_args.thread_command == "create":
             cmd_thread_create(parsed_args)
