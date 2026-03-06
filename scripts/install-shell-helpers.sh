@@ -79,6 +79,25 @@ yazicd() {
 unalias wss >/dev/null 2>&1 || true
 wss() {
   local ws_script ws_host repo_base repo mesh_home target_dir
+  _is_local_ws_host() {
+    local h="$1"
+    local t ip
+    t="${h#*@}"
+    t="${t%%:*}"
+    case "$t" in
+      localhost|127.0.0.1) return 0 ;;
+    esac
+    [[ "$t" == "$(hostname 2>/dev/null || true)" ]] && return 0
+    ip=""
+    if command -v getent >/dev/null 2>&1; then
+      ip="$(getent ahostsv4 "$t" 2>/dev/null | awk 'NR==1{print $1}')"
+    fi
+    [[ -z "$ip" ]] && ip="$t"
+    if command -v ip >/dev/null 2>&1 && ip -4 addr show 2>/dev/null | grep -qw "$ip"; then
+      return 0
+    fi
+    return 1
+  }
   mesh_home="$(_mesh_resolve_home || true)"
   ws_script="${mesh_home}/scripts/ws"
   if [[ -x "$ws_script" ]]; then
@@ -89,12 +108,24 @@ wss() {
   ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
   if [[ $# -eq 0 ]]; then
+    if _is_local_ws_host "$ws_host"; then
+      exec "${SHELL:-/bin/bash}" -l
+    fi
     command ssh "$ws_host"
     return $?
   fi
 
   repo="$1"
   target_dir="${repo_base}/${repo}"
+  if _is_local_ws_host "$ws_host"; then
+    if [[ -d "$target_dir" ]]; then
+      builtin cd -- "$target_dir"
+    else
+      echo "[wss] missing repo: $target_dir"
+      builtin cd -- "$repo_base"
+    fi
+    return $?
+  fi
   command ssh -t "$ws_host" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[wss] missing repo: $target_dir'; cd '$repo_base'; fi; exec \$SHELL -l"
 }
 
