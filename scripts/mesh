@@ -50,15 +50,22 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/mesh status
-  ./scripts/mesh thread <thread-name>
+  ./scripts/mesh thread [thread-name]
+  ./scripts/mesh bootstrap
+  ./scripts/mesh start <feature text>
+  ./scripts/mesh new <feature text>
   ./scripts/mesh run <phase>
   ./scripts/mesh run <repo-name|repo-path> <phase>
 
 Examples:
   ./scripts/mesh status
+  ./scripts/mesh bootstrap
+  ./scripts/mesh start "checkout hardening"
+  ./scripts/mesh new "spec 017"
   ./scripts/mesh run 016
   ./scripts/mesh run rektslug 016
   ./scripts/mesh run /media/sam/1TB/rektslug 016
+  ./scripts/mesh thread
   ./scripts/mesh thread rektslug-spec-016
 EOF
 }
@@ -91,6 +98,51 @@ resolve_repo_path_and_name() {
   RESOLVED_REPO_NAME="$repo_name"
 }
 
+slugify() {
+  local text="${1:-}"
+  text="$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')"
+  text="$(printf '%s' "$text" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  if [[ -z "$text" ]]; then
+    text="work"
+  fi
+  printf '%s' "$text"
+}
+
+state_dir() {
+  printf '%s' "${HOME}/.mesh/state"
+}
+
+state_key_for_repo() {
+  local repo_path="${1:-}"
+  printf '%s' "$repo_path" | sed -E 's#[^A-Za-z0-9._-]#_#g'
+}
+
+state_file_for_repo() {
+  local repo_path="${1:-}"
+  printf '%s/last-thread-%s' "$(state_dir)" "$(state_key_for_repo "$repo_path")"
+}
+
+save_last_thread() {
+  local repo_path="${1:-}"
+  local thread_name="${2:-}"
+  local dir file
+  dir="$(state_dir)"
+  file="$(state_file_for_repo "$repo_path")"
+  mkdir -p "$dir"
+  printf '%s\n' "$thread_name" >"$file"
+}
+
+load_last_thread() {
+  local repo_path="${1:-}"
+  local file
+  file="$(state_file_for_repo "$repo_path")"
+  if [[ -f "$file" ]]; then
+    head -n1 "$file"
+    return 0
+  fi
+  return 1
+}
+
 cmd="${1:-}"
 case "$cmd" in
   status)
@@ -99,10 +151,97 @@ case "$cmd" in
   thread)
     thread_name="${2:-}"
     if [[ -z "$thread_name" ]]; then
+      repo_path="$(pwd -P)"
+      thread_name="$(load_last_thread "$repo_path" || true)"
+      if [[ -z "$thread_name" ]]; then
+        echo "Error: no thread provided and no saved thread for this repo." >&2
+        echo "Use: mesh start \"<feature>\" or mesh thread <thread-name>" >&2
+        exit 1
+      fi
+    fi
+    run_meshctl thread status "$thread_name"
+    ;;
+  bootstrap)
+    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+    ws_env_dir="${MESH_WS_ENV_DIR:-/etc/mesh-worker}"
+    stop_batch="${MESH_BOOTSTRAP_STOP_BATCH:-0}"
+    ssh -o ConnectTimeout=10 "$ws_host" "bash -s" -- "$ws_env_dir" "$stop_batch" <<'EOF'
+set -euo pipefail
+
+env_dir="${1:?missing env_dir}"
+stop_batch="${2:-0}"
+
+set_kv() {
+  local file="$1" key="$2" value="$3"
+  local escaped
+  escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
+  if sudo grep -q "^${key}=" "$file"; then
+    sudo sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
+  else
+    echo "${key}=${value}" | sudo tee -a "$file" >/dev/null
+  fi
+}
+
+configure_session_worker_env() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    echo "[WARN] missing env file: $file"
+    return 0
+  fi
+  set_kv "$file" MESH_CLI_COMMAND "ccs {target_account}"
+  set_kv "$file" MESH_ALLOWED_ACCOUNTS "*"
+  echo "[OK] configured $file"
+}
+
+configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
+configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
+
+sudo systemctl restart mesh-session-worker@mesh-session-claude-work
+sudo systemctl restart mesh-session-worker@mesh-session-codex-work
+
+if [[ "$stop_batch" == "1" ]]; then
+  sudo systemctl stop mesh-worker@claude-work || true
+  sudo systemctl stop mesh-worker@codex-work || true
+  sudo systemctl stop mesh-worker@gemini-work || true
+  echo "[OK] batch workers stopped"
+fi
+
+sudo systemctl is-active --quiet mesh-session-worker@mesh-session-claude-work && echo "[OK] session claude active"
+sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && echo "[OK] session codex active"
+
+echo
+echo "Bootstrap complete."
+echo "Next:"
+echo "  1) create CCS repo profiles once (if missing):"
+echo "     ccs auth create claude-<repo>"
+echo "     ccs auth create codex-<repo>"
+echo "  2) run from repo dir:"
+echo "     mesh run <phase>"
+EOF
+    ;;
+  start|new)
+    feature="${*:2}"
+    if [[ -z "$feature" ]]; then
       usage
       exit 1
     fi
-    run_meshctl thread status "$thread_name"
+
+    repo_path="$(pwd -P)"
+    repo="$(basename "$repo_path")"
+    feature_slug="$(slugify "$feature")"
+    ts="$(date +%Y%m%d-%H%M%S)"
+    thread_name="${repo}-${feature_slug}-${ts}"
+
+    run_meshctl pipeline create \
+      --template speckit \
+      --thread-name "$thread_name" \
+      --repo "$repo_path" \
+      --project "$repo" \
+      --feature "$feature" \
+      --phase "" \
+      --account-scope repo
+    save_last_thread "$repo_path" "$thread_name"
+    echo "Started thread: $thread_name"
     ;;
   run)
     input_a="${2:-}"
@@ -135,6 +274,8 @@ case "$cmd" in
       --feature "$feature" \
       --phase "$phase" \
       --account-scope repo
+    save_last_thread "$repo_path" "$thread_name"
+    echo "Started thread: $thread_name"
     ;;
   ""|-h|--help|help)
     usage

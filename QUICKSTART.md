@@ -186,18 +186,27 @@ This enables:
 Ultra-short operator commands:
 
 ```bash
+mesh bootstrap
 mesh status
-mesh run 016                    # run pipeline from current repo directory
-mesh thread <repo>-spec-016
+mesh start "checkout hardening" # new thread (spec created inside flow)
+mesh run 016                    # existing spec/phase flow
+mesh thread                     # show last thread for current repo
 wss <repo>
 ```
 
 Examples:
 
 ```bash
+# once after deploy/config drift
+mesh bootstrap
+
 # from inside /media/sam/1TB/rektaslug
+mesh start "spec 016"
+mesh thread
+
+# existing numbered phase flow
 mesh run 016
-mesh thread rektaslug-spec-016
+mesh thread
 ```
 
 If you need explicit path/name mode:

@@ -11,20 +11,41 @@ Use GoBabyGo as orchestration control-plane, not manual copy/paste between CLIs.
 - iTerm2: operator UX only (attach/split/observe), not orchestration state.
 - Default policy: session-first (`MESH_SESSION_FALLBACK_TO_BATCH=0`).
 
+## Bootstrap (one command)
+
+After deploy/config drift, run once from BOSS host:
+
+```bash
+mesh bootstrap
+```
+
+This automatically:
+- updates WS session worker envs to dynamic profile routing (`ccs {target_account}`)
+- enables `MESH_ALLOWED_ACCOUNTS=*`
+- restarts session workers
+
+Optional: set `MESH_BOOTSTRAP_STOP_BATCH=1` before running bootstrap to stop batch workers.
+
 ## Minimal Daily Flow
 
 From the target repo directory on WS:
 
 ```bash
+mesh start "checkout hardening"
+mesh thread
+
+# existing numbered flow
 mesh run 016
-mesh thread <repo>-spec-016
+mesh thread
 ```
 
 Examples:
 
 ```bash
+mesh start "spec 016"
+mesh thread
 mesh run 016
-mesh thread rektaslug-spec-016
+mesh thread
 ```
 
 No hardcoded path is required when run from inside the repo.
