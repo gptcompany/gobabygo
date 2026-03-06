@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${MESH_ENV_FILE:-$HOME/.mesh/.env.mesh}"
+FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
+WS_REPO_BASE="${MESH_WS_REPO_BASE:-/home/sam}"
+
+run_meshctl() {
+  if command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
+    (cd "$REPO_ROOT" && exec dotenvx run -f "$ENV_FILE" -- python -m src.meshctl "$@")
+  elif [[ -f "$FALLBACK_EXPORTS" ]]; then
+    # shellcheck source=/dev/null
+    source "$FALLBACK_EXPORTS"
+    (cd "$REPO_ROOT" && exec python -m src.meshctl "$@")
+  else
+    (cd "$REPO_ROOT" && exec python -m src.meshctl "$@")
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh status
+  ./scripts/mesh thread <thread-name>
+  ./scripts/mesh run <repo-name> <phase>
+
+Examples:
+  ./scripts/mesh status
+  ./scripts/mesh run rektslug 016
+  ./scripts/mesh thread rektslug-spec-016
+EOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  status)
+    run_meshctl status
+    ;;
+  thread)
+    thread_name="${2:-}"
+    if [[ -z "$thread_name" ]]; then
+      usage
+      exit 1
+    fi
+    run_meshctl thread status "$thread_name"
+    ;;
+  run)
+    repo="${2:-}"
+    phase="${3:-}"
+    if [[ -z "$repo" || -z "$phase" ]]; then
+      usage
+      exit 1
+    fi
+    thread_name="${repo}-spec-${phase}"
+    feature="spec-${phase}"
+    run_meshctl pipeline create \
+      --template speckit \
+      --thread-name "$thread_name" \
+      --repo "${WS_REPO_BASE}/${repo}" \
+      --project "$repo" \
+      --feature "$feature" \
+      --phase "$phase" \
+      --account-scope repo
+    ;;
+  ""|-h|--help|help)
+    usage
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac
+

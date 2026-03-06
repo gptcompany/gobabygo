@@ -170,6 +170,15 @@ Optional shortcut for macOS operator shell:
 alias meshctlx='dotenvx run -f ~/.mesh/.env.mesh -- python -m src.meshctl'
 ```
 
+Ultra-short operator commands (from repo root):
+
+```bash
+./scripts/mesh status           # router/worker status
+./scripts/mesh run rektslug 016 # create speckit pipeline for spec-016
+./scripts/mesh thread rektslug-spec-016
+./scripts/ws rektslug           # SSH to WS and open /home/sam/rektslug
+```
+
 Interactive task example (`execution_mode=session`):
 
 ```bash
