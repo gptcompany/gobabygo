@@ -4,6 +4,7 @@
 
 - Python 3.11+
 - `pip install -e .` (installs pydantic, requests, etc.)
+- Recommended on operator hosts: `uv` (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
 ## 1. Start the Router
 
@@ -170,14 +171,55 @@ Optional shortcut for macOS operator shell:
 alias meshctlx='dotenvx run -f ~/.mesh/.env.mesh -- python -m src.meshctl'
 ```
 
-Ultra-short operator commands (from repo root):
+One-time shell helpers (Mac/WS):
 
 ```bash
-./scripts/mesh status           # router/worker status
-./scripts/mesh run rektslug 016 # create speckit pipeline for spec-016
-./scripts/mesh thread rektslug-spec-016
-./scripts/ws rektslug           # SSH to WS and open /home/sam/rektslug
+./scripts/install-shell-helpers.sh
+source ~/.zshrc   # or source ~/.bashrc on bash hosts
 ```
+
+This enables:
+- `wss` / `wss <repo>` (quick SSH to WS)
+- `mesh` (global wrapper to `gobabygo/scripts/mesh`)
+- `yazi` / `lf` aliases to `yazicd` / `lfcd` (keep selected directory on exit)
+
+Ultra-short operator commands:
+
+```bash
+mesh status
+mesh run 016                    # run pipeline from current repo directory
+mesh thread <repo>-spec-016
+wss <repo>
+```
+
+Examples:
+
+```bash
+# from inside /media/sam/1TB/rektaslug
+mesh run 016
+mesh thread rektaslug-spec-016
+```
+
+If you need explicit path/name mode:
+
+```bash
+mesh run rektaslug 016
+mesh run /media/sam/1TB/rektaslug 016
+```
+
+UV-first execution:
+- `scripts/mesh` now prefers `uv run -- python -m src.meshctl ...` when `uv` is available.
+- fallback remains plain `python3/python` if `uv` is not installed.
+
+CCS profile isolation (recommended for per-repo history/context):
+
+```bash
+ccs auth create claude-rektaslug --context-group rektaslug
+ccs auth create codex-rektaslug --context-group rektaslug
+```
+
+Then run workers with `MESH_CLI_COMMAND=ccs {target_account}` and dynamic `target_account`
+(`claude-rektaslug`, `codex-rektaslug`, etc.).
 
 Interactive task example (`execution_mode=session`):
 

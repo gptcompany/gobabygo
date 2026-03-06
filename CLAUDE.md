@@ -1,0 +1,81 @@
+# CLAUDE.md
+
+## Operator Mode (BOSS)
+
+Use GoBabyGo as orchestration control-plane, not manual copy/paste between CLIs.
+
+### Core principles
+
+- Source of truth: router DB + task/thread state.
+- Runtime execution: session workers in `tmux`.
+- iTerm2: operator UX only (attach/split/observe), not orchestration state.
+- Default policy: session-first (`MESH_SESSION_FALLBACK_TO_BATCH=0`).
+
+## Minimal Daily Flow
+
+From the target repo directory on WS:
+
+```bash
+mesh run 016
+mesh thread <repo>-spec-016
+```
+
+Examples:
+
+```bash
+mesh run 016
+mesh thread rektaslug-spec-016
+```
+
+No hardcoded path is required when run from inside the repo.
+
+## Required Helpers
+
+Install once on each host (Mac + WS):
+
+```bash
+./scripts/install-shell-helpers.sh
+source ~/.zshrc   # or ~/.bashrc
+```
+
+Provided commands:
+
+- `mesh` -> global wrapper for `scripts/mesh`
+- `wss` / `wss <repo>` -> SSH WS shortcut
+- `yazi`/`lf` -> mapped to `yazicd`/`lfcd` (keep selected directory)
+
+## Python Runtime
+
+`scripts/mesh` is UV-first:
+
+- if `uv` exists: uses `uv run -- python -m src.meshctl ...`
+- fallback: `python3/python`
+
+Recommended on operator hosts:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync --frozen
+```
+
+## CCS Profile Isolation
+
+For repo-scoped context/history isolation, create account profiles per repo:
+
+```bash
+ccs auth create claude-<repo> --context-group <repo>
+ccs auth create codex-<repo> --context-group <repo>
+```
+
+Worker dynamic routing should use:
+
+- `MESH_CLI_COMMAND=ccs {target_account}`
+- `MESH_ALLOWED_ACCOUNTS=*` (or explicit allowlist)
+
+So `target_account` from pipeline steps can map directly to repo profiles.
+
+## Troubleshooting
+
+- `mesh status` fails on missing Python deps: use `uv sync --frozen`.
+- `yazi`/`lf` exits without changing dir: use `yazicd`/`lfcd` (or aliases installed by helper).
+- multiple repos sharing context unexpectedly: use dedicated CCS profiles (`claude-<repo>`, `codex-<repo>`).

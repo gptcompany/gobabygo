@@ -21,6 +21,19 @@ detect_python() {
 }
 
 run_meshctl() {
+  # Prefer uv-managed environment when available.
+  if command -v uv >/dev/null 2>&1 && [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
+    if command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
+      (cd "$REPO_ROOT" && exec dotenvx run -f "$ENV_FILE" -- uv run -- python -m src.meshctl "$@")
+    elif [[ -f "$FALLBACK_EXPORTS" ]]; then
+      # shellcheck source=/dev/null
+      source "$FALLBACK_EXPORTS"
+      (cd "$REPO_ROOT" && exec uv run -- python -m src.meshctl "$@")
+    else
+      (cd "$REPO_ROOT" && exec uv run -- python -m src.meshctl "$@")
+    fi
+  fi
+
   py_bin="$(detect_python)" || exit $?
   if command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
     (cd "$REPO_ROOT" && exec dotenvx run -f "$ENV_FILE" -- "$py_bin" -m src.meshctl "$@")
