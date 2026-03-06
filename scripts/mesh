@@ -7,15 +7,29 @@ ENV_FILE="${MESH_ENV_FILE:-$HOME/.mesh/.env.mesh}"
 FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/home/sam}"
 
+detect_python() {
+  if command -v python3 >/dev/null 2>&1; then
+    echo "python3"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    echo "python"
+    return 0
+  fi
+  echo "Error: python3/python not found in PATH" >&2
+  return 127
+}
+
 run_meshctl() {
+  py_bin="$(detect_python)" || exit $?
   if command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
-    (cd "$REPO_ROOT" && exec dotenvx run -f "$ENV_FILE" -- python -m src.meshctl "$@")
+    (cd "$REPO_ROOT" && exec dotenvx run -f "$ENV_FILE" -- "$py_bin" -m src.meshctl "$@")
   elif [[ -f "$FALLBACK_EXPORTS" ]]; then
     # shellcheck source=/dev/null
     source "$FALLBACK_EXPORTS"
-    (cd "$REPO_ROOT" && exec python -m src.meshctl "$@")
+    (cd "$REPO_ROOT" && exec "$py_bin" -m src.meshctl "$@")
   else
-    (cd "$REPO_ROOT" && exec python -m src.meshctl "$@")
+    (cd "$REPO_ROOT" && exec "$py_bin" -m src.meshctl "$@")
   fi
 }
 
@@ -24,13 +38,44 @@ usage() {
 Usage:
   ./scripts/mesh status
   ./scripts/mesh thread <thread-name>
-  ./scripts/mesh run <repo-name> <phase>
+  ./scripts/mesh run <phase>
+  ./scripts/mesh run <repo-name|repo-path> <phase>
 
 Examples:
   ./scripts/mesh status
+  ./scripts/mesh run 016
   ./scripts/mesh run rektslug 016
+  ./scripts/mesh run /media/sam/1TB/rektslug 016
   ./scripts/mesh thread rektslug-spec-016
 EOF
+}
+
+resolve_repo_path_and_name() {
+  # Args:
+  #   $1: repo input (name or path)
+  # Sets globals:
+  #   RESOLVED_REPO_PATH
+  #   RESOLVED_REPO_NAME
+  local repo_input="$1"
+  local repo_path=""
+  local repo_name=""
+
+  # Existing dir (absolute or relative) => use as-is
+  if [[ -d "$repo_input" ]]; then
+    repo_path="$(cd "$repo_input" && pwd -P)"
+    repo_name="$(basename "$repo_path")"
+  # Path-like token (contains "/") => normalize under current dir
+  elif [[ "$repo_input" == *"/"* ]]; then
+    repo_path="$(cd "$(dirname "$repo_input")" && pwd -P)/$(basename "$repo_input")"
+    repo_name="$(basename "$repo_path")"
+  else
+    # Pure repo name => resolve under WS_REPO_BASE (legacy behavior)
+    repo_name="$repo_input"
+    repo_path="${WS_REPO_BASE}/${repo_name}"
+  fi
+
+  RESOLVED_REPO_PATH="$repo_path"
+  RESOLVED_REPO_NAME="$repo_name"
 }
 
 cmd="${1:-}"
@@ -47,18 +92,32 @@ case "$cmd" in
     run_meshctl thread status "$thread_name"
     ;;
   run)
-    repo="${2:-}"
-    phase="${3:-}"
-    if [[ -z "$repo" || -z "$phase" ]]; then
+    input_a="${2:-}"
+    input_b="${3:-}"
+
+    # Dynamic mode: mesh run <phase>
+    # Uses current directory as target repo.
+    if [[ -n "$input_a" && -z "$input_b" ]]; then
+      phase="$input_a"
+      repo_path="$(pwd -P)"
+      repo="$(basename "$repo_path")"
+    # Explicit mode: mesh run <repo-name|repo-path> <phase>
+    elif [[ -n "$input_a" && -n "$input_b" ]]; then
+      resolve_repo_path_and_name "$input_a"
+      repo_path="$RESOLVED_REPO_PATH"
+      repo="$RESOLVED_REPO_NAME"
+      phase="$input_b"
+    else
       usage
       exit 1
     fi
+
     thread_name="${repo}-spec-${phase}"
     feature="spec-${phase}"
     run_meshctl pipeline create \
       --template speckit \
       --thread-name "$thread_name" \
-      --repo "${WS_REPO_BASE}/${repo}" \
+      --repo "$repo_path" \
       --project "$repo" \
       --feature "$feature" \
       --phase "$phase" \
@@ -72,4 +131,3 @@ case "$cmd" in
     exit 1
     ;;
 esac
-

@@ -73,6 +73,19 @@ if ! alias wss >/dev/null 2>&1 && ! typeset -f wss >/dev/null 2>&1 && ! command 
   }
 fi
 
+# mesh: wrapper globale al launcher gobabygo/scripts/mesh (funziona da qualsiasi cartella).
+if ! alias mesh >/dev/null 2>&1 && ! typeset -f mesh >/dev/null 2>&1 && ! command -v mesh >/dev/null 2>&1; then
+  mesh() {
+    local mesh_script
+    mesh_script="$HOME/gobabygo/scripts/mesh"
+    if [[ ! -x "$mesh_script" ]]; then
+      echo "mesh script not found at $mesh_script"
+      return 127
+    fi
+    command "$mesh_script" "$@"
+  }
+fi
+
 # Convenience aliases: keep native command names but use cd-aware wrappers.
 # Installed only if alias name is currently unused.
 if command -v yazi >/dev/null 2>&1 && ! alias yazi >/dev/null 2>&1; then
