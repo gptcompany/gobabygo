@@ -78,9 +78,10 @@ def _pipeline_create_args(
     project: str = "Demo Project",
     feature: str = "Feature X",
     template_file: str = "/tmp/pipeline_templates.yaml",
-    account_claude: str = "work-claude",
-    account_codex: str = "work-codex",
-    account_gemini: str = "work-gemini",
+    account_scope: str = "static",
+    account_claude: str | None = None,
+    account_codex: str | None = None,
+    account_gemini: str | None = None,
     dry_run: bool = False,
     json_output: bool = False,
 ) -> argparse.Namespace:
@@ -94,6 +95,7 @@ def _pipeline_create_args(
         project=project,
         feature=feature,
         template_file=template_file,
+        account_scope=account_scope,
         account_claude=account_claude,
         account_codex=account_codex,
         account_gemini=account_gemini,
@@ -245,9 +247,57 @@ templates:
         out = capsys.readouterr().out
         data = json.loads(out)
         assert data["template"] == "gsd"
+        assert data["account_scope"] == "static"
+        assert data["accounts"]["claude"] == "work-claude"
         assert data["steps"][0]["execution_mode"] == "session"
         assert data["steps"][0]["critical"] is True
         assert "Run /gsd:plan-phase 5 in /repo/demo" in data["steps"][0]["prompt"]
+        mock_post.assert_not_called()
+
+    @patch("src.meshctl.requests.post")
+    def test_pipeline_create_repo_account_scope(
+        self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text(
+            """version: 1
+templates:
+  gsd:
+    steps:
+      - name: gsd:plan-phase
+        title: "Plan {phase}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        critical: true
+        on_failure: abort
+        review_policy: codex_review
+        prompt: "Run /gsd:plan-phase {phase} in {repo}"
+      - name: verify
+        title: "Verify"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Verify {repo}"
+""",
+            encoding="utf-8",
+        )
+        args = _pipeline_create_args(
+            dry_run=True,
+            template_file=str(template_file),
+            repo="/home/sam/RektSlug",
+            account_scope="repo",
+        )
+        cmd_pipeline_create(args)
+        data = json.loads(capsys.readouterr().out)
+        assert data["account_scope"] == "repo"
+        assert data["accounts"]["claude"] == "claude-rektslug"
+        assert data["accounts"]["codex"] == "codex-rektslug"
+        assert data["steps"][0]["target_account"] == "claude-rektslug"
+        assert data["steps"][1]["target_account"] == "codex-rektslug"
         mock_post.assert_not_called()
 
     @patch("src.meshctl.requests.post")

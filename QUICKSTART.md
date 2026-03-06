@@ -151,13 +151,20 @@ Who executes commands in mesh:
 Pipeline orchestration example (from BOSS terminal):
 
 ```bash
-python -m src.meshctl pipeline create \
+dotenvx run -f ~/.mesh/.env.mesh -- python -m src.meshctl pipeline create \
   --template gsd \
   --thread-name "gsd-phase-17" \
   --repo /media/sam/1TB/gobabygo \
   --phase 17 \
   --project "AI Mesh Router" \
-  --feature "session-first hard mode"
+  --feature "session-first hard mode" \
+  --account-scope repo
+```
+
+Optional shortcut for macOS operator shell:
+
+```bash
+alias meshctlx='dotenvx run -f ~/.mesh/.env.mesh -- python -m src.meshctl'
 ```
 
 Interactive task example (`execution_mode=session`):

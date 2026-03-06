@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -371,6 +372,13 @@ def _render_text(template: str, variables: dict[str, str]) -> str:
     return template.format_map(_StrictFormatDict(variables))
 
 
+def _repo_slug(repo_path: str, project: str = "") -> str:
+    """Build a stable repo slug for account/profile naming."""
+    candidate = Path(repo_path.rstrip("/")).name or project or "repo"
+    slug = re.sub(r"[^a-z0-9]+", "-", candidate.lower()).strip("-")
+    return slug or "repo"
+
+
 def _pipeline_execution_policy_from_env() -> tuple[str, bool]:
     """Return (default_execution_mode, enforce_session_only) from env."""
     default_mode = os.environ.get("MESH_DEFAULT_EXECUTION_MODE", "batch").strip()
@@ -413,14 +421,37 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    account_scope = str(getattr(args, "account_scope", "static") or "static").strip().lower()
+    if account_scope not in {"static", "repo"}:
+        print("Error: --account-scope must be 'static' or 'repo'", file=sys.stderr)
+        sys.exit(1)
+
+    if account_scope == "repo":
+        repo_slug = _repo_slug(args.repo, args.project)
+        default_accounts = {
+            "claude": f"claude-{repo_slug}",
+            "codex": f"codex-{repo_slug}",
+            "gemini": f"gemini-{repo_slug}",
+        }
+    else:
+        default_accounts = {
+            "claude": "work-claude",
+            "codex": "work-codex",
+            "gemini": "work-gemini",
+        }
+
+    account_claude = (args.account_claude or default_accounts["claude"]).strip()
+    account_codex = (args.account_codex or default_accounts["codex"]).strip()
+    account_gemini = (args.account_gemini or default_accounts["gemini"]).strip()
+
     variables = {
         "repo": args.repo,
         "phase": args.phase,
         "project": args.project,
         "feature": args.feature,
-        "claude_account": args.account_claude,
-        "codex_account": args.account_codex,
-        "gemini_account": args.account_gemini,
+        "claude_account": account_claude,
+        "codex_account": account_codex,
+        "gemini_account": account_gemini,
     }
 
     prepared_steps: list[dict[str, object]] = []
@@ -536,6 +567,12 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
             "template": args.template,
             "thread_name": args.thread_name,
             "repo": args.repo,
+            "account_scope": account_scope,
+            "accounts": {
+                "claude": account_claude,
+                "codex": account_codex,
+                "gemini": account_gemini,
+            },
             "policy": {
                 "default_execution_mode": default_mode_from_env,
                 "enforce_session_only": enforce_session_only,
@@ -949,13 +986,19 @@ pipeline_create_parser.add_argument(
     help="YAML template file path",
 )
 pipeline_create_parser.add_argument(
-    "--account-claude", default="work-claude", help="Account profile placeholder for Claude steps",
+    "--account-scope",
+    choices=["static", "repo"],
+    default="static",
+    help="Account naming strategy: static (work-*) or repo (<provider>-<repo>).",
 )
 pipeline_create_parser.add_argument(
-    "--account-codex", default="work-codex", help="Account profile placeholder for Codex steps",
+    "--account-claude", default=None, help="Override account profile for Claude steps.",
 )
 pipeline_create_parser.add_argument(
-    "--account-gemini", default="work-gemini", help="Account profile placeholder for Gemini steps",
+    "--account-codex", default=None, help="Override account profile for Codex steps.",
+)
+pipeline_create_parser.add_argument(
+    "--account-gemini", default=None, help="Override account profile for Gemini steps.",
 )
 pipeline_create_parser.add_argument(
     "--dry-run", action="store_true", help="Render and print pipeline plan without API calls",
