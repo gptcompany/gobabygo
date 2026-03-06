@@ -187,6 +187,7 @@ Ultra-short operator commands:
 
 ```bash
 mesh bootstrap
+mesh deploy
 mesh status
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
@@ -201,6 +202,7 @@ Examples:
 ```bash
 # once after deploy/config drift
 mesh bootstrap
+mesh deploy
 
 # from inside /media/sam/1TB/rektaslug
 mesh start

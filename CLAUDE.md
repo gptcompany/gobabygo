@@ -26,6 +26,20 @@ This automatically:
 
 Optional: set `MESH_BOOTSTRAP_STOP_BATCH=1` before running bootstrap to stop batch workers.
 
+## Auto Deploy
+
+From Mac BOSS host:
+
+```bash
+mesh deploy
+```
+
+Behavior:
+- updates WS repo (`/opt/mesh-router`) via `git pull --ff-only`
+- syncs python editable install in WS venv
+- restarts router
+- restarts session workers only if no `mesh-*` tmux sessions are detected
+
 ## Minimal Daily Flow
 
 From the target repo directory on WS:
