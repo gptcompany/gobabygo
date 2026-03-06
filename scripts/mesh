@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${MESH_ENV_FILE:-$HOME/.mesh/.env.mesh}"
 FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
+PIPELINE_TEMPLATE="${MESH_PIPELINE_TEMPLATE:-speckit}"
 
 detect_python() {
   if command -v python3 >/dev/null 2>&1; then
@@ -57,6 +58,9 @@ Usage:
   ./scripts/mesh new [feature text]
   ./scripts/mesh run <phase>
   ./scripts/mesh run <repo-name|repo-path> <phase>
+
+Env:
+  MESH_PIPELINE_TEMPLATE   default: speckit
 
 Examples:
   ./scripts/mesh status
@@ -383,7 +387,7 @@ EOF
     thread_name="${repo}-${feature_slug}-${ts}"
 
     run_meshctl pipeline create \
-      --template speckit \
+      --template "$PIPELINE_TEMPLATE" \
       --thread-name "$thread_name" \
       --repo "$repo_path" \
       --project "$repo" \
@@ -416,7 +420,7 @@ EOF
     thread_name="${repo}-spec-${phase}"
     feature="spec-${phase}"
     run_meshctl pipeline create \
-      --template speckit \
+      --template "$PIPELINE_TEMPLATE" \
       --thread-name "$thread_name" \
       --repo "$repo_path" \
       --project "$repo" \

@@ -43,6 +43,7 @@ Behavior:
 Controls:
 - `MESH_WS_HOST` (default `sam@192.168.1.111`)
 - `MESH_DEPLOY_MODE=auto|remote|local` (use `remote` from Mac if needed)
+- `MESH_PIPELINE_TEMPLATE=speckit_codex` when Claude is unavailable
 
 ## Minimal Daily Flow
 

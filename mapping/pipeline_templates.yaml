@@ -245,3 +245,106 @@ templates:
         on_failure: abort
         review_policy: none
         prompt: "Run confidence-gate post-implementation checks for feature '{feature}' in repo {repo}."
+
+  speckit_codex:
+    description: "Speckit lifecycle in codex-only session mode (no Claude dependency)."
+    steps:
+      - name: speckit.specify
+        title: "Speckit Specify {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Execute /speckit.specify for feature '{feature}' in repo {repo}. Produce spec.md with goals, scope, and acceptance criteria."
+
+      - name: speckit.clarify
+        title: "Speckit Clarify {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Execute /speckit.clarify for feature '{feature}' in repo {repo}. Resolve all [NEEDS CLARIFICATION] markers."
+
+      - name: speckit.plan
+        title: "Speckit Plan {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: true
+        on_failure: abort
+        review_policy: codex_review
+        prompt: "Execute /speckit.plan for feature '{feature}' in repo {repo}. Produce plan.md with milestones and risk controls."
+
+      - name: confidence-gate-plan
+        title: "Confidence Gate Plan {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Run confidence-gate plan checks for feature '{feature}' in repo {repo}."
+
+      - name: speckit.tasks
+        title: "Speckit Tasks {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Execute /speckit.tasks in repo {repo}. Generate tasks.md from plan.md with deterministic, testable work items."
+
+      - name: speckit.analyze
+        title: "Speckit Analyze {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Execute /speckit.analyze in repo {repo}. Perform cross-artifact consistency checks (spec, plan, tasks)."
+
+      - name: confidence-gate-pre-impl
+        title: "Confidence Gate Pre-Implementation {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Run confidence-gate pre-implementation checks for feature '{feature}' in repo {repo}."
+
+      - name: speckit.implement
+        title: "Speckit Implement {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: true
+        on_failure: abort
+        review_policy: codex_review
+        prompt: "Execute /speckit.implement in repo {repo}. Implement tasks.md for feature '{feature}' and run relevant test subsets."
+
+      - name: validate
+        title: "Validate {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Run 14-dimension validate workflow for feature '{feature}' in repo {repo}."
+
+      - name: confidence-gate-post-impl
+        title: "Confidence Gate Post-Implementation {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Run confidence-gate post-implementation checks for feature '{feature}' in repo {repo}."

@@ -225,6 +225,12 @@ WS host override:
 MESH_WS_HOST=sam@192.168.1.111 mesh deploy
 ```
 
+If Claude is disabled, switch to codex-only pipeline:
+
+```bash
+export MESH_PIPELINE_TEMPLATE=speckit_codex
+```
+
 If you need explicit path/name mode:
 
 ```bash
