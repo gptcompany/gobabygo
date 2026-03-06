@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${MESH_ENV_FILE:-$HOME/.mesh/.env.mesh}"
 FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
-WS_REPO_BASE="${MESH_WS_REPO_BASE:-/home/sam}"
+WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 
 detect_python() {
   if command -v python3 >/dev/null 2>&1; then

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WS_HOST="${MESH_WS_HOST:-sam@192.168.1.111}"
-WS_REPO_BASE="${MESH_WS_REPO_BASE:-/home/sam}"
+WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
@@ -12,7 +12,7 @@ Usage:
 
 Env:
   MESH_WS_HOST       default: sam@192.168.1.111
-  MESH_WS_REPO_BASE  default: /home/sam
+  MESH_WS_REPO_BASE  default: /media/sam/1TB
 EOF
   exit 0
 fi
