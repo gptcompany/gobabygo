@@ -180,6 +180,7 @@ source ~/.zshrc   # or source ~/.bashrc on bash hosts
 
 This enables:
 - `wss` / `wss <repo>` (quick SSH to WS)
+- `wsattach <tmux-session>` (attach robusto: auto-detect utente tmux service)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `yazi` / `lf` aliases to `yazicd` / `lfcd` (keep selected directory on exit)
 
@@ -193,6 +194,7 @@ mesh start                      # one-command start (feature label auto-generate
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
 wss <repo>
+wsattach <tmux-session>
 ```
 
 `mesh thread` resolves latest thread from router (`GET /threads`), not from local state files.

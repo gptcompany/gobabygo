@@ -76,49 +76,65 @@ yazicd() {
 }
 
 # wss: quick SSH to WS; if passed a repo name, jumps to that repo directory.
-# Installed only if "wss" is currently unused (no alias/function/command).
-if ! alias wss >/dev/null 2>&1 && ! typeset -f wss >/dev/null 2>&1 && ! command -v wss >/dev/null 2>&1; then
-  wss() {
-    local ws_script ws_host repo_base repo mesh_home
-    mesh_home="$(_mesh_resolve_home || true)"
-    ws_script="${mesh_home}/scripts/ws"
-    if [[ -x "$ws_script" ]]; then
-      command "$ws_script" "$@"
-      return $?
-    fi
+unalias wss >/dev/null 2>&1 || true
+wss() {
+  local ws_script ws_host repo_base repo mesh_home target_dir
+  mesh_home="$(_mesh_resolve_home || true)"
+  ws_script="${mesh_home}/scripts/ws"
+  if [[ -x "$ws_script" ]]; then
+    command "$ws_script" "$@"
+    return $?
+  fi
 
-    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
-    repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
-    if [[ $# -eq 0 ]]; then
-      command ssh "$ws_host"
-      return $?
-    fi
+  ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+  repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
+  if [[ $# -eq 0 ]]; then
+    command ssh "$ws_host"
+    return $?
+  fi
 
-    repo="$1"
-    command ssh -t "$ws_host" "cd '${repo_base}/${repo}' && exec \$SHELL -l"
-  }
-fi
+  repo="$1"
+  target_dir="${repo_base}/${repo}"
+  command ssh -t "$ws_host" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[wss] missing repo: $target_dir'; cd '$repo_base'; fi; exec \$SHELL -l"
+}
+
+# wsattach: attach to tmux session on WS, auto-detecting effective service user.
+unalias wsattach >/dev/null 2>&1 || true
+wsattach() {
+  local ws_host session
+  ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+  session="${1:-}"
+  if [[ -z "$session" ]]; then
+    echo "Usage: wsattach <tmux-session>"
+    return 1
+  fi
+  command ssh -t "$ws_host" "bash -lc '
+if id mesh-worker >/dev/null 2>&1; then exec sudo -u mesh-worker tmux attach -t \"$session\"; fi
+if id mesh >/dev/null 2>&1; then exec sudo -u mesh tmux attach -t \"$session\"; fi
+exec tmux attach -t \"$session\"
+'"
+}
 
 # mesh: wrapper globale al launcher gobabygo/scripts/mesh (funziona da qualsiasi cartella).
-if ! alias mesh >/dev/null 2>&1 && ! typeset -f mesh >/dev/null 2>&1 && ! command -v mesh >/dev/null 2>&1; then
-  mesh() {
-    local mesh_script mesh_home
-    mesh_home="$(_mesh_resolve_home || true)"
-    mesh_script="${mesh_home}/scripts/mesh"
-    if [[ ! -x "$mesh_script" ]]; then
-      echo "mesh script not found at $mesh_script"
-      return 127
-    fi
-    command "$mesh_script" "$@"
-  }
-fi
+unalias mesh >/dev/null 2>&1 || true
+mesh() {
+  local mesh_script mesh_home
+  mesh_home="$(_mesh_resolve_home || true)"
+  mesh_script="${mesh_home}/scripts/mesh"
+  if [[ ! -x "$mesh_script" ]]; then
+    echo "mesh script not found at $mesh_script"
+    return 127
+  fi
+  command "$mesh_script" "$@"
+}
 
 # Convenience aliases: keep native command names but use cd-aware wrappers.
-# Installed only if alias name is currently unused.
-if command -v yazi >/dev/null 2>&1 && ! alias yazi >/dev/null 2>&1; then
+if command -v yazi >/dev/null 2>&1; then
+  unalias yazi >/dev/null 2>&1 || true
   alias yazi='yazicd'
 fi
-if command -v lf >/dev/null 2>&1 && ! alias lf >/dev/null 2>&1; then
+if command -v lf >/dev/null 2>&1; then
+  unalias lf >/dev/null 2>&1 || true
   alias lf='lfcd'
 fi
 # <<< gobabygo-shell-helpers <<<

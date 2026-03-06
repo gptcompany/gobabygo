@@ -8,7 +8,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
 Usage:
   ./scripts/ws                # ssh on WS
-  ./scripts/ws <repo-name>    # ssh on WS and cd into /home/sam/<repo-name>
+  ./scripts/ws <repo-name>    # ssh on WS and cd into ${MESH_WS_REPO_BASE}/<repo-name>
 
 Env:
   MESH_WS_HOST       default: sam@192.168.1.111
@@ -23,4 +23,4 @@ fi
 
 repo="$1"
 target_dir="${WS_REPO_BASE}/${repo}"
-exec ssh -t "$WS_HOST" "cd '$target_dir' && exec \$SHELL -l"
+exec ssh -t "$WS_HOST" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[ws] missing repo: $target_dir'; cd '$WS_REPO_BASE'; fi; exec \$SHELL -l"
