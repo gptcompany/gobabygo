@@ -125,6 +125,24 @@ class TestApproveTask:
         result = gate.approve_task(db, "t1", verifier_id="v1")
         assert result.success is True
 
+    def test_approve_unblocks_blocked_dependents(self, gate, db):
+        _add_task(db, "t1", critical=True)
+        _make_task_review(db, "t1")
+        _add_task(
+            db,
+            "t2",
+            status=TaskStatus.blocked,
+            depends_on=["t1"],
+            target_account="work",
+        )
+
+        result = gate.approve_task(db, "t1", verifier_id="v1")
+        assert result.success is True
+
+        dep = db.get_task("t2")
+        assert dep is not None
+        assert dep.status == TaskStatus.queued
+
 
 class TestRejectTask:
     def test_reject_creates_fix_task(self, gate, db):

@@ -165,6 +165,9 @@ class VerifierGate:
                     },
                 )
             )
+            # review -> completed is terminal for dependency graph;
+            # unblock dependents waiting on this task.
+            on_task_terminal(db, task_id)
 
         return result
 
