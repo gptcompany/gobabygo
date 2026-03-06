@@ -67,11 +67,13 @@ extract_kv() {
   local file="$1" key="$2"
   [[ -r "$file" ]] || return 1
   awk -F= -v key="$key" '
-    $0 ~ "^[[:space:]]*"key"=" {
-      sub(/^[[:space:]]*[^=]*=/, "", $0)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
-      gsub(/^["'"'"']|["'"'"']$/, "", $0)
-      print $0
+    $0 ~ "^[[:space:]]*(export[[:space:]]+)?"key"=" {
+      line = $0
+      sub(/^[[:space:]]*(export[[:space:]]+)?/, "", line)
+      sub(/^[^=]*=/, "", line)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      gsub(/^["'"'"']|["'"'"']$/, "", line)
+      print line
       exit 0
     }
   ' "$file"
