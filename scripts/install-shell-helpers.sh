@@ -8,9 +8,15 @@ END_MARKER="# <<< gobabygo-shell-helpers <<<"
 mkdir -p "$(dirname "$TARGET_ZSHRC")"
 touch "$TARGET_ZSHRC"
 
+# Idempotent update: remove previous helper block (if present), then append fresh block.
 if grep -Fq "$BEGIN_MARKER" "$TARGET_ZSHRC"; then
-  echo "Shell helpers already installed in $TARGET_ZSHRC"
-  exit 0
+  tmp_cleanup="$(mktemp "${TMPDIR:-/tmp}/zshrc.helpers.XXXXXX")"
+  awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
+    $0 == begin { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ' "$TARGET_ZSHRC" >"$tmp_cleanup"
+  mv "$tmp_cleanup" "$TARGET_ZSHRC"
 fi
 
 cat >>"$TARGET_ZSHRC" <<'EOF'
@@ -43,9 +49,31 @@ yazicd() {
   rm -f "$tmp"
   return "$rc"
 }
+
+# wss: quick SSH to WS; if passed a repo name, jumps to that repo directory.
+# Installed only if "wss" is currently unused (no alias/function/command).
+if ! alias wss >/dev/null 2>&1 && ! typeset -f wss >/dev/null 2>&1 && ! command -v wss >/dev/null 2>&1; then
+  wss() {
+    local ws_script ws_host repo_base repo
+    ws_script="$HOME/gobabygo/scripts/ws"
+    if [[ -x "$ws_script" ]]; then
+      command "$ws_script" "$@"
+      return $?
+    fi
+
+    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+    repo_base="${MESH_WS_REPO_BASE:-/home/sam}"
+    if [[ $# -eq 0 ]]; then
+      command ssh "$ws_host"
+      return $?
+    fi
+
+    repo="$1"
+    command ssh -t "$ws_host" "cd '${repo_base}/${repo}' && exec \$SHELL -l"
+  }
+fi
 # <<< gobabygo-shell-helpers <<<
 EOF
 
-echo "Installed lfcd + yazicd in $TARGET_ZSHRC"
+echo "Installed/updated lfcd + yazicd (+safe wss) in $TARGET_ZSHRC"
 echo "Run: source \"$TARGET_ZSHRC\""
-
