@@ -213,6 +213,18 @@ mesh run 016
 mesh thread
 ```
 
+If `mesh deploy` chooses wrong host mode:
+
+```bash
+MESH_DEPLOY_MODE=remote mesh deploy
+```
+
+WS host override:
+
+```bash
+MESH_WS_HOST=sam@192.168.1.111 mesh deploy
+```
+
 If you need explicit path/name mode:
 
 ```bash

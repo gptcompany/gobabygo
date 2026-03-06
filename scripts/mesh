@@ -253,6 +253,7 @@ EOF
   deploy)
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
     ws_repo_dir="${MESH_WS_REPO_DIR:-/opt/mesh-router}"
+    caller_repo_root="${REPO_ROOT}"
     branch="${MESH_DEPLOY_BRANCH:-master}"
     restart_router="${MESH_DEPLOY_RESTART_ROUTER:-1}"
     restart_batch="${MESH_DEPLOY_RESTART_BATCH:-0}"
@@ -266,13 +267,16 @@ branch="${2:-master}"
 restart_router="${3:-1}"
 restart_batch="${4:-0}"
 restart_session="${5:-1}"
+caller_repo_root="${6:-}"
 
 resolve_repo_dir() {
-  local preferred="$1"
+  local preferred="$1" caller="$2"
   local candidates=(
     "$preferred"
+    "$caller"
     "/opt/mesh-router"
     "$HOME/gobabygo"
+    "/media/sam/1TB/gobabygo"
   )
   local d
   for d in "${candidates[@]}"; do
@@ -284,9 +288,9 @@ resolve_repo_dir() {
   return 1
 }
 
-resolved_repo="$(resolve_repo_dir "$repo_dir" || true)"
+resolved_repo="$(resolve_repo_dir "$repo_dir" "$caller_repo_root" || true)"
 if [[ -z "$resolved_repo" ]]; then
-  echo "Error: repo not found. tried: $repo_dir, /opt/mesh-router, $HOME/gobabygo"
+  echo "Error: repo not found. tried: $repo_dir, $caller_repo_root, /opt/mesh-router, $HOME/gobabygo, /media/sam/1TB/gobabygo"
   exit 2
 fi
 repo_dir="$resolved_repo"
@@ -335,12 +339,12 @@ EOF
 )"
 
     run_local_deploy() {
-      bash -s -- "$ws_repo_dir" "$branch" "$restart_router" "$restart_batch" "$restart_session" <<<"$deploy_script"
+      bash -s -- "$ws_repo_dir" "$branch" "$restart_router" "$restart_batch" "$restart_session" "$caller_repo_root" <<<"$deploy_script"
     }
 
     run_remote_deploy() {
       ssh -tt -o ConnectTimeout=10 "$ws_host" "bash -s" -- \
-        "$ws_repo_dir" "$branch" "$restart_router" "$restart_batch" "$restart_session" <<<"$deploy_script"
+        "$ws_repo_dir" "$branch" "$restart_router" "$restart_batch" "$restart_session" "$caller_repo_root" <<<"$deploy_script"
     }
 
     case "$deploy_mode" in

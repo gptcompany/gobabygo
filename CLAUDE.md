@@ -40,6 +40,10 @@ Behavior:
 - restarts router
 - restarts session workers only if no `mesh-*` tmux sessions are detected
 
+Controls:
+- `MESH_WS_HOST` (default `sam@192.168.1.111`)
+- `MESH_DEPLOY_MODE=auto|remote|local` (use `remote` from Mac if needed)
+
 ## Minimal Daily Flow
 
 From the target repo directory on WS:
