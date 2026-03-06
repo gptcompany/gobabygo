@@ -595,6 +595,7 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
             "on_failure": step["on_failure"],
             "payload": {
                 "prompt": step["prompt"],
+                "working_dir": args.repo,
                 "pipeline_template": args.template,
                 "pipeline_step": step["name"],
                 "review_policy": step["review_policy"],

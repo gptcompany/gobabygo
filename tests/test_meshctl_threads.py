@@ -307,6 +307,7 @@ templates:
         assert step_a_body["step_index"] == 0
         assert step_a_body["execution_mode"] == "session"
         assert step_a_body["critical"] is True
+        assert step_a_body["payload"]["working_dir"] == "/repo/demo"
 
         # 3) second step depends on first created task id
         step_b_call = mock_post.call_args_list[2]
@@ -314,6 +315,7 @@ templates:
         assert step_b_body["step_index"] == 1
         assert step_b_body["depends_on"] == ["task-1"]
         assert step_b_body["on_failure"] == "retry"
+        assert step_b_body["payload"]["working_dir"] == "/repo/demo"
 
     def test_pipeline_create_unknown_template_exits(
         self, tmp_path, capsys: pytest.CaptureFixture[str]
