@@ -25,6 +25,10 @@ MESH_SESSION_FALLBACK_TO_BATCH=1   # only fallback session->batch when no sessio
 With `MESH_DEFAULT_EXECUTION_MODE=session`, tasks created without explicit `execution_mode`
 default to interactive session workers.
 
+Note: repository deploy templates already enable this policy in
+`deploy/mesh-router.env` (`MESH_DEFAULT_EXECUTION_MODE=session`,
+`MESH_SESSION_FALLBACK_TO_BATCH=1`).
+
 ## 2. Start a Worker
 
 ```bash
@@ -169,8 +173,8 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 | `MESH_CLI_TYPE` | `claude` | Worker CLI type: `claude\|codex\|gemini` |
 | `MESH_ACCOUNT_PROFILE` | `work` | Account profile for task matching |
 | `MESH_LONGPOLL_TIMEOUT_S` | `25` | Long-poll block duration (seconds) |
-| `MESH_DEFAULT_EXECUTION_MODE` | `batch` | Router default when task omits execution mode (`batch\|session`) |
-| `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | If `1`, session tasks may fallback to batch workers when no session worker is available |
+| `MESH_DEFAULT_EXECUTION_MODE` | `batch` | Router code default when task omits execution mode (`batch\|session`). Deploy template sets `session` in `deploy/mesh-router.env`. |
+| `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | Router code default. If `1`, session tasks may fallback to batch workers when no session worker is available. Deploy template sets `1` in `deploy/mesh-router.env`. |
 | `MESH_REVIEWER_ID` | `verifier-codex` | Verifier identity written to review events |
 | `MESH_REVIEW_CLI_COMMAND` | `ccs codex --effort xhigh` | CLI command used by `review_worker` |
 | `MESH_REVIEW_POLL_INTERVAL_S` | `8` | Review worker polling interval |
