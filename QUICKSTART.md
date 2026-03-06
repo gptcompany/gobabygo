@@ -188,7 +188,7 @@ Ultra-short operator commands:
 ```bash
 mesh bootstrap
 mesh status
-mesh start "checkout hardening" # new thread (spec created inside flow)
+mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
 wss <repo>
@@ -203,7 +203,7 @@ Examples:
 mesh bootstrap
 
 # from inside /media/sam/1TB/rektaslug
-mesh start "spec 016"
+mesh start
 mesh thread
 
 # existing numbered phase flow

@@ -31,7 +31,7 @@ Optional: set `MESH_BOOTSTRAP_STOP_BATCH=1` before running bootstrap to stop bat
 From the target repo directory on WS:
 
 ```bash
-mesh start "checkout hardening"
+mesh start
 mesh thread
 
 # existing numbered flow
@@ -42,7 +42,7 @@ mesh thread
 Examples:
 
 ```bash
-mesh start "spec 016"
+mesh start
 mesh thread
 mesh run 016
 mesh thread
@@ -50,6 +50,7 @@ mesh thread
 
 No hardcoded path is required when run from inside the repo.
 `mesh thread` resolves latest thread from router (server-side), not from local state files.
+If `mesh start` has no arguments, feature label is auto-generated per run.
 
 ## Required Helpers
 

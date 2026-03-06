@@ -52,14 +52,15 @@ Usage:
   ./scripts/mesh status
   ./scripts/mesh thread [thread-name]
   ./scripts/mesh bootstrap
-  ./scripts/mesh start <feature text>
-  ./scripts/mesh new <feature text>
+  ./scripts/mesh start [feature text]
+  ./scripts/mesh new [feature text]
   ./scripts/mesh run <phase>
   ./scripts/mesh run <repo-name|repo-path> <phase>
 
 Examples:
   ./scripts/mesh status
   ./scripts/mesh bootstrap
+  ./scripts/mesh start
   ./scripts/mesh start "checkout hardening"
   ./scripts/mesh new "spec 017"
   ./scripts/mesh run 016
@@ -106,6 +107,11 @@ slugify() {
     text="work"
   fi
   printf '%s' "$text"
+}
+
+gen_feature_label() {
+  # Dynamic label for ad-hoc starts without explicit feature text.
+  printf 'run-%s-%04d' "$(date +%Y%m%d-%H%M%S)" "$RANDOM"
 }
 
 load_router_env() {
@@ -245,8 +251,7 @@ EOF
   start|new)
     feature="${*:2}"
     if [[ -z "$feature" ]]; then
-      usage
-      exit 1
+      feature="$(gen_feature_label)"
     fi
 
     repo_path="$(pwd -P)"
