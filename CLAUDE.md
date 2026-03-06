@@ -49,6 +49,7 @@ mesh thread
 ```
 
 No hardcoded path is required when run from inside the repo.
+`mesh thread` resolves latest thread from router (server-side), not from local state files.
 
 ## Required Helpers
 

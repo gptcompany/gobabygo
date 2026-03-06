@@ -194,6 +194,8 @@ mesh thread                     # show last thread for current repo
 wss <repo>
 ```
 
+`mesh thread` resolves latest thread from router (`GET /threads`), not from local state files.
+
 Examples:
 
 ```bash
