@@ -361,6 +361,47 @@ class TestTaskPollEndpoint:
         assert data["title"] == "test task"
 
 
+class TestDefaultExecutionMode:
+    def test_create_task_uses_session_default_when_configured(self, db):
+        from datetime import datetime, timezone
+
+        longpoll_registry = LongPollRegistry()
+        worker_manager = WorkerManager(db, tokens=[], dev_mode=True, longpoll_registry=longpoll_registry)
+        heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
+        scheduler = Scheduler(db, longpoll_registry=longpoll_registry)
+        transport = InProcessTransport(db)
+        metrics = MeshMetrics()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+        server.router_state = {
+            "db": db,
+            "worker_manager": worker_manager,
+            "heartbeat": heartbeat,
+            "scheduler": scheduler,
+            "transport": transport,
+            "metrics": metrics,
+            "longpoll_registry": longpoll_registry,
+            "longpoll_timeout": 0.1,
+            "default_execution_mode": "session",
+            "auth_token": None,
+            "start_time": datetime.now(timezone.utc),
+        }
+
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+
+        port = server.server_address[1]
+        url = f"http://127.0.0.1:{port}"
+        resp = requests.post(f"{url}/tasks", json={"title": "session by default"})
+        assert resp.status_code == 201
+        task_id = resp.json()["task_id"]
+        task = db.get_task(task_id)
+        assert str(task.execution_mode.value) == "session"
+
+        server.shutdown()
+
+
 class TestTaskPollLongPoll:
     """Tests for long-poll specific behavior through the server."""
 
@@ -525,6 +566,146 @@ class TestTaskFailEndpoint:
             json={"task_id": "t1", "worker_id": "w1", "error": "test error"},
         )
         assert resp.status_code == 200
+
+
+class TestTaskReviewEndpoints:
+    def test_review_approve_valid_task(self, server_url, db):
+        task = Task(
+            task_id="t-review-1",
+            title="needs review",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            idempotency_key="k-review-1",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/review/approve",
+            json={"task_id": "t-review-1", "verifier_id": "v-codex"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+
+        updated = db.get_task("t-review-1")
+        assert updated.status == TaskStatus.completed
+
+        events = db.get_events("t-review-1")
+        approval = [e for e in events if e.event_type == "verifier_approval"]
+        assert len(approval) == 1
+        assert approval[0].payload["verifier_id"] == "v-codex"
+
+    def test_review_approve_with_pending_fix_returns_409(self, server_url, db):
+        parent = Task(
+            task_id="t-review-2",
+            title="parent review",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            idempotency_key="k-review-2",
+        )
+        db.insert_task(parent)
+        fix = Task(
+            task_id="t-fix-2",
+            parent_task_id="t-review-2",
+            title="open fix",
+            phase="implement",
+            status=TaskStatus.queued,
+            idempotency_key="k-fix-2",
+        )
+        db.insert_task(fix)
+
+        resp = requests.post(
+            f"{server_url}/tasks/review/approve",
+            json={"task_id": "t-review-2", "verifier_id": "v-codex"},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "review_approval_failed"
+        assert "pending fix tasks" in resp.json()["detail"]
+
+    def test_review_reject_creates_fix_task(self, server_url, db):
+        task = Task(
+            task_id="t-review-3",
+            title="review me",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            target_cli="codex",
+            target_account="review-codex",
+            idempotency_key="k-review-3",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/review/reject",
+            json={
+                "task_id": "t-review-3",
+                "verifier_id": "v-codex",
+                "reason": "missing tests",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "rejected"
+        assert body["task_id"] == "t-review-3"
+        assert body["fix_task_id"]
+
+        fix_task = db.get_task(body["fix_task_id"])
+        assert fix_task is not None
+        assert fix_task.parent_task_id == "t-review-3"
+        assert fix_task.target_cli == task.target_cli
+        assert fix_task.target_account == task.target_account
+
+    def test_review_reject_escalates_after_max_rejections(self, server_url, db):
+        task = Task(
+            task_id="t-review-4",
+            title="escalate me",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            rejection_count=2,
+            idempotency_key="k-review-4",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/review/reject",
+            json={
+                "task_id": "t-review-4",
+                "verifier_id": "v-codex",
+                "reason": "still wrong",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "rejected_escalated"
+
+        updated = db.get_task("t-review-4")
+        assert updated.status == TaskStatus.failed
+        assert updated.rejection_count == 3
+
+    def test_review_reject_missing_reason_returns_400(self, server_url):
+        resp = requests.post(
+            f"{server_url}/tasks/review/reject",
+            json={"task_id": "t1", "verifier_id": "v-codex"},
+        )
+        assert resp.status_code == 400
+        assert "missing_field" in resp.json()["error"]
+
+    def test_review_approve_requires_auth(self, authed_server_url, db):
+        task = Task(
+            task_id="t-review-5",
+            title="auth check",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            idempotency_key="k-review-5",
+        )
+        db.insert_task(task)
+        resp = requests.post(
+            f"{authed_server_url}/tasks/review/approve",
+            json={"task_id": "t-review-5", "verifier_id": "v-codex"},
+        )
+        assert resp.status_code == 401
 
 
 class TestAuth:

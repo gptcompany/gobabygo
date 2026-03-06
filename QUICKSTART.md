@@ -15,6 +15,16 @@ Default: `http://localhost:8780`. Override with `MESH_ROUTER_PORT`.
 
 Dev mode disables auth -- no token needed for registration.
 
+Session-first routing policy (optional):
+
+```bash
+MESH_DEFAULT_EXECUTION_MODE=session
+MESH_SESSION_FALLBACK_TO_BATCH=1   # only fallback session->batch when no session worker is available
+```
+
+With `MESH_DEFAULT_EXECUTION_MODE=session`, tasks created without explicit `execution_mode`
+default to interactive session workers.
+
 ## 2. Start a Worker
 
 ```bash
@@ -41,6 +51,21 @@ python -m src.router.session_worker
 
 Session workers persist session metadata/messages via router `/sessions/*`.
 CLI approval prompts remain CLI-native (manual/yolo/etc.).
+
+## 2c. Start an External Review Worker (Codex Verifier)
+
+Use this worker to process tasks already in `review` state and call:
+- `POST /tasks/review/approve`
+- `POST /tasks/review/reject`
+
+```bash
+MESH_ROUTER_URL=http://localhost:8780 \
+MESH_AUTH_TOKEN=... \
+MESH_REVIEWER_ID=review-codex \
+MESH_REVIEW_CLI_COMMAND="ccs codex --effort xhigh" \
+MESH_ACCOUNT_PROFILE=review-codex \
+python -m src.router.review_worker
+```
 
 ## 3. Check Status with meshctl
 
@@ -110,6 +135,18 @@ progress without attaching immediately.
 For a real `.111` (worker) + `.112` (iTerm2 operator) VPN-first validation run, use:
 - `deploy/SESSION-FIRST-E2E-RUNBOOK.md`
 
+Manual review API examples:
+
+```bash
+curl -s -X POST http://localhost:8780/tasks/review/approve \
+  -H 'Content-Type: application/json' \
+  -d '{"task_id":"<TASK_ID>","verifier_id":"review-codex"}'
+
+curl -s -X POST http://localhost:8780/tasks/review/reject \
+  -H 'Content-Type: application/json' \
+  -d '{"task_id":"<TASK_ID>","verifier_id":"review-codex","reason":"missing tests"}'
+```
+
 ## 5. Run the Smoke Test
 
 ```bash
@@ -132,3 +169,8 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 | `MESH_CLI_TYPE` | `claude` | Worker CLI type: `claude\|codex\|gemini` |
 | `MESH_ACCOUNT_PROFILE` | `work` | Account profile for task matching |
 | `MESH_LONGPOLL_TIMEOUT_S` | `25` | Long-poll block duration (seconds) |
+| `MESH_DEFAULT_EXECUTION_MODE` | `batch` | Router default when task omits execution mode (`batch\|session`) |
+| `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | If `1`, session tasks may fallback to batch workers when no session worker is available |
+| `MESH_REVIEWER_ID` | `verifier-codex` | Verifier identity written to review events |
+| `MESH_REVIEW_CLI_COMMAND` | `ccs codex --effort xhigh` | CLI command used by `review_worker` |
+| `MESH_REVIEW_POLL_INTERVAL_S` | `8` | Review worker polling interval |

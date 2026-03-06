@@ -1,0 +1,30 @@
+[Unit]
+Description=AI Mesh Review Worker (%i)
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=simple
+User=mesh-worker
+Group=mesh
+SupplementaryGroups=sam
+WorkingDirectory=/opt/mesh-worker
+EnvironmentFile=/etc/mesh-worker/%i.env
+ExecStart=/opt/mesh-worker/venv/bin/python -m src.router.review_worker
+Restart=always
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/mesh-worker/.mesh /tmp/mesh-tasks
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mesh-review-worker-%i
+
+[Install]
+WantedBy=multi-user.target

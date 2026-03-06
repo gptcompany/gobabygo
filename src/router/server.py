@@ -129,6 +129,10 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._handle_task_complete()
             elif path == "/tasks/fail":
                 self._handle_task_fail()
+            elif path == "/tasks/review/approve":
+                self._handle_task_review_approve()
+            elif path == "/tasks/review/reject":
+                self._handle_task_review_reject()
             elif path == "/threads":
                 self._handle_create_thread()
             elif path == "/notifications":
@@ -254,6 +258,9 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
         state = self.server.router_state  # type: ignore[attr-defined]
         metrics: MeshMetrics = state["metrics"]
+        default_mode = str(state.get("default_execution_mode", "batch")).strip()
+        if "execution_mode" not in data and default_mode in {"batch", "session"}:
+            data["execution_mode"] = default_mode
 
         try:
             request = TaskCreateRequest(**data)
@@ -439,6 +446,105 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"status": "failed_recorded"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+        except KeyError as e:
+            self._send_json(400, {"error": f"missing_field: {e}"})
+
+    def _get_verifier_gate(self) -> VerifierGate:
+        """Return verifier gate from router_state, lazily initializing when absent."""
+        state = self.server.router_state  # type: ignore[attr-defined]
+        gate = state.get("verifier_gate")
+        if gate is None:
+            gate = VerifierGate()
+            state["verifier_gate"] = gate
+        return gate
+
+    def _handle_task_review_approve(self) -> None:
+        """POST /tasks/review/approve — approve task in review state."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+            task_id = data["task_id"]
+            verifier_id = data["verifier_id"]
+            if not isinstance(verifier_id, str) or not verifier_id.strip():
+                self._send_json(400, {"error": "invalid_verifier_id"})
+                return
+            state = self.server.router_state  # type: ignore[attr-defined]
+            db: RouterDB = state["db"]
+            if db.get_task(task_id) is None:
+                self._send_json(404, {"error": "not_found"})
+                return
+            gate = self._get_verifier_gate()
+            result = gate.approve_task(db, task_id, verifier_id.strip())
+            if result.success:
+                self._send_json(200, {
+                    "status": "approved",
+                    "task_id": task_id,
+                    "event_id": result.event_id,
+                })
+            else:
+                self._send_json(
+                    409,
+                    {
+                        "error": "review_approval_failed",
+                        "detail": result.reason or "transition_failed",
+                    },
+                )
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+        except KeyError as e:
+            self._send_json(400, {"error": f"missing_field: {e}"})
+
+    def _handle_task_review_reject(self) -> None:
+        """POST /tasks/review/reject — reject task in review, create fix/escalate."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+            task_id = data["task_id"]
+            verifier_id = data["verifier_id"]
+            reason = data["reason"]
+            if not isinstance(verifier_id, str) or not verifier_id.strip():
+                self._send_json(400, {"error": "invalid_verifier_id"})
+                return
+            if not isinstance(reason, str) or not reason.strip():
+                self._send_json(400, {"error": "invalid_reason"})
+                return
+            state = self.server.router_state  # type: ignore[attr-defined]
+            db: RouterDB = state["db"]
+            if db.get_task(task_id) is None:
+                self._send_json(404, {"error": "not_found"})
+                return
+            gate = self._get_verifier_gate()
+            fix_task = gate.reject_task(
+                db,
+                task_id,
+                verifier_id=verifier_id.strip(),
+                reason=reason.strip(),
+            )
+            task = db.get_task(task_id)
+            if fix_task is not None:
+                self._send_json(200, {
+                    "status": "rejected",
+                    "task_id": task_id,
+                    "fix_task_id": fix_task.task_id,
+                    "rejection_count": task.rejection_count if task else None,
+                })
+                return
+
+            self._send_json(200, {
+                "status": "rejected_escalated",
+                "task_id": task_id,
+                "rejection_count": task.rejection_count if task else None,
+            })
         except json.JSONDecodeError:
             self._send_json(400, {"error": "invalid_json"})
         except KeyError as e:
@@ -918,6 +1024,11 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
             return
 
+        state = self.server.router_state  # type: ignore[attr-defined]
+        default_mode = str(state.get("default_execution_mode", "batch")).strip()
+        if "execution_mode" not in data and default_mode in {"batch", "session"}:
+            data["execution_mode"] = default_mode
+
         try:
             step_request = ThreadStepRequest(**data)
         except (ValidationError, ValueError, TypeError) as e:
@@ -1038,7 +1149,17 @@ def run_server(
     heartbeat = HeartbeatManager(db, longpoll_registry=longpoll_registry)
     topology_path = os.environ.get("MESH_TOPOLOGY_PATH")
     topology = load_topology(topology_path)
-    scheduler = Scheduler(db, longpoll_registry=longpoll_registry, topology=topology)
+    default_execution_mode = os.environ.get("MESH_DEFAULT_EXECUTION_MODE", "batch").strip()
+    if default_execution_mode not in {"batch", "session"}:
+        logger.warning("Invalid MESH_DEFAULT_EXECUTION_MODE=%r, using 'batch'", default_execution_mode)
+        default_execution_mode = "batch"
+    session_fallback_to_batch = os.environ.get("MESH_SESSION_FALLBACK_TO_BATCH", "").strip() == "1"
+    scheduler = Scheduler(
+        db,
+        longpoll_registry=longpoll_registry,
+        topology=topology,
+        session_fallback_to_batch=session_fallback_to_batch,
+    )
     transport = InProcessTransport(db)
     buffer_path = os.environ.get("MESH_BUFFER_PATH", "~/.mesh/events-buffer.jsonl")
     buffer = FallbackBuffer(buffer_path=buffer_path)
@@ -1070,6 +1191,8 @@ def run_server(
         "metrics": metrics,
         "longpoll_registry": longpoll_registry,
         "longpoll_timeout": longpoll_timeout,
+        "default_execution_mode": default_execution_mode,
+        "session_fallback_to_batch": session_fallback_to_batch,
         "auth_token": auth_token,
         "start_time": start_time,
         "topology": topology,

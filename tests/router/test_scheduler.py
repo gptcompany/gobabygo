@@ -124,6 +124,31 @@ class TestFindEligibleWorker:
         )
         assert sched.find_all_eligible_workers(task) == []
 
+    def test_session_fallback_to_batch_when_enabled(self, db):
+        sched = Scheduler(db=db, lease_duration_s=300, session_fallback_to_batch=True)
+        _add_worker(db, "w1", "work", CLIType.claude, execution_modes=["batch"])
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.session,
+        )
+        workers = sched.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w1"]
+
+    def test_session_fallback_prefers_session_when_available(self, db):
+        sched = Scheduler(db=db, lease_duration_s=300, session_fallback_to_batch=True)
+        _add_worker(db, "w-batch", "work", CLIType.claude, execution_modes=["batch"], idle_since=_past(120))
+        _add_worker(db, "w-session", "work", CLIType.claude, execution_modes=["session"], idle_since=_past(60))
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.session,
+        )
+        workers = sched.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w-session"]
+
 
 class TestFindNextTask:
     def test_priority_order(self, sched, db):

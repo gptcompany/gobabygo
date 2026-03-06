@@ -52,12 +52,14 @@ class Scheduler:
         db: RouterDB,
         lease_duration_s: int = 300,
         review_timeout_s: int = 3600,
+        session_fallback_to_batch: bool = False,
         longpoll_registry: LongPollRegistry | None = None,
         topology: Topology | None = None,
     ) -> None:
         self._db = db
         self._lease_duration_s = lease_duration_s
         self._review_timeout_s = review_timeout_s
+        self._session_fallback_to_batch = session_fallback_to_batch
         self._verifier = VerifierGate()
         self._longpoll_registry = longpoll_registry
         self._topology = topology
@@ -73,14 +75,46 @@ class Scheduler:
             and w.account_profile == task.target_account
             and task_mode in (w.execution_modes or ["batch"])
         ]
-        # Topology-aware filter: restrict to repo worker pool if defined
+        eligible = self._apply_topology_filter(task, eligible)
+        if eligible:
+            return self._sort_by_idle(eligible)
+
+        # Session-first policy with explicit fallback:
+        # when enabled, session tasks may run on batch workers if no session worker is available.
+        if task_mode == "session" and self._session_fallback_to_batch:
+            fallback = [
+                w
+                for w in idle_workers
+                if w.cli_type == task.target_cli
+                and w.account_profile == task.target_account
+                and "batch" in (w.execution_modes or ["batch"])
+            ]
+            fallback = self._apply_topology_filter(task, fallback)
+            if fallback:
+                logger.info(
+                    "session_fallback_to_batch task=%s cli=%s account=%s workers=%d",
+                    task.task_id,
+                    task.target_cli,
+                    task.target_account,
+                    len(fallback),
+                )
+            return self._sort_by_idle(fallback)
+
+        return []
+
+    def _apply_topology_filter(self, task: Task, workers: list[Worker]) -> list[Worker]:
+        """Restrict workers to repo-specific pool when topology provides one."""
         if self._topology and task.repo:
             pool = self._topology.get_repo_worker_pool(task.repo)
             if pool is not None:
                 pool_set = set(pool)
-                eligible = [w for w in eligible if w.worker_id in pool_set]
-        eligible.sort(key=lambda w: w.idle_since or "")
-        return eligible
+                return [w for w in workers if w.worker_id in pool_set]
+        return workers
+
+    @staticmethod
+    def _sort_by_idle(workers: list[Worker]) -> list[Worker]:
+        workers.sort(key=lambda w: w.idle_since or "")
+        return workers
 
     def find_next_task(self) -> Task | None:
         """Find the next schedulable queued task."""

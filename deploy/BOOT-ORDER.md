@@ -18,6 +18,7 @@
    - Heartbeat begins immediately (5s interval)
    - Stale detection at 35s (WireGuard keepalive 25s)
    - `mesh-session-worker@*.service` is the interactive/tmux variant (Claude/Codex session workers)
+   - `mesh-review-worker@*.service` is the verifier variant (approve/reject review tasks via API)
 
 ## MacBook (.112) Control Terminal Sequence (iTerm2)
 
@@ -73,6 +74,9 @@ sudo systemctl start mesh-worker@claude-work mesh-worker@codex-work mesh-worker@
 # Interactive session workers (tmux-backed)
 sudo systemctl start mesh-session-worker@mesh-session-claude-work
 sudo systemctl start mesh-session-worker@mesh-session-codex-work
+
+# External verifier worker (Codex review)
+sudo systemctl start mesh-review-worker@mesh-review-codex
 
 # MacBook (.112) quick checks (operator machine, VPN-first)
 ./deploy/check-mac-112-cli.sh
