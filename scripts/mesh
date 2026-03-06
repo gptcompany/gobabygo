@@ -379,14 +379,22 @@ if command -v tmux >/dev/null 2>&1; then
 fi
 
 if [[ "$restart_router" == "1" ]]; then
-  sudo systemctl restart mesh-router
-  sudo systemctl is-active --quiet mesh-router && echo "[deploy] mesh-router active"
+  if systemctl list-unit-files 2>/dev/null | grep -q '^mesh-router\.service'; then
+    sudo systemctl restart mesh-router
+    sudo systemctl is-active --quiet mesh-router && echo "[deploy] mesh-router active"
+  else
+    echo "[deploy] mesh-router.service not found on this host; skipping router restart"
+  fi
 fi
 
 if [[ "$restart_batch" == "1" ]]; then
-  sudo systemctl restart mesh-worker@claude-work || true
-  sudo systemctl restart mesh-worker@codex-work || true
-  sudo systemctl restart mesh-worker@gemini-work || true
+  if systemctl list-unit-files 2>/dev/null | grep -q '^mesh-worker@\.service'; then
+    sudo systemctl restart mesh-worker@claude-work || true
+    sudo systemctl restart mesh-worker@codex-work || true
+    sudo systemctl restart mesh-worker@gemini-work || true
+  else
+    echo "[deploy] mesh-worker@.service not found; skipping batch restart"
+  fi
   echo "[deploy] batch workers restarted"
 fi
 
@@ -394,9 +402,13 @@ if [[ "$restart_session" == "1" ]]; then
   if [[ "$has_mesh_tmux" == "1" ]]; then
     echo "[deploy] session workers NOT restarted (active/stale mesh tmux sessions detected)"
   else
-    sudo systemctl restart mesh-session-worker@mesh-session-claude-work
-    sudo systemctl restart mesh-session-worker@mesh-session-codex-work
-    echo "[deploy] session workers restarted"
+    if systemctl list-unit-files 2>/dev/null | grep -q '^mesh-session-worker@\.service'; then
+      sudo systemctl restart mesh-session-worker@mesh-session-claude-work
+      sudo systemctl restart mesh-session-worker@mesh-session-codex-work
+      echo "[deploy] session workers restarted"
+    else
+      echo "[deploy] mesh-session-worker@.service not found; skipping session restart"
+    fi
   fi
 fi
 
