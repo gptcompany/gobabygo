@@ -72,6 +72,15 @@ if ! alias wss >/dev/null 2>&1 && ! typeset -f wss >/dev/null 2>&1 && ! command 
     command ssh -t "$ws_host" "cd '${repo_base}/${repo}' && exec \$SHELL -l"
   }
 fi
+
+# Convenience aliases: keep native command names but use cd-aware wrappers.
+# Installed only if alias name is currently unused.
+if command -v yazi >/dev/null 2>&1 && ! alias yazi >/dev/null 2>&1; then
+  alias yazi='yazicd'
+fi
+if command -v lf >/dev/null 2>&1 && ! alias lf >/dev/null 2>&1; then
+  alias lf='lfcd'
+fi
 # <<< gobabygo-shell-helpers <<<
 EOF
 
