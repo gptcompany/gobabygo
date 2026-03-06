@@ -196,6 +196,11 @@ wss <repo>
 ```
 
 `mesh thread` resolves latest thread from router (`GET /threads`), not from local state files.
+`mesh` auto-discovers router env in this order:
+1. shell env (`MESH_ROUTER_URL`, `MESH_AUTH_TOKEN`)
+2. `~/.mesh/.env.mesh`
+3. `~/.mesh/router.env`
+4. `/etc/mesh-worker/*.env` (WS fallback)
 
 Examples:
 

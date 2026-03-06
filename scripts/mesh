@@ -7,6 +7,15 @@ ENV_FILE="${MESH_ENV_FILE:-$HOME/.mesh/.env.mesh}"
 FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 PIPELINE_TEMPLATE="${MESH_PIPELINE_TEMPLATE:-speckit}"
+MESH_ENV_SOURCES=(
+  "${ENV_FILE}"
+  "${FALLBACK_EXPORTS}"
+  "/etc/mesh-worker/mesh-session-claude-work.env"
+  "/etc/mesh-worker/mesh-session-codex-work.env"
+  "/etc/mesh-worker/mesh-worker-claude-work.env"
+  "/etc/mesh-worker/mesh-worker-codex-work.env"
+  "/etc/mesh-worker/mesh-worker-gemini-work.env"
+)
 
 detect_python() {
   if command -v python3 >/dev/null 2>&1; then
@@ -22,6 +31,8 @@ detect_python() {
 }
 
 run_meshctl() {
+  ensure_router_env
+
   # Prefer uv-managed environment when available.
   if command -v uv >/dev/null 2>&1 && [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
     if command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
@@ -45,6 +56,67 @@ run_meshctl() {
   else
     (cd "$REPO_ROOT" && exec "$py_bin" -m src.meshctl "$@")
   fi
+}
+
+extract_kv() {
+  local file="$1" key="$2"
+  [[ -r "$file" ]] || return 1
+  awk -F= -v key="$key" '
+    $0 ~ "^[[:space:]]*"key"=" {
+      sub(/^[[:space:]]*[^=]*=/, "", $0)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      gsub(/^["'"'"']|["'"'"']$/, "", $0)
+      print $0
+      exit 0
+    }
+  ' "$file"
+}
+
+persist_router_env_if_possible() {
+  [[ -n "${MESH_ROUTER_URL:-}" ]] || return 0
+  [[ -n "${MESH_AUTH_TOKEN:-}" ]] || return 0
+
+  mkdir -p "$(dirname "$FALLBACK_EXPORTS")" 2>/dev/null || return 0
+  touch "$FALLBACK_EXPORTS" 2>/dev/null || return 0
+  cat >"$FALLBACK_EXPORTS" <<EOF
+export MESH_ROUTER_URL=${MESH_ROUTER_URL}
+export MESH_AUTH_TOKEN=${MESH_AUTH_TOKEN}
+EOF
+}
+
+ensure_router_env() {
+  # Keep explicit shell env as highest priority.
+  if [[ -n "${MESH_ROUTER_URL:-}" && -n "${MESH_AUTH_TOKEN:-}" ]]; then
+    return 0
+  fi
+
+  local src router token
+
+  # Discover values from known env files.
+  for src in "${MESH_ENV_SOURCES[@]}"; do
+    [[ -r "$src" ]] || continue
+
+    if [[ -z "${MESH_ROUTER_URL:-}" ]]; then
+      router="$(extract_kv "$src" "MESH_ROUTER_URL" || true)"
+      [[ -n "$router" ]] && export MESH_ROUTER_URL="$router"
+    fi
+
+    if [[ -z "${MESH_AUTH_TOKEN:-}" ]]; then
+      token="$(extract_kv "$src" "MESH_AUTH_TOKEN" || true)"
+      [[ -n "$token" ]] && export MESH_AUTH_TOKEN="$token"
+    fi
+
+    if [[ -n "${MESH_ROUTER_URL:-}" && -n "${MESH_AUTH_TOKEN:-}" ]]; then
+      break
+    fi
+  done
+
+  # WS-friendly default router address if nothing discovered.
+  if [[ -z "${MESH_ROUTER_URL:-}" && -d "/etc/mesh-worker" ]]; then
+    export MESH_ROUTER_URL="http://192.168.1.100:8780"
+  fi
+
+  persist_router_env_if_possible
 }
 
 usage() {
@@ -121,17 +193,7 @@ gen_feature_label() {
 }
 
 load_router_env() {
-  if [[ -f "$ENV_FILE" ]]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$ENV_FILE"
-    set +a
-  elif [[ -f "$FALLBACK_EXPORTS" ]]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$FALLBACK_EXPORTS"
-    set +a
-  fi
+  ensure_router_env
 }
 
 latest_thread_for_repo() {

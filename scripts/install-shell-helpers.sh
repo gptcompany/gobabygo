@@ -2,24 +2,28 @@
 set -euo pipefail
 
 TARGET_ZSHRC="${TARGET_ZSHRC:-$HOME/.zshrc}"
+TARGET_BASHRC="${TARGET_BASHRC:-$HOME/.bashrc}"
 BEGIN_MARKER="# >>> gobabygo-shell-helpers >>>"
 END_MARKER="# <<< gobabygo-shell-helpers <<<"
 
-mkdir -p "$(dirname "$TARGET_ZSHRC")"
-touch "$TARGET_ZSHRC"
+install_block() {
+  local target_rc="$1"
+  mkdir -p "$(dirname "$target_rc")"
+  touch "$target_rc"
 
-# Idempotent update: remove previous helper block (if present), then append fresh block.
-if grep -Fq "$BEGIN_MARKER" "$TARGET_ZSHRC"; then
-  tmp_cleanup="$(mktemp "${TMPDIR:-/tmp}/zshrc.helpers.XXXXXX")"
-  awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
-    $0 == begin { skip = 1; next }
-    $0 == end { skip = 0; next }
-    !skip { print }
-  ' "$TARGET_ZSHRC" >"$tmp_cleanup"
-  mv "$tmp_cleanup" "$TARGET_ZSHRC"
-fi
+  # Idempotent update: remove previous helper block (if present), then append fresh block.
+  if grep -Fq "$BEGIN_MARKER" "$target_rc"; then
+    local tmp_cleanup
+    tmp_cleanup="$(mktemp "${TMPDIR:-/tmp}/shell.helpers.XXXXXX")"
+    awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
+      $0 == begin { skip = 1; next }
+      $0 == end { skip = 0; next }
+      !skip { print }
+    ' "$target_rc" >"$tmp_cleanup"
+    mv "$tmp_cleanup" "$target_rc"
+  fi
 
-cat >>"$TARGET_ZSHRC" <<'EOF'
+  cat >>"$target_rc" <<'EOF'
 
 # >>> gobabygo-shell-helpers >>>
 _mesh_resolve_home() {
@@ -119,6 +123,14 @@ if command -v lf >/dev/null 2>&1 && ! alias lf >/dev/null 2>&1; then
 fi
 # <<< gobabygo-shell-helpers <<<
 EOF
+}
 
-echo "Installed/updated lfcd + yazicd (+safe wss) in $TARGET_ZSHRC"
-echo "Run: source \"$TARGET_ZSHRC\""
+install_block "$TARGET_ZSHRC"
+install_block "$TARGET_BASHRC"
+
+echo "Installed/updated lfcd + yazicd (+safe wss) in:"
+echo "  - $TARGET_ZSHRC"
+echo "  - $TARGET_BASHRC"
+echo "Run one of:"
+echo "  source \"$TARGET_ZSHRC\""
+echo "  source \"$TARGET_BASHRC\""
