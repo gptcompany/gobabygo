@@ -178,4 +178,3 @@ else
 fi
 echo "  Logs: journalctl -u mesh-worker@claude-work -f"
 echo "  Interactive session worker (manual start): systemctl start mesh-session-worker@mesh-session-claude-work"
-echo "  Review worker (manual start): systemctl start mesh-review-worker@mesh-review-codex"

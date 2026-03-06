@@ -98,13 +98,10 @@ case "$MODE" in
     done
     echo "!! Edit /etc/mesh-worker/*.env with real MESH_AUTH_TOKEN and MESH_ROUTER_URL"
 
-    # 6. Install systemd template units
+    # 6. Install systemd template unit
     sudo cp deploy/mesh-worker@.service /etc/systemd/system/
     if [ -f deploy/mesh-session-worker@.service ]; then
       sudo cp deploy/mesh-session-worker@.service /etc/systemd/system/
-    fi
-    if [ -f deploy/mesh-review-worker@.service ]; then
-      sudo cp deploy/mesh-review-worker@.service /etc/systemd/system/
     fi
     sudo systemctl daemon-reload
 
@@ -115,7 +112,6 @@ case "$MODE" in
 
     echo "=== Workers installed. Start batch with: sudo systemctl start mesh-worker@claude-work ==="
     echo "=== Interactive session workers available: mesh-session-worker@mesh-session-claude-work ==="
-    echo "=== Review worker available: mesh-review-worker@mesh-review-codex ==="
     ;;
 
   *)

@@ -50,6 +50,7 @@ logger = logging.getLogger("mesh.server")
 
 class MeshRouterHandler(BaseHTTPRequestHandler):
     """HTTP request handler for mesh router endpoints."""
+    _verifier_gate_lock = threading.Lock()
 
     def do_GET(self) -> None:
         try:
@@ -63,10 +64,16 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             elif path == "/tasks":
                 self._handle_list_tasks()
             elif path.startswith("/tasks/"):
-                task_id = path[len("/tasks/"):]
-                if task_id and task_id != "next":
+                suffix = path[len("/tasks/"):]
+                parts = suffix.split("/")
+                task_id = parts[0]
+                if not task_id:
+                    self._send_json(404, {"error": "not_found"})
+                elif len(parts) == 1 and task_id != "next":
                     self._handle_get_task(task_id)
-                elif not task_id:
+                elif len(parts) == 2 and parts[1] == "pending-fixes":
+                    self._handle_task_pending_fixes(task_id)
+                else:
                     self._send_json(404, {"error": "not_found"})
             elif path == "/workers":
                 self._handle_list_workers()
@@ -455,11 +462,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
     def _get_verifier_gate(self) -> VerifierGate:
         """Return verifier gate from router_state, lazily initializing when absent."""
         state = self.server.router_state  # type: ignore[attr-defined]
-        lock = state.get("_verifier_gate_lock")
-        if lock is None:
-            lock = threading.Lock()
-            state["_verifier_gate_lock"] = lock
-        with lock:
+        with self._verifier_gate_lock:
             gate = state.get("verifier_gate")
             if gate is None:
                 gate = VerifierGate()
@@ -573,6 +576,19 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
         except KeyError as e:
             self._send_json(400, {"error": f"missing_field: {e}"})
+
+    def _handle_task_pending_fixes(self, task_id: str) -> None:
+        """GET /tasks/<id>/pending-fixes — check if non-terminal fix tasks exist."""
+        if not self._check_auth():
+            return
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        task = db.get_task(task_id)
+        if task is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+        gate = self._get_verifier_gate()
+        pending = gate.has_pending_fixes(db, task_id)
+        self._send_json(200, {"task_id": task_id, "has_pending_fixes": pending})
 
     # --- Task read endpoints ---
 

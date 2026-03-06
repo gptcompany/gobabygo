@@ -22,7 +22,6 @@ import requests
 logger = logging.getLogger("mesh.review_worker")
 
 _TERMINAL = {"completed", "failed", "timeout", "canceled"}
-_PENDING_FIX_STATUSES = ("queued", "assigned", "running", "blocked", "review")
 
 
 @dataclass
@@ -196,12 +195,19 @@ class ReviewWorker:
         return tasks if isinstance(tasks, list) else []
 
     def _has_pending_fix_tasks_remote(self, task_id: str) -> bool:
-        """Check pending fix tasks by scanning non-terminal statuses in bounded pages."""
-        for status in _PENDING_FIX_STATUSES:
-            tasks = self._list_tasks(status=status, limit=1000)
-            if _has_pending_fix_tasks(task_id, tasks):
-                return True
-        return False
+        """Check pending fixes via dedicated router endpoint."""
+        resp = self._http.get(
+            f"{self.config.router_url}/tasks/{task_id}/pending-fixes",
+            timeout=10,
+        )
+        if resp.status_code == 404:
+            # Task likely transitioned while reviewing.
+            return False
+        if resp.status_code == 401:
+            raise RuntimeError("unauthorized: set MESH_AUTH_TOKEN for review worker")
+        resp.raise_for_status()
+        data = resp.json()
+        return bool(data.get("has_pending_fixes"))
 
     def _review_task(self, task: dict) -> None:
         task_id = str(task.get("task_id") or "")

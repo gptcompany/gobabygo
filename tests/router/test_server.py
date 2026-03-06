@@ -729,6 +729,54 @@ class TestTaskReviewEndpoints:
         assert resp.status_code == 401
 
 
+class TestTaskPendingFixesEndpoint:
+    def test_pending_fixes_true_when_child_running(self, server_url, db):
+        parent = Task(
+            task_id="t-pending-1",
+            title="parent",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            idempotency_key="k-pending-1",
+        )
+        child = Task(
+            task_id="t-pending-child-1",
+            parent_task_id="t-pending-1",
+            title="fix",
+            phase="implement",
+            status=TaskStatus.running,
+            idempotency_key="k-pending-child-1",
+        )
+        db.insert_task(parent)
+        db.insert_task(child)
+        resp = requests.get(f"{server_url}/tasks/t-pending-1/pending-fixes")
+        assert resp.status_code == 200
+        assert resp.json()["has_pending_fixes"] is True
+
+    def test_pending_fixes_false_when_no_active_child(self, server_url, db):
+        parent = Task(
+            task_id="t-pending-2",
+            title="parent",
+            phase="implement",
+            status=TaskStatus.review,
+            critical=True,
+            idempotency_key="k-pending-2",
+        )
+        child = Task(
+            task_id="t-pending-child-2",
+            parent_task_id="t-pending-2",
+            title="fix",
+            phase="implement",
+            status=TaskStatus.completed,
+            idempotency_key="k-pending-child-2",
+        )
+        db.insert_task(parent)
+        db.insert_task(child)
+        resp = requests.get(f"{server_url}/tasks/t-pending-2/pending-fixes")
+        assert resp.status_code == 200
+        assert resp.json()["has_pending_fixes"] is False
+
+
 class TestAuth:
     def test_no_auth_on_health(self, authed_server_url):
         """Health endpoint should work without auth."""
