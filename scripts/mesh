@@ -13,8 +13,8 @@ MESH_ENV_SOURCES=(
   "/etc/mesh-worker/mesh-worker-claude-work.env"
   "/etc/mesh-worker/mesh-worker-codex-work.env"
   "/etc/mesh-worker/mesh-worker-gemini-work.env"
-  "${ENV_FILE}"
   "${FALLBACK_EXPORTS}"
+  "${ENV_FILE}"
 )
 
 detect_python() {
