@@ -26,6 +26,15 @@ MESH_ENFORCE_SESSION_ONLY=1        # reject batch tasks/steps at API level
 With `MESH_DEFAULT_EXECUTION_MODE=session`, tasks created without explicit `execution_mode`
 default to interactive session workers.
 
+Token bootstrap helper (router + workers + local operator env):
+
+```bash
+./scripts/set-mesh-token.sh --generate \
+  --vps-host root@10.0.0.1 \
+  --ws-host sam@10.0.0.2 \
+  --router-url http://10.0.0.1:8780
+```
+
 Note: repository deploy templates already enable this policy in
 `deploy/mesh-router.env` (`MESH_DEFAULT_EXECUTION_MODE=session`,
 `MESH_SESSION_FALLBACK_TO_BATCH=0`, `MESH_ENFORCE_SESSION_ONLY=1`).
