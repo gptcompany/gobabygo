@@ -22,6 +22,7 @@ import requests
 logger = logging.getLogger("mesh.review_worker")
 
 _TERMINAL = {"completed", "failed", "timeout", "canceled"}
+_PENDING_FIX_STATUSES = ("queued", "assigned", "running", "blocked", "review")
 
 
 @dataclass
@@ -91,6 +92,8 @@ def _parse_review_decision(output: str) -> ReviewDecision:
             obj = json.loads(candidate)
         except (TypeError, ValueError):
             continue
+        if not isinstance(obj, dict):
+            continue
         decision = str(obj.get("decision", "")).strip().lower()
         reason = str(obj.get("reason", "")).strip()
         if decision in {"approve", "reject"}:
@@ -113,6 +116,16 @@ def _has_pending_fix_tasks(task_id: str, all_tasks: list[dict]) -> bool:
         if status and status not in _TERMINAL:
             return True
     return False
+
+
+def _safe_json_preview(value: object, max_chars: int) -> str:
+    """Render JSON text safely; truncate with explicit marker if too long."""
+    text = json.dumps(value, ensure_ascii=True)
+    if len(text) <= max_chars:
+        return text
+    kept = max(0, max_chars - 32)
+    omitted = len(text) - kept
+    return f"{text[:kept]}... [truncated {omitted} chars]"
 
 
 class ReviewWorker:
@@ -148,8 +161,6 @@ class ReviewWorker:
         review_tasks = self._list_tasks(status="review", limit=self.config.max_review_tasks)
         if not review_tasks:
             return
-        # Load task universe once for pending fix detection.
-        all_tasks = self._list_tasks(status=None, limit=1000)
         for task in review_tasks:
             if not self._running:
                 return
@@ -158,7 +169,7 @@ class ReviewWorker:
             task_id = str(task.get("task_id") or "")
             if not task_id:
                 continue
-            if _has_pending_fix_tasks(task_id, all_tasks):
+            if self._has_pending_fix_tasks_remote(task_id):
                 logger.info("skip task=%s (pending fix tasks)", task_id)
                 continue
             self._review_task(task)
@@ -183,6 +194,14 @@ class ReviewWorker:
         data = resp.json()
         tasks = data.get("tasks", [])
         return tasks if isinstance(tasks, list) else []
+
+    def _has_pending_fix_tasks_remote(self, task_id: str) -> bool:
+        """Check pending fix tasks by scanning non-terminal statuses in bounded pages."""
+        for status in _PENDING_FIX_STATUSES:
+            tasks = self._list_tasks(status=status, limit=1000)
+            if _has_pending_fix_tasks(task_id, tasks):
+                return True
+        return False
 
     def _review_task(self, task: dict) -> None:
         task_id = str(task.get("task_id") or "")
@@ -209,8 +228,8 @@ class ReviewWorker:
         target_account = str(task.get("target_account") or "")
         payload = task.get("payload") or {}
         result = task.get("result")
-        payload_json = json.dumps(payload, ensure_ascii=True)[:4000]
-        result_json = json.dumps(result, ensure_ascii=True)[:8000] if result is not None else "null"
+        payload_json = _safe_json_preview(payload, 4000)
+        result_json = _safe_json_preview(result, 8000) if result is not None else "null"
         return (
             "You are the mesh verifier.\n"
             "Decide if this task can be approved or must be rejected.\n"
@@ -229,13 +248,17 @@ class ReviewWorker:
         cmd_parts = shlex.split(cmd_base)
         full_cmd = cmd_parts + ["--print", "-p", prompt]
         logger.info("review command: %s", full_cmd)
-        proc = subprocess.run(
-            full_cmd,
-            capture_output=True,
-            text=True,
-            timeout=self.config.task_timeout,
-            cwd=self.config.work_dir,
-        )
+        try:
+            proc = subprocess.run(
+                full_cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.config.task_timeout,
+                cwd=self.config.work_dir,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("review command timeout after %ss", self.config.task_timeout)
+            return ReviewDecision("reject", f"review command timeout after {self.config.task_timeout}s")
         if proc.returncode != 0:
             stderr = (proc.stderr or "")[-1024:]
             logger.warning("review command failed exit=%d stderr=%s", proc.returncode, stderr)

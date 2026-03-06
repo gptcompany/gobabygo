@@ -691,6 +691,27 @@ class TestTaskReviewEndpoints:
         assert resp.status_code == 400
         assert "missing_field" in resp.json()["error"]
 
+    def test_review_reject_task_not_in_review_returns_409(self, server_url, db):
+        task = Task(
+            task_id="t-review-not-state",
+            title="not in review",
+            phase="implement",
+            status=TaskStatus.running,
+            critical=True,
+            idempotency_key="k-review-not-state",
+        )
+        db.insert_task(task)
+        resp = requests.post(
+            f"{server_url}/tasks/review/reject",
+            json={
+                "task_id": "t-review-not-state",
+                "verifier_id": "v-codex",
+                "reason": "x",
+            },
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "review_rejection_failed"
+
     def test_review_approve_requires_auth(self, authed_server_url, db):
         task = Task(
             task_id="t-review-5",

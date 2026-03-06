@@ -33,6 +33,7 @@ from src.router.models import (
     SessionMessage,
     Task,
     TaskCreateRequest,
+    TaskStatus,
     ThreadCreateRequest,
     ThreadStepRequest,
     Worker,
@@ -454,11 +455,16 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
     def _get_verifier_gate(self) -> VerifierGate:
         """Return verifier gate from router_state, lazily initializing when absent."""
         state = self.server.router_state  # type: ignore[attr-defined]
-        gate = state.get("verifier_gate")
-        if gate is None:
-            gate = VerifierGate()
-            state["verifier_gate"] = gate
-        return gate
+        lock = state.get("_verifier_gate_lock")
+        if lock is None:
+            lock = threading.Lock()
+            state["_verifier_gate_lock"] = lock
+        with lock:
+            gate = state.get("verifier_gate")
+            if gate is None:
+                gate = VerifierGate()
+                state["verifier_gate"] = gate
+            return gate
 
     def _handle_task_review_approve(self) -> None:
         """POST /tasks/review/approve — approve task in review state."""
@@ -520,8 +526,18 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 return
             state = self.server.router_state  # type: ignore[attr-defined]
             db: RouterDB = state["db"]
-            if db.get_task(task_id) is None:
+            task = db.get_task(task_id)
+            if task is None:
                 self._send_json(404, {"error": "not_found"})
+                return
+            if task.status != TaskStatus.review:
+                self._send_json(
+                    409,
+                    {
+                        "error": "review_rejection_failed",
+                        "detail": f"task not in review (status={task.status.value})",
+                    },
+                )
                 return
             gate = self._get_verifier_gate()
             fix_task = gate.reject_task(
@@ -540,8 +556,16 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 })
                 return
 
+            if task is not None and task.status == TaskStatus.failed:
+                self._send_json(200, {
+                    "status": "rejected_escalated",
+                    "task_id": task_id,
+                    "rejection_count": task.rejection_count,
+                })
+                return
+
             self._send_json(200, {
-                "status": "rejected_escalated",
+                "status": "rejected_no_action",
                 "task_id": task_id,
                 "rejection_count": task.rejection_count if task else None,
             })

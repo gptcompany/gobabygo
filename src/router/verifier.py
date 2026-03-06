@@ -186,6 +186,13 @@ class VerifierGate:
         task = db.get_task(task_id)
         if task is None:
             return None
+        if task.status != TaskStatus.review:
+            logger.warning(
+                "reject_task ignored: task %s not in review (status=%s)",
+                task_id,
+                task.status,
+            )
+            return None
 
         new_count = task.rejection_count + 1
         db.update_task_fields(task_id, {"rejection_count": new_count})

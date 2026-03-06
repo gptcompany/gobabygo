@@ -214,6 +214,13 @@ class TestRejectTask:
         result = gate.reject_task(db, "nonexistent", verifier_id="v1", reason="x")
         assert result is None
 
+    def test_reject_non_review_task_returns_none(self, gate, db):
+        _add_task(db, "t1", critical=True, status=TaskStatus.running)
+        result = gate.reject_task(db, "t1", verifier_id="v1", reason="x")
+        assert result is None
+        task = db.get_task("t1")
+        assert task.rejection_count == 0
+
 
 class TestHasPendingFixes:
     def test_no_fixes(self, gate, db):
