@@ -83,9 +83,17 @@ source ~/.zshrc   # or ~/.bashrc
 Provided commands:
 
 - `mesh` -> global wrapper for `scripts/mesh`
+- `mesh ui <repo>` -> iTerm2 Python API layout (tabs/panes for operator roles)
 - `wss` / `wss <repo>` -> SSH WS shortcut
 - `wsattach <tmux-session>` -> attach tmux on WS (auto-detect service user)
 - `yazi`/`lf` -> mapped to `yazicd`/`lfcd` (keep selected directory)
+
+Mac iTerm2 setup (one-time):
+
+```bash
+pip3 install iterm2
+mesh ui rektaslug --max-panes-per-tab 5
+```
 
 ## Python Runtime
 
@@ -122,5 +130,6 @@ So `target_account` from pipeline steps can map directly to repo profiles.
 - `mesh status` fails on missing Python deps: use `uv sync --frozen`.
 - `mesh` points to `http://localhost:8780`: run `./scripts/install-shell-helpers.sh`, `source ~/.bashrc` (or `~/.zshrc`), then retry. `mesh` now auto-loads router env from `~/.mesh/*` and `/etc/mesh-worker/*.env`.
 - `wss <repo>` still tries `/home/sam/<repo>`: your shell has a stale helper. Run `./scripts/install-shell-helpers.sh` then open a new shell (or `exec $SHELL -l`).
+- `wss <repo>` on WS still does self-SSH (`Permission denied (publickey)`): stale shell helper in current shell. Run `./scripts/install-shell-helpers.sh` and `exec $SHELL -l`.
 - `yazi`/`lf` exits without changing dir: use `yazicd`/`lfcd` (or aliases installed by helper).
 - multiple repos sharing context unexpectedly: use dedicated CCS profiles (`claude-<repo>`, `codex-<repo>`).

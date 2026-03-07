@@ -87,6 +87,16 @@ wss() {
     case "$t" in
       localhost|127.0.0.1) return 0 ;;
     esac
+
+    # If we are already connected via SSH to this host, avoid self-SSH loops.
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+      local ssh_server_ip
+      ssh_server_ip="$(awk '{print $3}' <<<"${SSH_CONNECTION}" 2>/dev/null || true)"
+      if [[ -n "$ssh_server_ip" && "$t" == "$ssh_server_ip" ]]; then
+        return 0
+      fi
+    fi
+
     [[ "$t" == "$(hostname 2>/dev/null || true)" ]] && return 0
     ip=""
     if command -v getent >/dev/null 2>&1; then

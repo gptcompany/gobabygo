@@ -133,6 +133,7 @@ Usage:
   ./scripts/mesh thread [thread-name]
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
+  ./scripts/mesh ui [repo-name|repo-path] [--single-tab] [--max-panes-per-tab N]
   ./scripts/mesh start [feature text]
   ./scripts/mesh new [feature text]
   ./scripts/mesh run <phase>
@@ -145,6 +146,8 @@ Examples:
   ./scripts/mesh status
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
+  ./scripts/mesh ui rektaslug
+  ./scripts/mesh ui /media/sam/1TB/rektaslug --single-tab
   ./scripts/mesh start
   ./scripts/mesh start "checkout hardening"
   ./scripts/mesh new "spec 017"
@@ -322,6 +325,15 @@ echo "     ccs auth create codex-<repo>"
 echo "  2) run from repo dir:"
 echo "     mesh run <phase>"
 EOF
+    ;;
+  ui)
+    py_bin="$(detect_python)" || exit $?
+    ui_script="${REPO_ROOT}/scripts/mesh_iterm_ui.py"
+    if [[ ! -f "$ui_script" ]]; then
+      echo "Error: missing iTerm UI script at $ui_script" >&2
+      exit 1
+    fi
+    "$py_bin" "$ui_script" "${@:2}"
     ;;
   deploy)
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"

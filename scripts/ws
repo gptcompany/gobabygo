@@ -17,6 +17,15 @@ is_local_ws_host() {
       ;;
   esac
 
+  # If already inside an SSH session on the target host, avoid self-SSH loops.
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    local ssh_server_ip
+    ssh_server_ip="$(awk '{print $3}' <<<"${SSH_CONNECTION}" 2>/dev/null || true)"
+    if [[ -n "$ssh_server_ip" && "$target" == "$ssh_server_ip" ]]; then
+      return 0
+    fi
+  fi
+
   if [[ "$target" == "$(hostname 2>/dev/null || true)" ]]; then
     return 0
   fi

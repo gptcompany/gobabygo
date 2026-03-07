@@ -182,6 +182,7 @@ This enables:
 - `wss` / `wss <repo>` (quick SSH to WS)
 - `wsattach <tmux-session>` (attach robusto: auto-detect utente tmux service)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
+- `mesh ui <repo>` (iTerm2 layout auto tabs/panes for BOSS/PRESIDENT/LEAD/WORKERS)
 - `yazi` / `lf` aliases to `yazicd` / `lfcd` (keep selected directory on exit)
 
 Ultra-short operator commands:
@@ -190,6 +191,8 @@ Ultra-short operator commands:
 mesh bootstrap
 mesh deploy
 mesh status
+mesh ui rektaslug               # iTerm2: multi-tab layout
+mesh ui rektaslug --single-tab  # iTerm2: one-tab, multi-pane
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
@@ -230,6 +233,13 @@ WS host override:
 
 ```bash
 MESH_WS_HOST=sam@192.168.1.111 mesh deploy
+```
+
+iTerm2 Python API setup (Mac only, one-time):
+
+```bash
+pip3 install iterm2
+mesh ui rektaslug --max-panes-per-tab 5
 ```
 
 If Claude is disabled, switch to codex-only pipeline:
