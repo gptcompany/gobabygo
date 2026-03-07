@@ -7,6 +7,8 @@ ENV_FILE="${MESH_ENV_FILE:-$HOME/.mesh/.env.mesh}"
 FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 PIPELINE_TEMPLATE="${MESH_PIPELINE_TEMPLATE:-speckit}"
+MESH_UI_FORWARD_HOST="${MESH_UI_FORWARD_HOST-sam@192.168.1.112}"
+MESH_UI_FORWARD_REPO="${MESH_UI_FORWARD_REPO-/Users/sam/gobabygo}"
 MESH_ENV_SOURCES=(
   "/etc/mesh-worker/mesh-session-claude-work.env"
   "/etc/mesh-worker/mesh-session-codex-work.env"
@@ -327,13 +329,27 @@ echo "     mesh run <phase>"
 EOF
     ;;
   ui)
+    ui_args=("${@:2}")
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+      if [[ -n "${MESH_UI_FORWARD_HOST:-}" ]]; then
+        escaped_args=""
+        for arg in "${ui_args[@]}"; do
+          escaped_args+=" $(printf '%q' "$arg")"
+        done
+        exec ssh -tt "$MESH_UI_FORWARD_HOST" "cd '$MESH_UI_FORWARD_REPO' && ./scripts/mesh ui${escaped_args}"
+      fi
+      echo "Error: mesh ui is available only on macOS/iTerm2." >&2
+      echo "Set MESH_UI_FORWARD_HOST to auto-forward this command to your Mac operator host." >&2
+      exit 2
+    fi
+
     py_bin="$(detect_python)" || exit $?
     ui_script="${REPO_ROOT}/scripts/mesh_iterm_ui.py"
     if [[ ! -f "$ui_script" ]]; then
       echo "Error: missing iTerm UI script at $ui_script" >&2
       exit 1
     fi
-    "$py_bin" "$ui_script" "${@:2}"
+    "$py_bin" "$ui_script" "${ui_args[@]}"
     ;;
   deploy)
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"

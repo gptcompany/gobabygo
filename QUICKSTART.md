@@ -242,6 +242,9 @@ pip3 install iterm2
 mesh ui rektaslug --max-panes-per-tab 5
 ```
 
+From WS/Linux, `mesh ui ...` auto-forwards to Mac operator host by default
+(`MESH_UI_FORWARD_HOST=sam@192.168.1.112`).
+
 If Claude is disabled, switch to codex-only pipeline:
 
 ```bash

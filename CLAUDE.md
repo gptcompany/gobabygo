@@ -95,6 +95,9 @@ pip3 install iterm2
 mesh ui rektaslug --max-panes-per-tab 5
 ```
 
+When launched from WS/Linux, `mesh ui ...` auto-forwards to Mac operator host
+(`MESH_UI_FORWARD_HOST`, default `sam@192.168.1.112`).
+
 ## Python Runtime
 
 `scripts/mesh` is UV-first:
