@@ -349,7 +349,14 @@ EOF
       echo "Error: missing iTerm UI script at $ui_script" >&2
       exit 1
     fi
+    set +e
     "$py_bin" "$ui_script" "${ui_args[@]}"
+    ui_rc=$?
+    set -e
+    if [[ "$ui_rc" -eq 3 ]] && command -v uv >/dev/null 2>&1; then
+      exec uv run --with iterm2 -- python "$ui_script" "${ui_args[@]}"
+    fi
+    exit "$ui_rc"
     ;;
   deploy)
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"

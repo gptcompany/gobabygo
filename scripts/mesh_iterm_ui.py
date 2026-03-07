@@ -162,10 +162,10 @@ def main() -> int:
         import iterm2  # type: ignore
     except Exception:
         print(
-            "Error: Python package 'iterm2' not found. Install with: pip3 install iterm2",
+            "Error: Python package 'iterm2' not found. Install with: uv run --with iterm2 -- python scripts/mesh_iterm_ui.py ... (or pip3 install iterm2)",
             file=sys.stderr,
         )
-        return 2
+        return 3
 
     try:
         iterm2.run_until_complete(lambda conn: _launch_layout(conn, cfg))

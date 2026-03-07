@@ -242,6 +242,9 @@ pip3 install iterm2
 mesh ui rektaslug --max-panes-per-tab 5
 ```
 
+`mesh ui` now auto-falls back to `uv run --with iterm2 ...` if module `iterm2`
+is missing and `uv` is available.
+
 From WS/Linux, `mesh ui ...` auto-forwards to Mac operator host by default
 (`MESH_UI_FORWARD_HOST=sam@192.168.1.112`).
 
