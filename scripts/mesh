@@ -32,6 +32,18 @@ detect_python() {
   return 127
 }
 
+detect_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+    return 0
+  fi
+  if [[ -x "$HOME/.local/bin/uv" ]]; then
+    echo "$HOME/.local/bin/uv"
+    return 0
+  fi
+  return 1
+}
+
 run_meshctl() {
   ensure_router_env
 
@@ -353,8 +365,10 @@ EOF
     "$py_bin" "$ui_script" "${ui_args[@]}"
     ui_rc=$?
     set -e
-    if [[ "$ui_rc" -eq 3 ]] && command -v uv >/dev/null 2>&1; then
-      exec uv run --with iterm2 -- python "$ui_script" "${ui_args[@]}"
+    if [[ "$ui_rc" -eq 3 ]]; then
+      if uv_bin="$(detect_uv)"; then
+        exec "$uv_bin" run --with iterm2 -- python "$ui_script" "${ui_args[@]}"
+      fi
     fi
     exit "$ui_rc"
     ;;
