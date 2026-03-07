@@ -100,6 +100,8 @@ When launched from WS/Linux, `mesh ui ...` auto-forwards to Mac operator host
 If `iterm2` Python module is missing, `mesh ui` auto-tries
 `uv run --with iterm2` when `uv` is installed.
 Default behavior replaces old mesh-ui tabs; use `--keep-existing` to preserve them.
+Default preset is `team-4x3` (2 tab: 4 panes + 3 panes). Use `--preset auto`
+to restore chunking by `--max-panes-per-tab`.
 
 ## Python Runtime
 

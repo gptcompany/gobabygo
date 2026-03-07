@@ -43,6 +43,7 @@ class UiConfig:
     max_panes_per_tab: int
     single_tab: bool
     replace_tabs: bool
+    preset: str
 
 
 def _parse_args() -> argparse.Namespace:
@@ -74,6 +75,12 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Keep previous mesh-ui tabs instead of replacing them.",
     )
+    parser.add_argument(
+        "--preset",
+        choices=["team-4x3", "auto"],
+        default=os.environ.get("MESH_UI_PRESET", "team-4x3"),
+        help="Layout preset. team-4x3 = 2 tabs (4 panes + 3 panes). auto = chunk by max panes.",
+    )
     return parser.parse_args()
 
 
@@ -94,6 +101,22 @@ def _split_groups(items: list[str], size: int) -> list[list[str]]:
     if size <= 0:
         size = 5
     return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def _team_4x3_groups(roles: list[str]) -> list[list[str]]:
+    if not roles:
+        return []
+    first = roles[:4]
+    second = roles[4:7]
+    tail = roles[7:]
+    groups: list[list[str]] = []
+    if first:
+        groups.append(first)
+    if second:
+        groups.append(second)
+    if tail:
+        groups.extend(_split_groups(tail, 4))
+    return groups
 
 
 def _role_env_key(role: str) -> str:
@@ -168,7 +191,12 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
     if cfg.replace_tabs:
         await _cleanup_existing_mesh_tabs(window)
 
-    groups = [cfg.roles] if cfg.single_tab else _split_groups(cfg.roles, cfg.max_panes_per_tab)
+    if cfg.single_tab:
+        groups = [cfg.roles]
+    elif cfg.preset == "team-4x3":
+        groups = _team_4x3_groups(cfg.roles)
+    else:
+        groups = _split_groups(cfg.roles, cfg.max_panes_per_tab)
     for tab_index, roles in enumerate(groups):
         tab = await window.async_create_tab()
         await _mark_mesh_ui_tab(tab)
@@ -198,6 +226,7 @@ def main() -> int:
         max_panes_per_tab=max(1, args.max_panes_per_tab),
         single_tab=bool(args.single_tab),
         replace_tabs=not bool(args.keep_existing),
+        preset=args.preset,
     )
 
     try:

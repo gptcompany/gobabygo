@@ -191,9 +191,10 @@ Ultra-short operator commands:
 mesh bootstrap
 mesh deploy
 mesh status
-mesh ui rektaslug               # iTerm2: multi-tab layout
+mesh ui rektaslug               # iTerm2 preset team-4x3 (2 tab: 4 pane + 3 pane)
 mesh ui rektaslug --single-tab  # iTerm2: one-tab, multi-pane
 mesh ui rektaslug --keep-existing  # keep prior mesh-ui tabs
+mesh ui rektaslug --preset auto --max-panes-per-tab 5  # old chunk behavior
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
