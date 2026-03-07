@@ -42,6 +42,7 @@ class UiConfig:
     roles: list[str]
     max_panes_per_tab: int
     single_tab: bool
+    replace_tabs: bool
 
 
 def _parse_args() -> argparse.Namespace:
@@ -67,6 +68,11 @@ def _parse_args() -> argparse.Namespace:
         "--single-tab",
         action="store_true",
         help="Put all roles in one tab (ignores max-panes-per-tab).",
+    )
+    parser.add_argument(
+        "--keep-existing",
+        action="store_true",
+        help="Keep previous mesh-ui tabs instead of replacing them.",
     )
     return parser.parse_args()
 
@@ -94,9 +100,9 @@ def _role_env_key(role: str) -> str:
     return "MESH_UI_CMD_" + role.upper().replace("-", "_")
 
 
-def _default_command_for_role(role: str, repo_name: str) -> str:
+def _default_command_for_role(role: str, repo: str) -> str:
     # Keep default bootstrap minimal and robust.
-    return f"wss {shlex.quote(repo_name)}"
+    return f"wss {shlex.quote(repo)}"
 
 
 def _command_for_role(role: str, repo: str, repo_name: str) -> str:
@@ -104,7 +110,7 @@ def _command_for_role(role: str, repo: str, repo_name: str) -> str:
     template = os.environ.get(env_key, "").strip()
     if template:
         return template.format(repo=repo, repo_name=repo_name)
-    return _default_command_for_role(role, repo_name)
+    return _default_command_for_role(role, repo)
 
 
 async def _create_panes_for_roles(tab, roles: list[str]):
@@ -117,6 +123,40 @@ async def _create_panes_for_roles(tab, roles: list[str]):
     return sessions
 
 
+async def _is_mesh_ui_tab(tab) -> bool:
+    try:
+        marker = await tab.current_session.async_get_variable("user.mesh_ui_tab")
+        return str(marker) == "1"
+    except Exception:
+        return False
+
+
+async def _mark_mesh_ui_tab(tab) -> None:
+    try:
+        await tab.current_session.async_set_variable("user.mesh_ui_tab", "1")
+    except Exception:
+        pass
+
+
+async def _close_tab(tab) -> None:
+    close_fn = getattr(tab, "async_close", None)
+    if close_fn is None:
+        return
+    try:
+        await close_fn(force=True)
+    except TypeError:
+        await close_fn()
+    except Exception:
+        pass
+
+
+async def _cleanup_existing_mesh_tabs(window) -> None:
+    tabs = list(window.tabs)
+    for tab in tabs:
+        if await _is_mesh_ui_tab(tab):
+            await _close_tab(tab)
+
+
 async def _launch_layout(connection, cfg: UiConfig) -> None:
     import iterm2
 
@@ -125,12 +165,13 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
     if window is None:
         window = await iterm2.Window.async_create(connection)
 
+    if cfg.replace_tabs:
+        await _cleanup_existing_mesh_tabs(window)
+
     groups = [cfg.roles] if cfg.single_tab else _split_groups(cfg.roles, cfg.max_panes_per_tab)
     for tab_index, roles in enumerate(groups):
-        if tab_index == 0 and window.current_tab is not None:
-            tab = window.current_tab
-        else:
-            tab = await window.async_create_tab()
+        tab = await window.async_create_tab()
+        await _mark_mesh_ui_tab(tab)
         sessions = await _create_panes_for_roles(tab, roles)
         for sess, role in zip(sessions, roles):
             cmd = _command_for_role(role, cfg.repo, cfg.repo_name)
@@ -156,6 +197,7 @@ def main() -> int:
         roles=roles,
         max_panes_per_tab=max(1, args.max_panes_per_tab),
         single_tab=bool(args.single_tab),
+        replace_tabs=not bool(args.keep_existing),
     )
 
     try:

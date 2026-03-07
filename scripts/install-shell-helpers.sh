@@ -115,7 +115,11 @@ wss() {
       return 0
     fi
     repo="$1"
-    target_dir="${repo_base}/${repo}"
+    if [[ "$repo" == /* ]]; then
+      target_dir="$repo"
+    else
+      target_dir="${repo_base}/${repo}"
+    fi
     if [[ -d "$target_dir" ]]; then
       builtin cd -- "$target_dir"
     else
@@ -138,7 +142,11 @@ wss() {
   fi
 
   repo="$1"
-  target_dir="${repo_base}/${repo}"
+  if [[ "$repo" == /* ]]; then
+    target_dir="$repo"
+  else
+    target_dir="${repo_base}/${repo}"
+  fi
   command ssh -t "$ws_host" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[wss] missing repo: $target_dir'; cd '$repo_base'; fi; exec \$SHELL -l"
 }
 

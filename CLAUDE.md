@@ -99,6 +99,7 @@ When launched from WS/Linux, `mesh ui ...` auto-forwards to Mac operator host
 (`MESH_UI_FORWARD_HOST`, default `sam@192.168.1.112`).
 If `iterm2` Python module is missing, `mesh ui` auto-tries
 `uv run --with iterm2` when `uv` is installed.
+Default behavior replaces old mesh-ui tabs; use `--keep-existing` to preserve them.
 
 ## Python Runtime
 

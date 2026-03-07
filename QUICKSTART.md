@@ -193,6 +193,7 @@ mesh deploy
 mesh status
 mesh ui rektaslug               # iTerm2: multi-tab layout
 mesh ui rektaslug --single-tab  # iTerm2: one-tab, multi-pane
+mesh ui rektaslug --keep-existing  # keep prior mesh-ui tabs
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
@@ -244,6 +245,7 @@ mesh ui rektaslug --max-panes-per-tab 5
 
 `mesh ui` now auto-falls back to `uv run --with iterm2 ...` if module `iterm2`
 is missing and `uv` is available.
+By default it replaces previous mesh-ui tabs to avoid tab accumulation.
 
 From WS/Linux, `mesh ui ...` auto-forwards to Mac operator host by default
 (`MESH_UI_FORWARD_HOST=sam@192.168.1.112`).

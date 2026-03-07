@@ -65,7 +65,11 @@ if [[ -z "${1:-}" ]]; then
 fi
 
 repo="$1"
-target_dir="${WS_REPO_BASE}/${repo}"
+if [[ "$repo" == /* ]]; then
+  target_dir="$repo"
+else
+  target_dir="${WS_REPO_BASE}/${repo}"
+fi
 if is_local_ws_host "$WS_HOST"; then
   if [[ -d "$target_dir" ]]; then
     cd "$target_dir"
