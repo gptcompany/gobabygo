@@ -19,6 +19,39 @@ MESH_ENV_SOURCES=(
   "${ENV_FILE}"
 )
 
+is_local_host() {
+  local host="$1"
+  local target target_ip
+  target="${host#*@}"
+  target="${target%%:*}"
+
+  case "$target" in
+    localhost|127.0.0.1)
+      return 0
+      ;;
+  esac
+
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    local ssh_server_ip
+    ssh_server_ip="$(awk '{print $3}' <<<"${SSH_CONNECTION}" 2>/dev/null || true)"
+    if [[ -n "$ssh_server_ip" && "$target" == "$ssh_server_ip" ]]; then
+      return 0
+    fi
+  fi
+
+  [[ "$target" == "$(hostname 2>/dev/null || true)" ]] && return 0
+
+  target_ip=""
+  if command -v getent >/dev/null 2>&1; then
+    target_ip="$(getent ahostsv4 "$target" 2>/dev/null | awk 'NR==1{print $1}')"
+  fi
+  [[ -z "$target_ip" ]] && target_ip="$target"
+  if command -v ip >/dev/null 2>&1 && ip -4 addr show 2>/dev/null | grep -qw "$target_ip"; then
+    return 0
+  fi
+  return 1
+}
+
 detect_python() {
   if command -v python3 >/dev/null 2>&1; then
     echo "python3"
@@ -160,8 +193,8 @@ Examples:
   ./scripts/mesh status
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
-  ./scripts/mesh ui rektaslug
-  ./scripts/mesh ui /media/sam/1TB/rektaslug --single-tab
+  ./scripts/mesh ui rektslug
+  ./scripts/mesh ui /media/sam/1TB/rektslug --single-tab
   ./scripts/mesh start
   ./scripts/mesh start "checkout hardening"
   ./scripts/mesh new "spec 017"
@@ -214,6 +247,18 @@ slugify() {
 gen_feature_label() {
   # Dynamic label for ad-hoc starts without explicit feature text.
   printf 'run-%s-%04d' "$(date +%Y%m%d-%H%M%S)" "$RANDOM"
+}
+
+build_pipeline_account_args() {
+  local repo_name="$1"
+  local repo_slug
+  repo_slug="$(slugify "$repo_name")"
+  PIPELINE_ACCOUNT_ARGS=(
+    --account-scope static
+    --account-claude "${MESH_ACCOUNT_CLAUDE:-claude-${repo_slug}}"
+    --account-codex "${MESH_ACCOUNT_CODEX:-codex}"
+    --account-gemini "${MESH_ACCOUNT_GEMINI:-gemini}"
+  )
 }
 
 load_router_env() {
@@ -286,7 +331,8 @@ case "$cmd" in
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
     ws_env_dir="${MESH_WS_ENV_DIR:-/etc/mesh-worker}"
     stop_batch="${MESH_BOOTSTRAP_STOP_BATCH:-0}"
-    ssh -tt -o ConnectTimeout=10 "$ws_host" "bash -s" -- "$ws_env_dir" "$stop_batch" <<'EOF'
+    if is_local_host "$ws_host"; then
+      bash -s -- "$ws_env_dir" "$stop_batch" <<'EOF'
 set -euo pipefail
 
 env_dir="${1:?missing env_dir}"
@@ -311,9 +357,25 @@ configure_session_worker_env() {
   fi
   set_kv "$file" MESH_CLI_COMMAND "ccs {target_account}"
   set_kv "$file" MESH_ALLOWED_ACCOUNTS "*"
+  if command -v upterm >/dev/null 2>&1; then
+    set_kv "$file" MESH_UPTERM_BIN "$(command -v upterm)"
+  fi
   echo "[OK] configured $file"
 }
 
+bootstrap_mesh_worker_runtime() {
+  sudo mkdir -p /home/mesh-worker/.ccs/instances
+  sudo mkdir -p /home/mesh-worker/.claude
+  sudo chown -R mesh-worker:mesh /home/mesh-worker/.ccs /home/mesh-worker/.claude
+
+  if ! sudo -u mesh-worker env PATH=/usr/local/bin:/usr/bin:/bin bash -lc 'command -v ccs >/dev/null 2>&1' \
+    && [[ -x /home/sam/.npm-global/bin/ccs ]]; then
+    sudo ln -sf /home/sam/.npm-global/bin/ccs /usr/local/bin/ccs
+    echo "[OK] linked ccs into /usr/local/bin/ccs"
+  fi
+}
+
+bootstrap_mesh_worker_runtime
 configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
 configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
 
@@ -332,13 +394,96 @@ sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && 
 
 echo
 echo "Bootstrap complete."
+echo "Session workers now preseed Claude project state on task start (.claude.json trust/onboarding/MCP metadata)."
+echo "mesh-worker runtime ownership for ~/.ccs and ~/.claude has been normalized."
+if command -v upterm >/dev/null 2>&1; then
+  echo "upterm detected: $(command -v upterm)"
+else
+  echo "[WARN] upterm not installed on WS; attach handles will fallback to ssh/tmux only"
+fi
 echo "Next:"
-echo "  1) create CCS repo profiles once (if missing):"
+echo "  1) create Claude CCS account profiles once (if missing):"
 echo "     ccs auth create claude-<repo>"
-echo "     ccs auth create codex-<repo>"
 echo "  2) run from repo dir:"
 echo "     mesh run <phase>"
 EOF
+    else
+      ssh -tt -o ConnectTimeout=10 "$ws_host" "bash -s" -- "$ws_env_dir" "$stop_batch" <<'EOF'
+set -euo pipefail
+
+env_dir="${1:?missing env_dir}"
+stop_batch="${2:-0}"
+
+set_kv() {
+  local file="$1" key="$2" value="$3"
+  local escaped
+  escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
+  if sudo grep -q "^${key}=" "$file"; then
+    sudo sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
+  else
+    echo "${key}=${value}" | sudo tee -a "$file" >/dev/null
+  fi
+}
+
+configure_session_worker_env() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    echo "[WARN] missing env file: $file"
+    return 0
+  fi
+  set_kv "$file" MESH_CLI_COMMAND "ccs {target_account}"
+  set_kv "$file" MESH_ALLOWED_ACCOUNTS "*"
+  if command -v upterm >/dev/null 2>&1; then
+    set_kv "$file" MESH_UPTERM_BIN "$(command -v upterm)"
+  fi
+  echo "[OK] configured $file"
+}
+
+bootstrap_mesh_worker_runtime() {
+  sudo mkdir -p /home/mesh-worker/.ccs/instances
+  sudo mkdir -p /home/mesh-worker/.claude
+  sudo chown -R mesh-worker:mesh /home/mesh-worker/.ccs /home/mesh-worker/.claude
+
+  if ! sudo -u mesh-worker env PATH=/usr/local/bin:/usr/bin:/bin bash -lc 'command -v ccs >/dev/null 2>&1' \
+    && [[ -x /home/sam/.npm-global/bin/ccs ]]; then
+    sudo ln -sf /home/sam/.npm-global/bin/ccs /usr/local/bin/ccs
+    echo "[OK] linked ccs into /usr/local/bin/ccs"
+  fi
+}
+
+bootstrap_mesh_worker_runtime
+configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
+configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
+
+sudo systemctl restart mesh-session-worker@mesh-session-claude-work
+sudo systemctl restart mesh-session-worker@mesh-session-codex-work
+
+if [[ "$stop_batch" == "1" ]]; then
+  sudo systemctl stop mesh-worker@claude-work || true
+  sudo systemctl stop mesh-worker@codex-work || true
+  sudo systemctl stop mesh-worker@gemini-work || true
+  echo "[OK] batch workers stopped"
+fi
+
+sudo systemctl is-active --quiet mesh-session-worker@mesh-session-claude-work && echo "[OK] session claude active"
+sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && echo "[OK] session codex active"
+
+echo
+echo "Bootstrap complete."
+echo "Session workers now preseed Claude project state on task start (.claude.json trust/onboarding/MCP metadata)."
+echo "mesh-worker runtime ownership for ~/.ccs and ~/.claude has been normalized."
+if command -v upterm >/dev/null 2>&1; then
+  echo "upterm detected: $(command -v upterm)"
+else
+  echo "[WARN] upterm not installed on WS; attach handles will fallback to ssh/tmux only"
+fi
+echo "Next:"
+echo "  1) create Claude CCS account profiles once (if missing):"
+echo "     ccs auth create claude-<repo>"
+echo "  2) run from repo dir:"
+echo "     mesh run <phase>"
+EOF
+    fi
     ;;
   ui)
     ui_args=("${@:2}")
@@ -520,6 +665,7 @@ EOF
 
     repo_path="$(pwd -P)"
     repo="$(basename "$repo_path")"
+    build_pipeline_account_args "$repo"
     feature_slug="$(slugify "$feature")"
     ts="$(date +%Y%m%d-%H%M%S)"
     thread_name="${repo}-${feature_slug}-${ts}"
@@ -531,7 +677,7 @@ EOF
       --project "$repo" \
       --feature "$feature" \
       --phase "" \
-      --account-scope repo
+      "${PIPELINE_ACCOUNT_ARGS[@]}"
     echo "Started thread: $thread_name"
     ;;
   run)
@@ -554,6 +700,7 @@ EOF
       usage
       exit 1
     fi
+    build_pipeline_account_args "$repo"
 
     thread_name="${repo}-spec-${phase}"
     feature="spec-${phase}"
@@ -564,7 +711,7 @@ EOF
       --project "$repo" \
       --feature "$feature" \
       --phase "$phase" \
-      --account-scope repo
+      "${PIPELINE_ACCOUNT_ARGS[@]}"
     echo "Started thread: $thread_name"
     ;;
   ""|-h|--help|help)

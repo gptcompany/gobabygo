@@ -91,6 +91,11 @@ python -m src.router.session_worker
 Session workers persist session metadata/messages via router `/sessions/*`.
 CLI approval prompts remain CLI-native (manual/yolo/etc.).
 
+Operational note:
+- session workers run as `mesh-worker`, not the operator user
+- provider/runtime state therefore must exist under `/home/mesh-worker/.ccs`
+- if only `/home/sam/.ccs` is configured, tasks may dispatch correctly but still fail later on provider auth/bootstrap
+
 ## 2c. Start an External Review Worker (Codex Verifier)
 
 Use this worker to process tasks already in `review` state and call:
@@ -191,16 +196,42 @@ Ultra-short operator commands:
 mesh bootstrap
 mesh deploy
 mesh status
-mesh ui rektaslug               # iTerm2 preset team-4x3 (2 tab: 4 pane + 3 pane)
-mesh ui rektaslug --single-tab  # iTerm2: one-tab, multi-pane
-mesh ui rektaslug --keep-existing  # keep prior mesh-ui tabs
-mesh ui rektaslug --preset auto --max-panes-per-tab 5  # old chunk behavior
+mesh ui rektslug               # iTerm2 preset team-4x3 (2 tab: 4 pane + 3 pane)
+mesh ui rektslug --single-tab  # iTerm2: one-tab, multi-pane
+mesh ui rektslug --keep-existing  # keep prior mesh-ui tabs
+mesh ui rektslug --preset auto --max-panes-per-tab 5  # old chunk behavior
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
+python -m src.meshctl task cancel <task-id> --reason "stuck queued"
+python -m src.meshctl task fail <task-id> --reason "stuck review"
 wss <repo>
 wsattach <tmux-session>
 ```
+
+`mesh bootstrap` now:
+- keeps worker envs simple; runtime command resolution is policy-driven via `mapping/provider_runtime.yaml`
+- enables `MESH_ALLOWED_ACCOUNTS=*`
+- wires `MESH_UPTERM_BIN` automatically when `upterm` exists on WS
+- normalizes `/home/mesh-worker/.ccs` and `/home/mesh-worker/.claude` ownership
+- links `ccs` into `/usr/local/bin/ccs` when needed
+- restarts session workers
+- relies on session workers to preseed Claude repo metadata (`.claude.json`) at task start
+
+Provider runtime policy:
+
+```text
+mapping/provider_runtime.yaml
+```
+
+Default behavior:
+- `claude` -> real CCS account profile: `ccs {target_account}`
+- `codex` -> provider direct: `ccs codex`
+- `gemini` -> provider direct: `ccs gemini`
+
+Override/disable:
+- `MESH_PROVIDER_RUNTIME_CONFIG=/abs/path/file.yaml`
+- `MESH_PROVIDER_RUNTIME_CONFIG=""`
 
 `mesh thread` resolves latest thread from router (`GET /threads`), not from local state files.
 `mesh` auto-discovers router env in this order:
@@ -216,7 +247,7 @@ Examples:
 mesh bootstrap
 mesh deploy
 
-# from inside /media/sam/1TB/rektaslug
+# from inside /media/sam/1TB/rektslug
 mesh start
 mesh thread
 
@@ -241,7 +272,7 @@ iTerm2 Python API setup (Mac only, one-time):
 
 ```bash
 pip3 install iterm2
-mesh ui rektaslug --max-panes-per-tab 5
+mesh ui rektslug --max-panes-per-tab 5
 ```
 
 `mesh ui` now auto-falls back to `uv run --with iterm2 ...` if module `iterm2`
@@ -260,8 +291,8 @@ export MESH_PIPELINE_TEMPLATE=speckit_codex
 If you need explicit path/name mode:
 
 ```bash
-mesh run rektaslug 016
-mesh run /media/sam/1TB/rektaslug 016
+mesh run rektslug 016
+mesh run /media/sam/1TB/rektslug 016
 ```
 
 UV-first execution:
@@ -271,12 +302,11 @@ UV-first execution:
 CCS profile isolation (recommended for per-repo history/context):
 
 ```bash
-ccs auth create claude-rektaslug --context-group rektaslug
-ccs auth create codex-rektaslug --context-group rektaslug
+ccs auth create claude-rektslug --context-group rektslug
 ```
 
-Then run workers with `MESH_CLI_COMMAND=ccs {target_account}` and dynamic `target_account`
-(`claude-rektaslug`, `codex-rektaslug`, etc.).
+Then set Claude task accounts to those real CCS profiles. Codex/Gemini routing is
+controlled centrally in `mapping/provider_runtime.yaml`.
 
 Interactive task example (`execution_mode=session`):
 
@@ -302,6 +332,16 @@ curl -s "http://localhost:8780/sessions/messages?session_id=<SESSION_ID>" | pyth
 During execution, `session_worker` appends incremental CLI output to `/sessions/messages`
 (`direction="out"`, `role="cli"`) using tmux pane deltas/snapshots, so operators can tail
 progress without attaching immediately.
+
+Verified live behavior on the current stack:
+- router dispatches to real tmux-backed session workers
+- repo `working_dir` is honored when the path is correct
+- long-lived interactive sessions now renew leases on heartbeat and are not requeued after the 5-minute lease window
+
+Known operational gaps:
+- `upterm` is not installed yet, so attach handles are absent
+- brand-new CCS profiles can still require first auth/bootstrap under `mesh-worker`
+- session workers now preseed Claude project trust/onboarding/MCP metadata automatically; remaining drift is provider/profile bootstrap, not the router bus
 
 For a real `.111` (worker) + `.112` (iTerm2 operator) VPN-first validation run, use:
 - `deploy/SESSION-FIRST-E2E-RUNBOOK.md`
@@ -356,6 +396,7 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 | `MESH_CLI_TYPE` | `claude` | Worker CLI type: `claude\|codex\|gemini` |
 | `MESH_ACCOUNT_PROFILE` | `work` | Worker default account/profile identifier (still valid for exact-match routing) |
 | `MESH_ALLOWED_ACCOUNTS` | `""` | Optional CSV allowlist published as capabilities (`foo,bar,*` -> `account:foo`, `account:bar`, `account:*`) for dynamic target account routing |
+| `MESH_PROVIDER_RUNTIME_CONFIG` | repo default | Optional provider runtime policy file. `""` disables central policy and falls back to `MESH_CLI_COMMAND`. |
 | `MESH_LONGPOLL_TIMEOUT_S` | `25` | Long-poll block duration (seconds) |
 | `MESH_DEFAULT_EXECUTION_MODE` | `batch` | Router code default when task omits execution mode (`batch\|session`). Deploy template sets `session` in `deploy/mesh-router.env`. |
 | `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | Router code default. If `1`, session tasks may fallback to batch workers when no session worker is available. Deploy template keeps `0` for session-first hard mode. |
@@ -363,3 +404,17 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 | `MESH_REVIEWER_ID` | `verifier-codex` | Verifier identity written to review events |
 | `MESH_REVIEW_CLI_COMMAND` | `ccs codex --effort xhigh` | CLI command used by `review_worker` |
 | `MESH_REVIEW_POLL_INTERVAL_S` | `8` | Review worker polling interval |
+
+## Current Limitations
+
+- `mesh ui` is operator UX only; it is not orchestration state.
+- `wss` / `wsattach` now enable SSH keepalive + control persist by default to reduce idle pane freezes in iTerm2.
+- If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.
+- If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.
+- `meshctl task cancel|fail` is intentionally conservative:
+  - safe for `queued`, `assigned`, `blocked`, `review`
+  - rejects `running` tasks because the live tmux session may still be executing
+- A clean unattended demo still requires:
+  - `upterm` installation
+  - preseeded Claude/Codex runtime under `/home/mesh-worker`
+  - unattended CLI bootstrap under `mesh-worker` (no theme/security/trust-folder/MCP first-run prompts)

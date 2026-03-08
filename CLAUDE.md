@@ -11,6 +11,38 @@ Use GoBabyGo as orchestration control-plane, not manual copy/paste between CLIs.
 - iTerm2: operator UX only (attach/split/observe), not orchestration state.
 - Default policy: session-first (`MESH_SESSION_FALLBACK_TO_BATCH=0`).
 
+## Verified Live Status
+
+Verified on the real `.100` router + `.111` WS stack:
+
+- router dispatches session tasks to tmux-backed session workers
+- `working_dir` is honored by session workers when the repo path is correct
+- worker deregistration and periodic recovery are live
+- lease renewal on heartbeat is implemented and tested, so healthy long-lived sessions are no longer requeued after the 5-minute lease window
+
+Not yet production-clean:
+
+- `upterm` is still missing, so attach handles are not created automatically
+- brand-new CCS profiles can still need first auth/bootstrap under `mesh-worker`
+- provider runtime must exist under `/home/mesh-worker`, not only under `/home/sam`
+
+## Provider Runtime Policy
+
+Runtime resolution is centralized in:
+
+`mapping/provider_runtime.yaml`
+
+Default policy:
+- `claude` -> real CCS account profile: `ccs {target_account}`
+- `codex` -> CLIProxy provider direct: `ccs codex`
+- `gemini` -> CLIProxy provider direct: `ccs gemini`
+
+If CCS changes syntax later, edit this file instead of patching worker code.
+
+Optional override:
+- `MESH_PROVIDER_RUNTIME_CONFIG=/abs/path/file.yaml`
+- `MESH_PROVIDER_RUNTIME_CONFIG=""` to disable the policy file and fall back to `MESH_CLI_COMMAND`
+
 ## Bootstrap (one command)
 
 After deploy/config drift, run once from BOSS host:
@@ -20,9 +52,13 @@ mesh bootstrap
 ```
 
 This automatically:
-- updates WS session worker envs to dynamic profile routing (`ccs {target_account}`)
+- keeps WS worker envs simple; runtime command resolution is now policy-driven via `mapping/provider_runtime.yaml`
 - enables `MESH_ALLOWED_ACCOUNTS=*`
+- wires `MESH_UPTERM_BIN` automatically when `upterm` exists on WS
+- normalizes `/home/mesh-worker/.ccs` and `/home/mesh-worker/.claude` ownership
+- links `ccs` into `/usr/local/bin/ccs` when only the operator npm-global install exists
 - restarts session workers
+- relies on session workers to preseed Claude project metadata (`.claude.json`) per repo at task start
 
 Optional: set `MESH_BOOTSTRAP_STOP_BATCH=1` before running bootstrap to stop batch workers.
 
@@ -71,6 +107,17 @@ No hardcoded path is required when run from inside the repo.
 `mesh thread` resolves latest thread from router (server-side), not from local state files.
 If `mesh start` has no arguments, feature label is auto-generated per run.
 
+Admin cleanup for stuck tasks:
+
+```bash
+python -m src.meshctl task cancel <task-id> --reason "stuck queued"
+python -m src.meshctl task fail <task-id> --reason "stuck review"
+```
+
+Use these for non-running tasks. They are intentionally conservative:
+- safe for `queued`, `assigned`, `blocked`, `review`
+- they reject `running` tasks, because a live tmux session may still be executing
+
 ## Required Helpers
 
 Install once on each host (Mac + WS):
@@ -92,7 +139,7 @@ Mac iTerm2 setup (one-time):
 
 ```bash
 pip3 install iterm2
-mesh ui rektaslug --max-panes-per-tab 5
+mesh ui rektslug --max-panes-per-tab 5
 ```
 
 When launched from WS/Linux, `mesh ui ...` auto-forwards to Mac operator host
@@ -123,15 +170,16 @@ For repo-scoped context/history isolation, create account profiles per repo:
 
 ```bash
 ccs auth create claude-<repo> --context-group <repo>
-ccs auth create codex-<repo> --context-group <repo>
 ```
 
-Worker dynamic routing should use:
+Claude task accounts should map to these real CCS profiles.
+Codex/Gemini routing is controlled centrally in `mapping/provider_runtime.yaml`.
 
-- `MESH_CLI_COMMAND=ccs {target_account}`
-- `MESH_ALLOWED_ACCOUNTS=*` (or explicit allowlist)
+Important runtime note:
 
-So `target_account` from pipeline steps can map directly to repo profiles.
+- repo/account profiles under `/home/sam/.ccs` are not sufficient by themselves
+- session workers run as `mesh-worker`, so provider/runtime state must exist under `/home/mesh-worker/.ccs`
+- otherwise tasks can dispatch correctly but still fail later on provider auth/bootstrap
 
 ## Troubleshooting
 
@@ -140,4 +188,8 @@ So `target_account` from pipeline steps can map directly to repo profiles.
 - `wss <repo>` still tries `/home/sam/<repo>`: your shell has a stale helper. Run `./scripts/install-shell-helpers.sh` then open a new shell (or `exec $SHELL -l`).
 - `wss <repo>` on WS still does self-SSH (`Permission denied (publickey)`): stale shell helper in current shell. Run `./scripts/install-shell-helpers.sh` and `exec $SHELL -l`.
 - `yazi`/`lf` exits without changing dir: use `yazicd`/`lfcd` (or aliases installed by helper).
-- multiple repos sharing context unexpectedly: use dedicated CCS profiles (`claude-<repo>`, `codex-<repo>`).
+- iTerm2 pane becomes unresponsive after idle: refresh shell helpers; `wss`/`wsattach` now use SSH keepalive + control persist by default.
+- multiple repos sharing context unexpectedly: use dedicated Claude CCS profiles (`claude-<repo>`). Codex/Gemini routing is controlled centrally in `mapping/provider_runtime.yaml`.
+- a session task gets requeued after ~5 minutes even though tmux is still alive: router or worker is still running old code without lease-renewal fixes; redeploy router + worker runtime.
+- a session opens tmux but blocks on theme/security/trust-folder/MCP prompts: this is CLI bootstrap drift under `mesh-worker`, not a router bus failure.
+- `mesh ui` is operator UX only; when in doubt, trust router task state plus `journalctl` on the session worker.
