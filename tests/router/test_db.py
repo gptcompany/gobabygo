@@ -249,6 +249,14 @@ def test_lease_crud(db: RouterDB, sample_task: Task, sample_worker: Worker) -> N
     assert active.task_id == sample_task.task_id
     assert active.worker_id == sample_worker.worker_id
 
+    # Renew lease
+    renewed_expiry = "2027-01-01T00:00:00+00:00"
+    result = db.renew_lease(lease.lease_id, renewed_expiry)
+    assert result is True
+    renewed = db.get_active_lease(sample_task.task_id)
+    assert renewed is not None
+    assert renewed.expires_at == renewed_expiry
+
     # Expire lease
     result = db.expire_lease(lease.lease_id)
     assert result is True
@@ -258,6 +266,10 @@ def test_lease_crud(db: RouterDB, sample_task: Task, sample_worker: Worker) -> N
 
     # Double expire returns False
     result = db.expire_lease(lease.lease_id)
+    assert result is False
+
+    # Renewing a missing lease returns False
+    result = db.renew_lease(lease.lease_id, renewed_expiry)
     assert result is False
 
 

@@ -24,6 +24,7 @@ class MockRouterHandler(BaseHTTPRequestHandler):
     poll_count = 0
     complete_calls = []
     fail_calls = []
+    deregister_calls = []
     task_to_serve = None
     error_on_first_poll = False  # Return 500 on first poll
     return_409_on_poll = False  # Return 409 conflict
@@ -57,6 +58,9 @@ class MockRouterHandler(BaseHTTPRequestHandler):
         elif self.path == "/tasks/fail":
             MockRouterHandler.fail_calls.append(body)
             self._respond(200, {"status": "failed_recorded"})
+        elif self.path.endswith("/deregister") and self.path.startswith("/workers/"):
+            MockRouterHandler.deregister_calls.append(self.path)
+            self._respond(200, {"status": "deregistered"})
         else:
             self._respond(404, {"error": "not_found"})
 
@@ -102,6 +106,7 @@ def reset_mock():
     MockRouterHandler.poll_count = 0
     MockRouterHandler.complete_calls = []
     MockRouterHandler.fail_calls = []
+    MockRouterHandler.deregister_calls = []
     MockRouterHandler.task_to_serve = None
     MockRouterHandler.error_on_first_poll = False
     MockRouterHandler.return_409_on_poll = False
@@ -443,6 +448,16 @@ class TestMeshWorkerStop:
         # Should not have sent many more heartbeats after stop
         assert count_after - count_before <= 1
 
+    def test_stop_deregisters_worker(self, mock_router):
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+        )
+        worker = MeshWorker(config)
+        worker.stop()
+
+        assert MockRouterHandler.deregister_calls == ["/workers/ws-test-01/deregister"]
+
 
 class TestCLIExecution:
     """Tests for real CLI invocation in _execute_task (Phase 3)."""
@@ -644,6 +659,7 @@ class TestCLIExecution:
             router_url=mock_router,
             longpoll_timeout=0.05,
             cli_command="nonexistent",
+            provider_runtime_config="",
         )
         worker = MeshWorker(config)
         worker._running = True
@@ -657,6 +673,49 @@ class TestCLIExecution:
 
         assert len(MockRouterHandler.fail_calls) == 1
         assert "command not found: nonexistent" in MockRouterHandler.fail_calls[0].get("error", "")
+
+    def test_provider_runtime_rule_overrides_cli_command(self, mock_router, tmp_path):
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-provider-policy",
+            "title": "provider runtime policy",
+            "target_account": "review-codex",
+            "payload": {"prompt": "Hello"},
+        }
+        config_file = tmp_path / "provider_runtime.yaml"
+        config_file.write_text(
+            """
+version: 1
+providers:
+  codex:
+    strategy: cliproxy_provider
+    command_template: "ccs codex --effort high"
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            cli_type="codex",
+            cli_command="ccs {target_account}",
+            provider_runtime_config=str(config_file),
+            dry_run=True,
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.complete_calls) == 1
+        output = MockRouterHandler.complete_calls[0].get("result", {}).get("output", "")
+        assert "ccs codex --effort high --print -p Hello" in output
 
     @patch("src.router.worker_client.subprocess.run")
     def test_output_truncation(self, mock_run, mock_router):
@@ -706,6 +765,7 @@ class TestCLIExecution:
             router_url=mock_router,
             longpoll_timeout=0.05,
             cli_command="ccs {account_profile}",
+            provider_runtime_config="",
             account_profile="work",
             dry_run=True,
         )
@@ -738,6 +798,7 @@ class TestCLIExecution:
             router_url=mock_router,
             longpoll_timeout=0.05,
             cli_command="ccs {target_account} --worker {worker_account_profile}",
+            provider_runtime_config="",
             account_profile="work-claude",
             dry_run=True,
         )
@@ -776,6 +837,7 @@ class TestCLIExecution:
             router_url=mock_router,
             longpoll_timeout=0.05,
             cli_command="ccs {account_profile}",
+            provider_runtime_config="",
             account_profile="work",
         )
         worker = MeshWorker(config)
@@ -807,6 +869,7 @@ class TestCLIExecution:
         with patch.dict(os.environ, env):
             config = WorkerConfig.from_env()
             assert config.cli_command == "ccs {account_profile}"
+            assert config.provider_runtime_config is None
             assert config.dry_run is True
             assert config.work_dir == "/opt/tasks"
             assert config.task_timeout == 600

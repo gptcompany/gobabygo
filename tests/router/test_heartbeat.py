@@ -74,6 +74,34 @@ class TestReceiveHeartbeat:
         resp = hm.receive_heartbeat("w1")
         assert resp["status"] == "ok"
 
+    def test_heartbeat_renews_active_lease(self, hm, db):
+        _register_worker(db, worker_id="w1", status="busy")
+        task = Task(
+            task_id="t1",
+            title="test",
+            status=TaskStatus.running,
+            assigned_worker="w1",
+            attempt=1,
+        )
+        db.insert_task(task)
+        lease = Lease(
+            task_id="t1",
+            worker_id="w1",
+            expires_at=_past(10),
+        )
+        db.create_lease(lease)
+        db.update_task_fields("t1", {"lease_expires_at": lease.expires_at})
+
+        resp = hm.receive_heartbeat("w1")
+
+        assert resp["status"] == "ok"
+        renewed_lease = db.get_active_lease("t1")
+        renewed_task = db.get_task("t1")
+        assert renewed_lease is not None
+        assert renewed_task is not None
+        assert renewed_lease.expires_at > lease.expires_at
+        assert renewed_task.lease_expires_at == renewed_lease.expires_at
+
 
 class TestStaleSweep:
     def test_marks_stale(self, hm, db):

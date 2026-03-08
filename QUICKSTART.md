@@ -92,9 +92,9 @@ Session workers persist session metadata/messages via router `/sessions/*`.
 CLI approval prompts remain CLI-native (manual/yolo/etc.).
 
 Operational note:
-- session workers run as `mesh-worker`, not the operator user
-- provider/runtime state therefore must exist under `/home/mesh-worker/.ccs`
-- if only `/home/sam/.ccs` is configured, tasks may dispatch correctly but still fail later on provider auth/bootstrap
+- session worker Unix user is policy-driven, not hardcoded
+- default policy runs Claude sessions as `sam` and Codex sessions as `mesh-worker`
+- provider/runtime state therefore must exist under the Unix user selected in `mapping/provider_runtime.yaml`
 
 ## 2c. Start an External Review Worker (Codex Verifier)
 
@@ -228,6 +228,8 @@ Default behavior:
 - `claude` -> real CCS account profile: `ccs {target_account}`
 - `codex` -> provider direct: `ccs codex`
 - `gemini` -> provider direct: `ccs gemini`
+- Claude session worker service user -> `sam`
+- Codex session worker service user -> `mesh-worker`
 
 Override/disable:
 - `MESH_PROVIDER_RUNTIME_CONFIG=/abs/path/file.yaml`
@@ -307,6 +309,9 @@ ccs auth create claude-rektslug --context-group rektslug
 
 Then set Claude task accounts to those real CCS profiles. Codex/Gemini routing is
 controlled centrally in `mapping/provider_runtime.yaml`.
+
+Bootstrap also reads `mapping/provider_runtime.yaml` to install per-instance
+systemd overrides for session worker Unix users.
 
 Interactive task example (`execution_mode=session`):
 

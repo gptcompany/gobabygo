@@ -11,6 +11,7 @@ This worker focuses on orchestration + persistence + attachability.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -23,6 +24,8 @@ import time
 from dataclasses import dataclass, field
 
 import requests
+
+from src.router.provider_runtime import resolve_cli_command
 
 logger = logging.getLogger("mesh.session_worker")
 
@@ -78,6 +81,22 @@ def _compute_output_emit(
     }
 
 
+def _discover_project_mcp_servers(work_dir: str) -> list[str]:
+    """Return MCP server names declared by ``work_dir/.mcp.json``."""
+    mcp_path = os.path.join(work_dir, ".mcp.json")
+    if not os.path.isfile(mcp_path):
+        return []
+    try:
+        with open(mcp_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return []
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        return []
+    return [str(name).strip() for name in servers.keys() if str(name).strip()]
+
+
 @dataclass
 class SessionWorkerConfig:
     """Configuration for a tmux-backed interactive session worker."""
@@ -93,6 +112,7 @@ class SessionWorkerConfig:
     allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
     execution_modes: list[str] = field(default_factory=lambda: ["session"])
     cli_command: str = "claude"  # supports {target_account}, {account_profile}, {worker_account_profile}
+    provider_runtime_config: str | None = None  # None=repo default, ""=disabled
     work_dir: str = "/tmp/mesh-tasks"
     session_poll_interval_s: float = 1.0
     tmux_bin: str = "tmux"
@@ -127,6 +147,7 @@ class SessionWorkerConfig:
             allowed_accounts=allowed_accounts,
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
+            provider_runtime_config=os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG"),
             execution_modes=[
                 m.strip() for m in os.environ.get("MESH_EXECUTION_MODES", "session").split(",")
                 if m.strip()
@@ -181,6 +202,7 @@ class MeshSessionWorker:
         self._running = False
         if self._heartbeat_thread:
             self._heartbeat_thread.join(timeout=10)
+        self._deregister()
 
     def _register(self) -> None:
         payload = {
@@ -199,6 +221,22 @@ class MeshSessionWorker:
             return
         resp.raise_for_status()
         logger.info("Registered session worker %s", self.config.worker_id)
+
+    def _deregister(self) -> None:
+        """Best-effort router retirement during worker shutdown."""
+        try:
+            resp = self._http.post(
+                f"{self.config.router_url}/workers/{self.config.worker_id}/deregister",
+                timeout=5,
+            )
+            if resp.status_code not in (200, 404):
+                logger.warning(
+                    "Session worker %s deregister returned %d",
+                    self.config.worker_id,
+                    resp.status_code,
+                )
+        except requests.RequestException as e:
+            logger.warning("Session worker %s deregister failed: %s", self.config.worker_id, e)
 
     def _start_heartbeat(self) -> None:
         def heartbeat_loop() -> None:
@@ -270,13 +308,18 @@ class MeshSessionWorker:
                 self._report_failure(task_id, "missing payload.prompt")
                 return
 
-            os.makedirs(work_dir, exist_ok=True)
-            cmd_base = (
-                self.config.cli_command
-                .replace("{target_account}", target_account)
-                .replace("{account_profile}", target_account)
-                .replace("{worker_account_profile}", self.config.account_profile)
+            if os.path.isdir(work_dir):
+                pass
+            else:
+                os.makedirs(work_dir, exist_ok=True)
+            cmd_base = resolve_cli_command(
+                cli_type=self.config.cli_type,
+                target_account=target_account,
+                worker_account_profile=self.config.account_profile,
+                fallback_command=self.config.cli_command,
+                config_path=self.config.provider_runtime_config,
             )
+            self._prepare_cli_runtime(work_dir, target_account)
             tmux_session_name = self._tmux_session_name(task_id, target_account)
             self._tmux_new_session(tmux_session_name, work_dir, cmd_base)
 
@@ -383,6 +426,84 @@ class MeshSessionWorker:
             if upterm_proc is not None:
                 socket_path = f"/tmp/upterm-{tmux_session_name}.sock" if tmux_session_name else None
                 self._stop_upterm(upterm_proc, socket_path)
+
+    def _prepare_cli_runtime(self, work_dir: str, target_account: str) -> None:
+        """Preseed provider runtime metadata needed for unattended session startup."""
+        if self.config.cli_type != "claude":
+            return
+        self._preseed_claude_runtime(work_dir, target_account)
+
+    def _preseed_claude_runtime(self, work_dir: str, target_account: str) -> None:
+        """Mark onboarding/trust/MCP state as accepted for the current project.
+
+        Claude persists most first-run state in ``.claude.json`` files, both
+        globally and per-CCS instance. Preseeding these files avoids blocking
+        tmux sessions on theme/onboarding/trust/MCP prompts.
+        """
+        home_dir = os.path.expanduser("~")
+        enabled_servers = _discover_project_mcp_servers(work_dir)
+        state_paths = [os.path.join(home_dir, ".claude.json")]
+        if target_account:
+            instance_dir = os.path.join(home_dir, ".ccs", "instances", target_account)
+            if os.path.isdir(instance_dir):
+                state_paths.append(os.path.join(instance_dir, ".claude.json"))
+            else:
+                logger.info(
+                    "Skipping Claude instance preseed; CCS profile dir missing: %s",
+                    instance_dir,
+                )
+        for state_path in state_paths:
+            self._preseed_claude_state_file(state_path, work_dir, enabled_servers)
+
+    @staticmethod
+    def _preseed_claude_state_file(
+        state_path: str, work_dir: str, enabled_servers: list[str]
+    ) -> None:
+        data: dict = {}
+        if os.path.exists(state_path):
+            try:
+                with open(state_path, encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict):
+                    data = raw
+            except (OSError, json.JSONDecodeError):
+                logger.warning("Failed to read Claude state file %s; recreating", state_path)
+
+        projects = data.get("projects")
+        if not isinstance(projects, dict):
+            projects = {}
+            data["projects"] = projects
+
+        project = projects.get(work_dir)
+        if not isinstance(project, dict):
+            project = {}
+            projects[work_dir] = project
+
+        data["hasCompletedOnboarding"] = True
+        data["numStartups"] = max(int(data.get("numStartups", 0) or 0), 1)
+
+        project["allowedTools"] = list(project.get("allowedTools") or [])
+        project["mcpContextUris"] = list(project.get("mcpContextUris") or [])
+        project["mcpServers"] = dict(project.get("mcpServers") or {})
+        project["enabledMcpjsonServers"] = enabled_servers
+        project["disabledMcpjsonServers"] = []
+        project["hasTrustDialogAccepted"] = True
+        project["projectOnboardingSeenCount"] = max(
+            int(project.get("projectOnboardingSeenCount", 0) or 0), 1
+        )
+        project["hasClaudeMdExternalIncludesApproved"] = bool(
+            project.get("hasClaudeMdExternalIncludesApproved", False)
+        )
+        project["hasClaudeMdExternalIncludesWarningShown"] = bool(
+            project.get("hasClaudeMdExternalIncludesWarningShown", False)
+        )
+
+        os.makedirs(os.path.dirname(state_path), exist_ok=True)
+        tmp_path = f"{state_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+        os.replace(tmp_path, state_path)
 
     def _tmux_session_name(self, task_id: str, target_account: str | None = None) -> str:
         account = (target_account or self.config.account_profile or "work").strip() or "work"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import requests
@@ -13,6 +14,7 @@ from src.router.session_worker import (
     MeshSessionWorker,
     SessionWorkerConfig,
     _compute_output_emit,
+    _discover_project_mcp_servers,
     _parse_upterm_ssh_url,
     _sanitize_session_name,
 )
@@ -154,6 +156,19 @@ def test_parse_upterm_ssh_url_inline() -> None:
     assert _parse_upterm_ssh_url(output) == "ssh://abc@host:2222"
 
 
+def test_discover_project_mcp_servers(tmp_path) -> None:
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"playwright": {}, "serena": {}}}),
+        encoding="utf-8",
+    )
+    assert _discover_project_mcp_servers(str(tmp_path)) == ["playwright", "serena"]
+
+
+def test_discover_project_mcp_servers_invalid_json(tmp_path) -> None:
+    (tmp_path / ".mcp.json").write_text("{not json", encoding="utf-8")
+    assert _discover_project_mcp_servers(str(tmp_path)) == []
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -165,9 +180,64 @@ def _make_worker(**overrides) -> MeshSessionWorker:
         router_url="http://localhost:8780",
         upterm_bin="/usr/bin/upterm",
         upterm_ready_timeout=0.6,
+        provider_runtime_config="",
         **overrides,
     )
     return MeshSessionWorker(cfg)
+
+
+def test_preseed_claude_state_file(tmp_path) -> None:
+    state_path = tmp_path / ".claude.json"
+    MeshSessionWorker._preseed_claude_state_file(
+        str(state_path),
+        "/media/sam/1TB/rektslug",
+        ["playwright"],
+    )
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    assert data["hasCompletedOnboarding"] is True
+    assert data["numStartups"] == 1
+    project = data["projects"]["/media/sam/1TB/rektslug"]
+    assert project["hasTrustDialogAccepted"] is True
+    assert project["projectOnboardingSeenCount"] == 1
+    assert project["enabledMcpjsonServers"] == ["playwright"]
+    assert project["disabledMcpjsonServers"] == []
+
+
+def test_preseed_claude_runtime_targets_global_and_instance(tmp_path) -> None:
+    home_dir = tmp_path / "home"
+    work_dir = tmp_path / "repo"
+    work_dir.mkdir()
+    (home_dir / ".ccs" / "instances" / "claude-rektslug").mkdir(parents=True)
+    (work_dir / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"playwright": {}}}),
+        encoding="utf-8",
+    )
+    worker = _make_worker(cli_type="claude")
+
+    with patch("src.router.session_worker.os.path.expanduser", return_value=str(home_dir)):
+        worker._preseed_claude_runtime(str(work_dir), "claude-rektslug")
+
+    global_state = json.loads((home_dir / ".claude.json").read_text(encoding="utf-8"))
+    instance_state = json.loads(
+        (home_dir / ".ccs" / "instances" / "claude-rektslug" / ".claude.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert global_state["projects"][str(work_dir)]["enabledMcpjsonServers"] == ["playwright"]
+    assert instance_state["projects"][str(work_dir)]["hasTrustDialogAccepted"] is True
+
+
+def test_preseed_claude_runtime_skips_missing_instance_dir(tmp_path) -> None:
+    home_dir = tmp_path / "home"
+    work_dir = tmp_path / "repo"
+    work_dir.mkdir()
+    worker = _make_worker(cli_type="claude")
+
+    with patch("src.router.session_worker.os.path.expanduser", return_value=str(home_dir)):
+        worker._preseed_claude_runtime(str(work_dir), "claude-missing")
+
+    assert (home_dir / ".claude.json").exists()
+    assert not (home_dir / ".ccs" / "instances" / "claude-missing" / ".claude.json").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +662,52 @@ class TestAttachCleanupInExecuteTask:
         # Should not raise, and no upterm involvement
         worker._execute_task(task)
 
+    @patch("src.router.session_worker.os.makedirs")
+    @patch("src.router.session_worker.os.path.isdir", return_value=True)
+    @patch.object(MeshSessionWorker, "_tmux_has_session", return_value=False)
+    @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-1")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.time.sleep")
+    def test_existing_work_dir_skips_makedirs(
+        self,
+        mock_sleep: Mock,
+        mock_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+        mock_isdir: Mock,
+        mock_makedirs: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+        task = {
+            "task_id": "t-005",
+            "execution_mode": "session",
+            "target_account": "claude-alt",
+            "payload": {
+                "prompt": "hello",
+                "working_dir": "/media/sam/1TB/rektaslug",
+            },
+        }
+
+        worker._execute_task(task)
+
+        assert call("/media/sam/1TB/rektaslug") in mock_isdir.mock_calls
+        assert call("/media/sam/1TB/rektaslug", exist_ok=True) not in mock_makedirs.mock_calls
+        mock_tmux_new.assert_called_once()
+        mock_send_text.assert_called_once_with("mesh-claude-claude-alt-t-005", "hello")
+        mock_complete.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # _deliver_inbound_messages
@@ -775,3 +891,16 @@ class TestTmuxOperations:
         mock_run.return_value = MagicMock(returncode=1)
         worker = _make_worker()
         assert worker._tmux_capture_pane("mysess") == ""
+
+
+def test_stop_deregisters_session_worker() -> None:
+    worker = _make_worker()
+    worker._http = MagicMock()
+    worker._http.post.return_value = MagicMock(status_code=200)
+
+    worker.stop()
+
+    worker._http.post.assert_called_once_with(
+        "http://localhost:8780/workers/ws-test-01/deregister",
+        timeout=5,
+    )

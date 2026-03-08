@@ -22,9 +22,9 @@ Verified on the real `.100` router + `.111` WS stack:
 
 Not yet production-clean:
 
-- `upterm` is still missing, so attach handles are not created automatically
-- brand-new CCS profiles can still need first auth/bootstrap under `mesh-worker`
-- provider runtime must exist under `/home/mesh-worker`, not only under `/home/sam`
+- `upterm` attach URL discovery is still flaky even when `upterm` is installed
+- brand-new Claude CCS profiles still need one first login/bootstrap in their own instance
+- session worker Unix user must match where that provider/runtime state actually lives
 
 ## Provider Runtime Policy
 
@@ -36,6 +36,8 @@ Default policy:
 - `claude` -> real CCS account profile: `ccs {target_account}`
 - `codex` -> CLIProxy provider direct: `ccs codex`
 - `gemini` -> CLIProxy provider direct: `ccs gemini`
+- Claude session worker service user defaults to `sam`
+- Codex session worker service user defaults to `mesh-worker`
 
 If CCS changes syntax later, edit this file instead of patching worker code.
 
@@ -56,6 +58,7 @@ This automatically:
 - enables `MESH_ALLOWED_ACCOUNTS=*`
 - wires `MESH_UPTERM_BIN` automatically when `upterm` exists on WS
 - normalizes `/home/mesh-worker/.ccs` and `/home/mesh-worker/.claude` ownership
+- applies instance-specific systemd overrides for session worker Unix users from `mapping/provider_runtime.yaml`
 - links `ccs` into `/usr/local/bin/ccs` when only the operator npm-global install exists
 - restarts session workers
 - relies on session workers to preseed Claude project metadata (`.claude.json`) per repo at task start
@@ -178,7 +181,9 @@ Codex/Gemini routing is controlled centrally in `mapping/provider_runtime.yaml`.
 Important runtime note:
 
 - repo/account profiles under `/home/sam/.ccs` are not sufficient by themselves
-- session workers run as `mesh-worker`, so provider/runtime state must exist under `/home/mesh-worker/.ccs`
+- session worker auth/state must exist under the Unix user selected in `mapping/provider_runtime.yaml`
+- default policy runs Claude sessions as `sam`, so repo-scoped Claude profiles should live under `/home/sam/.ccs`
+- default policy runs Codex sessions as `mesh-worker`, so Codex CLIProxy state should live under `/home/mesh-worker/.ccs`
 - otherwise tasks can dispatch correctly but still fail later on provider auth/bootstrap
 
 ## Troubleshooting

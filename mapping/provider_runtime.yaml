@@ -1,0 +1,24 @@
+version: 1
+providers:
+  claude:
+    strategy: ccs_account_profile
+    command_template: "ccs {target_account}"
+    session_service_user: "sam"
+    session_service_group: "sam"
+    session_service_supplementary_groups:
+      - "mesh"
+    notes: "Claude isolation uses real CCS account profiles created via `ccs auth create <profile>`."
+
+  codex:
+    strategy: cliproxy_provider
+    command_template: "ccs codex"
+    session_service_user: "mesh-worker"
+    session_service_group: "mesh"
+    session_service_supplementary_groups:
+      - "sam"
+    notes: "Provider-direct today. If CCS later exposes stable multi-account routing, edit this template only."
+
+  gemini:
+    strategy: cliproxy_provider
+    command_template: "ccs gemini"
+    notes: "Provider-direct today. Can be changed centrally to account-aware form later."

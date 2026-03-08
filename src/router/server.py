@@ -143,6 +143,10 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._handle_task_complete()
             elif path == "/tasks/fail":
                 self._handle_task_fail()
+            elif path == "/tasks/cancel":
+                self._handle_task_cancel()
+            elif path == "/tasks/admin-fail":
+                self._handle_task_admin_fail()
             elif path == "/tasks/review/approve":
                 self._handle_task_review_approve()
             elif path == "/tasks/review/reject":
@@ -162,6 +166,12 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 worker_id = path[len("/workers/"):-len("/drain")]
                 if worker_id:
                     self._handle_drain_worker(worker_id)
+                else:
+                    self._send_json(404, {"error": "not_found"})
+            elif path.endswith("/deregister") and path.startswith("/workers/"):
+                worker_id = path[len("/workers/"):-len("/deregister")]
+                if worker_id:
+                    self._handle_deregister_worker(worker_id)
                 else:
                     self._send_json(404, {"error": "not_found"})
             else:
@@ -463,6 +473,54 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._send_json(200, {"status": "failed_recorded"})
             else:
                 self._send_json(409, {"error": "transition_failed"})
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+        except KeyError as e:
+            self._send_json(400, {"error": f"missing_field: {e}"})
+
+    def _handle_task_cancel(self) -> None:
+        """POST /tasks/cancel — admin cancel a non-running task."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+            task_id = data["task_id"]
+            reason = str(data.get("reason") or "admin_cancel").strip()
+            scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
+            ok, detail = scheduler.admin_cancel_task(task_id, reason=reason)
+            if ok:
+                self._send_json(200, {"status": "canceled", "task_id": task_id})
+            elif detail == "not_found":
+                self._send_json(404, {"error": "not_found"})
+            else:
+                self._send_json(409, {"error": "cancel_failed", "detail": detail})
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+        except KeyError as e:
+            self._send_json(400, {"error": f"missing_field: {e}"})
+
+    def _handle_task_admin_fail(self) -> None:
+        """POST /tasks/admin-fail — admin fail a non-running task."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+            task_id = data["task_id"]
+            reason = str(data.get("reason") or "admin_fail").strip()
+            scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
+            ok, detail = scheduler.admin_fail_task(task_id, reason=reason)
+            if ok:
+                self._send_json(200, {"status": "failed", "task_id": task_id})
+            elif detail == "not_found":
+                self._send_json(404, {"error": "not_found"})
+            else:
+                self._send_json(409, {"error": "admin_fail_failed", "detail": detail})
         except json.JSONDecodeError:
             self._send_json(400, {"error": "invalid_json"})
         except KeyError as e:
@@ -1086,6 +1144,23 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         # 202 Accepted: drain initiated (or completed immediately for idle workers)
         self._send_json(202, {"status": message, "worker_id": worker_id})
 
+    def _handle_deregister_worker(self, worker_id: str) -> None:
+        """POST /workers/<id>/deregister -- immediately retire a worker."""
+        if not self._check_auth():
+            return
+        state = self.server.router_state  # type: ignore[attr-defined]
+        wm: WorkerManager = state["worker_manager"]
+
+        ok, message = wm.deregister_worker(worker_id)
+        if not ok:
+            if message == "not_found":
+                self._send_json(404, {"error": "not_found"})
+            else:
+                self._send_json(409, {"error": message})
+            return
+
+        self._send_json(200, {"status": message, "worker_id": worker_id})
+
     # --- Thread endpoints ---
 
     def _handle_list_threads(self) -> None:
@@ -1384,6 +1459,7 @@ def run_server(
     )
     metrics = MeshMetrics()
     review_check_interval = float(os.environ.get("MESH_REVIEW_CHECK_INTERVAL_S", "60"))
+    recovery_check_interval = float(os.environ.get("MESH_RECOVERY_CHECK_INTERVAL_S", "30"))
     verifier_gate = VerifierGate()
     longpoll_timeout = float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25"))
     wal_size_threshold = int(os.environ.get("MESH_DB_WAL_SIZE_THRESHOLD_BYTES", str(50 * 1024 * 1024)))  # 50MB
@@ -1411,6 +1487,7 @@ def run_server(
         "topology": topology,
         "verifier_gate": verifier_gate,
         "review_check_interval": review_check_interval,
+        "recovery_check_interval": recovery_check_interval,
         "db_health_config": {
             "wal_size_threshold": wal_size_threshold,
             "disk_free_threshold": disk_free_threshold,
@@ -1470,6 +1547,26 @@ def run_server(
 
     review_thread = threading.Thread(target=review_check_loop, daemon=True, name="review-check")
     review_thread.start()
+
+    def recovery_check_loop() -> None:
+        """Periodically recover orphaned assigned/running tasks after worker loss."""
+        while True:
+            time.sleep(recovery_check_interval)
+            try:
+                result = recover_on_startup(db)
+                if result.tasks_requeued or result.leases_expired:
+                    logger.info(
+                        "Periodic recovery: %d tasks requeued, %d leases expired",
+                        result.tasks_requeued,
+                        result.leases_expired,
+                    )
+                for error in result.errors:
+                    logger.warning("Periodic recovery warning: %s", error)
+            except Exception as e:
+                logger.error("Periodic recovery check failed: %s", e)
+
+    recovery_thread = threading.Thread(target=recovery_check_loop, daemon=True, name="recovery-check")
+    recovery_thread.start()
 
     # Start buffer replay timer
     emitter.start_replay_timer()

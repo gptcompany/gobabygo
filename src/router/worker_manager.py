@@ -147,20 +147,20 @@ class WorkerManager:
             return False, "not_found"
 
         with self._db.transaction() as conn:
-            # If worker is busy, clean up its tasks
-            if worker.status == "busy":
-                leases = self._db.list_worker_leases(worker_id)
-                for lease in leases:
-                    task = self._db.get_task(lease.task_id)
-                    if task and task.status.value in ("assigned", "running"):
-                        self._db.expire_lease(lease.lease_id, conn=conn)
-                        requeue_task(
-                            self._db,
-                            task.task_id,
-                            "deregister",
-                            self._max_attempts,
-                            conn=conn,
-                        )
+            # Deregistration is immediate retirement: requeue any active work,
+            # regardless of whether the worker was marked busy, draining, or idle.
+            leases = self._db.list_worker_leases(worker_id)
+            for lease in leases:
+                task = self._db.get_task(lease.task_id)
+                if task and task.status.value in ("assigned", "running"):
+                    self._db.expire_lease(lease.lease_id, conn=conn)
+                    requeue_task(
+                        self._db,
+                        task.task_id,
+                        "deregister",
+                        self._max_attempts,
+                        conn=conn,
+                    )
 
             # Set worker offline
             self._db.update_worker(

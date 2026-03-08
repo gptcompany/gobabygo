@@ -101,11 +101,13 @@ class HeartbeatManager:
         db: RouterDB,
         stale_threshold_s: int = 35,
         max_attempts: int = 3,
+        lease_duration_s: int = 300,
         longpoll_registry: LongPollRegistry | None = None,
     ) -> None:
         self._db = db
         self._stale_threshold_s = stale_threshold_s
         self._max_attempts = max_attempts
+        self._lease_duration_s = lease_duration_s
         self._longpoll_registry = longpoll_registry
 
     def receive_heartbeat(self, worker_id: str) -> dict:
@@ -149,12 +151,29 @@ class HeartbeatManager:
             return {"status": "stale_recovered", "requeued_tasks": requeued_tasks}
 
         if worker.status in ("idle", "busy"):
-            self._db.update_worker(
-                worker_id, {"last_heartbeat": now}
-            )
+            self._db.update_worker(worker_id, {"last_heartbeat": now})
+            self._renew_active_leases(worker_id, now)
             return {"status": "ok"}
 
         return {"status": "unknown"}
+
+    def _renew_active_leases(self, worker_id: str, now: str) -> None:
+        """Extend leases for active tasks owned by a healthy worker."""
+        new_expiry = (
+            datetime.now(timezone.utc) + timedelta(seconds=self._lease_duration_s)
+        ).isoformat()
+
+        with self._db.transaction() as conn:
+            for lease in self._db.list_worker_leases(worker_id):
+                task = self._db.get_task(lease.task_id)
+                if task is None or task.status.value not in ("assigned", "running"):
+                    continue
+                self._db.renew_lease(lease.lease_id, new_expiry, conn=conn)
+                self._db.update_task_fields(
+                    task.task_id,
+                    {"lease_expires_at": new_expiry},
+                    conn=conn,
+                )
 
     def run_stale_sweep(self) -> SweepResult:
         """Detect stale workers and clean up their tasks.

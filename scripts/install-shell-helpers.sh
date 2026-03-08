@@ -47,6 +47,23 @@ if [[ -z "${MESH_HOME:-}" && -d "/media/sam/1TB/gobabygo/scripts" ]]; then
   export MESH_HOME="/media/sam/1TB/gobabygo"
 fi
 
+_mesh_ssh_opts() {
+  local ctl_dir interval count persist
+  ctl_dir="${MESH_SSH_CONTROL_DIR:-$HOME/.ssh/cm}"
+  interval="${MESH_SSH_SERVER_ALIVE_INTERVAL:-30}"
+  count="${MESH_SSH_SERVER_ALIVE_COUNT_MAX:-6}"
+  persist="${MESH_SSH_CONTROL_PERSIST:-10m}"
+  mkdir -p "$ctl_dir" 2>/dev/null || true
+  printf '%s\n' \
+    -o "ServerAliveInterval=${interval}" \
+    -o "ServerAliveCountMax=${count}" \
+    -o "TCPKeepAlive=yes" \
+    -o "ControlMaster=auto" \
+    -o "ControlPersist=${persist}" \
+    -o "ControlPath=${ctl_dir}/%C" \
+    -o "IPQoS=none"
+}
+
 lfcd() {
   command -v lf >/dev/null 2>&1 || { echo "lf not found"; return 127; }
   local tmp rc dir
@@ -79,6 +96,7 @@ yazicd() {
 unalias wss >/dev/null 2>&1 || true
 wss() {
   local ws_script ws_host repo_base repo mesh_home target_dir
+  local -a ssh_opts=()
   _is_local_ws_host() {
     local h="$1"
     local t ip
@@ -110,6 +128,7 @@ wss() {
   }
   ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
+  mapfile -t ssh_opts < <(_mesh_ssh_opts)
   if _is_local_ws_host "$ws_host"; then
     if [[ $# -eq 0 ]]; then
       return 0
@@ -137,7 +156,7 @@ wss() {
   fi
 
   if [[ $# -eq 0 ]]; then
-    command ssh "$ws_host"
+    command ssh "${ssh_opts[@]}" "$ws_host"
     return $?
   fi
 
@@ -147,20 +166,22 @@ wss() {
   else
     target_dir="${repo_base}/${repo}"
   fi
-  command ssh -t "$ws_host" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[wss] missing repo: $target_dir'; cd '$repo_base'; fi; exec \$SHELL -l"
+  command ssh "${ssh_opts[@]}" -t "$ws_host" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[wss] missing repo: $target_dir'; cd '$repo_base'; fi; exec \$SHELL -l"
 }
 
 # wsattach: attach to tmux session on WS, auto-detecting effective service user.
 unalias wsattach >/dev/null 2>&1 || true
 wsattach() {
   local ws_host session
+  local -a ssh_opts=()
   ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
   session="${1:-}"
   if [[ -z "$session" ]]; then
     echo "Usage: wsattach <tmux-session>"
     return 1
   fi
-  command ssh -t "$ws_host" "bash -lc '
+  mapfile -t ssh_opts < <(_mesh_ssh_opts)
+  command ssh "${ssh_opts[@]}" -t "$ws_host" "bash -lc '
 if id mesh-worker >/dev/null 2>&1; then exec sudo -u mesh-worker tmux attach -t \"$session\"; fi
 if id mesh >/dev/null 2>&1; then exec sudo -u mesh tmux attach -t \"$session\"; fi
 exec tmux attach -t \"$session\"

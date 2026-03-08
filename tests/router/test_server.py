@@ -661,6 +661,81 @@ class TestTaskFailEndpoint:
         assert resp.status_code == 200
 
 
+class TestTaskAdminEndpoints:
+    def test_cancel_queued_task(self, server_url, db):
+        task = Task(
+            task_id="t-cancel-1",
+            title="queued task",
+            phase="implement",
+            status=TaskStatus.queued,
+            idempotency_key="k-cancel-1",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/cancel",
+            json={"task_id": "t-cancel-1", "reason": "admin cleanup"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "canceled"
+        updated = db.get_task("t-cancel-1")
+        assert updated.status == TaskStatus.canceled
+
+    def test_cancel_running_task_returns_409(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="busy")
+        db.insert_worker(worker)
+        task = Task(
+            task_id="t-cancel-2",
+            title="running task",
+            phase="implement",
+            status=TaskStatus.running,
+            assigned_worker="w1",
+            idempotency_key="k-cancel-2",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/cancel",
+            json={"task_id": "t-cancel-2"},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "cancel_failed"
+        assert "running_not_supported" in resp.json()["detail"]
+
+    def test_admin_fail_assigned_task_releases_worker(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="busy")
+        db.insert_worker(worker)
+        task = Task(
+            task_id="t-fail-1",
+            title="assigned task",
+            phase="implement",
+            status=TaskStatus.assigned,
+            assigned_worker="w1",
+            idempotency_key="k-fail-1",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/admin-fail",
+            json={"task_id": "t-fail-1", "reason": "stuck pre-ack"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "failed"
+        updated = db.get_task("t-fail-1")
+        assert updated.status == TaskStatus.failed
+        assert updated.assigned_worker is None
+        worker_after = db.get_worker("w1")
+        assert worker_after is not None
+        assert worker_after.status == "idle"
+
+    def test_admin_fail_not_found_returns_404(self, server_url):
+        resp = requests.post(
+            f"{server_url}/tasks/admin-fail",
+            json={"task_id": "missing"},
+        )
+        assert resp.status_code == 404
+
+
 class TestTaskReviewEndpoints:
     def test_review_approve_valid_task(self, server_url, db):
         task = Task(
@@ -1256,7 +1331,7 @@ class TestBufferReplayMetrics:
 
 
 class TestWorkerEndpoints:
-    """Tests for GET /workers, GET /workers/<id>, POST /workers/<id>/drain."""
+    """Tests for GET /workers, GET /workers/<id>, POST drain/deregister endpoints."""
 
     AUTH = {"Authorization": "Bearer test-token-123"}
 
@@ -1393,6 +1468,25 @@ class TestWorkerEndpoints:
     def test_drain_requires_auth(self, authed_server_url):
         """POST /workers/<id>/drain without auth returns 401."""
         resp = requests.post(f"{authed_server_url}/workers/w1/drain")
+        assert resp.status_code == 401
+
+    def test_deregister_worker(self, authed_server_url):
+        self._register_worker(authed_server_url)
+        resp = requests.post(f"{authed_server_url}/workers/w1/deregister", headers=self.AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "deregistered"
+        get_resp = requests.get(f"{authed_server_url}/workers/w1", headers=self.AUTH)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["status"] == "offline"
+
+    def test_deregister_not_found_404(self, authed_server_url):
+        resp = requests.post(
+            f"{authed_server_url}/workers/nonexistent/deregister", headers=self.AUTH
+        )
+        assert resp.status_code == 404
+
+    def test_deregister_requires_auth(self, authed_server_url):
+        resp = requests.post(f"{authed_server_url}/workers/w1/deregister")
         assert resp.status_code == 401
 
 

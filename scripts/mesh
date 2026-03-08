@@ -331,158 +331,179 @@ case "$cmd" in
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
     ws_env_dir="${MESH_WS_ENV_DIR:-/etc/mesh-worker}"
     stop_batch="${MESH_BOOTSTRAP_STOP_BATCH:-0}"
+    bootstrap_script="$(cat <<'EOF'
+set -euo pipefail
+
+env_dir="${1:?missing env_dir}"
+stop_batch="${2:-0}"
+repo_root_hint="${3:-}"
+
+resolve_repo_root() {
+  local hint="${1:-}"
+  local candidates=(
+    "$hint"
+    "/media/sam/1TB/gobabygo"
+    "$HOME/gobabygo"
+    "/opt/mesh-router"
+    "/opt/mesh-worker"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate/mapping/provider_runtime.yaml" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+repo_root="$(resolve_repo_root "$repo_root_hint" || true)"
+
+set_kv() {
+  local file="$1" key="$2" value="$3"
+  local escaped
+  escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
+  if sudo grep -q "^${key}=" "$file"; then
+    sudo sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
+  else
+    echo "${key}=${value}" | sudo tee -a "$file" >/dev/null
+  fi
+}
+
+configure_session_worker_env() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    echo "[WARN] missing env file: $file"
+    return 0
+  fi
+  set_kv "$file" MESH_CLI_COMMAND "ccs {target_account}"
+  set_kv "$file" MESH_ALLOWED_ACCOUNTS "*"
+  if command -v upterm >/dev/null 2>&1; then
+    set_kv "$file" MESH_UPTERM_BIN "$(command -v upterm)"
+  fi
+  echo "[OK] configured $file"
+}
+
+provider_identity_json() {
+  local cli_type="$1"
+  if [[ -z "$repo_root" ]]; then
+    printf '{"user":"","group":"","supplementary_groups":[]}'
+    return 0
+  fi
+  python3 - "$repo_root" "$cli_type" <<'PY'
+import json
+import sys
+
+repo_root = sys.argv[1]
+cli_type = sys.argv[2]
+sys.path.insert(0, repo_root)
+
+from src.router.provider_runtime import resolve_session_service_identity
+
+print(json.dumps(resolve_session_service_identity(cli_type)))
+PY
+}
+
+session_identity_field() {
+  local cli_type="$1" field="$2"
+  local payload
+  payload="$(provider_identity_json "$cli_type")"
+  MESH_PROVIDER_IDENTITY_JSON="$payload" python3 - "$field" <<'PY'
+import json
+import os
+import sys
+
+field = sys.argv[1]
+data = json.loads(os.environ["MESH_PROVIDER_IDENTITY_JSON"])
+value = data.get(field, [])
+if isinstance(value, list):
+    print(" ".join(str(item) for item in value if str(item).strip()))
+else:
+    print(str(value or "").strip())
+PY
+}
+
+apply_session_service_override() {
+  local unit_instance="$1" cli_type="$2"
+  local user group supplementary_groups override_dir override_path
+
+  user="$(session_identity_field "$cli_type" user)"
+  group="$(session_identity_field "$cli_type" group)"
+  supplementary_groups="$(session_identity_field "$cli_type" supplementary_groups)"
+  [[ -n "$user" ]] || return 0
+
+  override_dir="/etc/systemd/system/mesh-session-worker@${unit_instance}.service.d"
+  override_path="${override_dir}/runtime-user.conf"
+
+  sudo mkdir -p "$override_dir"
+  {
+    echo "[Service]"
+    echo "User=${user}"
+    echo "Group=${group:-$user}"
+    echo "SupplementaryGroups="
+    if [[ -n "$supplementary_groups" ]]; then
+      echo "SupplementaryGroups=${supplementary_groups}"
+    fi
+    echo "Environment=HOME=/home/${user}"
+  } | sudo tee "$override_path" >/dev/null
+  echo "[OK] applied ${cli_type} session user override: user=${user} group=${group:-$user} supplementary_groups=${supplementary_groups:-<none>}"
+}
+
+bootstrap_mesh_worker_runtime() {
+  sudo mkdir -p /home/mesh-worker/.ccs/instances
+  sudo mkdir -p /home/mesh-worker/.claude
+  sudo chown -R mesh-worker:mesh /home/mesh-worker/.ccs /home/mesh-worker/.claude
+
+  if ! sudo -u mesh-worker env PATH=/usr/local/bin:/usr/bin:/bin bash -lc 'command -v ccs >/dev/null 2>&1' \
+    && [[ -x /home/sam/.npm-global/bin/ccs ]]; then
+    sudo ln -sf /home/sam/.npm-global/bin/ccs /usr/local/bin/ccs
+    echo "[OK] linked ccs into /usr/local/bin/ccs"
+  fi
+}
+
+bootstrap_mesh_worker_runtime
+configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
+configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
+apply_session_service_override "mesh-session-claude-work" "claude"
+apply_session_service_override "mesh-session-codex-work" "codex"
+
+sudo systemctl daemon-reload
+sudo systemctl restart mesh-session-worker@mesh-session-claude-work
+sudo systemctl restart mesh-session-worker@mesh-session-codex-work
+
+if [[ "$stop_batch" == "1" ]]; then
+  sudo systemctl stop mesh-worker@claude-work || true
+  sudo systemctl stop mesh-worker@codex-work || true
+  sudo systemctl stop mesh-worker@gemini-work || true
+  echo "[OK] batch workers stopped"
+fi
+
+sudo systemctl is-active --quiet mesh-session-worker@mesh-session-claude-work && echo "[OK] session claude active"
+sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && echo "[OK] session codex active"
+
+echo
+echo "Bootstrap complete."
+if [[ -n "$repo_root" ]]; then
+  echo "Provider runtime policy: ${repo_root}/mapping/provider_runtime.yaml"
+fi
+echo "Session workers now preseed Claude project state on task start (.claude.json trust/onboarding/MCP metadata)."
+echo "mesh-worker runtime ownership for ~/.ccs and ~/.claude has been normalized."
+if command -v upterm >/dev/null 2>&1; then
+  echo "upterm detected: $(command -v upterm)"
+else
+  echo "[WARN] upterm not installed on WS; attach handles will fallback to ssh/tmux only"
+fi
+echo "Next:"
+echo "  1) create Claude CCS account profiles once (if missing):"
+echo "     ccs auth create claude-<repo>"
+echo "  2) run from repo dir:"
+echo "     mesh run <phase>"
+EOF
+)"
     if is_local_host "$ws_host"; then
-      bash -s -- "$ws_env_dir" "$stop_batch" <<'EOF'
-set -euo pipefail
-
-env_dir="${1:?missing env_dir}"
-stop_batch="${2:-0}"
-
-set_kv() {
-  local file="$1" key="$2" value="$3"
-  local escaped
-  escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
-  if sudo grep -q "^${key}=" "$file"; then
-    sudo sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
-  else
-    echo "${key}=${value}" | sudo tee -a "$file" >/dev/null
-  fi
-}
-
-configure_session_worker_env() {
-  local file="$1"
-  if [[ ! -f "$file" ]]; then
-    echo "[WARN] missing env file: $file"
-    return 0
-  fi
-  set_kv "$file" MESH_CLI_COMMAND "ccs {target_account}"
-  set_kv "$file" MESH_ALLOWED_ACCOUNTS "*"
-  if command -v upterm >/dev/null 2>&1; then
-    set_kv "$file" MESH_UPTERM_BIN "$(command -v upterm)"
-  fi
-  echo "[OK] configured $file"
-}
-
-bootstrap_mesh_worker_runtime() {
-  sudo mkdir -p /home/mesh-worker/.ccs/instances
-  sudo mkdir -p /home/mesh-worker/.claude
-  sudo chown -R mesh-worker:mesh /home/mesh-worker/.ccs /home/mesh-worker/.claude
-
-  if ! sudo -u mesh-worker env PATH=/usr/local/bin:/usr/bin:/bin bash -lc 'command -v ccs >/dev/null 2>&1' \
-    && [[ -x /home/sam/.npm-global/bin/ccs ]]; then
-    sudo ln -sf /home/sam/.npm-global/bin/ccs /usr/local/bin/ccs
-    echo "[OK] linked ccs into /usr/local/bin/ccs"
-  fi
-}
-
-bootstrap_mesh_worker_runtime
-configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
-configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
-
-sudo systemctl restart mesh-session-worker@mesh-session-claude-work
-sudo systemctl restart mesh-session-worker@mesh-session-codex-work
-
-if [[ "$stop_batch" == "1" ]]; then
-  sudo systemctl stop mesh-worker@claude-work || true
-  sudo systemctl stop mesh-worker@codex-work || true
-  sudo systemctl stop mesh-worker@gemini-work || true
-  echo "[OK] batch workers stopped"
-fi
-
-sudo systemctl is-active --quiet mesh-session-worker@mesh-session-claude-work && echo "[OK] session claude active"
-sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && echo "[OK] session codex active"
-
-echo
-echo "Bootstrap complete."
-echo "Session workers now preseed Claude project state on task start (.claude.json trust/onboarding/MCP metadata)."
-echo "mesh-worker runtime ownership for ~/.ccs and ~/.claude has been normalized."
-if command -v upterm >/dev/null 2>&1; then
-  echo "upterm detected: $(command -v upterm)"
-else
-  echo "[WARN] upterm not installed on WS; attach handles will fallback to ssh/tmux only"
-fi
-echo "Next:"
-echo "  1) create Claude CCS account profiles once (if missing):"
-echo "     ccs auth create claude-<repo>"
-echo "  2) run from repo dir:"
-echo "     mesh run <phase>"
-EOF
+      bash -s -- "$ws_env_dir" "$stop_batch" "$REPO_ROOT" <<<"$bootstrap_script"
     else
-      ssh -tt -o ConnectTimeout=10 "$ws_host" "bash -s" -- "$ws_env_dir" "$stop_batch" <<'EOF'
-set -euo pipefail
-
-env_dir="${1:?missing env_dir}"
-stop_batch="${2:-0}"
-
-set_kv() {
-  local file="$1" key="$2" value="$3"
-  local escaped
-  escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
-  if sudo grep -q "^${key}=" "$file"; then
-    sudo sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
-  else
-    echo "${key}=${value}" | sudo tee -a "$file" >/dev/null
-  fi
-}
-
-configure_session_worker_env() {
-  local file="$1"
-  if [[ ! -f "$file" ]]; then
-    echo "[WARN] missing env file: $file"
-    return 0
-  fi
-  set_kv "$file" MESH_CLI_COMMAND "ccs {target_account}"
-  set_kv "$file" MESH_ALLOWED_ACCOUNTS "*"
-  if command -v upterm >/dev/null 2>&1; then
-    set_kv "$file" MESH_UPTERM_BIN "$(command -v upterm)"
-  fi
-  echo "[OK] configured $file"
-}
-
-bootstrap_mesh_worker_runtime() {
-  sudo mkdir -p /home/mesh-worker/.ccs/instances
-  sudo mkdir -p /home/mesh-worker/.claude
-  sudo chown -R mesh-worker:mesh /home/mesh-worker/.ccs /home/mesh-worker/.claude
-
-  if ! sudo -u mesh-worker env PATH=/usr/local/bin:/usr/bin:/bin bash -lc 'command -v ccs >/dev/null 2>&1' \
-    && [[ -x /home/sam/.npm-global/bin/ccs ]]; then
-    sudo ln -sf /home/sam/.npm-global/bin/ccs /usr/local/bin/ccs
-    echo "[OK] linked ccs into /usr/local/bin/ccs"
-  fi
-}
-
-bootstrap_mesh_worker_runtime
-configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
-configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
-
-sudo systemctl restart mesh-session-worker@mesh-session-claude-work
-sudo systemctl restart mesh-session-worker@mesh-session-codex-work
-
-if [[ "$stop_batch" == "1" ]]; then
-  sudo systemctl stop mesh-worker@claude-work || true
-  sudo systemctl stop mesh-worker@codex-work || true
-  sudo systemctl stop mesh-worker@gemini-work || true
-  echo "[OK] batch workers stopped"
-fi
-
-sudo systemctl is-active --quiet mesh-session-worker@mesh-session-claude-work && echo "[OK] session claude active"
-sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && echo "[OK] session codex active"
-
-echo
-echo "Bootstrap complete."
-echo "Session workers now preseed Claude project state on task start (.claude.json trust/onboarding/MCP metadata)."
-echo "mesh-worker runtime ownership for ~/.ccs and ~/.claude has been normalized."
-if command -v upterm >/dev/null 2>&1; then
-  echo "upterm detected: $(command -v upterm)"
-else
-  echo "[WARN] upterm not installed on WS; attach handles will fallback to ssh/tmux only"
-fi
-echo "Next:"
-echo "  1) create Claude CCS account profiles once (if missing):"
-echo "     ccs auth create claude-<repo>"
-echo "  2) run from repo dir:"
-echo "     mesh run <phase>"
-EOF
+      ssh -tt -o ConnectTimeout=10 "$ws_host" "bash -s" -- "$ws_env_dir" "$stop_batch" "$REPO_ROOT" <<<"$bootstrap_script"
     fi
     ;;
   ui)

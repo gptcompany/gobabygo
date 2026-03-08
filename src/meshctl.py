@@ -335,6 +335,75 @@ def cmd_submit(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _post_task_admin_action(
+    endpoint: str,
+    task_id: str,
+    reason: str,
+) -> requests.Response:
+    """POST a task admin action to the router."""
+    base = _base_url()
+    headers = _headers()
+    headers["Content-Type"] = "application/json"
+    return requests.post(
+        f"{base}{endpoint}",
+        json={"task_id": task_id, "reason": reason},
+        headers=headers,
+        timeout=10,
+    )
+
+
+def cmd_task_cancel(args: argparse.Namespace) -> None:
+    """Admin cancel a non-running task."""
+    base = _base_url()
+    try:
+        resp = _post_task_admin_action("/tasks/cancel", args.task_id, args.reason)
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code == 200:
+        print(f"Task canceled: {args.task_id}")
+        return
+    if resp.status_code == 401:
+        print("Error: Authentication failed. Set MESH_AUTH_TOKEN.", file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code == 404:
+        print(f"Error: task not found: {args.task_id}", file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code == 409:
+        detail = resp.json().get("detail", "transition_failed")
+        print(f"Error: cannot cancel task {args.task_id} -- {detail}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Error: {resp.status_code} -- {resp.text}", file=sys.stderr)
+    sys.exit(1)
+
+
+def cmd_task_fail(args: argparse.Namespace) -> None:
+    """Admin fail a non-running task."""
+    base = _base_url()
+    try:
+        resp = _post_task_admin_action("/tasks/admin-fail", args.task_id, args.reason)
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code == 200:
+        print(f"Task failed: {args.task_id}")
+        return
+    if resp.status_code == 401:
+        print("Error: Authentication failed. Set MESH_AUTH_TOKEN.", file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code == 404:
+        print(f"Error: task not found: {args.task_id}", file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code == 409:
+        detail = resp.json().get("detail", "transition_failed")
+        print(f"Error: cannot fail task {args.task_id} -- {detail}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Error: {resp.status_code} -- {resp.text}", file=sys.stderr)
+    sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline commands
 # ---------------------------------------------------------------------------
@@ -967,6 +1036,25 @@ submit_parser.add_argument("--phase", default=None, help="Task phase")
 submit_parser.add_argument("--priority", type=int, default=None, help="Priority (higher = first)")
 submit_parser.add_argument("--payload", default=None, help="JSON payload string")
 
+task_parser = sub.add_parser("task", help="Administrative task actions")
+task_sub = task_parser.add_subparsers(dest="task_command")
+
+task_cancel_parser = task_sub.add_parser("cancel", help="Cancel a non-running task")
+task_cancel_parser.add_argument("task_id", help="Task ID")
+task_cancel_parser.add_argument(
+    "--reason",
+    default="admin_cancel",
+    help="Audit reason written to the transition event",
+)
+
+task_fail_parser = task_sub.add_parser("fail", help="Fail a non-running task")
+task_fail_parser.add_argument("task_id", help="Task ID")
+task_fail_parser.add_argument(
+    "--reason",
+    default="admin_fail",
+    help="Audit reason written to the transition event",
+)
+
 pipeline_parser = sub.add_parser("pipeline", help="Pipeline template orchestration")
 pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_command")
 
@@ -1054,6 +1142,14 @@ if __name__ == "__main__":
         cmd_drain(parsed_args)
     elif parsed_args.command == "submit":
         cmd_submit(parsed_args)
+    elif parsed_args.command == "task":
+        if parsed_args.task_command == "cancel":
+            cmd_task_cancel(parsed_args)
+        elif parsed_args.task_command == "fail":
+            cmd_task_fail(parsed_args)
+        else:
+            task_parser.print_help()
+            sys.exit(1)
     elif parsed_args.command == "pipeline":
         if parsed_args.pipeline_command == "create":
             cmd_pipeline_create(parsed_args)

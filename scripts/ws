@@ -4,6 +4,23 @@ set -euo pipefail
 WS_HOST="${MESH_WS_HOST:-sam@192.168.1.111}"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 
+mesh_ssh_opts() {
+  local ctl_dir interval count persist
+  ctl_dir="${MESH_SSH_CONTROL_DIR:-$HOME/.ssh/cm}"
+  interval="${MESH_SSH_SERVER_ALIVE_INTERVAL:-30}"
+  count="${MESH_SSH_SERVER_ALIVE_COUNT_MAX:-6}"
+  persist="${MESH_SSH_CONTROL_PERSIST:-10m}"
+  mkdir -p "$ctl_dir" 2>/dev/null || true
+  printf '%s\n' \
+    -o "ServerAliveInterval=${interval}" \
+    -o "ServerAliveCountMax=${count}" \
+    -o "TCPKeepAlive=yes" \
+    -o "ControlMaster=auto" \
+    -o "ControlPersist=${persist}" \
+    -o "ControlPath=${ctl_dir}/%C" \
+    -o "IPQoS=none"
+}
+
 is_local_ws_host() {
   local host="$1"
   local target
@@ -61,7 +78,8 @@ if [[ -z "${1:-}" ]]; then
   if is_local_ws_host "$WS_HOST"; then
     exec "${SHELL:-/bin/bash}" -l
   fi
-  exec ssh "$WS_HOST"
+  mapfile -t ssh_opts < <(mesh_ssh_opts)
+  exec ssh "${ssh_opts[@]}" "$WS_HOST"
 fi
 
 repo="$1"
@@ -79,4 +97,5 @@ if is_local_ws_host "$WS_HOST"; then
   fi
   exec "${SHELL:-/bin/bash}" -l
 fi
-exec ssh -t "$WS_HOST" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[ws] missing repo: $target_dir'; cd '$WS_REPO_BASE'; fi; exec \$SHELL -l"
+mapfile -t ssh_opts < <(mesh_ssh_opts)
+exec ssh "${ssh_opts[@]}" -t "$WS_HOST" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[ws] missing repo: $target_dir'; cd '$WS_REPO_BASE'; fi; exec \$SHELL -l"

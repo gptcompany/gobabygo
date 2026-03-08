@@ -18,6 +18,8 @@ from src.meshctl import (
     cmd_drain,
     cmd_status,
     cmd_submit,
+    cmd_task_cancel,
+    cmd_task_fail,
 )
 
 
@@ -397,6 +399,18 @@ def _submit_args(
     )
 
 
+def _task_admin_args(
+    task_id: str = "t-123",
+    reason: str = "admin_test",
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="task",
+        task_command="cancel",
+        task_id=task_id,
+        reason=reason,
+    )
+
+
 class TestSubmitCommand:
     @patch("src.meshctl.requests.post")
     def test_submit_success(
@@ -525,3 +539,75 @@ class TestSubmitCommand:
         assert body["phase"] == "test"
         assert body["priority"] == 5
         assert body["payload"] == {"prompt": "Run tests"}
+
+
+class TestTaskAdminCommands:
+    @patch("src.meshctl.requests.post")
+    def test_task_cancel_success(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(200, {"status": "canceled"})
+
+        cmd_task_cancel(_task_admin_args("t-1", "cleanup queue"))
+        out = capsys.readouterr().out
+        assert "Task canceled: t-1" in out
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.args[0].endswith("/tasks/cancel")
+        assert call_kwargs.kwargs["json"] == {"task_id": "t-1", "reason": "cleanup queue"}
+
+    @patch("src.meshctl.requests.post")
+    def test_task_fail_success(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(200, {"status": "failed"})
+
+        args = _task_admin_args("t-2", "stuck review")
+        args.task_command = "fail"
+        cmd_task_fail(args)
+        out = capsys.readouterr().out
+        assert "Task failed: t-2" in out
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.args[0].endswith("/tasks/admin-fail")
+        assert call_kwargs.kwargs["json"] == {"task_id": "t-2", "reason": "stuck review"}
+
+    @patch("src.meshctl.requests.post")
+    def test_task_cancel_conflict(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            409, {"error": "cancel_failed", "detail": "running_not_supported"}
+        )
+        with pytest.raises(SystemExit) as exc:
+            cmd_task_cancel(_task_admin_args("t-3"))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "running_not_supported" in err
+
+    @patch("src.meshctl.requests.post")
+    def test_task_fail_not_found(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(404)
+        args = _task_admin_args("missing")
+        args.task_command = "fail"
+        with pytest.raises(SystemExit) as exc:
+            cmd_task_fail(args)
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "task not found" in err

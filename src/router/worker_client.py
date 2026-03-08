@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 
 import requests
 
+from src.router.provider_runtime import resolve_cli_command
+
 logger = logging.getLogger("mesh.worker")
 
 
@@ -41,6 +43,7 @@ class WorkerConfig:
     allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
     execution_modes: list[str] = field(default_factory=lambda: ["batch"])
     cli_command: str = "claude"  # Template supports {target_account}, {account_profile}, {worker_account_profile}
+    provider_runtime_config: str | None = None  # None=repo default, ""=disabled
     dry_run: bool = False  # MESH_DRY_RUN=1 logs without executing
     work_dir: str = "/tmp/mesh-tasks"  # MESH_WORK_DIR
     task_timeout: int = 1800  # MESH_TASK_TIMEOUT_S (30 min)
@@ -66,6 +69,7 @@ class WorkerConfig:
             allowed_accounts=allowed_accounts,
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
+            provider_runtime_config=os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG"),
             execution_modes=[
                 m.strip() for m in os.environ.get("MESH_EXECUTION_MODES", "batch").split(",")
                 if m.strip()
@@ -113,6 +117,7 @@ class MeshWorker:
         self._running = False
         if self._heartbeat_thread:
             self._heartbeat_thread.join(timeout=10)
+        self._deregister()
 
     def _register(self) -> None:
         """POST /register with worker metadata."""
@@ -249,11 +254,12 @@ class MeshWorker:
             # - {target_account}: account requested by current task
             # - {account_profile}: alias of task account (for backward compatibility)
             # - {worker_account_profile}: static worker registration profile
-            cmd_base = (
-                self.config.cli_command
-                .replace("{target_account}", target_account)
-                .replace("{account_profile}", target_account)
-                .replace("{worker_account_profile}", self.config.account_profile)
+            cmd_base = resolve_cli_command(
+                cli_type=self.config.cli_type,
+                target_account=target_account,
+                worker_account_profile=self.config.account_profile,
+                fallback_command=self.config.cli_command,
+                config_path=self.config.provider_runtime_config,
             )
             cmd_parts = shlex.split(cmd_base)
             full_cmd = cmd_parts + ["--print", "-p", prompt]
@@ -291,10 +297,13 @@ class MeshWorker:
             self._report_failure(task_id, f"timeout after {self.config.task_timeout}s")
         except FileNotFoundError:
             cmd_name = shlex.split(
-                self.config.cli_command
-                .replace("{target_account}", target_account)
-                .replace("{account_profile}", target_account)
-                .replace("{worker_account_profile}", self.config.account_profile)
+                resolve_cli_command(
+                    cli_type=self.config.cli_type,
+                    target_account=target_account,
+                    worker_account_profile=self.config.account_profile,
+                    fallback_command=self.config.cli_command,
+                    config_path=self.config.provider_runtime_config,
+                )
             )[0]
             self._report_failure(task_id, f"command not found: {cmd_name}")
         except Exception as e:
@@ -347,6 +356,22 @@ class MeshWorker:
             )
         except requests.RequestException as e:
             logger.error("Failed to report failure for task %s: %s", task_id, e)
+
+    def _deregister(self) -> None:
+        """Best-effort router retirement during worker shutdown."""
+        try:
+            resp = self._session.post(
+                f"{self.config.router_url}/workers/{self.config.worker_id}/deregister",
+                timeout=5,
+            )
+            if resp.status_code not in (200, 404):
+                logger.warning(
+                    "Worker %s deregister returned %d",
+                    self.config.worker_id,
+                    resp.status_code,
+                )
+        except requests.RequestException as e:
+            logger.warning("Worker %s deregister failed: %s", self.config.worker_id, e)
 
 
 def run_worker() -> None:

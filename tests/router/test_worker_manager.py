@@ -146,6 +146,25 @@ class TestDeregisterWorker:
         t = db.get_task("t1")
         assert t.status == TaskStatus.failed
 
+    def test_deregister_draining_requeues_assigned_task(self, wm, db):
+        from src.router.models import Lease
+
+        w = _make_worker()
+        wm.register_worker(w, "valid-token-1")
+        db.update_worker("w1", {"status": "draining"})
+        task = Task(task_id="t1", title="test", status=TaskStatus.assigned, assigned_worker="w1")
+        db.insert_task(task)
+        lease = Lease(task_id="t1", worker_id="w1", expires_at="2099-01-01T00:00:00+00:00")
+        db.create_lease(lease)
+
+        ok, msg = wm.deregister_worker("w1")
+        assert ok is True
+        assert msg == "deregistered"
+        t = db.get_task("t1")
+        assert t.status == TaskStatus.queued
+        assert t.attempt == 2
+        assert t.assigned_worker is None
+
 
 class TestWorkerStatusTransitions:
     def test_valid_transitions(self, wm, db):

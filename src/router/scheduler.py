@@ -559,3 +559,127 @@ class Scheduler:
             task.task_id, new_attempt, 3, not_before,
         )
         return True
+
+    def admin_cancel_task(self, task_id: str, reason: str = "") -> tuple[bool, str]:
+        """Admin cancel for non-running tasks.
+
+        Safe targets:
+        - queued
+        - assigned
+        - blocked
+        - review
+
+        Running tasks are intentionally rejected here because the worker session
+        may still be actively executing in tmux.
+        """
+        task = self._db.get_task(task_id)
+        if task is None:
+            return False, "not_found"
+        if task.status in {
+            TaskStatus.completed,
+            TaskStatus.failed,
+            TaskStatus.timeout,
+            TaskStatus.canceled,
+        }:
+            return False, f"already_terminal:{task.status.value}"
+        if task.status == TaskStatus.running:
+            return False, "running_not_supported"
+        return self._admin_finalize_task(
+            task,
+            to_status=TaskStatus.canceled,
+            reason=reason or "admin_cancel",
+        )
+
+    def admin_fail_task(self, task_id: str, reason: str = "") -> tuple[bool, str]:
+        """Admin fail for non-running tasks.
+
+        Safe targets:
+        - queued
+        - assigned
+        - blocked
+        - review
+
+        Running tasks are intentionally rejected here because the worker session
+        may still be actively executing in tmux.
+        """
+        task = self._db.get_task(task_id)
+        if task is None:
+            return False, "not_found"
+        if task.status in {
+            TaskStatus.completed,
+            TaskStatus.failed,
+            TaskStatus.timeout,
+            TaskStatus.canceled,
+        }:
+            return False, f"already_terminal:{task.status.value}"
+        if task.status == TaskStatus.running:
+            return False, "running_not_supported"
+        return self._admin_finalize_task(
+            task,
+            to_status=TaskStatus.failed,
+            reason=reason or "admin_fail",
+        )
+
+    def _admin_finalize_task(
+        self,
+        task: Task,
+        to_status: TaskStatus,
+        reason: str,
+    ) -> tuple[bool, str]:
+        """Transition a non-running task to a terminal admin state."""
+        with self._db.transaction() as conn:
+            cas_ok = self._db.update_task_status(
+                task.task_id,
+                task.status,
+                to_status,
+                conn=conn,
+            )
+            if not cas_ok:
+                return False, "transition_failed"
+
+            self._db.insert_event(
+                TaskEvent(
+                    task_id=task.task_id,
+                    event_type="state_transition",
+                    payload={
+                        "from": task.status.value,
+                        "to": to_status.value,
+                        "reason": reason,
+                    },
+                ),
+                conn=conn,
+            )
+
+            self._db.update_task_fields(
+                task.task_id,
+                {
+                    "assigned_worker": None,
+                    "lease_expires_at": None,
+                },
+                conn=conn,
+            )
+
+            if task.thread_id:
+                from src.router.thread import compute_thread_status
+                new_thread_status = compute_thread_status(self._db, task.thread_id)
+                self._db.update_thread(
+                    task.thread_id,
+                    {"status": new_thread_status.value, "updated_at": _utc_now()},
+                    conn=conn,
+                )
+
+            lease = self._db.get_active_lease(task.task_id)
+            if lease:
+                self._db.expire_lease(lease.lease_id, conn=conn)
+
+            if task.assigned_worker and task.status == TaskStatus.assigned:
+                self._update_worker_post_task(
+                    task.assigned_worker,
+                    task.task_id,
+                    conn,
+                    f"admin_{to_status.value}",
+                )
+
+        from src.router.dependency import on_task_terminal
+        on_task_terminal(self._db, task.task_id)
+        return True, to_status.value

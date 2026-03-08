@@ -1176,3 +1176,20 @@ class RouterDB:
         if conn is None:
             self._conn.commit()
         return cur.rowcount > 0
+
+    @_retry_on_busy
+    def renew_lease(
+        self,
+        lease_id: str,
+        expires_at: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> bool:
+        """Extend an active lease expiry. Returns True if a lease was updated."""
+        c = conn or self._conn
+        cur = c.execute(
+            "UPDATE leases SET expires_at = ? WHERE lease_id = ?",
+            (expires_at, lease_id),
+        )
+        if conn is None:
+            self._conn.commit()
+        return cur.rowcount > 0
