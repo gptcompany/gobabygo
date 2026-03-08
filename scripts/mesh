@@ -459,6 +459,11 @@ bootstrap_mesh_worker_runtime() {
     sudo ln -sf /home/sam/.npm-global/bin/ccs /usr/local/bin/ccs
     echo "[OK] linked ccs into /usr/local/bin/ccs"
   fi
+
+  if [[ -x /home/sam/.npm-global/bin/claude ]]; then
+    sudo ln -sf /home/sam/.npm-global/bin/claude /usr/local/bin/claude
+    echo "[OK] linked claude into /usr/local/bin/claude"
+  fi
 }
 
 bootstrap_mesh_worker_runtime
