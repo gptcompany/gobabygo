@@ -1,0 +1,27 @@
+version: 1
+
+roles:
+  boss:
+    remote_init: >-
+      mesh status || true;
+      printf '\n[mesh:boss] Next: mesh thread | mesh start | mesh run <phase>\n'
+  president:
+    remote_init: >-
+      mesh thread || true;
+      printf '\n[mesh:president] Next: inspect the latest thread and coordinate delegation.\n'
+  lead:
+    remote_init: >-
+      git status --short || true;
+      printf '\n[mesh:lead] Next: inspect repo state, branch, and implementation boundaries.\n'
+  worker-claude:
+    remote_init: >-
+      printf '[mesh:worker-claude] Claude worker shell ready in %s\n' "$PWD"
+  worker-codex:
+    remote_init: >-
+      printf '[mesh:worker-codex] Codex worker shell ready in %s\n' "$PWD"
+  worker-gemini:
+    remote_init: >-
+      printf '[mesh:worker-gemini] Gemini worker shell ready in %s\n' "$PWD"
+  verifier:
+    remote_init: >-
+      printf '[mesh:verifier] Review/verifier shell ready in %s\n' "$PWD"

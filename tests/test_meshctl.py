@@ -19,6 +19,7 @@ from src.meshctl import (
     cmd_drain,
     cmd_status,
     cmd_submit,
+    cmd_worker_prune,
     cmd_task_cancel,
     cmd_task_fail,
 )
@@ -38,12 +39,37 @@ def _mock_response(status_code: int, json_data: dict | None = None, text: str = 
     return resp
 
 
-def _status_args(json_output: bool = False) -> argparse.Namespace:
-    return argparse.Namespace(command="status", json_output=json_output)
+def _status_args(
+    json_output: bool = False,
+    *,
+    show_all: bool = False,
+    recent_seconds: int = 6 * 3600,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="status",
+        json_output=json_output,
+        all=show_all,
+        recent_seconds=recent_seconds,
+    )
 
 
 def _drain_args(worker_id: str = "w1", timeout: int = 300) -> argparse.Namespace:
     return argparse.Namespace(command="drain", worker_id=worker_id, timeout=timeout)
+
+
+def _worker_prune_args(
+    *,
+    older_than: int = 12 * 3600,
+    statuses: list[str] | None = None,
+    json_output: bool = False,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="worker",
+        worker_command="prune",
+        older_than=older_than,
+        statuses=statuses or ["offline"],
+        json_output=json_output,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +258,47 @@ class TestStatusCommand:
             headers = call.kwargs.get("headers", {})
             assert "Authorization" not in headers
 
+    @patch("src.meshctl.requests.get")
+    def test_status_hides_historical_workers_by_default(
+        self, mock_get: MagicMock, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        stale_hb = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        fresh_hb = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+        mock_get.side_effect = [
+            _mock_response(
+                200,
+                {
+                    "workers": [
+                        {
+                            "worker_id": "fresh-worker",
+                            "machine": "worker-fresh",
+                            "cli_type": "claude",
+                            "status": "idle",
+                            "last_heartbeat": fresh_hb,
+                            "running_tasks": [],
+                        },
+                        {
+                            "worker_id": "stale-worker",
+                            "machine": "worker-stale",
+                            "cli_type": "codex",
+                            "status": "offline",
+                            "last_heartbeat": stale_hb,
+                            "running_tasks": [],
+                        },
+                    ]
+                },
+            ),
+            _mock_response(200, SAMPLE_HEALTH),
+        ]
+
+        cmd_status(_status_args())
+        out = capsys.readouterr().out
+
+        assert "fresh-wo" in out
+        assert "stale-wo" not in out
+        assert "hidden historical workers: 1" in out
+
 
 # ---------------------------------------------------------------------------
 # Drain command tests
@@ -388,6 +455,79 @@ class TestDrainCommand:
         cmd_drain(_drain_args("w1"))
         out = capsys.readouterr().out
         assert "drained and retired" in out
+
+
+class TestWorkerPruneCommand:
+    @patch("src.meshctl.requests.get")
+    def test_worker_prune_json_output(
+        self, mock_get: MagicMock, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        old_hb = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        recent_hb = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        mock_get.return_value = _mock_response(
+            200,
+            {
+                "workers": [
+                    {
+                        "worker_id": "stale-offline",
+                        "status": "offline",
+                        "last_heartbeat": old_hb,
+                        "running_tasks": [],
+                    },
+                    {
+                        "worker_id": "fresh-offline",
+                        "status": "offline",
+                        "last_heartbeat": recent_hb,
+                        "running_tasks": [],
+                    },
+                ]
+            },
+        )
+
+        cmd_worker_prune(_worker_prune_args(json_output=True))
+        data = json.loads(capsys.readouterr().out)
+        assert [item["worker_id"] for item in data["selected"]] == ["stale-offline"]
+
+    @patch("src.meshctl.requests.post")
+    @patch("src.meshctl.requests.get")
+    def test_worker_prune_success(
+        self,
+        mock_get: MagicMock,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        old_hb = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        mock_get.return_value = _mock_response(
+            200,
+            {
+                "workers": [
+                    {
+                        "worker_id": "offline-old",
+                        "status": "offline",
+                        "last_heartbeat": old_hb,
+                        "running_tasks": [],
+                    },
+                    {
+                        "worker_id": "idle-old",
+                        "status": "idle",
+                        "last_heartbeat": old_hb,
+                        "running_tasks": [],
+                    },
+                ]
+            },
+        )
+        mock_post.return_value = _mock_response(200, {"status": "deregistered"})
+
+        cmd_worker_prune(_worker_prune_args(statuses=["offline", "idle"]))
+        out = capsys.readouterr().out
+
+        assert "Pruned 2 worker(s)." in out
+        assert "offline-old" in out
+        assert "idle-old" in out
+        assert mock_post.call_count == 2
 
 
 # ---------------------------------------------------------------------------

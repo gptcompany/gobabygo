@@ -22,6 +22,9 @@ import platform
 import shlex
 import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
 
 
 DEFAULT_ROLES = [
@@ -44,6 +47,14 @@ class UiConfig:
     single_tab: bool
     replace_tabs: bool
     preset: str
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _default_ui_config_path() -> str:
+    return str(_repo_root() / "mapping" / "operator_ui.yaml")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -123,17 +134,88 @@ def _role_env_key(role: str) -> str:
     return "MESH_UI_CMD_" + role.upper().replace("-", "_")
 
 
-def _default_command_for_role(role: str, repo: str) -> str:
-    # Keep default bootstrap minimal and robust.
-    return f"wss {shlex.quote(repo)}"
+def _load_ui_role_rules(config_path: str | None = None) -> dict[str, dict[str, str]]:
+    path_value = config_path
+    if path_value is None:
+        path_value = os.environ.get("MESH_UI_CONFIG") or _default_ui_config_path()
+    if path_value == "":
+        return {}
+
+    path = Path(path_value)
+    if not path.is_file():
+        return {}
+
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+    roles = raw.get("roles")
+    if not isinstance(roles, dict):
+        return {}
+
+    result: dict[str, dict[str, str]] = {}
+    for role, entry in roles.items():
+        if not isinstance(entry, dict):
+            continue
+        result[str(role).strip()] = {
+            str(key).strip(): str(value).strip()
+            for key, value in entry.items()
+            if str(key).strip() and str(value).strip()
+        }
+    return result
+
+
+def _default_remote_init_for_role(role: str) -> str:
+    defaults = {
+        "boss": "mesh status || true; printf '\\n[mesh:boss] Next: mesh thread | mesh start | mesh run <phase>\\n'",
+        "president": "mesh thread || true; printf '\\n[mesh:president] Next: inspect the latest thread and coordinate delegation.\\n'",
+        "lead": "git status --short || true; printf '\\n[mesh:lead] Next: inspect repo state, branch, and implementation boundaries.\\n'",
+        "worker-claude": "printf '[mesh:worker-claude] Claude worker shell ready in %s\\n' \"$PWD\"",
+        "worker-codex": "printf '[mesh:worker-codex] Codex worker shell ready in %s\\n' \"$PWD\"",
+        "worker-gemini": "printf '[mesh:worker-gemini] Gemini worker shell ready in %s\\n' \"$PWD\"",
+        "verifier": "printf '[mesh:verifier] Review/verifier shell ready in %s\\n' \"$PWD\"",
+    }
+    return defaults.get(role, "")
+
+
+def _default_command_for_role(role: str, repo: str, repo_name: str) -> str:
+    helper = _repo_root() / "scripts" / "mesh_ui_role_shell.sh"
+    remote_init = _default_remote_init_for_role(role)
+    return " ".join(
+        [
+            shlex.quote(str(helper)),
+            shlex.quote(role),
+            shlex.quote(repo),
+            shlex.quote(repo_name),
+            shlex.quote(remote_init),
+        ]
+    )
 
 
 def _command_for_role(role: str, repo: str, repo_name: str) -> str:
     env_key = _role_env_key(role)
     template = os.environ.get(env_key, "").strip()
     if template:
-        return template.format(repo=repo, repo_name=repo_name)
-    return _default_command_for_role(role, repo)
+        return template.format(repo=repo, repo_name=repo_name, role=role)
+
+    rules = _load_ui_role_rules()
+    rule = rules.get(role, {})
+    template = rule.get("command_template", "").strip()
+    if template:
+        return template.format(repo=repo, repo_name=repo_name, role=role)
+
+    remote_init = rule.get("remote_init", "").strip() or _default_remote_init_for_role(role)
+    helper = _repo_root() / "scripts" / "mesh_ui_role_shell.sh"
+    return " ".join(
+        [
+            shlex.quote(str(helper)),
+            shlex.quote(role),
+            shlex.quote(repo),
+            shlex.quote(repo_name),
+            shlex.quote(remote_init),
+        ]
+    )
 
 
 async def _create_panes_for_roles(tab, roles: list[str]):

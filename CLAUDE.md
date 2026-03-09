@@ -212,6 +212,13 @@ Provided commands:
 - `wsattach <tmux-session>` -> attach tmux on WS (auto-detect service user)
 - `yazi`/`lf` -> mapped to `yazicd`/`lfcd` (keep selected directory)
 
+Current `mesh ui` behavior:
+
+- pane boot commands are centralized in `mapping/operator_ui.yaml`
+- default launcher is `scripts/mesh_ui_role_shell.sh`
+- each role can have its own non-destructive bootstrap command
+- this closes the gap where every pane previously opened as the same blank shell
+
 Mac iTerm2 setup (one-time):
 
 ```bash
@@ -271,6 +278,7 @@ Important runtime note:
 ## Troubleshooting
 
 - `mesh status` fails on missing Python deps: use `uv sync --frozen`.
+- `mesh status` shows only active/recent workers by default; use `mesh status --all` when you need the full historical table.
 - `mesh` points to `http://localhost:8780`: run `./scripts/install-shell-helpers.sh`, `source ~/.bashrc` (or `~/.zshrc`), then retry. `mesh` now auto-loads router env from `~/.mesh/*` and `/etc/mesh-worker/*.env`.
 - `wss <repo>` still tries `/home/sam/<repo>`: your shell has a stale helper. Run `./scripts/install-shell-helpers.sh` then open a new shell (or `exec $SHELL -l`).
 - `wss <repo>` on WS still does self-SSH (`Permission denied (publickey)`): stale shell helper in current shell. Run `./scripts/install-shell-helpers.sh` and `exec $SHELL -l`.

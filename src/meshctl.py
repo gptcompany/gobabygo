@@ -183,6 +183,19 @@ def _format_duration(seconds: float) -> str:
     return f"{h}h"
 
 
+def _parse_iso_datetime(raw: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp into an aware datetime."""
+    if not raw:
+        return None
+    try:
+        value = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Status command
 # ---------------------------------------------------------------------------
@@ -220,15 +233,36 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     workers_data = workers_resp.json()
     health_data = health_resp.json()
+    all_workers = workers_data.get("workers", [])
+
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    def include_worker(worker: dict[str, object]) -> bool:
+        if args.all:
+            return True
+        running_tasks = worker.get("running_tasks") or []
+        if running_tasks:
+            return True
+        last_hb = _parse_iso_datetime(str(worker.get("last_heartbeat", "")).strip())
+        if last_hb is None:
+            return False
+        age_s = now_ts - last_hb.timestamp()
+        return age_s <= float(args.recent_seconds)
+
+    workers = [w for w in all_workers if include_worker(w)]
+    hidden_count = max(len(all_workers) - len(workers), 0)
 
     # --json: raw combined output
     if args.json_output:
-        combined = {"workers": workers_data.get("workers", []), "health": health_data}
+        combined = {
+            "workers": workers,
+            "health": health_data,
+            "hidden_workers": hidden_count,
+        }
         print(json.dumps(combined, indent=2))
         return
 
     # Human-readable table
-    workers = workers_data.get("workers", [])
     if not workers:
         print("No workers registered.")
     else:
@@ -254,6 +288,9 @@ def cmd_status(args: argparse.Namespace) -> None:
                 f"{wid:<10} {machine:<12} {cli_type:<8} {status:<10} "
                 f"{last_hb:<12} {tasks_str}"
             )
+        if hidden_count:
+            print()
+            print(f"(hidden historical workers: {hidden_count}; use --all to show everything)")
 
     # Queue summary from /health
     queue_depth = health_data.get("queue_depth", 0)
@@ -373,6 +410,94 @@ def cmd_drain(args: argparse.Namespace) -> None:
             print(f"  Waiting for {task_count} task(s)...")
         else:
             print(f"  Status: {worker_status}, waiting...")
+
+
+def cmd_worker_prune(args: argparse.Namespace) -> None:
+    """Deregister stale workers from the router."""
+    base = _base_url()
+    headers = _headers()
+    cutoff = datetime.now(timezone.utc).timestamp() - float(args.older_than)
+
+    try:
+        resp = requests.get(f"{base}/workers", headers=headers, timeout=_router_timeout())
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code == 401:
+        print("Error: Authentication failed. Set MESH_AUTH_TOKEN.", file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code != 200:
+        print(f"Error: /workers returned {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    payload = resp.json()
+    workers = payload.get("workers", []) if isinstance(payload, dict) else payload
+
+    stale_workers: list[dict[str, object]] = []
+    for worker in workers:
+        if not isinstance(worker, dict):
+            continue
+        status = str(worker.get("status", "")).strip()
+        if status not in args.statuses:
+            continue
+        if worker.get("running_tasks"):
+            continue
+        last_hb = _parse_iso_datetime(str(worker.get("last_heartbeat", "")).strip())
+        if last_hb is None:
+            continue
+        if last_hb.timestamp() > cutoff:
+            continue
+        stale_workers.append(worker)
+
+    if args.json_output:
+        print(
+            json.dumps(
+                {
+                    "selected": [
+                        {
+                            "worker_id": w.get("worker_id", ""),
+                            "status": w.get("status", ""),
+                            "last_heartbeat": w.get("last_heartbeat", ""),
+                        }
+                        for w in stale_workers
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not stale_workers:
+        print("No stale workers matched.")
+        return
+
+    retired: list[str] = []
+    for worker in stale_workers:
+        worker_id = str(worker.get("worker_id", "")).strip()
+        if not worker_id:
+            continue
+        try:
+            retire_resp = requests.post(
+                f"{base}/workers/{worker_id}/deregister",
+                headers={**headers, "Content-Type": "application/json"},
+                json={},
+                timeout=_router_timeout(),
+            )
+        except requests.ConnectionError as e:
+            print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+            sys.exit(1)
+        if retire_resp.status_code not in {200, 404}:
+            print(
+                f"Error: cannot deregister worker {worker_id} -- {retire_resp.status_code} {retire_resp.text}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        retired.append(worker_id)
+
+    print(f"Pruned {len(retired)} worker(s).")
+    for worker_id in retired:
+        print(f"  - {worker_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -1097,6 +1222,18 @@ status_parser.add_argument(
     dest="json_output",
     help="Machine-readable JSON output",
 )
+status_parser.add_argument(
+    "--all",
+    action="store_true",
+    help="Show historical workers too (default hides stale/offline records older than recent window).",
+)
+status_parser.add_argument(
+    "--recent-seconds",
+    type=int,
+    default=6 * 3600,
+    dest="recent_seconds",
+    help="Show only workers with heartbeat within this many seconds unless --all is set (default: 21600).",
+)
 
 drain_parser = sub.add_parser("drain", help="Gracefully drain a worker")
 drain_parser.add_argument("worker_id", help="Worker ID to drain")
@@ -1105,6 +1242,35 @@ drain_parser.add_argument(
     type=int,
     default=300,
     help="Timeout in seconds (default: 300)",
+)
+
+worker_parser = sub.add_parser("worker", help="Administrative worker actions")
+worker_sub = worker_parser.add_subparsers(dest="worker_command")
+
+worker_prune_parser = worker_sub.add_parser(
+    "prune",
+    help="Deregister stale worker records older than a threshold",
+)
+worker_prune_parser.add_argument(
+    "--older-than",
+    type=int,
+    default=12 * 3600,
+    dest="older_than",
+    help="Only prune workers with last heartbeat older than this many seconds (default: 43200)",
+)
+worker_prune_parser.add_argument(
+    "--status",
+    action="append",
+    dest="statuses",
+    choices=["offline", "idle", "busy"],
+    default=None,
+    help="Worker status to target. Repeatable. Default: offline",
+)
+worker_prune_parser.add_argument(
+    "--json",
+    action="store_true",
+    dest="json_output",
+    help="Show matching workers without modifying router state",
 )
 
 submit_parser = sub.add_parser("submit", help="Submit a new task")
@@ -1215,10 +1381,18 @@ thread_handoff_parser.add_argument("--json", action="store_true", dest="json_out
 
 if __name__ == "__main__":
     parsed_args = parser.parse_args()
+    if getattr(parsed_args, "statuses", None) is None:
+        parsed_args.statuses = ["offline"]
     if parsed_args.command == "status":
         cmd_status(parsed_args)
     elif parsed_args.command == "drain":
         cmd_drain(parsed_args)
+    elif parsed_args.command == "worker":
+        if parsed_args.worker_command == "prune":
+            cmd_worker_prune(parsed_args)
+        else:
+            worker_parser.print_help()
+            sys.exit(1)
     elif parsed_args.command == "submit":
         cmd_submit(parsed_args)
     elif parsed_args.command == "task":

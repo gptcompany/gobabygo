@@ -102,9 +102,11 @@ Current expectation:
 ## Notes
 
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
+- Default operator multi-panel bootstrap is centralized in [mapping/operator_ui.yaml](/media/sam/1TB/gobabygo/mapping/operator_ui.yaml).
 - For Claude, use isolated CCS account profiles such as `claude-samuele` and launch them from the target repo directory with `ccs <profile>`.
 - Claude account autoswitch is router-driven, not CCS-provider-driven: worker failures tagged as `account_exhausted` rotate the next task attempt to the next isolated profile from `mapping/account_pools.yaml`.
-- `mesh ui <repo>` is part of the intended operator flow and opens panels for `boss`, `president`, `lead`, `worker-claude`, `worker-codex`, `worker-gemini`, and `verifier`. The runtime source of truth is still the router DB, not iTerm2.
+- `mesh ui <repo>` is part of the intended operator flow and opens panels for `boss`, `president`, `lead`, `worker-claude`, `worker-codex`, `worker-gemini`, and `verifier`. It now boots each pane through a central role policy instead of dropping every pane into the same bare shell. The runtime source of truth is still the router DB, not iTerm2.
+- `mesh status` now hides historical stale/offline worker rows by default; use `--all` when you explicitly want the full audit-heavy worker table.
 - Runtime roles are stricter than UI roles today: `boss`, `president`, and `worker` are first-class in the policy layer; `lead` currently exists as operator/UI convention and layout role.
 - Historical architecture notes remain in [kiss_mesh/README.md](kiss_mesh/README.md).
 - Canonical architecture for the current runtime is now in [ARCHITECTURE.md](/media/sam/1TB/gobabygo/ARCHITECTURE.md).

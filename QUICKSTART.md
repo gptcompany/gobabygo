@@ -195,6 +195,7 @@ Ultra-short operator commands:
 mesh bootstrap
 mesh deploy
 mesh status
+mesh status --all               # show historical stale/offline workers too
 mesh ui rektslug               # iTerm2 preset team-4x3 (2 tab: 4 pane + 3 pane)
 mesh ui rektslug --single-tab  # iTerm2: one-tab, multi-pane
 mesh ui rektslug --keep-existing  # keep prior mesh-ui tabs
@@ -228,6 +229,17 @@ Default behavior:
 - `codex` -> provider direct: `ccs codex`
 - `gemini` -> provider direct: `ccs gemini`
 - Claude session worker service user -> `sam`
+
+Operator UI policy:
+
+```text
+mapping/operator_ui.yaml
+```
+
+Default behavior:
+- `mesh ui` bootstraps each pane through `scripts/mesh_ui_role_shell.sh`
+- each role can run a different remote init command
+- the policy is user-editable in one file instead of being hardcoded or split across env vars
 - Codex session worker service user -> `mesh-worker`
 
 Override/disable:
@@ -443,7 +455,9 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 ## Current Limitations
 
 - `mesh ui` is operator UX only; it is not orchestration state.
+- `mesh ui` is now operationally useful by default, but it still does not replace router task state.
 - `wss` / `wsattach` now enable SSH keepalive + control persist by default to reduce idle pane freezes in iTerm2.
+- `mesh status` hides historical stale/offline worker rows by default; use `mesh status --all` when you need the full audit-heavy view.
 - If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.
 - If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.
 - `meshctl task cancel|fail` is intentionally conservative:

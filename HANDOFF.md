@@ -85,6 +85,22 @@ This produced:
 
 The key point is that this was infrastructure drift, not a fundamental mesh design failure.
 
+## Follow-up closed after recovery
+
+Two operator-facing follow-ups were closed after the stack recovery:
+
+1. `mesh ui` no longer opens identical blank shells for every pane
+   - pane bootstrap is now centralized in `mapping/operator_ui.yaml`
+   - role launcher is `scripts/mesh_ui_role_shell.sh`
+2. `mesh status` no longer drowns the operator in stale historical workers
+   - default view shows active/recent workers only
+   - `mesh status --all` shows the full audit-heavy table
+
+Important boundary:
+
+- historical worker rows still exist in the router DB for audit
+- the default operator view is now clean even if the DB keeps those rows
+
 ## Next session checks
 
 ```bash
