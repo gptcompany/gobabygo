@@ -1,10 +1,12 @@
 version: 1
 providers:
   claude:
-    default_account: "work-claude"
+    default_account: "claude-samuele"
     accounts:
-      - "work-claude"
-    notes: "Replace with real isolated CCS account profiles created via `ccs auth create <profile>`. Recommended naming is by real account/persona, not by repo."
+      - "claude-samuele"
+      - "claude-gptprojectmanager"
+      - "claude-gptcoderassistant"
+    notes: "Real isolated CCS account profiles created via `ccs auth create <profile>`. Mesh may switch across these profiles between tasks/sessions when one account reaches its limit."
 
   codex:
     default_account: "codex"
