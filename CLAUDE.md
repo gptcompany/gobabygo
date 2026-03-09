@@ -4,6 +4,14 @@
 
 Use GoBabyGo as orchestration control-plane, not manual copy/paste between CLIs.
 
+Primary docs for restart/resume in this repo:
+
+- `README.md`
+- `ARCHITECTURE.md`
+- `CLAUDE.md`
+
+`HANDOFF.md` is supplemental session log, not the only canonical source.
+
 ### Core principles
 
 - Source of truth: router DB + task/thread state.
@@ -38,6 +46,12 @@ Last active real pipeline:
 - step 0 task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
 - step 0 session: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
 - repo: `/media/sam/1TB/rektslug`
+
+Important boundary:
+
+- `spec-016` belongs to `rektslug`
+- precise orchestration continuity for that run belongs to `gobabygo`
+- that is why this repo documents the thread/task/session IDs explicitly
 
 Observed before this commit:
 
