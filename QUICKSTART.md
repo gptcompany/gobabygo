@@ -342,11 +342,36 @@ Verified live behavior on the current stack:
 - router dispatches to real tmux-backed session workers
 - repo `working_dir` is honored when the path is correct
 - long-lived interactive sessions now renew leases on heartbeat and are not requeued after the 5-minute lease window
+- real repo-scoped Claude CCS profiles are supported (`ccs <profile>`, not `ccs claude`)
 
 Known operational gaps:
-- `upterm` is not installed yet, so attach handles are absent
-- brand-new CCS profiles can still require first auth/bootstrap under `mesh-worker`
-- session workers now preseed Claude project trust/onboarding/MCP metadata automatically; remaining drift is provider/profile bootstrap, not the router bus
+- `upterm` is installed on WS; attach URL discovery is implemented in code, but if workers still log `upterm binary not found ...` the running service has not picked up the latest code yet
+- brand-new CCS profiles still require one real login/bootstrap under the Unix user that runs that provider
+- if `GET /sessions/messages` returns `500 {"details":"bad parameter or other API misuse"}`, the live router is still running the pre-fix session DB path and needs redeploy
+- session workers preseed Claude project trust/onboarding/MCP metadata automatically; remaining drift is provider/profile bootstrap, not the router bus
+
+Current real pipeline snapshot:
+
+- thread: `rektslug-spec-016-20260309-003627`
+- thread id: `8c9151d2-fea8-4293-8b43-00cd2884d605`
+- active step 0 task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
+- session id: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
+- repo: `/media/sam/1TB/rektslug`
+
+Useful live checks:
+
+```bash
+source ~/.mesh/router.env
+
+curl -sS -H "Authorization: Bearer $MESH_AUTH_TOKEN" \
+  "$MESH_ROUTER_URL/threads/8c9151d2-fea8-4293-8b43-00cd2884d605/status" | python -m json.tool
+
+curl -sS -H "Authorization: Bearer $MESH_AUTH_TOKEN" \
+  "$MESH_ROUTER_URL/sessions/bd55bde4-9ea8-4118-9ddd-a16f04fd313b" | python -m json.tool
+
+curl -sS -H "Authorization: Bearer $MESH_AUTH_TOKEN" \
+  "$MESH_ROUTER_URL/sessions/messages?session_id=bd55bde4-9ea8-4118-9ddd-a16f04fd313b&after_seq=630&limit=200" | python -m json.tool
+```
 
 For a real `.111` (worker) + `.112` (iTerm2 operator) VPN-first validation run, use:
 - `deploy/SESSION-FIRST-E2E-RUNBOOK.md`

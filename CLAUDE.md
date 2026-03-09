@@ -19,12 +19,39 @@ Verified on the real `.100` router + `.111` WS stack:
 - `working_dir` is honored by session workers when the repo path is correct
 - worker deregistration and periodic recovery are live
 - lease renewal on heartbeat is implemented and tested, so healthy long-lived sessions are no longer requeued after the 5-minute lease window
+- `claude` runtime resolution is policy-driven (`ccs {target_account}` for real CCS profiles)
+- session worker runtime on WS now uses current Claude Code (`/usr/local/bin/claude`, not the stale `/usr/bin/claude`)
 
 Not yet production-clean:
 
-- `upterm` attach URL discovery is still flaky even when `upterm` is installed
+- `/sessions/messages` fix is committed/tested locally; if the live router still returns `500 bad parameter or other API misuse`, `.100` is still running the old runtime
+- `upterm` launch logging is fixed in code; if the worker still logs `upterm binary not found ...` for an existing binary, the worker runtime has not been restarted on the new code yet
 - brand-new Claude CCS profiles still need one first login/bootstrap in their own instance
 - session worker Unix user must match where that provider/runtime state actually lives
+
+## Current Handoff Snapshot
+
+Last active real pipeline:
+
+- thread: `rektslug-spec-016-20260309-003627`
+- thread_id: `8c9151d2-fea8-4293-8b43-00cd2884d605`
+- step 0 task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
+- step 0 session: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
+- repo: `/media/sam/1TB/rektslug`
+
+Observed before this commit:
+
+- `GET /sessions/messages` on the live router alternated between:
+  - `404 session_not_found`
+  - `500 {"details":"bad parameter or other API misuse"}`
+- direct `GET /sessions/<id>` still returned the session record
+- this is consistent with shared SQLite connection misuse on the router session-message path, not with a truly missing session row
+
+Committed fix in this session:
+
+- `RouterDB` now serializes session CRUD/message access with an `RLock`
+- `session_worker` treats router `404 session_not_found` as terminal and stops polling instead of spamming forever
+- `session_worker` now logs real `OSError` details for `upterm` launch failures instead of collapsing everything into `binary not found`
 
 ## Provider Runtime Policy
 

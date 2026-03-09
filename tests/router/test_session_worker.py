@@ -12,6 +12,7 @@ import pytest
 
 from src.router.session_worker import (
     MeshSessionWorker,
+    SessionNotFoundError,
     SessionWorkerConfig,
     _compute_output_emit,
     _discover_project_mcp_servers,
@@ -422,6 +423,16 @@ class TestStartUpterm:
         p, target = worker._start_upterm("mesh-sess")
         assert p is None
         assert target is None
+
+    @patch("src.router.session_worker.subprocess.Popen", side_effect=PermissionError("denied"))
+    def test_launch_oserror_logs_actual_error(self, mock_popen: Mock, caplog: pytest.LogCaptureFixture) -> None:
+        worker = _make_worker()
+        with caplog.at_level("WARNING"):
+            p, target = worker._start_upterm("mesh-sess")
+        assert p is None
+        assert target is None
+        assert "upterm launch failed" in caplog.text
+        assert "denied" in caplog.text
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_poll_upterm_target", return_value=None)
@@ -928,6 +939,23 @@ class TestDeliverInboundMessages:
         
         new_seq = worker._deliver_inbound_messages("sid", "tsess", 5)
         assert new_seq == 5
+
+    def test_list_session_messages_raises_session_not_found(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        resp = MagicMock(status_code=404)
+        resp.json.return_value = {"error": "session_not_found"}
+        worker._http.get.return_value = resp
+
+        with pytest.raises(SessionNotFoundError):
+            worker._list_session_messages("sid", after_seq=0, limit=50)
+
+    def test_session_not_found_propagates(self) -> None:
+        worker = _make_worker()
+        worker._list_session_messages = Mock(side_effect=SessionNotFoundError("sid"))  # type: ignore[method-assign]
+
+        with pytest.raises(SessionNotFoundError):
+            worker._deliver_inbound_messages("sid", "tsess", 5)
 
     def test_tmux_send_error_continues(self) -> None:
         worker = _make_worker()

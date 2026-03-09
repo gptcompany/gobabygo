@@ -30,6 +30,10 @@ from src.router.provider_runtime import resolve_cli_command
 logger = logging.getLogger("mesh.session_worker")
 
 
+class SessionNotFoundError(RuntimeError):
+    """Raised when the router no longer has a record for a session."""
+
+
 def _sanitize_session_name(value: str) -> str:
     """Return tmux-safe session name (ASCII-ish, bounded length)."""
     s = re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
@@ -363,6 +367,12 @@ class MeshSessionWorker:
             # Mark any messages already present so we don't replay our own initial prompt.
             try:
                 msgs = self._list_session_messages(session_id, after_seq=0, limit=1000)
+            except SessionNotFoundError:
+                logger.warning(
+                    "Session %s disappeared before initial sync; continuing with after_seq=0",
+                    session_id,
+                )
+                msgs = []
             except requests.RequestException as e:
                 logger.warning(
                     "Initial session message sync failed for %s: %s; continuing with after_seq=0",
@@ -394,7 +404,15 @@ class MeshSessionWorker:
                 if not self._tmux_has_session(tmux_session_name):
                     break
 
-                new_after_seq = self._deliver_inbound_messages(session_id, tmux_session_name, after_seq)
+                try:
+                    new_after_seq = self._deliver_inbound_messages(session_id, tmux_session_name, after_seq)
+                except SessionNotFoundError:
+                    logger.info(
+                        "Router no longer has session %s; stopping interactive loop for task %s",
+                        session_id,
+                        task_id,
+                    )
+                    break
                 after_seq = max(after_seq, new_after_seq)
                 captured = self._tmux_capture_pane(tmux_session_name)
                 if captured:
@@ -717,8 +735,11 @@ class MeshSessionWorker:
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-        except (OSError, FileNotFoundError):
+        except FileNotFoundError:
             logger.warning("upterm binary not found at %s", self.config.upterm_bin)
+            return None, None
+        except OSError as e:
+            logger.warning("upterm launch failed at %s: %s", self.config.upterm_bin, e)
             return None, None
         finally:
             if log_handle is not None:
@@ -880,12 +901,21 @@ class MeshSessionWorker:
             params={"session_id": session_id, "after_seq": after_seq, "limit": limit},
             timeout=self.config.control_plane_timeout,
         )
+        if resp.status_code == 404:
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {}
+            if isinstance(payload, dict) and payload.get("error") == "session_not_found":
+                raise SessionNotFoundError(session_id)
         resp.raise_for_status()
         return resp.json().get("messages", [])
 
     def _deliver_inbound_messages(self, session_id: str, tmux_session: str, after_seq: int) -> int:
         try:
             messages = self._list_session_messages(session_id, after_seq=after_seq, limit=200)
+        except SessionNotFoundError:
+            raise
         except requests.RequestException as e:
             logger.warning("Failed to fetch session messages for %s: %s", session_id, e)
             return after_seq

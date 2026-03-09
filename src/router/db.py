@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -213,6 +214,7 @@ class RouterDB:
     def __init__(self, db_path: str, check_same_thread: bool = True) -> None:
         self._conn = sqlite3.connect(db_path, check_same_thread=check_same_thread)
         self._db_path = db_path
+        self._lock = threading.RLock()
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
@@ -566,33 +568,35 @@ class RouterDB:
     @_retry_on_busy
     def insert_session(self, session: Session, conn: sqlite3.Connection | None = None) -> Session:
         c = conn or self._conn
-        c.execute(
-            """INSERT INTO sessions (
-                session_id, worker_id, cli_type, account_profile, task_id,
-                state, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                session.session_id,
-                session.worker_id,
-                session.cli_type.value if hasattr(session.cli_type, "value") else str(session.cli_type),
-                session.account_profile,
-                session.task_id,
-                session.state.value if hasattr(session.state, "value") else str(session.state),
-                json.dumps(session.metadata),
-                session.created_at,
-                session.updated_at,
-            ),
-        )
-        if conn is None:
-            self._conn.commit()
+        with self._lock:
+            c.execute(
+                """INSERT INTO sessions (
+                    session_id, worker_id, cli_type, account_profile, task_id,
+                    state, metadata, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    session.session_id,
+                    session.worker_id,
+                    session.cli_type.value if hasattr(session.cli_type, "value") else str(session.cli_type),
+                    session.account_profile,
+                    session.task_id,
+                    session.state.value if hasattr(session.state, "value") else str(session.state),
+                    json.dumps(session.metadata),
+                    session.created_at,
+                    session.updated_at,
+                ),
+            )
+            if conn is None:
+                self._conn.commit()
         return session
 
     def get_session(self, session_id: str) -> Session | None:
-        cur = self._conn.execute(
-            "SELECT * FROM sessions WHERE session_id = ?",
-            (session_id,),
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cur.fetchone()
         return self._session_from_row(row) if row else None
 
     def list_sessions(
@@ -615,8 +619,9 @@ class RouterDB:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY updated_at DESC LIMIT ?"
         params.append(limit)
-        cur = self._conn.execute(sql, params)
-        return [self._session_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            return [self._session_from_row(row) for row in cur.fetchall()]
 
     @_retry_on_busy
     def update_session(
@@ -634,12 +639,13 @@ class RouterDB:
             updates["metadata"] = json.dumps(updates["metadata"])  # pragma: no cover
         set_clauses = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [session_id]
-        cur = c.execute(
-            f"UPDATE sessions SET {set_clauses} WHERE session_id = ?",
-            values,
-        )
-        if conn is None:
-            self._conn.commit()
+        with self._lock:
+            cur = c.execute(
+                f"UPDATE sessions SET {set_clauses} WHERE session_id = ?",
+                values,
+            )
+            if conn is None:
+                self._conn.commit()
         return cur.rowcount > 0
 
     @_retry_on_busy
@@ -649,21 +655,22 @@ class RouterDB:
         conn: sqlite3.Connection | None = None,
     ) -> int:
         c = conn or self._conn
-        cur = c.execute(
-            """INSERT INTO session_messages (
-                session_id, direction, role, content, metadata, ts
-            ) VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                message.session_id,
-                message.direction,
-                message.role,
-                message.content,
-                json.dumps(message.metadata),
-                message.ts,
-            ),
-        )
-        if conn is None:
-            self._conn.commit()
+        with self._lock:
+            cur = c.execute(
+                """INSERT INTO session_messages (
+                    session_id, direction, role, content, metadata, ts
+                ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    message.session_id,
+                    message.direction,
+                    message.role,
+                    message.content,
+                    json.dumps(message.metadata),
+                    message.ts,
+                ),
+            )
+            if conn is None:
+                self._conn.commit()
         return int(cur.lastrowid)
 
     def list_session_messages(
@@ -673,14 +680,15 @@ class RouterDB:
         after_seq: int = 0,
         limit: int = 200,
     ) -> list[SessionMessage]:
-        cur = self._conn.execute(
-            """SELECT * FROM session_messages
-            WHERE session_id = ? AND seq > ?
-            ORDER BY seq ASC
-            LIMIT ?""",
-            (session_id, after_seq, limit),
-        )
-        return [self._session_message_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT * FROM session_messages
+                WHERE session_id = ? AND seq > ?
+                ORDER BY seq ASC
+                LIMIT ?""",
+                (session_id, after_seq, limit),
+            )
+            return [self._session_message_from_row(row) for row in cur.fetchall()]
 
     # -- Notification ledger --
 
