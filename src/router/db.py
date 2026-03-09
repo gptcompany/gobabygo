@@ -191,6 +191,15 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _decode_json_blob(raw: Any, *, default: Any) -> Any:
+    """Decode JSON from SQLite TEXT columns with tolerance for legacy NULL rows."""
+    if raw in (None, ""):
+        return default
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8")
+    return json.loads(raw)
+
+
 def _retry_on_busy(func):
     """Decorator to retry on SQLITE_BUSY with exponential backoff."""
     def wrapper(*args, **kwargs):
@@ -549,7 +558,7 @@ class RouterDB:
             account_profile=row["account_profile"],
             task_id=row["task_id"],
             state=row["state"],
-            metadata=json.loads(row["metadata"]),
+            metadata=_decode_json_blob(row["metadata"], default={}),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -561,7 +570,7 @@ class RouterDB:
             direction=row["direction"],
             role=row["role"],
             content=row["content"],
-            metadata=json.loads(row["metadata"]),
+            metadata=_decode_json_blob(row["metadata"], default={}),
             ts=row["ts"],
         )
 

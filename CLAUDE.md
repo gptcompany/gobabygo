@@ -58,12 +58,16 @@ Observed before this commit:
 - `GET /sessions/messages` on the live router alternated between:
   - `404 session_not_found`
   - `500 {"details":"bad parameter or other API misuse"}`
+  - `500 {"details":"the JSON object must be str, bytes or bytearray, not NoneType"}`
 - direct `GET /sessions/<id>` still returned the session record
-- this is consistent with shared SQLite connection misuse on the router session-message path, not with a truly missing session row
+- this is consistent with:
+  - shared SQLite connection misuse on the router session-message path
+  - legacy/dirty metadata rows decoding as `None`
 
 Committed fix in this session:
 
 - `RouterDB` now serializes session CRUD/message access with an `RLock`
+- `RouterDB` now tolerates `NULL` / empty metadata blobs on read
 - `session_worker` treats router `404 session_not_found` as terminal and stops polling instead of spamming forever
 - `session_worker` now logs real `OSError` details for `upterm` launch failures instead of collapsing everything into `binary not found`
 

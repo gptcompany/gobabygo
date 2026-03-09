@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from src.router.db import RouterDB
+from src.router.db import RouterDB, _decode_json_blob
 from src.router.models import (
     CLIType,
     ExecutionMode,
@@ -366,6 +366,11 @@ def test_notification_ledger_duplicate_dedup(db: RouterDB) -> None:
     assert len(rows) == 2
     room_ids = {r.room_id for r in rows}
     assert room_ids == {"!r1", "!r2"}
+
+
+def test_decode_json_blob_tolerates_null_metadata() -> None:
+    assert _decode_json_blob(None, default={}) == {}
+    assert _decode_json_blob("", default={}) == {}
 
 
 # -- Transaction context manager --

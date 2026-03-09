@@ -22,6 +22,7 @@ Files changed:
 What changed:
 
 - `RouterDB` now serializes session CRUD and `session_messages` reads/writes with a process-local `RLock`
+- `RouterDB` now tolerates `NULL` / empty JSON metadata blobs on read
 - `session_worker` now raises a dedicated `SessionNotFoundError` when the router returns `404 session_not_found`
 - the interactive loop stops polling when the router no longer has the session, instead of logging forever
 - `upterm` launch errors now distinguish:
@@ -36,8 +37,12 @@ Live evidence before the fix:
 - `GET /sessions/messages?...` for the same session alternated between:
   - `404 session_not_found`
   - `500 {"error":"internal_error","details":"bad parameter or other API misuse"}`
+  - `500 {"error":"internal_error","details":"the JSON object must be str, bytes or bytearray, not NoneType"}`
 
-That points to router-side SQLite misuse on the shared connection path, not to a truly deleted session row.
+That points to two router-side problems:
+
+1. shared SQLite connection misuse on the session-message path
+2. legacy/dirty metadata rows decoding as `None`
 
 ## Tests
 
