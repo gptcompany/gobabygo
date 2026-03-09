@@ -38,6 +38,20 @@ def _headers() -> dict[str, str]:
     return {}
 
 
+def _router_timeout() -> float:
+    """HTTP timeout for mesh router calls.
+
+    Defaults higher than before because thread/step creation and status calls can
+    legitimately exceed 10s on the live router under load.
+    """
+    raw = os.environ.get("MESH_ROUTER_TIMEOUT_S", "30").strip()
+    try:
+        timeout = float(raw)
+    except ValueError:
+        return 30.0
+    return max(timeout, 1.0)
+
+
 # ---------------------------------------------------------------------------
 # Time formatting helpers
 # ---------------------------------------------------------------------------
@@ -108,7 +122,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     # Fetch workers
     try:
-        workers_resp = requests.get(f"{base}/workers", headers=headers, timeout=10)
+        workers_resp = requests.get(f"{base}/workers", headers=headers, timeout=_router_timeout())
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
         sys.exit(1)
@@ -122,7 +136,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     # Fetch health
     try:
-        health_resp = requests.get(f"{base}/health", headers=headers, timeout=10)
+        health_resp = requests.get(f"{base}/health", headers=headers, timeout=_router_timeout())
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
         sys.exit(1)
@@ -194,7 +208,7 @@ def cmd_drain(args: argparse.Namespace) -> None:
     # Initiate drain
     try:
         resp = requests.post(
-            f"{base}/workers/{worker_id}/drain", headers=headers, timeout=10
+            f"{base}/workers/{worker_id}/drain", headers=headers, timeout=_router_timeout()
         )
     except requests.ConnectionError as e:
         print(
@@ -251,7 +265,7 @@ def cmd_drain(args: argparse.Namespace) -> None:
 
         try:
             resp = requests.get(
-                f"{base}/workers/{worker_id}", headers=headers, timeout=10
+                f"{base}/workers/{worker_id}", headers=headers, timeout=_router_timeout()
             )
         except requests.ConnectionError:
             print(
@@ -316,7 +330,7 @@ def cmd_submit(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     try:
-        resp = requests.post(f"{base}/tasks", json=body, headers=headers, timeout=10)
+        resp = requests.post(f"{base}/tasks", json=body, headers=headers, timeout=_router_timeout())
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
         sys.exit(1)
@@ -348,7 +362,7 @@ def _post_task_admin_action(
         f"{base}{endpoint}",
         json={"task_id": task_id, "reason": reason},
         headers=headers,
-        timeout=10,
+        timeout=_router_timeout(),
     )
 
 
@@ -656,7 +670,7 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
             f"{base}/threads",
             headers=headers,
             json={"name": args.thread_name},
-            timeout=10,
+            timeout=_router_timeout(),
         )
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
@@ -715,7 +729,7 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
                 f"{base}/threads/{thread_id}/steps",
                 headers=headers,
                 json=body,
-                timeout=10,
+                timeout=_router_timeout(),
             )
         except requests.ConnectionError as e:
             print(
@@ -780,7 +794,7 @@ def _resolve_thread_id(name_or_id: str) -> str:
     headers = _headers()
     try:
         resp = requests.get(
-            f"{base}/threads", params={"name": name_or_id}, headers=headers, timeout=10
+            f"{base}/threads", params={"name": name_or_id}, headers=headers, timeout=_router_timeout()
         )
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
@@ -817,7 +831,7 @@ def cmd_thread_create(args: argparse.Namespace) -> None:
     headers["Content-Type"] = "application/json"
     body = {"name": args.name}
     try:
-        resp = requests.post(f"{base}/threads", json=body, headers=headers, timeout=10)
+        resp = requests.post(f"{base}/threads", json=body, headers=headers, timeout=_router_timeout())
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
         sys.exit(1)
@@ -853,7 +867,7 @@ def cmd_thread_add_step(args: argparse.Namespace) -> None:
             sys.exit(1)
     try:
         resp = requests.post(
-            f"{base}/threads/{thread_id}/steps", json=body, headers=headers, timeout=10
+            f"{base}/threads/{thread_id}/steps", json=body, headers=headers, timeout=_router_timeout()
         )
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
@@ -874,7 +888,7 @@ def cmd_thread_status(args: argparse.Namespace) -> None:
     thread_id = _resolve_thread_id(args.thread)
     try:
         resp = requests.get(
-            f"{base}/threads/{thread_id}/status", headers=headers, timeout=10
+            f"{base}/threads/{thread_id}/status", headers=headers, timeout=_router_timeout()
         )
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
@@ -916,7 +930,7 @@ def cmd_thread_handoff(args: argparse.Namespace) -> None:
     # Get thread status to find the task_id for the step
     try:
         resp = requests.get(
-            f"{base}/threads/{thread_id}/status", headers=headers, timeout=10
+            f"{base}/threads/{thread_id}/status", headers=headers, timeout=_router_timeout()
         )
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
@@ -945,7 +959,7 @@ def cmd_thread_handoff(args: argparse.Namespace) -> None:
     # Fetch full task to get payload
     task_id = target_step["task_id"]
     try:
-        resp = requests.get(f"{base}/tasks/{task_id}", headers=headers, timeout=10)
+        resp = requests.get(f"{base}/tasks/{task_id}", headers=headers, timeout=_router_timeout())
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
         sys.exit(1)
@@ -990,7 +1004,7 @@ def cmd_thread_context(args: argparse.Namespace) -> None:
     thread_id = _resolve_thread_id(args.thread)
     try:
         resp = requests.get(
-            f"{base}/threads/{thread_id}/context", headers=headers, timeout=10
+            f"{base}/threads/{thread_id}/context", headers=headers, timeout=_router_timeout()
         )
     except requests.ConnectionError as e:
         print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)

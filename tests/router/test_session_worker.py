@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import requests
-from unittest.mock import MagicMock, Mock, call, patch
+from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
 import pytest
 
@@ -111,6 +111,8 @@ def test_config_from_env_attach_fields() -> None:
         "MESH_UPTERM_BIN": "/usr/local/bin/upterm",
         "MESH_UPTERM_SERVER": "ssh://uptermd.example.com:22",
         "MESH_UPTERM_READY_TIMEOUT": "5.0",
+        "MESH_UPTERM_ACCEPT": "0",
+        "MESH_UPTERM_SKIP_HOST_KEY_CHECK": "0",
         "MESH_SSH_TMUX_USER": "operator",
         "MESH_SSH_TMUX_HOST": "10.0.0.5",
     }
@@ -119,6 +121,8 @@ def test_config_from_env_attach_fields() -> None:
     assert cfg.upterm_bin == "/usr/local/bin/upterm"
     assert cfg.upterm_server == "ssh://uptermd.example.com:22"
     assert cfg.upterm_ready_timeout == 5.0
+    assert cfg.upterm_accept is False
+    assert cfg.upterm_skip_host_key_check is False
     assert cfg.ssh_tmux_user == "operator"
     assert cfg.ssh_tmux_host == "10.0.0.5"
 
@@ -128,6 +132,8 @@ def test_config_defaults_attach_fields() -> None:
     assert cfg.upterm_bin == "upterm"
     assert cfg.upterm_server == ""
     assert cfg.upterm_ready_timeout == 10.0
+    assert cfg.upterm_accept is True
+    assert cfg.upterm_skip_host_key_check is True
     assert cfg.ssh_tmux_user == ""
     assert cfg.ssh_tmux_host == ""
 
@@ -322,10 +328,12 @@ class TestStartUpterm:
     @patch("src.router.session_worker.os.path.exists", return_value=True)
     @patch("src.router.session_worker.os.remove")
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
+    @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen")
     def test_success(
         self,
         mock_popen: Mock,
+        mock_open_file: Mock,
         mock_poll: Mock,
         mock_remove: Mock,
         mock_exists: Mock,
@@ -341,19 +349,24 @@ class TestStartUpterm:
         assert target == "ssh://tok@host:22"
         # Verify forced command
         popen_args = mock_popen.call_args[0][0]
+        assert "--accept" in popen_args
+        assert "--skip-host-key-check" in popen_args
         assert "--force-command" in popen_args
         fc_idx = popen_args.index("--force-command")
         assert "tmux attach -t mesh-sess" in popen_args[fc_idx + 1]
-        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.sock")
-        mock_remove.assert_called_once_with("/tmp/upterm-mesh-sess.sock")
+        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.log")
+        mock_remove.assert_called_once_with("/tmp/upterm-mesh-sess.log")
+        mock_poll.assert_called_once_with("/tmp/upterm-mesh-sess.log", proc)
 
     @patch("src.router.session_worker.os.path.exists", return_value=False)
     @patch("src.router.session_worker.os.remove")
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
+    @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen")
     def test_success_without_stale_socket(
         self,
         mock_popen: Mock,
+        mock_open_file: Mock,
         mock_poll: Mock,
         mock_remove: Mock,
         mock_exists: Mock,
@@ -367,12 +380,14 @@ class TestStartUpterm:
 
         assert p is proc
         assert target == "ssh://tok@host:22"
-        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.sock")
+        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.log")
         mock_remove.assert_not_called()
+        mock_poll.assert_called_once_with("/tmp/upterm-mesh-sess.log", proc)
 
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
+    @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen")
-    def test_with_server_flag(self, mock_popen: Mock, mock_poll: Mock) -> None:
+    def test_with_server_flag(self, mock_popen: Mock, mock_open_file: Mock, mock_poll: Mock) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
         mock_poll.return_value = "ssh://tok@host:22"
@@ -384,6 +399,23 @@ class TestStartUpterm:
         assert "--server" in popen_args
         assert "ssh://custom:22" in popen_args
 
+    @patch.object(MeshSessionWorker, "_poll_upterm_target")
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("src.router.session_worker.subprocess.Popen")
+    def test_can_disable_accept_and_host_key_skip(
+        self, mock_popen: Mock, mock_open_file: Mock, mock_poll: Mock
+    ) -> None:
+        proc = MagicMock(spec=subprocess.Popen)
+        mock_popen.return_value = proc
+        mock_poll.return_value = "ssh://tok@host:22"
+        worker = _make_worker(upterm_accept=False, upterm_skip_host_key_check=False)
+
+        worker._start_upterm("mesh-sess")
+
+        popen_args = mock_popen.call_args[0][0]
+        assert "--accept" not in popen_args
+        assert "--skip-host-key-check" not in popen_args
+
     @patch("src.router.session_worker.subprocess.Popen", side_effect=FileNotFoundError)
     def test_binary_not_found(self, mock_popen: Mock) -> None:
         worker = _make_worker()
@@ -393,9 +425,10 @@ class TestStartUpterm:
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_poll_upterm_target", return_value=None)
+    @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen")
     def test_poll_timeout_kills_process(
-        self, mock_popen: Mock, mock_poll: Mock, mock_stop: Mock
+        self, mock_popen: Mock, mock_open_file: Mock, mock_poll: Mock, mock_stop: Mock
     ) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
@@ -405,7 +438,7 @@ class TestStartUpterm:
 
         assert p is None
         assert target is None
-        mock_stop.assert_called_once_with(proc, "/tmp/upterm-mesh-sess.sock")
+        mock_stop.assert_called_once_with(proc, log_path="/tmp/upterm-mesh-sess.log")
 
 
 # ---------------------------------------------------------------------------
@@ -440,12 +473,12 @@ class TestStopUpterm:
 
     @patch("src.router.session_worker.os.path.exists", return_value=True)
     @patch("src.router.session_worker.os.remove")
-    def test_socket_cleanup(self, mock_remove: Mock, mock_exists: Mock) -> None:
+    def test_log_cleanup(self, mock_remove: Mock, mock_exists: Mock) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         proc.poll.return_value = 0
-        MeshSessionWorker._stop_upterm(proc, "/tmp/test.sock")
-        mock_exists.assert_called_once_with("/tmp/test.sock")
-        mock_remove.assert_called_once_with("/tmp/test.sock")
+        MeshSessionWorker._stop_upterm(proc, "/tmp/test.log")
+        mock_exists.assert_called_once_with("/tmp/test.log")
+        mock_remove.assert_called_once_with("/tmp/test.log")
 
 
 # ---------------------------------------------------------------------------
@@ -510,39 +543,50 @@ class TestOpenSessionMetadata:
 class TestPollUptermTarget:
 
     @patch("src.router.session_worker.time.sleep")
-    @patch("src.router.session_worker.subprocess.run")
     @patch("src.router.session_worker.time.monotonic")
     def test_success_on_second_poll(
-        self, mock_mono: Mock, mock_run: Mock, mock_sleep: Mock
+        self, mock_mono: Mock, mock_sleep: Mock, tmp_path
     ) -> None:
-        # First call: deadline check -> True
-        # Second call: returns before deadline
-        # Third call: deadline exceeded (shouldn't reach)
         mock_mono.side_effect = [0.0, 0.1, 0.5, 99.0]
-        fail_result = MagicMock(returncode=1, stdout="")
-        ok_result = MagicMock(
-            returncode=0,
-            stdout="Host:                   ssh://tok@uptermd:22\n",
-        )
-        mock_run.side_effect = [fail_result, ok_result]
         worker = _make_worker()
+        log_path = tmp_path / "upterm.log"
+        proc = MagicMock(spec=subprocess.Popen)
+        proc.poll.side_effect = [None, None, None]
 
-        target = worker._poll_upterm_target("/tmp/upterm-sess.sock")
+        def write_target(*args, **kwargs):
+            log_path.write_text("Host: ssh://tok@uptermd:22\n", encoding="utf-8")
+
+        mock_sleep.side_effect = write_target
+
+        target = worker._poll_upterm_target(str(log_path), proc)
 
         assert target == "ssh://tok@uptermd:22"
 
     @patch("src.router.session_worker.time.sleep")
-    @patch("src.router.session_worker.subprocess.run")
     @patch("src.router.session_worker.time.monotonic")
     def test_timeout(
-        self, mock_mono: Mock, mock_run: Mock, mock_sleep: Mock
+        self, mock_mono: Mock, mock_sleep: Mock, tmp_path
     ) -> None:
         mock_mono.side_effect = [0.0, 99.0]
         worker = _make_worker()
 
-        target = worker._poll_upterm_target("/tmp/upterm-sess.sock")
+        target = worker._poll_upterm_target(str(tmp_path / "missing.log"))
 
         assert target is None
+
+    @patch("src.router.session_worker.time.sleep")
+    @patch("src.router.session_worker.time.monotonic")
+    def test_returns_none_if_process_exits_without_url(
+        self, mock_mono: Mock, mock_sleep: Mock, tmp_path
+    ) -> None:
+        mock_mono.side_effect = [0.0, 0.1]
+        worker = _make_worker()
+        log_path = tmp_path / "upterm.log"
+        log_path.write_text("starting...\n", encoding="utf-8")
+        proc = MagicMock(spec=subprocess.Popen)
+        proc.poll.return_value = 1
+
+        assert worker._poll_upterm_target(str(log_path), proc) is None
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +652,10 @@ class TestAttachCleanupInExecuteTask:
         worker._execute_task(task)
 
         # tmux_session_name: mesh-claude-work-t-001
-        mock_stop.assert_called_once_with(upterm_proc, "/tmp/upterm-mesh-claude-work-t-001.sock")
+        mock_stop.assert_called_once_with(
+            upterm_proc,
+            log_path="/tmp/upterm-mesh-claude-work-t-001.log",
+        )
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_create_attach_handle")
@@ -672,7 +719,10 @@ class TestAttachCleanupInExecuteTask:
         worker._execute_task(task)
 
         # tmux_session_name: mesh-claude-work-t-003
-        mock_stop.assert_called_once_with(upterm_proc, "/tmp/upterm-mesh-claude-work-t-003.sock")
+        mock_stop.assert_called_once_with(
+            upterm_proc,
+            log_path="/tmp/upterm-mesh-claude-work-t-003.log",
+        )
 
     def test_no_cleanup_when_no_attach(self) -> None:
         """Early returns (bad mode) skip attach entirely; no cleanup needed."""

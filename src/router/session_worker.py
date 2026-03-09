@@ -126,6 +126,8 @@ class SessionWorkerConfig:
     upterm_bin: str = "upterm"
     upterm_server: str = ""
     upterm_ready_timeout: float = 10.0
+    upterm_accept: bool = True
+    upterm_skip_host_key_check: bool = True
     ssh_tmux_user: str = ""
     ssh_tmux_host: str = ""
 
@@ -167,6 +169,8 @@ class SessionWorkerConfig:
             upterm_bin=os.environ.get("MESH_UPTERM_BIN", "upterm"),
             upterm_server=os.environ.get("MESH_UPTERM_SERVER", ""),
             upterm_ready_timeout=float(os.environ.get("MESH_UPTERM_READY_TIMEOUT", "10.0")),
+            upterm_accept=os.environ.get("MESH_UPTERM_ACCEPT", "1").strip() != "0",
+            upterm_skip_host_key_check=os.environ.get("MESH_UPTERM_SKIP_HOST_KEY_CHECK", "1").strip() != "0",
             ssh_tmux_user=os.environ.get("MESH_SSH_TMUX_USER", ""),
             ssh_tmux_host=os.environ.get("MESH_SSH_TMUX_HOST", ""),
         )
@@ -444,8 +448,8 @@ class MeshSessionWorker:
             self._report_failure(task_id, f"unexpected: {e}")
         finally:
             if upterm_proc is not None:
-                socket_path = f"/tmp/upterm-{tmux_session_name}.sock" if tmux_session_name else None
-                self._stop_upterm(upterm_proc, socket_path)
+                log_path = f"/tmp/upterm-{tmux_session_name}.log" if tmux_session_name else None
+                self._stop_upterm(upterm_proc, log_path=log_path)
 
     def _prepare_cli_runtime(self, work_dir: str, target_account: str) -> None:
         """Preseed provider runtime metadata needed for unattended session startup."""
@@ -681,73 +685,73 @@ class MeshSessionWorker:
 
         Returns ``(process, ssh_url)`` or ``(None, None)`` on failure.
         """
-        socket_path = f"/tmp/upterm-{tmux_session}.sock"
-        if os.path.exists(socket_path):
+        log_path = f"/tmp/upterm-{tmux_session}.log"
+        if os.path.exists(log_path):
             try:
-                os.remove(socket_path)
-                logger.info("Removed stale upterm admin socket before start: %s", socket_path)
+                os.remove(log_path)
+                logger.info("Removed stale upterm log before start: %s", log_path)
             except OSError as e:
-                logger.warning("Failed to remove stale upterm admin socket %s: %s", socket_path, e)
+                logger.warning("Failed to remove stale upterm log %s: %s", log_path, e)
         cmd: list[str] = [
             self.config.upterm_bin,
             "host",
+        ]
+        if self.config.upterm_accept:
+            cmd.append("--accept")
+        if self.config.upterm_skip_host_key_check:
+            cmd.append("--skip-host-key-check")
+        cmd.extend([
             "--force-command",
             f"{self.config.tmux_bin} attach -t {tmux_session}",
-            "--admin-socket",
-            socket_path,
-        ]
+        ])
         if self.config.upterm_server:
             cmd.extend(["--server", self.config.upterm_server])
         cmd.extend(["--", "bash"])
 
+        log_handle = None
         try:
+            log_handle = open(log_path, "w", encoding="utf-8")
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
                 text=True,
             )
         except (OSError, FileNotFoundError):
             logger.warning("upterm binary not found at %s", self.config.upterm_bin)
             return None, None
+        finally:
+            if log_handle is not None:
+                log_handle.close()
 
-        target = self._poll_upterm_target(socket_path)
+        target = self._poll_upterm_target(log_path, proc)
         if target:
             return proc, target
 
         logger.warning("upterm started but failed to provide session URL")
-        self._stop_upterm(proc, socket_path)
+        self._stop_upterm(proc, log_path=log_path)
         return None, None
 
-    def _poll_upterm_target(self, socket_path: str) -> str | None:
-        """Poll ``upterm session current`` until an SSH URL appears."""
+    def _poll_upterm_target(self, log_path: str, proc: subprocess.Popen | None = None) -> str | None:
+        """Poll upterm host output until an SSH URL appears."""
         deadline = time.monotonic() + self.config.upterm_ready_timeout
         while time.monotonic() < deadline:
             try:
-                result = subprocess.run(
-                    [
-                        self.config.upterm_bin,
-                        "session",
-                        "current",
-                        "--admin-socket",
-                        socket_path,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
-                )
-                if result.returncode == 0:
-                    target = _parse_upterm_ssh_url(result.stdout)
+                if os.path.exists(log_path):
+                    with open(log_path, encoding="utf-8") as fh:
+                        target = _parse_upterm_ssh_url(fh.read())
                     if target:
                         return target
-            except (subprocess.SubprocessError, OSError):
+                if proc is not None and proc.poll() is not None:
+                    break
+            except OSError:
                 pass
             time.sleep(0.5)
         return None
 
     @staticmethod
-    def _stop_upterm(proc: subprocess.Popen, socket_path: str | None = None) -> None:
-        """Terminate an upterm child process (SIGTERM then SIGKILL) and cleanup socket."""
+    def _stop_upterm(proc: subprocess.Popen, log_path: str | None = None) -> None:
+        """Terminate an upterm child process (SIGTERM then SIGKILL) and cleanup temp log."""
         if proc.poll() is None:
             proc.terminate()
             try:
@@ -759,12 +763,12 @@ class MeshSessionWorker:
                 except subprocess.TimeoutExpired:
                     pass
 
-        if socket_path and os.path.exists(socket_path):
+        if log_path and os.path.exists(log_path):
             try:
-                os.remove(socket_path)
-                logger.info("Cleaned up upterm admin socket: %s", socket_path)
+                os.remove(log_path)
+                logger.info("Cleaned up upterm log: %s", log_path)
             except OSError as e:
-                logger.warning("Failed to remove upterm admin socket %s: %s", socket_path, e)
+                logger.warning("Failed to remove upterm log %s: %s", log_path, e)
 
     def _ack_task(self, task_id: str) -> bool:
         try:

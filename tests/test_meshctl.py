@@ -15,6 +15,7 @@ import pytest
 from src.meshctl import (
     _format_age,
     _format_duration,
+    _router_timeout,
     cmd_drain,
     cmd_status,
     cmd_submit,
@@ -89,6 +90,20 @@ class TestFormatDuration:
 
     def test_format_duration_exact_hours(self) -> None:
         assert _format_duration(3600) == "1h"
+
+
+class TestRouterTimeout:
+    def test_default_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MESH_ROUTER_TIMEOUT_S", raising=False)
+        assert _router_timeout() == 30.0
+
+    def test_env_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MESH_ROUTER_TIMEOUT_S", "45")
+        assert _router_timeout() == 45.0
+
+    def test_invalid_timeout_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MESH_ROUTER_TIMEOUT_S", "wat")
+        assert _router_timeout() == 30.0
 
 
 # ---------------------------------------------------------------------------
