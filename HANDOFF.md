@@ -106,7 +106,8 @@ Important boundary:
 - the default operator view is now clean even if the DB keeps those rows
 - Gemini session runtime now runs as `sam`, matching the validated local `ccs gemini` runtime
 - latest worker code adds longer Claude Code prompt readiness wait, a short tmux send-settle delay, and stale tmux cleanup on retry
-- one clean live rerun is still needed to validate the prompt-submission fix without legacy queued tasks interfering
+- Gemini smoke `9f67c914-3588-44c1-9001-2718791f0954` completed with `GEMINI_OK` after manual `Enter` plus `/exit`; this validates provider runtime and session wiring
+- if `065248f0-e810-4ade-928a-d97ee172d7df` or another redundant Gemini smoke is still live at next session start, clean it before opening new tests
 
 ## Next session checks
 

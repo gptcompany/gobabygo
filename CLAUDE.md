@@ -43,7 +43,8 @@ Not yet production-clean:
 - `upterm` launch logging is fixed in code; if the worker still logs `upterm binary not found ...` for an existing binary, the worker runtime has not been restarted on the new code yet
 - brand-new Claude CCS profiles still need one first login/bootstrap in their own instance
 - session worker Unix user must match where that provider/runtime state actually lives
-- Gemini session runtime now runs as `sam`; remaining live friction is Claude Code tmux prompt-submission timing, not provider auth/bootstrap
+- Gemini session runtime now runs as `sam`; live smoke `9f67c914-3588-44c1-9001-2718791f0954` produced `GEMINI_OK` via `ccs gemini` under Claude Code frontend and completed after manual `/exit`
+- if a redundant Gemini smoke task is still `running` or `assigned` at the next session start, clean it before new tests instead of treating it as a provider/auth regression
 - several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
 
 ## Current Handoff Snapshot
