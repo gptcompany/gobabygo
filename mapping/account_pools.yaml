@@ -1,0 +1,19 @@
+version: 1
+providers:
+  claude:
+    default_account: "work-claude"
+    accounts:
+      - "work-claude"
+    notes: "Replace with real isolated CCS account profiles created via `ccs auth create <profile>`. Recommended naming is by real account/persona, not by repo."
+
+  codex:
+    default_account: "codex"
+    accounts:
+      - "codex"
+    notes: "Provider-direct today. If you later use multiple Codex accounts, update this file only."
+
+  gemini:
+    default_account: "gemini"
+    accounts:
+      - "gemini"
+    notes: "Provider-direct today. If you later use multiple Gemini accounts, update this file only."

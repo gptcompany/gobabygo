@@ -133,7 +133,8 @@ Current default policy:
 Important distinction:
 
 - for Claude, `target_account` must be a real CCS profile created with `ccs auth create <profile>`
-- `ccs claude` is not the canonical isolation mechanism for repo-scoped Claude history
+- `ccs claude` is not the canonical isolation mechanism for account-scoped Claude history
+- default Claude account selection is policy-driven from `mapping/account_pools.yaml`
 
 Current Unix-user policy:
 

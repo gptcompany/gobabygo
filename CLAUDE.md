@@ -214,20 +214,27 @@ uv sync --frozen
 
 ## CCS Profile Isolation
 
-For repo-scoped context/history isolation, create account profiles per repo:
+Use account-scoped Claude CCS profiles, not repo-scoped naming.
+
+Recommended model:
 
 ```bash
-ccs auth create claude-<repo> --context-group <repo>
+ccs auth create claude-samuele
+ccs auth create claude-gptprojectmanager
+ccs auth create claude-gptcoderassistant
 ```
 
-Claude task accounts should map to these real CCS profiles.
-Codex/Gemini routing is controlled centrally in `mapping/provider_runtime.yaml`.
+Then keep those profiles `isolated` and select them per task/session.
+Default provider account selection is controlled centrally in:
+
+- `mapping/account_pools.yaml`
+- `mapping/provider_runtime.yaml`
 
 Important runtime note:
 
 - repo/account profiles under `/home/sam/.ccs` are not sufficient by themselves
 - session worker auth/state must exist under the Unix user selected in `mapping/provider_runtime.yaml`
-- default policy runs Claude sessions as `sam`, so repo-scoped Claude profiles should live under `/home/sam/.ccs`
+- default policy runs Claude sessions as `sam`, so Claude account profiles should live under `/home/sam/.ccs`
 - default policy runs Codex sessions as `mesh-worker`, so Codex CLIProxy state should live under `/home/mesh-worker/.ccs`
 - otherwise tasks can dispatch correctly but still fail later on provider auth/bootstrap
 
@@ -239,7 +246,7 @@ Important runtime note:
 - `wss <repo>` on WS still does self-SSH (`Permission denied (publickey)`): stale shell helper in current shell. Run `./scripts/install-shell-helpers.sh` and `exec $SHELL -l`.
 - `yazi`/`lf` exits without changing dir: use `yazicd`/`lfcd` (or aliases installed by helper).
 - iTerm2 pane becomes unresponsive after idle: refresh shell helpers; `wss`/`wsattach` now use SSH keepalive + control persist by default.
-- multiple repos sharing context unexpectedly: use dedicated Claude CCS profiles (`claude-<repo>`). Codex/Gemini routing is controlled centrally in `mapping/provider_runtime.yaml`.
+- multiple repos sharing context unexpectedly: check that the Claude profile is `isolated`, and do not reuse the same profile across unrelated work unless you accept shared history/state.
 - a session task gets requeued after ~5 minutes even though tmux is still alive: router or worker is still running old code without lease-renewal fixes; redeploy router + worker runtime.
 - a session opens tmux but blocks on theme/security/trust-folder/MCP prompts: this is CLI bootstrap drift under `mesh-worker`, not a router bus failure.
 - `mesh ui` is operator UX only; when in doubt, trust router task state plus `journalctl` on the session worker.

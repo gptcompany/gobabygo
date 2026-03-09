@@ -251,14 +251,18 @@ gen_feature_label() {
 
 build_pipeline_account_args() {
   local repo_name="$1"
-  local repo_slug
-  repo_slug="$(slugify "$repo_name")"
   PIPELINE_ACCOUNT_ARGS=(
-    --account-scope static
-    --account-claude "${MESH_ACCOUNT_CLAUDE:-claude-${repo_slug}}"
-    --account-codex "${MESH_ACCOUNT_CODEX:-codex}"
-    --account-gemini "${MESH_ACCOUNT_GEMINI:-gemini}"
+    --account-scope "${MESH_ACCOUNT_SCOPE:-config}"
   )
+  if [[ -n "${MESH_ACCOUNT_CLAUDE:-}" ]]; then
+    PIPELINE_ACCOUNT_ARGS+=(--account-claude "$MESH_ACCOUNT_CLAUDE")
+  fi
+  if [[ -n "${MESH_ACCOUNT_CODEX:-}" ]]; then
+    PIPELINE_ACCOUNT_ARGS+=(--account-codex "$MESH_ACCOUNT_CODEX")
+  fi
+  if [[ -n "${MESH_ACCOUNT_GEMINI:-}" ]]; then
+    PIPELINE_ACCOUNT_ARGS+=(--account-gemini "$MESH_ACCOUNT_GEMINI")
+  fi
 }
 
 load_router_env() {
@@ -490,6 +494,7 @@ echo
 echo "Bootstrap complete."
 if [[ -n "$repo_root" ]]; then
   echo "Provider runtime policy: ${repo_root}/mapping/provider_runtime.yaml"
+  echo "Account pool policy: ${repo_root}/mapping/account_pools.yaml"
 fi
 echo "Session workers now preseed Claude project state on task start (.claude.json trust/onboarding/MCP metadata)."
 echo "mesh-worker runtime ownership for ~/.ccs and ~/.claude has been normalized."
@@ -499,8 +504,9 @@ else
   echo "[WARN] upterm not installed on WS; attach handles will fallback to ssh/tmux only"
 fi
 echo "Next:"
-echo "  1) create Claude CCS account profiles once (if missing):"
-echo "     ccs auth create claude-<repo>"
+echo "  1) create isolated Claude CCS account profiles once (if missing):"
+echo "     ccs auth create claude-<account>"
+echo "     edit mapping/account_pools.yaml to set the default Claude profile"
 echo "  2) run from repo dir:"
 echo "     mesh run <phase>"
 EOF

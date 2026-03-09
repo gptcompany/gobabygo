@@ -82,7 +82,7 @@ Use this for tmux-backed interactive sessions (human can attach via iTerm2/tmux)
 ```bash
 MESH_WORKER_ID=ws-claude-session-01 \
 MESH_CLI_TYPE=claude \
-MESH_ACCOUNT_PROFILE=work-claude \
+MESH_ACCOUNT_PROFILE=claude-primary \
 MESH_EXECUTION_MODES=session \
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
 python -m src.router.session_worker
@@ -166,8 +166,7 @@ dotenvx run -f ~/.mesh/.env.mesh -- python -m src.meshctl pipeline create \
   --repo /media/sam/1TB/gobabygo \
   --phase 17 \
   --project "AI Mesh Router" \
-  --feature "session-first hard mode" \
-  --account-scope repo
+  --feature "session-first hard mode"
 ```
 
 Optional shortcut for macOS operator shell:
@@ -301,14 +300,18 @@ UV-first execution:
 - `scripts/mesh` now prefers `uv run -- python -m src.meshctl ...` when `uv` is available.
 - fallback remains plain `python3/python` if `uv` is not installed.
 
-CCS profile isolation (recommended for per-repo history/context):
+CCS profile isolation (recommended for account-scoped history/context):
 
 ```bash
-ccs auth create claude-rektslug --context-group rektslug
+ccs auth create claude-samuele
+ccs auth create claude-gptprojectmanager
 ```
 
-Then set Claude task accounts to those real CCS profiles. Codex/Gemini routing is
-controlled centrally in `mapping/provider_runtime.yaml`.
+Then set Claude task accounts to those real CCS profiles and keep them `isolated`.
+Default account selection is now controlled centrally in:
+
+- `mapping/account_pools.yaml`
+- `mapping/provider_runtime.yaml`
 
 Bootstrap also reads `mapping/provider_runtime.yaml` to install per-instance
 systemd overrides for session worker Unix users.
@@ -321,7 +324,7 @@ curl -s -X POST http://localhost:8780/tasks \
   -d '{
     "title": "Interactive refactor with human oversight",
     "target_cli": "claude",
-    "target_account": "work-claude",
+    "target_account": "claude-samuele",
     "execution_mode": "session",
     "payload": {"prompt": "Refactor auth module safely and ask before risky commands"}
   }'
@@ -342,7 +345,7 @@ Verified live behavior on the current stack:
 - router dispatches to real tmux-backed session workers
 - repo `working_dir` is honored when the path is correct
 - long-lived interactive sessions now renew leases on heartbeat and are not requeued after the 5-minute lease window
-- real repo-scoped Claude CCS profiles are supported (`ccs <profile>`, not `ccs claude`)
+- real account-scoped Claude CCS profiles are supported (`ccs <profile>`, not `ccs claude`)
 
 Known operational gaps:
 - `upterm` is installed on WS; attach URL discovery is implemented in code, but if workers still log `upterm binary not found ...` the running service has not picked up the latest code yet

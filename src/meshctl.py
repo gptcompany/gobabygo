@@ -52,6 +52,79 @@ def _router_timeout() -> float:
     return max(timeout, 1.0)
 
 
+def _default_account_pool_config_path() -> str:
+    """Default editable provider account policy file."""
+    return str(Path(__file__).resolve().parents[1] / "mapping" / "account_pools.yaml")
+
+
+def _load_account_pool_config(config_path: str | None = None) -> dict[str, dict[str, object]]:
+    """Load central provider account defaults from YAML."""
+    path_value = config_path
+    if path_value is None:
+        path_value = os.environ.get("MESH_ACCOUNT_POOL_CONFIG") or _default_account_pool_config_path()
+    if path_value == "":
+        return {}
+
+    path = Path(path_value)
+    if not path.is_file():
+        return {}
+
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+    providers = raw.get("providers")
+    if not isinstance(providers, dict):
+        return {}
+
+    return {
+        str(provider).strip(): entry
+        for provider, entry in providers.items()
+        if isinstance(entry, dict)
+    }
+
+
+def _resolve_default_accounts(
+    *,
+    account_scope: str,
+    repo: str,
+    project: str,
+    config_path: str | None = None,
+) -> dict[str, str]:
+    """Resolve default target accounts for pipeline rendering."""
+    if account_scope == "repo":
+        repo_slug = _repo_slug(repo, project)
+        return {
+            "claude": f"claude-{repo_slug}",
+            "codex": f"codex-{repo_slug}",
+            "gemini": f"gemini-{repo_slug}",
+        }
+
+    static_defaults = {
+        "claude": "work-claude",
+        "codex": "work-codex",
+        "gemini": "work-gemini",
+    }
+    if account_scope == "static":
+        return static_defaults
+
+    provider_config = _load_account_pool_config(config_path)
+    resolved: dict[str, str] = {}
+    for provider, fallback in static_defaults.items():
+        entry = provider_config.get(provider, {})
+        account = str(entry.get("default_account", "")).strip()
+        if not account:
+            raw_accounts = entry.get("accounts")
+            if isinstance(raw_accounts, list):
+                for candidate in raw_accounts:
+                    account = str(candidate).strip()
+                    if account:
+                        break
+        resolved[provider] = account or fallback
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # Time formatting helpers
 # ---------------------------------------------------------------------------
@@ -504,24 +577,16 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    account_scope = str(getattr(args, "account_scope", "static") or "static").strip().lower()
-    if account_scope not in {"static", "repo"}:
-        print("Error: --account-scope must be 'static' or 'repo'", file=sys.stderr)
+    account_scope = str(getattr(args, "account_scope", "config") or "config").strip().lower()
+    if account_scope not in {"config", "static", "repo"}:
+        print("Error: --account-scope must be 'config', 'static', or 'repo'", file=sys.stderr)
         sys.exit(1)
 
-    if account_scope == "repo":
-        repo_slug = _repo_slug(args.repo, args.project)
-        default_accounts = {
-            "claude": f"claude-{repo_slug}",
-            "codex": f"codex-{repo_slug}",
-            "gemini": f"gemini-{repo_slug}",
-        }
-    else:
-        default_accounts = {
-            "claude": "work-claude",
-            "codex": "work-codex",
-            "gemini": "work-gemini",
-        }
+    default_accounts = _resolve_default_accounts(
+        account_scope=account_scope,
+        repo=args.repo,
+        project=args.project,
+    )
 
     account_claude = (args.account_claude or default_accounts["claude"]).strip()
     account_codex = (args.account_codex or default_accounts["codex"]).strip()
@@ -1089,9 +1154,9 @@ pipeline_create_parser.add_argument(
 )
 pipeline_create_parser.add_argument(
     "--account-scope",
-    choices=["static", "repo"],
-    default="static",
-    help="Account naming strategy: static (work-*) or repo (<provider>-<repo>).",
+    choices=["config", "static", "repo"],
+    default="config",
+    help="Account selection strategy: config (mapping/account_pools.yaml), static (work-*), or repo (<provider>-<repo>).",
 )
 pipeline_create_parser.add_argument(
     "--account-claude", default=None, help="Override account profile for Claude steps.",

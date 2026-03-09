@@ -78,7 +78,7 @@ def _pipeline_create_args(
     project: str = "Demo Project",
     feature: str = "Feature X",
     template_file: str = "/tmp/pipeline_templates.yaml",
-    account_scope: str = "static",
+    account_scope: str = "config",
     account_claude: str | None = None,
     account_codex: str | None = None,
     account_gemini: str | None = None,
@@ -216,7 +216,12 @@ class TestThreadCommands:
 
 class TestPipelineCommands:
     @patch("src.meshctl.requests.post")
-    def test_pipeline_create_dry_run(
+    @patch.dict(
+        os.environ,
+        {"MESH_ACCOUNT_POOL_CONFIG": "/tmp/nonexistent-account-pools.yaml"},
+        clear=False,
+    )
+    def test_pipeline_create_dry_run_falls_back_to_static_when_config_missing(
         self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         template_file = tmp_path / "pipeline.yaml"
@@ -247,11 +252,78 @@ templates:
         out = capsys.readouterr().out
         data = json.loads(out)
         assert data["template"] == "gsd"
-        assert data["account_scope"] == "static"
+        assert data["account_scope"] == "config"
         assert data["accounts"]["claude"] == "work-claude"
         assert data["steps"][0]["execution_mode"] == "session"
         assert data["steps"][0]["critical"] is True
         assert "Run /gsd:plan-phase 5 in /repo/demo" in data["steps"][0]["prompt"]
+        mock_post.assert_not_called()
+
+    @patch("src.meshctl.requests.post")
+    def test_pipeline_create_config_account_scope_uses_central_account_pool(
+        self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text(
+            """version: 1
+templates:
+  gsd:
+    steps:
+      - name: gsd:plan-phase
+        title: "Plan {phase}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        critical: true
+        on_failure: abort
+        review_policy: codex_review
+        prompt: "Run /gsd:plan-phase {phase} in {repo}"
+      - name: verify
+        title: "Verify"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Verify {repo}"
+""",
+            encoding="utf-8",
+        )
+        account_config = tmp_path / "account_pools.yaml"
+        account_config.write_text(
+            """version: 1
+providers:
+  claude:
+    default_account: claude-samuele
+    accounts:
+      - claude-samuele
+      - claude-gptprojectmanager
+  codex:
+    default_account: codex
+    accounts:
+      - codex
+  gemini:
+    default_account: gemini
+    accounts:
+      - gemini
+""",
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"MESH_ACCOUNT_POOL_CONFIG": str(account_config)}, clear=False):
+            args = _pipeline_create_args(
+                dry_run=True,
+                template_file=str(template_file),
+                repo="/home/sam/progressive-deploy",
+                account_scope="config",
+            )
+            cmd_pipeline_create(args)
+
+        data = json.loads(capsys.readouterr().out)
+        assert data["account_scope"] == "config"
+        assert data["accounts"]["claude"] == "claude-samuele"
+        assert data["steps"][0]["target_account"] == "claude-samuele"
+        assert data["steps"][1]["target_account"] == "codex"
         mock_post.assert_not_called()
 
     @patch("src.meshctl.requests.post")

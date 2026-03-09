@@ -82,7 +82,7 @@ curl -s -X POST http://10.0.0.1:8780/tasks \
     "title": "Interactive smoke test (Claude)",
     "phase": "implement",
     "target_cli": "claude",
-    "target_account": "work-claude",
+    "target_account": "claude-samuele",
     "execution_mode": "session",
     "payload": {
       "prompt": "Inspect the repo root and tell me what files are relevant for router session persistence. Ask before risky commands."
@@ -222,4 +222,3 @@ sudo systemctl stop mesh-router
    - confirm session still `state=open`
    - inspect `/sessions/messages` for the new `in` message `seq`
    - check worker logs for delivery warnings
-
