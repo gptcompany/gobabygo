@@ -4,8 +4,8 @@ providers:
     default_account: "claude-samuele"
     accounts:
       - "claude-samuele"
-      - "claude-gptprojectmanager"
       - "claude-gptcoderassistant"
+      - "claude-gptprojectmanager"
     notes: "Real isolated CCS account profiles created via `ccs auth create <profile>`. Mesh may switch across these profiles between tasks/sessions when one account reaches its limit."
 
   codex:
