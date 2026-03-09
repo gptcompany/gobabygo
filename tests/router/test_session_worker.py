@@ -163,6 +163,18 @@ def test_control_plane_operations_use_configured_timeout() -> None:
     assert get_timeouts == [17.5]
 
 
+def test_report_failure_includes_error_kind() -> None:
+    worker = _make_worker(control_plane_timeout=17.5)
+    worker._http = MagicMock()
+    worker._http.post.return_value = MagicMock(status_code=200)
+
+    worker._report_failure("task-1", "boom", error_kind="account_exhausted")
+
+    body = worker._http.post.call_args.kwargs["json"]
+    assert body["task_id"] == "task-1"
+    assert body["error_kind"] == "account_exhausted"
+
+
 # ---------------------------------------------------------------------------
 # _parse_upterm_ssh_url
 # ---------------------------------------------------------------------------
@@ -898,6 +910,55 @@ class TestAttachCleanupInExecuteTask:
         mock_report_complete.assert_called_once()
         mock_report_failure.assert_not_called()
         assert "Initial session message sync failed for sid-sync" in caplog.text
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[True, False])
+    @patch.object(
+        MeshSessionWorker,
+        "_tmux_capture_pane",
+        return_value="API Error: 429 rate_limit_error\nYou've hit your limit",
+    )
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-limit")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch("src.router.session_worker.time.sleep")
+    def test_final_snapshot_rate_limit_reports_failure(
+        self,
+        mock_sleep: Mock,
+        mock_report_failure: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+
+        task = {
+            "task_id": "t-limit",
+            "execution_mode": "session",
+            "target_account": "claude-samuele",
+            "payload": {
+                "prompt": "/continue",
+                "working_dir": "/media/sam/1TB/rektslug",
+            },
+        }
+
+        worker._running = True
+        worker._execute_task(task)
+
+        mock_report_complete.assert_not_called()
+        mock_report_failure.assert_called_once()
+        assert mock_report_failure.call_args.kwargs["error_kind"] == "account_exhausted"
+        mock_close.assert_called_once_with("sid-limit", state="errored")
 
 
 # ---------------------------------------------------------------------------

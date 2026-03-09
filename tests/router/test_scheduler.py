@@ -238,7 +238,12 @@ class TestDispatch:
         assert result.task.task_id == "t2"
 
     def test_cas_failure_worker_busy(self, sched, db, monkeypatch: pytest.MonkeyPatch):
-        _add_worker(db, "w1", "work")
+        _add_worker(
+            db,
+            "w1",
+            "work",
+            capabilities=["account:*"],
+        )
         task = _add_task(db, "t1")
 
         # Manually set worker to busy right before dispatching
@@ -356,6 +361,81 @@ class TestReportFailure:
         assert db.get_active_lease("t1") is None
         w = db.get_worker("w1")
         assert w.status == "idle"
+
+    def test_claude_account_exhausted_rotates_target_account(self, db, tmp_path):
+        account_config = tmp_path / "account_pools.yaml"
+        account_config.write_text(
+            """
+providers:
+  claude:
+    default_account: claude-samuele
+    accounts:
+      - claude-samuele
+      - claude-gptprojectmanager
+      - claude-gptcoderassistant
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        sched = Scheduler(db=db, lease_duration_s=300, account_pool_config=str(account_config))
+        _add_worker(
+            db,
+            "w1",
+            "work",
+            execution_modes=["session"],
+            capabilities=["account:*"],
+        )
+        _add_task(
+            db,
+            "t1",
+            target_cli=CLIType.claude,
+            target_account="claude-samuele",
+            execution_mode=ExecutionMode.session,
+        )
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+
+        assert sched.report_failure(
+            "t1",
+            "w1",
+            "You've hit your limit",
+            error_kind="account_exhausted",
+        ) is True
+
+        t = db.get_task("t1")
+        assert t.status == TaskStatus.queued
+        assert t.attempt == 2
+        assert t.target_account == "claude-gptprojectmanager"
+        assert t.session_id is None
+
+    def test_claude_account_exhausted_without_alternative_fails(self, db, tmp_path):
+        account_config = tmp_path / "account_pools.yaml"
+        account_config.write_text(
+            """
+providers:
+  claude:
+    default_account: claude-samuele
+    accounts:
+      - claude-samuele
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        sched = Scheduler(db=db, lease_duration_s=300, account_pool_config=str(account_config))
+        _add_worker(db, "w1", "work", capabilities=["account:*"])
+        _add_task(db, "t1", target_cli=CLIType.claude, target_account="claude-samuele")
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+
+        assert sched.report_failure(
+            "t1",
+            "w1",
+            "API Error: 429 rate_limit_error",
+            error_kind="account_exhausted",
+        ) is True
+
+        t = db.get_task("t1")
+        assert t.status == TaskStatus.failed
 
 
 class TestDrainingAutoRetire:

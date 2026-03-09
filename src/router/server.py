@@ -472,8 +472,9 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             task_id = data["task_id"]
             worker_id = data["worker_id"]
             error = data.get("error", "unknown")
+            error_kind = str(data.get("error_kind") or "").strip()
             scheduler: Scheduler = self.server.router_state["scheduler"]  # type: ignore[attr-defined]
-            ok = scheduler.report_failure(task_id, worker_id, reason=error)
+            ok = scheduler.report_failure(task_id, worker_id, reason=error, error_kind=error_kind)
             if ok:
                 self._send_json(200, {"status": "failed_recorded"})
             else:
@@ -1454,6 +1455,7 @@ def run_server(
         longpoll_registry=longpoll_registry,
         topology=topology,
         session_fallback_to_batch=session_fallback_to_batch,
+        account_pool_config=os.environ.get("MESH_ACCOUNT_POOL_CONFIG"),
     )
     transport = InProcessTransport(db)
     buffer_path = os.environ.get("MESH_BUFFER_PATH", "~/.mesh/events-buffer.jsonl")

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 import requests
 
+from src.router.failure_classifier import classify_cli_failure
 from src.router.provider_runtime import resolve_cli_command
 
 logger = logging.getLogger("mesh.session_worker")
@@ -424,6 +425,7 @@ class MeshSessionWorker:
 
             final_snapshot = last_capture
             if session_id:
+                failure_kind = classify_cli_failure(self.config.cli_type, final_snapshot)
                 if final_snapshot and final_snapshot.strip() != (last_emitted_capture or "").strip():
                     self._send_session_message(
                         session_id,
@@ -439,9 +441,18 @@ class MeshSessionWorker:
                     content="tmux session exited",
                     metadata={"tmux_session": tmux_session_name},
                 )
-                self._close_session(session_id, state="closed")
+                self._close_session(
+                    session_id,
+                    state="errored" if failure_kind else "closed",
+                )
 
-            if self.config.auto_complete_on_exit:
+            if failure_kind:
+                self._report_failure(
+                    task_id,
+                    final_snapshot[-4000:] if final_snapshot else failure_kind,
+                    error_kind=failure_kind,
+                )
+            elif self.config.auto_complete_on_exit:
                 self._report_complete(task_id, {
                     "interactive_session": True,
                     "session_id": session_id,
@@ -817,12 +828,19 @@ class MeshSessionWorker:
         except requests.RequestException as e:
             logger.error("Failed to report completion for task %s: %s", task_id, e)
 
-    def _report_failure(self, task_id: str, error: str) -> None:
+    def _report_failure(self, task_id: str, error: str, *, error_kind: str = "") -> None:
         logger.error("Task %s failed: %s", task_id, error)
         try:
+            body = {
+                "task_id": task_id,
+                "worker_id": self.config.worker_id,
+                "error": error,
+            }
+            if error_kind:
+                body["error_kind"] = error_kind
             self._http.post(
                 f"{self.config.router_url}/tasks/fail",
-                json={"task_id": task_id, "worker_id": self.config.worker_id, "error": error},
+                json=body,
                 timeout=self.config.control_plane_timeout,
             )
         except requests.RequestException as e:

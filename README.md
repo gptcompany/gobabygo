@@ -85,6 +85,7 @@ curl -sS -H "Authorization: Bearer $MESH_AUTH_TOKEN" \
 
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
 - For Claude, use isolated CCS account profiles such as `claude-samuele` and launch them from the target repo directory with `ccs <profile>`.
+- Claude account autoswitch is router-driven, not CCS-provider-driven: worker failures tagged as `account_exhausted` rotate the next task attempt to the next isolated profile from `mapping/account_pools.yaml`.
 - Historical architecture notes remain in [kiss_mesh/README.md](kiss_mesh/README.md).
 - Canonical architecture for the current runtime is now in [ARCHITECTURE.md](/media/sam/1TB/gobabygo/ARCHITECTURE.md).
 - Quick operator guidance is in [QUICKSTART.md](/media/sam/1TB/gobabygo/QUICKSTART.md).

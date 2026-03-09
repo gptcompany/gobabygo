@@ -613,6 +613,40 @@ class TestCLIExecution:
         assert "something broke" in error
 
     @patch("src.router.worker_client.subprocess.run")
+    def test_subprocess_rate_limit_sets_error_kind(self, mock_run, mock_router):
+        """Claude rate limit failures are tagged for router-side account rotation."""
+        mock_run.return_value = type("Result", (), {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "API Error: 429 rate_limit_error You've hit your limit",
+        })()
+
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-rate-limit",
+            "title": "rate limit test",
+            "payload": {"prompt": "Do something"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            cli_type="claude",
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        assert len(MockRouterHandler.fail_calls) == 1
+        assert MockRouterHandler.fail_calls[0]["error_kind"] == "account_exhausted"
+
+    @patch("src.router.worker_client.subprocess.run")
     def test_subprocess_timeout(self, mock_run, mock_router):
         """TimeoutExpired reports failure with timeout message."""
         import subprocess as sp

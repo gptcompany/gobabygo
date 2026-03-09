@@ -8,6 +8,7 @@ Two follow-up fixes from the previous session were implemented:
 
 1. `/sessions/messages` instability
 2. misleading `upterm` worker logging
+3. Claude account autoswitch groundwork in router/worker runtime
 
 ## Code changes
 

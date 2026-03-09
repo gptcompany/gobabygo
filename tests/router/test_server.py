@@ -697,6 +697,31 @@ class TestTaskFailEndpoint:
         )
         assert resp.status_code == 200
 
+    def test_fail_accepts_error_kind(self, server_url, db):
+        worker = Worker(worker_id="w1", cli_type="claude", account_profile="work", status="busy")
+        db.insert_worker(worker)
+
+        task = Task(
+            task_id="t1",
+            title="test",
+            phase="implement",
+            status=TaskStatus.running,
+            assigned_worker="w1",
+            idempotency_key="k1",
+        )
+        db.insert_task(task)
+
+        resp = requests.post(
+            f"{server_url}/tasks/fail",
+            json={
+                "task_id": "t1",
+                "worker_id": "w1",
+                "error": "You've hit your limit",
+                "error_kind": "account_exhausted",
+            },
+        )
+        assert resp.status_code == 200
+
 
 class TestTaskAdminEndpoints:
     def test_cancel_queued_task(self, server_url, db):

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 import requests
 
+from src.router.failure_classifier import classify_cli_failure
 from src.router.provider_runtime import resolve_cli_command
 
 logger = logging.getLogger("mesh.worker")
@@ -291,7 +292,14 @@ class MeshWorker:
                 self._report_complete(task_id, {"output": output, "exit_code": 0})
             else:
                 stderr = proc.stderr[-2048:] if len(proc.stderr) > 2048 else proc.stderr
-                self._report_failure(task_id, f"exit_code={proc.returncode}: {stderr}")
+                stdout = proc.stdout[-2048:] if len(proc.stdout) > 2048 else proc.stdout
+                failure_output = stderr or stdout
+                error_kind = classify_cli_failure(self.config.cli_type, failure_output)
+                self._report_failure(
+                    task_id,
+                    f"exit_code={proc.returncode}: {failure_output}",
+                    error_kind=error_kind,
+                )
 
         except subprocess.TimeoutExpired:
             self._report_failure(task_id, f"timeout after {self.config.task_timeout}s")
@@ -341,17 +349,20 @@ class MeshWorker:
         except requests.RequestException as e:
             logger.error("Failed to report completion for task %s: %s", task_id, e)
 
-    def _report_failure(self, task_id: str, error: str) -> None:
+    def _report_failure(self, task_id: str, error: str, *, error_kind: str = "") -> None:
         """Report task failure to router."""
         logger.error("Task %s failed: %s", task_id, error)
         try:
+            body = {
+                "task_id": task_id,
+                "worker_id": self.config.worker_id,
+                "error": error,
+            }
+            if error_kind:
+                body["error_kind"] = error_kind
             self._session.post(
                 f"{self.config.router_url}/tasks/fail",
-                json={
-                    "task_id": task_id,
-                    "worker_id": self.config.worker_id,
-                    "error": error,
-                },
+                json=body,
                 timeout=5,
             )
         except requests.RequestException as e:

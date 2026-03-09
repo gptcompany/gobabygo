@@ -16,11 +16,13 @@ from datetime import datetime, timedelta, timezone
 
 from typing import Any
 
+from src.router.account_pool import get_account_pool, next_account_for_provider
 from src.router.db import RouterDB
 from src.router.dependency import check_dependencies
+from src.router.failure_classifier import classify_cli_failure
 from src.router.fsm import TransitionRequest, apply_transition, validate_transition
 from src.router.longpoll import LongPollRegistry
-from src.router.models import Lease, Task, TaskEvent, TaskStatus, Worker
+from src.router.models import CLIType, Lease, Task, TaskEvent, TaskStatus, Worker
 from src.router.topology import Topology
 from src.router.verifier import VerifierGate
 
@@ -55,6 +57,7 @@ class Scheduler:
         session_fallback_to_batch: bool = False,
         longpoll_registry: LongPollRegistry | None = None,
         topology: Topology | None = None,
+        account_pool_config: str | None = None,
     ) -> None:
         self._db = db
         self._lease_duration_s = lease_duration_s
@@ -63,6 +66,7 @@ class Scheduler:
         self._verifier = VerifierGate()
         self._longpoll_registry = longpoll_registry
         self._topology = topology
+        self._account_pool_config = account_pool_config
 
     def find_all_eligible_workers(self, task: Task) -> list[Worker]:
         """Find all eligible workers for a task, sorted by idle_since ASC."""
@@ -434,7 +438,11 @@ class Scheduler:
         return True
 
     def report_failure(
-        self, task_id: str, worker_id: str, reason: str = ""
+        self,
+        task_id: str,
+        worker_id: str,
+        reason: str = "",
+        error_kind: str = "",
     ) -> bool:
         """Worker reports task failure: running -> failed + cleanup.
 
@@ -444,6 +452,25 @@ class Scheduler:
         task = self._db.get_task(task_id)
         if task is None or task.assigned_worker != worker_id:
             return False
+
+        detected_kind = error_kind or classify_cli_failure(task.target_cli.value, reason)
+        if task.target_cli == CLIType.claude and detected_kind == "account_exhausted":
+            pool = get_account_pool("claude", config_path=self._account_pool_config)
+            max_attempts = max(3, len(pool.accounts)) if pool else 3
+            next_account = next_account_for_provider(
+                "claude",
+                task.target_account,
+                config_path=self._account_pool_config,
+            )
+            if next_account and task.attempt < max_attempts:
+                return self._retry_step(
+                    task,
+                    worker_id,
+                    reason,
+                    new_target_account=next_account,
+                    max_attempts=max_attempts,
+                    retry_kind=detected_kind,
+                )
 
         # Retry policy: requeue instead of failing if retries remain
         if task.on_failure == "retry" and task.attempt < 3:
@@ -485,7 +512,16 @@ class Scheduler:
         on_task_terminal(self._db, task_id)
         return True
 
-    def _retry_step(self, task: Task, worker_id: str, reason: str) -> bool:
+    def _retry_step(
+        self,
+        task: Task,
+        worker_id: str,
+        reason: str,
+        *,
+        new_target_account: str | None = None,
+        max_attempts: int = 3,
+        retry_kind: str = "",
+    ) -> bool:
         """Requeue a step for retry with backoff. Task stays non-terminal."""
         from src.router.retry import RetryPolicy
         retry_policy = RetryPolicy(self._db)
@@ -513,16 +549,16 @@ class Scheduler:
                 conn=conn,
             )
 
-            self._db.update_task_fields(
-                task.task_id,
-                {
-                    "attempt": new_attempt,
-                    "not_before": not_before,
-                    "assigned_worker": None,
-                    "lease_expires_at": None,
-                },
-                conn=conn,
-            )
+            update_fields: dict[str, Any] = {
+                "attempt": new_attempt,
+                "not_before": not_before,
+                "assigned_worker": None,
+                "session_id": None,
+                "lease_expires_at": None,
+            }
+            if new_target_account:
+                update_fields["target_account"] = new_target_account
+            self._db.update_task_fields(task.task_id, update_fields, conn=conn)
 
             self._db.insert_event(
                 TaskEvent(
@@ -532,6 +568,8 @@ class Scheduler:
                         "attempt": new_attempt,
                         "reason": f"retry: {reason}",
                         "not_before": not_before,
+                        "retry_kind": retry_kind,
+                        "next_target_account": new_target_account,
                     },
                 ),
                 conn=conn,
@@ -556,7 +594,7 @@ class Scheduler:
         # Do NOT call on_task_terminal — task is not terminal (requeued)
         logger.info(
             "step_retry task=%s attempt=%d/%d not_before=%s",
-            task.task_id, new_attempt, 3, not_before,
+            task.task_id, new_attempt, max_attempts, not_before,
         )
         return True
 

@@ -237,6 +237,7 @@ Important runtime note:
 - default policy runs Claude sessions as `sam`, so Claude account profiles should live under `/home/sam/.ccs`
 - default policy runs Codex sessions as `mesh-worker`, so Codex CLIProxy state should live under `/home/mesh-worker/.ccs`
 - otherwise tasks can dispatch correctly but still fail later on provider auth/bootstrap
+- Claude profile rotation on limit is handled by the router, not by `ccs claude`: keep the isolated profiles listed in `mapping/account_pools.yaml` valid and authenticated under `/home/sam/.ccs`
 
 ## Troubleshooting
 

@@ -135,6 +135,7 @@ Important distinction:
 - for Claude, `target_account` must be a real CCS profile created with `ccs auth create <profile>`
 - `ccs claude` is not the canonical isolation mechanism for account-scoped Claude history
 - default Claude account selection is policy-driven from `mapping/account_pools.yaml`
+- Claude rate-limit recovery is policy-driven too: `429`, `You've hit your limit`, `You're out of extra usage`, and `rate limit error` are treated as `account_exhausted` and retried on the next isolated Claude profile
 
 Current Unix-user policy:
 
