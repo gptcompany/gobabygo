@@ -347,6 +347,7 @@ Verified live behavior on the current stack:
 - long-lived interactive sessions now renew leases on heartbeat and are not requeued after the 5-minute lease window
 - real account-scoped Claude CCS profiles are supported (`ccs <profile>`, not `ccs claude`)
 - Claude limit recovery now rotates across those isolated profiles on retry when worker output matches `429`, `You've hit your limit`, `You're out of extra usage`, or `rate limit error`
+- Docker router reachability is controlled by `MESH_ROUTER_BIND_HOST` in `deploy/compose.yml`; for multi-host WS/router setups it must not stay pinned to `127.0.0.1`
 
 Known operational gaps:
 - `upterm` is installed on WS; attach URL discovery is implemented in code, but if workers still log `upterm binary not found ...` the running service has not picked up the latest code yet
