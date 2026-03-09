@@ -107,6 +107,8 @@ class SessionWorkerConfig:
     account_profile: str = "work"
     auth_token: str | None = None
     heartbeat_interval: float = 5.0
+    heartbeat_timeout: float = 3.0
+    control_plane_timeout: float = 15.0
     longpoll_timeout: float = 25.0
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor", "interactive"])
     allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
@@ -145,6 +147,8 @@ class SessionWorkerConfig:
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
             capabilities=capabilities,
             allowed_accounts=allowed_accounts,
+            heartbeat_timeout=float(os.environ.get("MESH_HEARTBEAT_TIMEOUT_S", "3")),
+            control_plane_timeout=float(os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "15")),
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
             provider_runtime_config=os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG"),
@@ -215,7 +219,11 @@ class MeshSessionWorker:
             "status": "idle",
             "concurrency": 1,
         }
-        resp = self._http.post(f"{self.config.router_url}/register", json=payload, timeout=5)
+        resp = self._http.post(
+            f"{self.config.router_url}/register",
+            json=payload,
+            timeout=self.config.control_plane_timeout,
+        )
         if resp.status_code == 409:
             logger.info("Session worker %s already registered, continuing", self.config.worker_id)
             return
@@ -227,7 +235,7 @@ class MeshSessionWorker:
         try:
             resp = self._http.post(
                 f"{self.config.router_url}/workers/{self.config.worker_id}/deregister",
-                timeout=5,
+                timeout=self.config.control_plane_timeout,
             )
             if resp.status_code not in (200, 404):
                 logger.warning(
@@ -243,7 +251,11 @@ class MeshSessionWorker:
             url = f"{self.config.router_url}/heartbeat"
             while self._running:
                 try:
-                    self._http.post(url, json={"worker_id": self.config.worker_id}, timeout=3)
+                    self._http.post(
+                        url,
+                        json={"worker_id": self.config.worker_id},
+                        timeout=self.config.heartbeat_timeout,
+                    )
                 except requests.RequestException as e:
                     logger.warning("Heartbeat failed: %s", e)
                 time.sleep(self.config.heartbeat_interval)
@@ -345,7 +357,15 @@ class MeshSessionWorker:
             start = time.monotonic()
             after_seq = 0
             # Mark any messages already present so we don't replay our own initial prompt.
-            msgs = self._list_session_messages(session_id, after_seq=0, limit=1000)
+            try:
+                msgs = self._list_session_messages(session_id, after_seq=0, limit=1000)
+            except requests.RequestException as e:
+                logger.warning(
+                    "Initial session message sync failed for %s: %s; continuing with after_seq=0",
+                    session_id,
+                    e,
+                )
+                msgs = []
             if msgs:
                 after_seq = max(int(m.get("seq") or 0) for m in msgs)
             last_capture = ""
@@ -751,7 +771,7 @@ class MeshSessionWorker:
             resp = self._http.post(
                 f"{self.config.router_url}/tasks/ack",
                 json={"task_id": task_id, "worker_id": self.config.worker_id},
-                timeout=5,
+                timeout=self.config.control_plane_timeout,
             )
             if resp.status_code != 200:
                 logger.warning("Task %s ack failed (%d)", task_id, resp.status_code)
@@ -766,7 +786,7 @@ class MeshSessionWorker:
             self._http.post(
                 f"{self.config.router_url}/tasks/complete",
                 json={"task_id": task_id, "worker_id": self.config.worker_id, "result": result},
-                timeout=5,
+                timeout=self.config.control_plane_timeout,
             )
             logger.info("Task %s completed", task_id)
         except requests.RequestException as e:
@@ -778,7 +798,7 @@ class MeshSessionWorker:
             self._http.post(
                 f"{self.config.router_url}/tasks/fail",
                 json={"task_id": task_id, "worker_id": self.config.worker_id, "error": error},
-                timeout=5,
+                timeout=self.config.control_plane_timeout,
             )
         except requests.RequestException as e:
             logger.error("Failed to report failure for task %s: %s", task_id, e)
@@ -805,7 +825,11 @@ class MeshSessionWorker:
             "task_id": task["task_id"],
             "metadata": metadata,
         }
-        resp = self._http.post(f"{self.config.router_url}/sessions/open", json=body, timeout=5)
+        resp = self._http.post(
+            f"{self.config.router_url}/sessions/open",
+            json=body,
+            timeout=self.config.control_plane_timeout,
+        )
         resp.raise_for_status()
         return resp.json()["session"]["session_id"]
 
@@ -827,7 +851,7 @@ class MeshSessionWorker:
                 "content": content,
                 "metadata": metadata or {},
             },
-            timeout=5,
+            timeout=self.config.control_plane_timeout,
         )
         resp.raise_for_status()
 
@@ -835,15 +859,22 @@ class MeshSessionWorker:
         resp = self._http.post(
             f"{self.config.router_url}/sessions/close",
             json={"session_id": session_id, "state": state},
-            timeout=5,
+            timeout=self.config.control_plane_timeout,
         )
+        if resp.status_code == 404:
+            logger.warning(
+                "Session close returned 404 for session %s (state=%s); treating as already closed",
+                session_id,
+                state,
+            )
+            return
         resp.raise_for_status()
 
     def _list_session_messages(self, session_id: str, *, after_seq: int, limit: int = 200) -> list[dict]:
         resp = self._http.get(
             f"{self.config.router_url}/sessions/messages",
             params={"session_id": session_id, "after_seq": after_seq, "limit": limit},
-            timeout=5,
+            timeout=self.config.control_plane_timeout,
         )
         resp.raise_for_status()
         return resp.json().get("messages", [])

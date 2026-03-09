@@ -6,6 +6,7 @@ import json
 import threading
 import time
 from http.server import ThreadingHTTPServer
+from unittest.mock import Mock
 
 import pytest
 import requests
@@ -131,6 +132,42 @@ class TestHealthEndpoint:
         db.insert_task(task)
         resp = requests.get(f"{server_url}/health")
         assert resp.json()["queue_depth"] == 1
+
+
+class TestClientDisconnectHandling:
+    def test_send_json_suppresses_broken_pipe(self) -> None:
+        handler = MeshRouterHandler.__new__(MeshRouterHandler)
+        handler.path = "/health"
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+        handler.wfile.write.side_effect = BrokenPipeError()
+
+        handler._send_json(200, {"status": "ok"})
+
+        handler.send_response.assert_called_once_with(200)
+        handler.end_headers.assert_called_once()
+
+    def test_do_get_ignores_client_disconnect(self) -> None:
+        handler = MeshRouterHandler.__new__(MeshRouterHandler)
+        handler.path = "/health"
+        handler._handle_health = Mock(side_effect=BrokenPipeError())
+        handler._send_json = Mock()
+
+        handler.do_GET()
+
+        handler._send_json.assert_not_called()
+
+    def test_do_post_ignores_client_disconnect(self) -> None:
+        handler = MeshRouterHandler.__new__(MeshRouterHandler)
+        handler.path = "/tasks"
+        handler._handle_create_task = Mock(side_effect=BrokenPipeError())
+        handler._send_json = Mock()
+
+        handler.do_POST()
+
+        handler._send_json.assert_not_called()
 
 
 class TestRegisterEndpoint:

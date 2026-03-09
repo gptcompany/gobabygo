@@ -41,6 +41,8 @@ def test_session_worker_config_from_env() -> None:
         "MESH_CLI_COMMAND": "claude",
         "MESH_CAPABILITIES": "interactive,code",
         "MESH_ALLOWED_ACCOUNTS": "work-claude,review-codex,*",
+        "MESH_HEARTBEAT_TIMEOUT_S": "4.5",
+        "MESH_CONTROL_PLANE_TIMEOUT_S": "22",
         "MESH_SESSION_POLL_INTERVAL_S": "0.5",
         "MESH_TMUX_SESSION_PREFIX": "meshx",
     }
@@ -55,6 +57,8 @@ def test_session_worker_config_from_env() -> None:
     assert cfg.cli_command == "claude"
     assert cfg.capabilities == ["interactive", "code"]
     assert cfg.allowed_accounts == ["work-claude", "review-codex", "*"]
+    assert cfg.heartbeat_timeout == 4.5
+    assert cfg.control_plane_timeout == 22.0
     assert cfg.session_poll_interval_s == 0.5
     assert cfg.tmux_session_prefix == "meshx"
 
@@ -126,6 +130,30 @@ def test_config_defaults_attach_fields() -> None:
     assert cfg.upterm_ready_timeout == 10.0
     assert cfg.ssh_tmux_user == ""
     assert cfg.ssh_tmux_host == ""
+
+
+def test_control_plane_operations_use_configured_timeout() -> None:
+    worker = _make_worker(control_plane_timeout=17.5)
+    worker._http = MagicMock()
+    ok_resp = MagicMock(status_code=200)
+    ok_resp.json.return_value = {"session": {"session_id": "sid-timeout"}}
+    worker._http.post.return_value = ok_resp
+    worker._http.get.return_value = MagicMock(status_code=200, json=Mock(return_value={"messages": []}))
+
+    worker._register()
+    worker._deregister()
+    assert worker._ack_task("task-1") is True
+    worker._report_complete("task-1", {"ok": True})
+    worker._report_failure("task-1", "boom")
+    assert worker._open_session({"task_id": "task-1", "title": "t"}, "mesh-sess", "/tmp/work", "claude-rektslug") == "sid-timeout"
+    worker._send_session_message("sid-timeout", direction="system", role="system", content="hello")
+    worker._close_session("sid-timeout")
+    assert worker._list_session_messages("sid-timeout", after_seq=0, limit=50) == []
+
+    post_timeouts = [call.kwargs["timeout"] for call in worker._http.post.call_args_list]
+    get_timeouts = [call.kwargs["timeout"] for call in worker._http.get.call_args_list]
+    assert post_timeouts == [17.5] * len(post_timeouts)
+    assert get_timeouts == [17.5]
 
 
 # ---------------------------------------------------------------------------
@@ -708,6 +736,108 @@ class TestAttachCleanupInExecuteTask:
         mock_send_text.assert_called_once_with("mesh-claude-claude-alt-t-005", "hello")
         mock_complete.assert_called_once()
 
+    @patch.object(MeshSessionWorker, "_tmux_has_session", return_value=False)
+    @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-404")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch("src.router.session_worker.time.sleep")
+    def test_missing_session_on_close_is_tolerated(
+        self,
+        mock_sleep: Mock,
+        mock_report_failure: Mock,
+        mock_report_complete: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        worker, http = self._setup_worker()
+        close_404 = MagicMock(status_code=404)
+        close_404.raise_for_status.side_effect = requests.HTTPError("session_not_found")
+
+        def post_dispatch(url, **kw):
+            if "/tasks/ack" in url:
+                return MagicMock(status_code=200)
+            if "/sessions/send" in url:
+                return MagicMock(status_code=200)
+            if "/sessions/close" in url:
+                return close_404
+            if "/tasks/complete" in url:
+                return MagicMock(status_code=200)
+            return MagicMock(status_code=200)
+
+        http.post.side_effect = post_dispatch
+
+        task = {
+            "task_id": "t-006",
+            "execution_mode": "session",
+            "target_account": "claude-rektslug",
+            "payload": {
+                "prompt": "/exit",
+                "working_dir": "/media/sam/1TB/rektslug",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_report_complete.assert_called_once()
+        mock_report_failure.assert_not_called()
+        assert "Session close returned 404 for session sid-404" in caplog.text
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", return_value=False)
+    @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-sync")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch("src.router.session_worker.time.sleep")
+    def test_initial_session_message_sync_failure_is_non_fatal(
+        self,
+        mock_sleep: Mock,
+        mock_report_failure: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        worker, http = self._setup_worker()
+        worker._list_session_messages = Mock(side_effect=requests.HTTPError("boom"))  # type: ignore[method-assign]
+
+        task = {
+            "task_id": "t-007",
+            "execution_mode": "session",
+            "target_account": "claude-rektslug",
+            "payload": {
+                "prompt": "/exit",
+                "working_dir": "/media/sam/1TB/rektslug",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_report_complete.assert_called_once()
+        mock_report_failure.assert_not_called()
+        assert "Initial session message sync failed for sid-sync" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # _deliver_inbound_messages
@@ -902,5 +1032,5 @@ def test_stop_deregisters_session_worker() -> None:
 
     worker._http.post.assert_called_once_with(
         "http://localhost:8780/workers/ws-test-01/deregister",
-        timeout=5,
+        timeout=worker.config.control_plane_timeout,
     )

@@ -151,7 +151,19 @@ class HeartbeatManager:
             return {"status": "stale_recovered", "requeued_tasks": requeued_tasks}
 
         if worker.status in ("idle", "busy"):
-            self._db.update_worker(worker_id, {"last_heartbeat": now})
+            updates: dict[str, str | None] = {"last_heartbeat": now}
+            if worker.status == "busy":
+                active_tasks = self._db.get_tasks_by_worker(worker_id, status="running")
+                active_tasks.extend(self._db.get_tasks_by_worker(worker_id, status="assigned"))
+                if not active_tasks:
+                    updates["status"] = "idle"
+                    updates["idle_since"] = now
+                    updates["stale_since"] = None
+                    logger.info(
+                        "Recovered worker %s from busy-without-tasks to idle on heartbeat",
+                        worker_id,
+                    )
+            self._db.update_worker(worker_id, updates)
             self._renew_active_leases(worker_id, now)
             return {"status": "ok"}
 

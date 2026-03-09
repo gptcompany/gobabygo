@@ -46,6 +46,7 @@ from src.router.verifier import VerifierGate
 from src.router.worker_manager import WorkerManager
 
 logger = logging.getLogger("mesh.server")
+_CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError)
 
 
 class MeshRouterHandler(BaseHTTPRequestHandler):
@@ -111,6 +112,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(404, {"error": "not_found"})
 
+        except _CLIENT_DISCONNECT_ERRORS:
+            logger.info("Client disconnected during GET %s", self.path)
         except Exception as e:
             self._send_json(500, {"error": "internal_error", "details": str(e)})
 
@@ -176,6 +179,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                     self._send_json(404, {"error": "not_found"})
             else:
                 self._send_json(404, {"error": "not_found"})
+        except _CLIENT_DISCONNECT_ERRORS:
+            logger.info("Client disconnected during POST %s", self.path)
         except Exception as e:
             self._send_json(500, {"error": "internal_error", "details": str(e)})
 
@@ -1381,16 +1386,19 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: int, data: dict | None) -> None:
         """Send JSON response."""
-        self.send_response(status)
-        if data is not None:
-            body = json.dumps(data).encode("utf-8")
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+        try:
+            self.send_response(status)
+            if data is not None:
+                body = json.dumps(data).encode("utf-8")
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            else:
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+        except _CLIENT_DISCONNECT_ERRORS:
+            logger.info("Client disconnected before response flush for %s", self.path)
 
     def log_message(self, format: str, *args: object) -> None:
         """Route access logs to logger instead of stderr."""

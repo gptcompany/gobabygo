@@ -74,6 +74,16 @@ class TestReceiveHeartbeat:
         resp = hm.receive_heartbeat("w1")
         assert resp["status"] == "ok"
 
+    def test_busy_worker_without_active_tasks_recovers_to_idle(self, hm, db):
+        _register_worker(db, status="busy")
+
+        resp = hm.receive_heartbeat("w1")
+
+        assert resp["status"] == "ok"
+        worker = db.get_worker("w1")
+        assert worker is not None
+        assert worker.status == "idle"
+
     def test_heartbeat_renews_active_lease(self, hm, db):
         _register_worker(db, worker_id="w1", status="busy")
         task = Task(
