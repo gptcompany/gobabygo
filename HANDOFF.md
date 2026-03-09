@@ -104,6 +104,9 @@ Important boundary:
 
 - historical worker rows still exist in the router DB for audit
 - the default operator view is now clean even if the DB keeps those rows
+- Gemini session runtime now runs as `sam`, matching the validated local `ccs gemini` runtime
+- latest worker code adds longer Claude Code prompt readiness wait, a short tmux send-settle delay, and stale tmux cleanup on retry
+- one clean live rerun is still needed to validate the prompt-submission fix without legacy queued tasks interfering
 
 ## Next session checks
 

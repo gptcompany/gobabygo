@@ -21,4 +21,8 @@ providers:
   gemini:
     strategy: cliproxy_provider
     command_template: "ccs gemini"
-    notes: "Provider-direct today. Can be changed centrally to account-aware form later."
+    session_service_user: "sam"
+    session_service_group: "sam"
+    session_service_supplementary_groups:
+      - "mesh"
+    notes: "Provider-direct today via CCS/CLIProxy, but session worker runs as sam to reuse the validated local Gemini runtime."

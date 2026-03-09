@@ -173,6 +173,7 @@ Current Unix-user policy:
 
 - Claude session worker -> `sam`
 - Codex session worker -> `mesh-worker`
+- Gemini session worker -> `sam`
 
 This matters because provider auth/state lives under the Unix user running the session worker.
 

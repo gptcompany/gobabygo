@@ -473,12 +473,17 @@ bootstrap_mesh_worker_runtime() {
 bootstrap_mesh_worker_runtime
 configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
 configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
+configure_session_worker_env "${env_dir}/mesh-session-gemini-work.env"
 apply_session_service_override "mesh-session-claude-work" "claude"
 apply_session_service_override "mesh-session-codex-work" "codex"
+apply_session_service_override "mesh-session-gemini-work" "gemini"
 
 sudo systemctl daemon-reload
 sudo systemctl restart mesh-session-worker@mesh-session-claude-work
 sudo systemctl restart mesh-session-worker@mesh-session-codex-work
+if [[ -f "${env_dir}/mesh-session-gemini-work.env" ]]; then
+  sudo systemctl restart mesh-session-worker@mesh-session-gemini-work
+fi
 
 if [[ "$stop_batch" == "1" ]]; then
   sudo systemctl stop mesh-worker@claude-work || true
@@ -489,6 +494,9 @@ fi
 
 sudo systemctl is-active --quiet mesh-session-worker@mesh-session-claude-work && echo "[OK] session claude active"
 sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && echo "[OK] session codex active"
+if [[ -f "${env_dir}/mesh-session-gemini-work.env" ]]; then
+  sudo systemctl is-active --quiet mesh-session-worker@mesh-session-gemini-work && echo "[OK] session gemini active"
+fi
 
 echo
 echo "Bootstrap complete."

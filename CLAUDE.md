@@ -28,12 +28,14 @@ Verified on the real `.100` router + `.111` WS stack:
 - worker deregistration and periodic recovery are live
 - lease renewal on heartbeat is implemented and tested, so healthy long-lived sessions are no longer requeued after the 5-minute lease window
 - `claude` runtime resolution is policy-driven (`ccs {target_account}` for real CCS profiles)
+- `codex` and `gemini` runtime resolution use Claude Code as frontend plus CCS/CLIProxy provider routing
 - session worker runtime on WS now uses current Claude Code (`/usr/local/bin/claude`, not the stale `/usr/bin/claude`)
 - router `.100` is back on a clean release runtime, not the dirty checkout under `/home/sam/work/gobabygo`
 - WS local shell auth and WS worker service auth have been realigned to the same live router token
 - current healthy session workers are:
   - `ws-claude-session-dyn-01`
   - `ws-codex-session-dyn-01`
+  - `ws-gemini-session-dyn-01`
 
 Not yet production-clean:
 
@@ -41,6 +43,7 @@ Not yet production-clean:
 - `upterm` launch logging is fixed in code; if the worker still logs `upterm binary not found ...` for an existing binary, the worker runtime has not been restarted on the new code yet
 - brand-new Claude CCS profiles still need one first login/bootstrap in their own instance
 - session worker Unix user must match where that provider/runtime state actually lives
+- Gemini session runtime now runs as `sam`; remaining live friction is Claude Code tmux prompt-submission timing, not provider auth/bootstrap
 - several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
 
 ## Current Handoff Snapshot
@@ -107,6 +110,7 @@ Default policy:
 - `gemini` -> CLIProxy provider direct: `ccs gemini`
 - Claude session worker service user defaults to `sam`
 - Codex session worker service user defaults to `mesh-worker`
+- Gemini session worker service user defaults to `sam`
 
 If CCS changes syntax later, edit this file instead of patching worker code.
 
@@ -279,6 +283,7 @@ Important runtime note:
 - session worker auth/state must exist under the Unix user selected in `mapping/provider_runtime.yaml`
 - default policy runs Claude sessions as `sam`, so Claude account profiles should live under `/home/sam/.ccs`
 - default policy runs Codex sessions as `mesh-worker`, so Codex CLIProxy state should live under `/home/mesh-worker/.ccs`
+- default policy runs Gemini sessions as `sam`, so Gemini CLIProxy state should live under `/home/sam/.ccs`
 - otherwise tasks can dispatch correctly but still fail later on provider auth/bootstrap
 - Claude profile rotation on limit is handled by the router, not by `ccs claude`: keep the isolated profiles listed in `mapping/account_pools.yaml` valid and authenticated under `/home/sam/.ccs`
 
@@ -296,4 +301,5 @@ Important runtime note:
 - a session task gets requeued after ~5 minutes even though tmux is still alive: router or worker is still running old code without lease-renewal fixes; redeploy router + worker runtime.
 - a session opens tmux but blocks on theme/security/trust-folder/MCP prompts: this is CLI bootstrap drift under `mesh-worker`, not a router bus failure.
 - `mesh ui` is operator UX only; when in doubt, trust router task state plus `journalctl` on the session worker.
+- Claude Code-backed session workers now wait longer for the `❯` prompt, add a short settle before `Enter`, and kill stale tmux sessions on retry. If a task still sits on the typed prompt, inspect the tmux pane before blaming provider auth.
 - if you ask whether the repo is still in scope for `boss/president/lead/workers` multi-panel operation: yes. `lead` is now a first-class communication role in the router policy layer, with create/dispatch/visibility permissions and runtime communication edges to both `president` and `worker`.

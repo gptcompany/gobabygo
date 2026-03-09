@@ -29,6 +29,7 @@ from src.router.failure_classifier import classify_cli_failure
 from src.router.provider_runtime import resolve_cli_command
 
 logger = logging.getLogger("mesh.session_worker")
+_CLAUDE_CODE_READY_MARKERS = ("❯",)
 
 
 class SessionNotFoundError(RuntimeError):
@@ -122,6 +123,9 @@ class SessionWorkerConfig:
     provider_runtime_config: str | None = None  # None=repo default, ""=disabled
     work_dir: str = "/tmp/mesh-tasks"
     session_poll_interval_s: float = 1.0
+    startup_ready_timeout_s: float = 10.0
+    startup_ready_poll_interval_s: float = 0.25
+    tmux_send_settle_s: float = 0.1
     tmux_bin: str = "tmux"
     tmux_capture_lines: int = 200
     output_emit_max_chars: int = 8000
@@ -165,6 +169,11 @@ class SessionWorkerConfig:
             ] or ["session"],
             work_dir=os.environ.get("MESH_WORK_DIR", "/tmp/mesh-tasks"),
             session_poll_interval_s=float(os.environ.get("MESH_SESSION_POLL_INTERVAL_S", "1.0")),
+            startup_ready_timeout_s=float(os.environ.get("MESH_SESSION_READY_TIMEOUT_S", "10.0")),
+            startup_ready_poll_interval_s=float(
+                os.environ.get("MESH_SESSION_READY_POLL_INTERVAL_S", "0.25")
+            ),
+            tmux_send_settle_s=float(os.environ.get("MESH_TMUX_SEND_SETTLE_S", "0.1")),
             tmux_bin=os.environ.get("MESH_TMUX_BIN", "tmux"),
             tmux_capture_lines=int(os.environ.get("MESH_TMUX_CAPTURE_LINES", "200")),
             output_emit_max_chars=int(os.environ.get("MESH_OUTPUT_EMIT_MAX_CHARS", "8000")),
@@ -342,6 +351,12 @@ class MeshSessionWorker:
             )
             self._prepare_cli_runtime(work_dir, target_account)
             tmux_session_name = self._tmux_session_name(task_id, target_account)
+            if self._tmux_has_session(tmux_session_name):
+                logger.warning(
+                    "Killing stale tmux session before retry: %s",
+                    tmux_session_name,
+                )
+                self._tmux_kill_session(tmux_session_name)
             self._tmux_new_session(tmux_session_name, work_dir, cmd_base)
 
             attach_meta, upterm_proc = self._create_attach_handle(tmux_session_name)
@@ -361,6 +376,11 @@ class MeshSessionWorker:
                 content=prompt,
                 metadata={"source": "task.payload.prompt", "task_id": task_id},
             )
+            if not self._wait_for_cli_ready(tmux_session_name):
+                logger.warning(
+                    "CLI prompt readiness timeout for session %s; sending prompt anyway",
+                    tmux_session_name,
+                )
             self._tmux_send_text(tmux_session_name, prompt)
 
             start = time.monotonic()
@@ -598,6 +618,7 @@ class MeshSessionWorker:
                     capture_output=True,
                     text=True,
                 )
+                time.sleep(max(0.0, float(self.config.tmux_send_settle_s)))
             # Submit each line (interactive CLI prompt style).
             subprocess.run(
                 [self.config.tmux_bin, "send-keys", "-t", target, "Enter"],
@@ -651,6 +672,17 @@ class MeshSessionWorker:
         if proc.returncode != 0:
             return ""
         return proc.stdout.strip()
+
+    def _wait_for_cli_ready(self, session_name: str) -> bool:
+        timeout_s = max(0.0, float(self.config.startup_ready_timeout_s))
+        poll_s = max(0.05, float(self.config.startup_ready_poll_interval_s))
+        attempts = max(1, int(timeout_s / poll_s)) if timeout_s > 0 else 1
+        for _ in range(attempts):
+            captured = self._tmux_capture_pane(session_name)
+            if any(marker in captured for marker in _CLAUDE_CODE_READY_MARKERS):
+                return True
+            time.sleep(poll_s)
+        return False
 
     def _emit_cli_output_if_changed(
         self,

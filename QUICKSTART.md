@@ -237,6 +237,7 @@ Default behavior:
 - `codex` -> provider direct: `ccs codex`
 - `gemini` -> provider direct: `ccs gemini`
 - Claude session worker service user -> `sam`
+- Gemini session worker service user -> `sam`
 
 Operator UI policy:
 
@@ -374,6 +375,7 @@ Known operational gaps:
 - brand-new CCS profiles still require one real login/bootstrap under the Unix user that runs that provider
 - if `GET /sessions/messages` returns `500 {"details":"bad parameter or other API misuse"}`, the live router is still running the pre-fix session DB path and needs redeploy
 - session workers preseed Claude project trust/onboarding/MCP metadata automatically; remaining drift is provider/profile bootstrap, not the router bus
+- `ccs codex` and `ccs gemini` still present Claude Code UX. If the prompt is visibly typed but not submitted, treat it as a tmux/TUI timing issue first.
 
 Current real pipeline snapshot:
 

@@ -45,6 +45,9 @@ def test_session_worker_config_from_env() -> None:
         "MESH_HEARTBEAT_TIMEOUT_S": "4.5",
         "MESH_CONTROL_PLANE_TIMEOUT_S": "22",
         "MESH_SESSION_POLL_INTERVAL_S": "0.5",
+        "MESH_SESSION_READY_TIMEOUT_S": "7",
+        "MESH_SESSION_READY_POLL_INTERVAL_S": "0.2",
+        "MESH_TMUX_SEND_SETTLE_S": "0.15",
         "MESH_TMUX_SESSION_PREFIX": "meshx",
     }
     with patch.dict(os.environ, env):
@@ -61,6 +64,9 @@ def test_session_worker_config_from_env() -> None:
     assert cfg.heartbeat_timeout == 4.5
     assert cfg.control_plane_timeout == 22.0
     assert cfg.session_poll_interval_s == 0.5
+    assert cfg.startup_ready_timeout_s == 7.0
+    assert cfg.startup_ready_poll_interval_s == 0.2
+    assert cfg.tmux_send_settle_s == 0.15
     assert cfg.tmux_session_prefix == "meshx"
 
 
@@ -137,6 +143,24 @@ def test_config_defaults_attach_fields() -> None:
     assert cfg.upterm_skip_host_key_check is True
     assert cfg.ssh_tmux_user == ""
     assert cfg.ssh_tmux_host == ""
+
+
+def test_wait_for_cli_ready_detects_prompt() -> None:
+    worker = _make_worker(startup_ready_timeout_s=0.5, startup_ready_poll_interval_s=0.1)
+    with (
+        patch.object(worker, "_tmux_capture_pane", side_effect=["booting", "╭─── Claude Code", "❯ "]),
+        patch("src.router.session_worker.time.sleep"),
+    ):
+        assert worker._wait_for_cli_ready("mysess") is True
+
+
+def test_wait_for_cli_ready_times_out_without_prompt() -> None:
+    worker = _make_worker(startup_ready_timeout_s=0.3, startup_ready_poll_interval_s=0.1)
+    with (
+        patch.object(worker, "_tmux_capture_pane", return_value="booting"),
+        patch("src.router.session_worker.time.sleep"),
+    ):
+        assert worker._wait_for_cli_ready("mysess") is False
 
 
 def test_control_plane_operations_use_configured_timeout() -> None:
@@ -809,6 +833,49 @@ class TestAttachCleanupInExecuteTask:
         mock_send_text.assert_called_once_with("mesh-claude-claude-alt-t-005", "hello")
         mock_complete.assert_called_once()
 
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[True, False])
+    @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_tmux_kill_session")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-retry")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.time.sleep")
+    def test_retry_kills_stale_tmux_session_before_new_session(
+        self,
+        mock_sleep: Mock,
+        mock_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_kill_session: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+        worker.config.cli_type = "gemini"
+        task = {
+            "task_id": "t-retry",
+            "execution_mode": "session",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "hello",
+                "working_dir": "/tmp/mesh-tasks",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_kill_session.assert_called_once_with("mesh-gemini-gemini-t-retry")
+        mock_tmux_new.assert_called_once()
+        mock_complete.assert_called_once()
+
     @patch.object(MeshSessionWorker, "_tmux_has_session", return_value=False)
     @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
     @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
@@ -911,7 +978,7 @@ class TestAttachCleanupInExecuteTask:
         mock_report_failure.assert_not_called()
         assert "Initial session message sync failed for sid-sync" in caplog.text
 
-    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[True, False])
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
     @patch.object(
         MeshSessionWorker,
         "_tmux_capture_pane",
@@ -1112,8 +1179,9 @@ class TestDeliverInboundMessages:
 
 class TestTmuxOperations:
 
+    @patch("src.router.session_worker.time.sleep")
     @patch("src.router.session_worker.subprocess.run")
-    def test_send_text_multiline(self, mock_run: Mock) -> None:
+    def test_send_text_multiline(self, mock_run: Mock, mock_sleep: Mock) -> None:
         worker = _make_worker()
         worker._tmux_send_text("mysess", "line1\nline2")
         
@@ -1124,14 +1192,17 @@ class TestTmuxOperations:
         assert args[1][4] == "Enter"
         assert args[2][4] == "line2"
         assert args[3][4] == "Enter"
+        assert mock_sleep.call_count == 2
 
+    @patch("src.router.session_worker.time.sleep")
     @patch("src.router.session_worker.subprocess.run")
-    def test_send_text_empty(self, mock_run: Mock) -> None:
+    def test_send_text_empty(self, mock_run: Mock, mock_sleep: Mock) -> None:
         worker = _make_worker()
         worker._tmux_send_text("mysess", "")
         # splitlines() or [text] -> [""] -> 1 iteration -> if line: skip, then Enter
         assert mock_run.call_count == 1
         assert mock_run.call_args[0][0][4] == "Enter"
+        mock_sleep.assert_not_called()
 
     @patch("src.router.session_worker.subprocess.run")
     def test_send_key_repeat(self, mock_run: Mock) -> None:
