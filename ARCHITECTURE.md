@@ -44,6 +44,7 @@ Example current downstream target:
 4. `iTerm2` is operator UX only: observe, attach, split panes, manage tabs.
 5. Session-first is the default operating mode.
 6. Batch is fallback or special-purpose only, not the primary path.
+7. UI roles and runtime roles are related, but not identical.
 
 ## Runtime Topology
 
@@ -67,6 +68,22 @@ Router (.100)
   - scheduler
   - SQLite DB
   - recovery / heartbeat / lease control
+
+Operator UI layout:
+
+- `mesh ui <repo>` opens iTerm2 panels for:
+  - `boss`
+  - `president`
+  - `lead`
+  - `worker-claude`
+  - `worker-codex`
+  - `worker-gemini`
+  - `verifier`
+
+Important boundary:
+
+- these panes are operator affordances
+- orchestration truth still lives in router DB + worker/session records
 ```
 
 ## Execution Model
@@ -144,6 +161,30 @@ Current Unix-user policy:
 
 This matters because provider auth/state lives under the Unix user running the session worker.
 
+## Role Model
+
+Current runtime-enforced roles:
+
+- `boss`
+- `president`
+- `worker`
+
+Those are enforced in the communication policy layer.
+
+Current operator/UI roles:
+
+- `boss`
+- `president`
+- `lead`
+- `worker-*`
+- `verifier`
+
+Important distinction:
+
+- `lead` exists today as operator/layout role, not as a first-class router communication role
+- `verifier` exists operationally as review path / worker responsibility, not as a distinct communication enum
+- this is why the system is in scope with the target architecture, but not yet fully polished as a native multi-role runtime
+
 ## Current Live Runtime Decisions
 
 These decisions are already reflected in code/docs:
@@ -154,27 +195,41 @@ These decisions are already reflected in code/docs:
 - lease renewal on heartbeat
 - worker deregistration and recovery loops
 - central provider runtime resolution
+- centralized provider account pool selection
 - current Claude binary path on WS session runtime should resolve to `/usr/local/bin/claude`
+- router bind is externally reachable on `.100:8780`
 
 ## Current Live Continuation State
 
-This repo must preserve precise continuation state for the active downstream run.
+This repo must preserve precise continuation state for the downstream run and for the control-plane itself.
 
-Current run:
+Current downstream run:
 
 - target repo: `/media/sam/1TB/rektslug`
 - feature: `spec-016`
 - thread: `rektslug-spec-016-20260309-003627`
 - thread_id: `8c9151d2-fea8-4293-8b43-00cd2884d605`
-- active task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
-- active session: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
+- first task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
+- first session: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
+- current state: `failed`
+
+Current control-plane recovery state:
+
+- router runtime has been redeployed from a clean release path:
+  - `/opt/mesh-router/releases/86c3f2b`
+  - `/opt/mesh-router/current` -> current release symlink
+- the historical dirty checkout under `/home/sam/work/gobabygo` was intentionally not used for deploy
+- WS local operator env `~/.mesh/router.env` was realigned to the live router token
+- WS worker service envs `/etc/mesh-worker/*.env` were realigned to the same token and router URL
+- current active session workers on `.111` are healthy and heartbeating:
+  - `ws-claude-session-dyn-01`
+  - `ws-codex-session-dyn-01`
 
 Interpretation:
 
 - the work item belongs to `rektslug`
 - the canonical orchestration state belongs to `gobabygo`
-
-That is why the continuation record must exist in this repo too.
+- the failed run should be treated as a historical attempt; the next implementation pass should start as a fresh run on the recovered control-plane
 
 ## Recent Runtime Issue
 
@@ -210,7 +265,8 @@ When resuming work:
    - `ARCHITECTURE.md`
    - `CLAUDE.md`
 3. verify current thread/session state from this repo
-4. only then switch focus to the target repo (`rektslug`)
+4. verify worker heartbeat freshness and account-pool policy
+5. only then switch focus to the target repo (`rektslug`)
 
 Minimal verification:
 
@@ -222,6 +278,13 @@ curl -sS -H "Authorization: Bearer $MESH_AUTH_TOKEN" \
 
 curl -sS -H "Authorization: Bearer $MESH_AUTH_TOKEN" \
   "$MESH_ROUTER_URL/sessions/bd55bde4-9ea8-4118-9ddd-a16f04fd313b" | python -m json.tool
+```
+
+For a recovered stack, also verify:
+
+```bash
+source ~/.mesh/router.env
+./scripts/mesh status
 ```
 
 ## Document Map

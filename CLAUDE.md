@@ -29,6 +29,11 @@ Verified on the real `.100` router + `.111` WS stack:
 - lease renewal on heartbeat is implemented and tested, so healthy long-lived sessions are no longer requeued after the 5-minute lease window
 - `claude` runtime resolution is policy-driven (`ccs {target_account}` for real CCS profiles)
 - session worker runtime on WS now uses current Claude Code (`/usr/local/bin/claude`, not the stale `/usr/bin/claude`)
+- router `.100` is back on a clean release runtime, not the dirty checkout under `/home/sam/work/gobabygo`
+- WS local shell auth and WS worker service auth have been realigned to the same live router token
+- current healthy session workers are:
+  - `ws-claude-session-dyn-01`
+  - `ws-codex-session-dyn-01`
 
 Not yet production-clean:
 
@@ -36,15 +41,17 @@ Not yet production-clean:
 - `upterm` launch logging is fixed in code; if the worker still logs `upterm binary not found ...` for an existing binary, the worker runtime has not been restarted on the new code yet
 - brand-new Claude CCS profiles still need one first login/bootstrap in their own instance
 - session worker Unix user must match where that provider/runtime state actually lives
+- several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
 
 ## Current Handoff Snapshot
 
-Last active real pipeline:
+Tracked downstream pipeline:
 
 - thread: `rektslug-spec-016-20260309-003627`
 - thread_id: `8c9151d2-fea8-4293-8b43-00cd2884d605`
 - step 0 task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
 - step 0 session: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
+- current thread status: `failed`
 - repo: `/media/sam/1TB/rektslug`
 
 Important boundary:
@@ -53,7 +60,7 @@ Important boundary:
 - precise orchestration continuity for that run belongs to `gobabygo`
 - that is why this repo documents the thread/task/session IDs explicitly
 
-Observed before this commit:
+Observed before the latest recovery work:
 
 - `GET /sessions/messages` on the live router alternated between:
   - `404 session_not_found`
@@ -70,6 +77,23 @@ Committed fix in this session:
 - `RouterDB` now tolerates `NULL` / empty metadata blobs on read
 - `session_worker` treats router `404 session_not_found` as terminal and stops polling instead of spamming forever
 - `session_worker` now logs real `OSError` details for `upterm` launch failures instead of collapsing everything into `binary not found`
+
+Operational recovery completed after those code fixes:
+
+- deployed router `.100` from a clean release path:
+  - `/opt/mesh-router/releases/86c3f2b`
+- external router bind exposed on `0.0.0.0:8780`
+- UFW on `.100` allows `8780/tcp` from `192.168.1.0/24`
+- WS local operator file `~/.mesh/router.env` was updated to the live router token
+- WS service files `/etc/mesh-worker/*.env` were updated to the same router URL/token
+- session workers were restarted and now register correctly
+- stale busy worker `ws-claude-session-rektaslug-01` was deregistered
+
+Interpretation:
+
+- the old `spec-016` run is no longer blocked by control-plane drift
+- it is still a failed historical run using old account targeting (`claude-rektslug`)
+- the correct next step is a fresh rerun using the centralized account pool
 
 ## Provider Runtime Policy
 
@@ -154,6 +178,11 @@ mesh thread
 No hardcoded path is required when run from inside the repo.
 `mesh thread` resolves latest thread from router (server-side), not from local state files.
 If `mesh start` has no arguments, feature label is auto-generated per run.
+
+Current recommendation for `rektslug/spec-016`:
+
+- do not try to revive `rektslug-spec-016-20260309-003627` in place
+- start a fresh run after confirming the Claude pool order in `mapping/account_pools.yaml`
 
 Admin cleanup for stuck tasks:
 
@@ -248,6 +277,8 @@ Important runtime note:
 - `yazi`/`lf` exits without changing dir: use `yazicd`/`lfcd` (or aliases installed by helper).
 - iTerm2 pane becomes unresponsive after idle: refresh shell helpers; `wss`/`wsattach` now use SSH keepalive + control persist by default.
 - multiple repos sharing context unexpectedly: check that the Claude profile is `isolated`, and do not reuse the same profile across unrelated work unless you accept shared history/state.
+- worker shell commands work but systemd workers still return `401`: local `~/.mesh/router.env` and `/etc/mesh-worker/*.env` are drifted; update both or run the token sync helper, then restart session workers.
 - a session task gets requeued after ~5 minutes even though tmux is still alive: router or worker is still running old code without lease-renewal fixes; redeploy router + worker runtime.
 - a session opens tmux but blocks on theme/security/trust-folder/MCP prompts: this is CLI bootstrap drift under `mesh-worker`, not a router bus failure.
 - `mesh ui` is operator UX only; when in doubt, trust router task state plus `journalctl` on the session worker.
+- if you ask whether the repo is still in scope for `boss/president/lead/workers` multi-panel operation: yes for architecture and operator UX, but `lead` is still a UI/operator role rather than a first-class communication role in the router policy layer.

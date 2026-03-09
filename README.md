@@ -42,24 +42,34 @@ pytest -q
 
 ## Current Live State
 
-This repo is the control-plane for a live `rektslug` run, not the target feature repo itself.
+This repo is the control-plane for `rektslug`, not the target feature repo itself.
 
-Current tracked pipeline:
+Current tracked downstream run:
 
 - target repo: `/media/sam/1TB/rektslug`
 - feature: `spec-016`
 - thread: `rektslug-spec-016-20260309-003627`
 - thread_id: `8c9151d2-fea8-4293-8b43-00cd2884d605`
-- active step 0 task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
-- active session: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
+- first step task: `d3980f6a-bfe5-4026-9141-308365ecf7e9`
+- first step session: `bd55bde4-9ea8-4118-9ddd-a16f04fd313b`
+- current thread status: `failed`
+
+Current control-plane state:
+
+- router `.100` has been recovered on a clean runtime release under `/opt/mesh-router/releases/86c3f2b`
+- router bind is now external (`0.0.0.0:8780`), not localhost-only
+- local operator token and WS worker service envs were realigned to the live router token
+- active session workers on `.111` are healthy again:
+  - `ws-claude-session-dyn-01`
+  - `ws-codex-session-dyn-01`
+- stale worker record `ws-claude-session-rektaslug-01` was deregistered from the router
 
 Meaning:
 
 - `gobabygo` owns router/worker/runtime state
 - `rektslug` owns the feature implementation
-- resuming `spec-016` requires both:
-  - the target repo path in `rektslug`
-  - the control-plane thread/task/session state stored and documented here
+- the old `spec-016` run is historical evidence, not the run to continue in place
+- the next correct move is a clean rerun of `spec-016` using the current centralized Claude account pool
 
 ## Resume Checklist
 
@@ -67,7 +77,8 @@ Use this repo to resume work precisely:
 
 1. verify router/thread state from here
 2. verify worker/session health from here
-3. only then continue the target repo flow in `rektslug`
+3. confirm the current account pool policy
+4. only then continue the target repo flow in `rektslug`
 
 Minimal checks:
 
@@ -81,11 +92,20 @@ curl -sS -H "Authorization: Bearer $MESH_AUTH_TOKEN" \
   "$MESH_ROUTER_URL/sessions/bd55bde4-9ea8-4118-9ddd-a16f04fd313b" | python -m json.tool
 ```
 
+Current expectation:
+
+- router health is good
+- session workers are `idle` with fresh heartbeats
+- `rektslug-spec-016-20260309-003627` stays `failed`
+- a new run should resolve Claude via [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml), starting with `claude-samuele`
+
 ## Notes
 
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
 - For Claude, use isolated CCS account profiles such as `claude-samuele` and launch them from the target repo directory with `ccs <profile>`.
 - Claude account autoswitch is router-driven, not CCS-provider-driven: worker failures tagged as `account_exhausted` rotate the next task attempt to the next isolated profile from `mapping/account_pools.yaml`.
+- `mesh ui <repo>` is part of the intended operator flow and opens panels for `boss`, `president`, `lead`, `worker-claude`, `worker-codex`, `worker-gemini`, and `verifier`. The runtime source of truth is still the router DB, not iTerm2.
+- Runtime roles are stricter than UI roles today: `boss`, `president`, and `worker` are first-class in the policy layer; `lead` currently exists as operator/UI convention and layout role.
 - Historical architecture notes remain in [kiss_mesh/README.md](kiss_mesh/README.md).
 - Canonical architecture for the current runtime is now in [ARCHITECTURE.md](/media/sam/1TB/gobabygo/ARCHITECTURE.md).
 - Quick operator guidance is in [QUICKSTART.md](/media/sam/1TB/gobabygo/QUICKSTART.md).
