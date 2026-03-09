@@ -153,6 +153,13 @@ Controls:
 - `MESH_DEPLOY_MODE=auto|remote|local` (use `remote` from Mac if needed)
 - `MESH_PIPELINE_TEMPLATE=speckit_codex` when Claude is unavailable
 
+Canonical template model:
+- built-in `gsd` and `speckit` are now session-first team templates
+- `lead` work is Claude-first
+- `president` adjudication is Codex-first
+- `worker` challenge/validation uses Codex and Gemini session workers
+- `speckit_codex` remains the pure-Codex fallback when Claude capacity is unavailable
+
 ## Minimal Daily Flow
 
 From the target repo directory on WS:

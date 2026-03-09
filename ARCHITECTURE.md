@@ -115,6 +115,21 @@ This is the primary path for:
 - interactive implementation
 - complex planning/discussion/implementation loops
 
+Canonical built-in workflow templates are now session-native too:
+
+- `confidence_gate_team`
+- `gsd`
+- `speckit`
+- `speckit_codex`
+
+Meaning:
+
+- the template file itself now encodes interactive team orchestration
+- it no longer relies on live `session-only` policy to silently override `batch` steps
+- Claude is used primarily for `lead` creative work
+- Codex is used primarily for `president` adjudication/review and worker-side verification
+- Gemini is used as an independent worker challenger/validator where available
+
 ## Session Bus
 
 The bus is not a replacement for a PTY.

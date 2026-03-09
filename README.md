@@ -103,6 +103,7 @@ Current expectation:
 
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
 - Default operator multi-panel bootstrap is centralized in [mapping/operator_ui.yaml](/media/sam/1TB/gobabygo/mapping/operator_ui.yaml).
+- Canonical built-in `gsd` and `speckit` templates are now session-only team templates. They use `lead=claude`, `president=codex`, and `worker=codex/gemini` to keep planning/implementation interactive while challenge, validation, and adjudication happen in parallel sessions.
 - For Claude, use isolated CCS account profiles such as `claude-samuele` and launch them from the target repo directory with `ccs <profile>`.
 - Claude account autoswitch is router-driven, not CCS-provider-driven: worker failures tagged as `account_exhausted` rotate the next task attempt to the next isolated profile from `mapping/account_pools.yaml`.
 - `mesh ui <repo>` is part of the intended operator flow and opens panels for `boss`, `president`, `lead`, `worker-claude`, `worker-codex`, `worker-gemini`, and `verifier`. It now boots each pane through a central role policy instead of dropping every pane into the same bare shell. The runtime source of truth is still the router DB, not iTerm2.

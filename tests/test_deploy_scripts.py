@@ -101,6 +101,26 @@ class TestEnvironmentFiles:
         assert "MESH_WORKER_ID" in content
         assert "MESH_ROUTER_URL" in content
 
+    @pytest.mark.parametrize("session_env", [
+        "mesh-session-claude-work.env",
+        "mesh-session-codex-work.env",
+        "mesh-session-gemini-work.env",
+    ])
+    def test_session_worker_env_exists(self, session_env):
+        path = DEPLOY_DIR / session_env
+        assert path.exists()
+
+    @pytest.mark.parametrize("session_env", [
+        "mesh-session-claude-work.env",
+        "mesh-session-codex-work.env",
+        "mesh-session-gemini-work.env",
+    ])
+    def test_session_worker_env_has_placeholder_token(self, session_env):
+        content = (DEPLOY_DIR / session_env).read_text()
+        assert "__REPLACE_WITH_TOKEN__" in content
+        assert "MESH_WORKER_ID" in content
+        assert "MESH_ROUTER_URL" in content
+
     def test_no_plaintext_tokens(self):
         """Ensure no real tokens are accidentally committed."""
         for env_file in DEPLOY_DIR.glob("*.env"):

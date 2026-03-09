@@ -1,18 +1,18 @@
 version: 1
 templates:
   confidence_gate_team:
-    description: "Decomposed confidence gate as a team workflow (collector -> challengers -> adjudicator)."
+    description: "Interactive confidence gate team: Claude lead collects evidence, Codex/Gemini challenge, Codex president adjudicates."
     steps:
       - name: confidence-gate.collector
         title: "Confidence Gate Collector {feature}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
-        role: president
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as evidence collector for confidence gate on feature '{feature}' in repo {repo}. Gather test results, lint/type-check output, changed files, and open risks. Produce structured evidence pack."
+        prompt: "Act as evidence collector for confidence gate on feature '{feature}' in repo {repo}. Gather test results, lint/type-check output, changed files, and open risks. Produce a structured evidence pack for challengers."
 
       - name: confidence-gate.challenger-a
         title: "Confidence Gate Challenger A {feature}"
@@ -28,232 +28,486 @@ templates:
 
       - name: confidence-gate.challenger-b
         title: "Confidence Gate Challenger B {feature}"
-        target_cli: codex
-        target_account: "{codex_account}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [0]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as independent challenger B for feature '{feature}' in repo {repo}. Focus on regression risk, rollback readiness, and production operability gaps."
+        prompt: "Act as independent challenger B for feature '{feature}' in repo {repo}. Focus on regression risk, rollback readiness, operability gaps, and alternative interpretations of the evidence pack."
 
       - name: confidence-gate.adjudicator
         title: "Confidence Gate Adjudication {feature}"
-        target_cli: claude
-        target_account: "{claude_account}"
+        target_cli: codex
+        target_account: "{codex_account}"
         execution_mode: session
         role: president
         depends_on_steps: [1, 2]
         critical: true
         on_failure: abort
         review_policy: codex_review
-        prompt: "Act as adjudicator for feature '{feature}' in repo {repo}. Reconcile challengers output, decide PASS/FAIL, and produce decision rationale with mandatory follow-up actions."
+        prompt: "Act as president-level adjudicator for feature '{feature}' in repo {repo}. Reconcile the challengers output, decide PASS/FAIL, and produce decision rationale with mandatory follow-up actions."
 
   gsd:
-    description: "Session-first GSD pipeline with codex review gates for critical steps."
+    description: "Session-first GSD team template: Claude lead executes phases, Codex president adjudicates, Codex/Gemini workers challenge and validate."
     steps:
       - name: gsd:research-phase
         title: "GSD Research Phase {phase}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Execute /gsd:research-phase {phase} in repo {repo}. Read ROADMAP.md and produce RESEARCH.md."
+        prompt: "Execute /gsd:research-phase {phase} in repo {repo}. Read ROADMAP.md, inspect the codebase, and produce RESEARCH.md with evidence, constraints, and technical unknowns."
 
       - name: gsd:discuss-phase
         title: "GSD Discuss Phase {phase}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Execute /gsd:discuss-phase {phase} in repo {repo}. Produce CONTEXT.md with assumptions, constraints, and open questions."
+        prompt: "Execute /gsd:discuss-phase {phase} in repo {repo}. Produce CONTEXT.md with assumptions, constraints, open questions, and decision candidates grounded in RESEARCH.md."
 
-      - name: confidence-gate-context
-        title: "Confidence Gate Context {phase}"
+      - name: confidence-gate-context.collector
+        title: "Confidence Gate Context Collector {phase}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        role: lead
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as context evidence collector for GSD phase {phase} in repo {repo}. Summarize RESEARCH.md and CONTEXT.md into a decision-ready evidence pack."
+
+      - name: confidence-gate-context.challenger-a
+        title: "Confidence Gate Context Challenger A {phase}"
         target_cli: codex
         target_account: "{codex_account}"
-        execution_mode: batch
+        execution_mode: session
+        role: worker
+        depends_on_steps: [2]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run confidence-gate for context on repo {repo} phase {phase} (equivalent to confidence_gate.py --step context-{phase})."
+        prompt: "Act as Codex challenger for GSD context phase {phase} in repo {repo}. Critique assumptions, missing tests, dependency blind spots, and operational risks in the context evidence pack."
+
+      - name: confidence-gate-context.challenger-b
+        title: "Confidence Gate Context Challenger B {phase}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [2]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Gemini challenger for GSD context phase {phase} in repo {repo}. Provide an independent critique focused on product edge cases, alternative solution paths, and gaps in context coverage."
+
+      - name: confidence-gate-context.adjudicator
+        title: "Confidence Gate Context Adjudication {phase}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: president
+        depends_on_steps: [3, 4]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as president-level adjudicator for GSD context phase {phase} in repo {repo}. Reconcile both challengers, decide if context is sufficient, and specify mandatory corrections before planning."
 
       - name: gsd:plan-phase
         title: "GSD Plan Phase {phase}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: true
         on_failure: abort
         review_policy: codex_review
-        prompt: "Execute /gsd:plan-phase {phase} in repo {repo}. Produce PLAN.md aligned to RESEARCH.md and CONTEXT.md."
+        prompt: "Execute /gsd:plan-phase {phase} in repo {repo}. Produce PLAN.md aligned to RESEARCH.md and CONTEXT.md, with explicit milestones, dependencies, and rollback strategy."
 
-      - name: confidence-gate-plan
-        title: "Confidence Gate Plan {phase}"
-        target_cli: codex
-        target_account: "{codex_account}"
-        execution_mode: batch
+      - name: confidence-gate-plan.collector
+        title: "Confidence Gate Plan Collector {phase}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run confidence-gate for plan on repo {repo} phase {phase} (equivalent to confidence_gate.py --step plan-{phase})."
+        prompt: "Act as plan evidence collector for GSD phase {phase} in repo {repo}. Summarize PLAN.md into an evidence pack suitable for rigorous challenge."
+
+      - name: confidence-gate-plan.challenger-a
+        title: "Confidence Gate Plan Challenger A {phase}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [7]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Codex challenger for GSD plan phase {phase} in repo {repo}. Attack plan consistency, execution order, missing verification, and operational blind spots."
+
+      - name: confidence-gate-plan.challenger-b
+        title: "Confidence Gate Plan Challenger B {phase}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [7]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Gemini challenger for GSD plan phase {phase} in repo {repo}. Focus on product fit, UX consequences, and alternate decomposition strategies."
+
+      - name: confidence-gate-plan.adjudicator
+        title: "Confidence Gate Plan Adjudication {phase}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: president
+        depends_on_steps: [8, 9]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as president-level adjudicator for GSD plan phase {phase} in repo {repo}. Decide whether the plan is ready for execution and enumerate required corrections if not."
 
       - name: gsd:execute-phase
         title: "GSD Execute Phase {phase}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: true
         on_failure: abort
         review_policy: codex_review
-        prompt: "Execute /gsd:execute-phase {phase} in repo {repo}. Implement PLAN.md and report changed files, tests, and residual risks."
+        prompt: "Execute /gsd:execute-phase {phase} in repo {repo}. Implement PLAN.md, report changed files, run relevant local checks, and summarize residual risks."
 
       - name: gsd:verify-work
         title: "GSD Verify Work {phase}"
         target_cli: codex
         target_account: "{codex_account}"
-        execution_mode: batch
+        execution_mode: session
+        role: worker
+        depends_on_steps: [11]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run verify on repo {repo}: tests, lint, and type-check. Return failing commands and root causes if any."
+        prompt: "Run verify on repo {repo}: tests, lint, and type-check. Return exact failing commands, root causes, and minimal corrective actions."
 
       - name: validate
         title: "Validate {phase}"
-        target_cli: codex
-        target_account: "{codex_account}"
-        execution_mode: batch
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [11]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run 14-dimension validate workflow on repo {repo} and summarize blockers/warnings/monitors."
+        prompt: "Run the 14-dimension validate workflow on repo {repo} for phase {phase}. Summarize blockers, warnings, monitors, and product-quality concerns."
 
-      - name: confidence-gate-impl
-        title: "Confidence Gate Implementation {phase}"
-        target_cli: codex
-        target_account: "{codex_account}"
-        execution_mode: batch
+      - name: confidence-gate-impl.collector
+        title: "Confidence Gate Implementation Collector {phase}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        role: lead
+        depends_on_steps: [12, 13]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run confidence-gate for implementation on repo {repo} phase {phase} (equivalent to confidence_gate.py --step impl-{phase})."
+        prompt: "Act as implementation evidence collector for GSD phase {phase} in repo {repo}. Combine execution output, verify results, validate output, and residual risks into a single evidence pack."
+
+      - name: confidence-gate-impl.challenger-a
+        title: "Confidence Gate Implementation Challenger A {phase}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [14]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Codex challenger for GSD implementation phase {phase} in repo {repo}. Attack correctness, regression safety, rollback readiness, and production operability."
+
+      - name: confidence-gate-impl.challenger-b
+        title: "Confidence Gate Implementation Challenger B {phase}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [14]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Gemini challenger for GSD implementation phase {phase} in repo {repo}. Focus on UX/product coherence, scenario coverage, and missing non-functional acceptance criteria."
+
+      - name: confidence-gate-impl.adjudicator
+        title: "Confidence Gate Implementation Adjudication {phase}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: president
+        depends_on_steps: [15, 16]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as president-level adjudicator for GSD implementation phase {phase} in repo {repo}. Decide whether the implementation is ready to close, and specify mandatory remediation if not."
 
   speckit:
-    description: "Speckit lifecycle with codex review gates on plan and implement."
+    description: "Session-first Speckit team template: Claude lead drives artifacts and implementation, Codex president adjudicates, Codex/Gemini workers challenge and validate."
     steps:
       - name: speckit.specify
         title: "Speckit Specify {feature}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Execute /speckit.specify for feature '{feature}' in repo {repo}. Produce spec.md with goals, scope, and acceptance criteria."
+        prompt: "Execute /speckit.specify for feature '{feature}' in repo {repo}. Produce spec.md with goals, scope, acceptance criteria, and explicit out-of-scope items."
 
       - name: speckit.clarify
         title: "Speckit Clarify {feature}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Execute /speckit.clarify for feature '{feature}' in repo {repo}. Resolve all [NEEDS CLARIFICATION] markers."
+        prompt: "Execute /speckit.clarify for feature '{feature}' in repo {repo}. Resolve all [NEEDS CLARIFICATION] markers and tighten ambiguous acceptance criteria."
 
       - name: speckit.plan
         title: "Speckit Plan {feature}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: true
         on_failure: abort
         review_policy: codex_review
-        prompt: "Execute /speckit.plan for feature '{feature}' in repo {repo}. Produce plan.md with milestones and risk controls."
+        prompt: "Execute /speckit.plan for feature '{feature}' in repo {repo}. Produce plan.md with milestones, dependency ordering, risk controls, and rollback considerations."
 
-      - name: confidence-gate-plan
-        title: "Confidence Gate Plan {feature}"
-        target_cli: codex
-        target_account: "{codex_account}"
-        execution_mode: batch
+      - name: confidence-gate-plan.collector
+        title: "Confidence Gate Plan Collector {feature}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run confidence-gate plan checks for feature '{feature}' in repo {repo}."
+        prompt: "Act as plan evidence collector for Speckit feature '{feature}' in repo {repo}. Summarize spec.md and plan.md into a rigorous challenge pack."
+
+      - name: confidence-gate-plan.challenger-a
+        title: "Confidence Gate Plan Challenger A {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [3]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Codex challenger for the Speckit plan of feature '{feature}' in repo {repo}. Attack plan consistency, verification depth, and hidden implementation risks."
+
+      - name: confidence-gate-plan.challenger-b
+        title: "Confidence Gate Plan Challenger B {feature}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [3]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Gemini challenger for the Speckit plan of feature '{feature}' in repo {repo}. Focus on product alignment, UX consequences, and alternative decomposition options."
+
+      - name: confidence-gate-plan.adjudicator
+        title: "Confidence Gate Plan Adjudication {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: president
+        depends_on_steps: [4, 5]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as president-level adjudicator for the Speckit plan of feature '{feature}' in repo {repo}. Decide whether planning is sufficient to proceed to task generation."
 
       - name: speckit.tasks
         title: "Speckit Tasks {feature}"
         target_cli: claude
         target_account: "{claude_account}"
-        execution_mode: batch
+        execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Execute /speckit.tasks in repo {repo}. Generate tasks.md from plan.md with deterministic, testable work items."
+        prompt: "Execute /speckit.tasks in repo {repo}. Generate tasks.md from plan.md with deterministic, testable work items and explicit done criteria."
 
       - name: speckit.analyze
         title: "Speckit Analyze {feature}"
         target_cli: codex
         target_account: "{codex_account}"
-        execution_mode: batch
+        execution_mode: session
+        role: worker
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Execute /speckit.analyze in repo {repo}. Perform cross-artifact consistency checks (spec, plan, tasks)."
+        prompt: "Execute /speckit.analyze in repo {repo}. Perform cross-artifact consistency checks across spec.md, plan.md, and tasks.md. Report mismatches and missing acceptance coverage."
 
-      - name: confidence-gate-pre-impl
-        title: "Confidence Gate Pre-Implementation {feature}"
+      - name: confidence-gate-pre-impl.collector
+        title: "Confidence Gate Pre-Implementation Collector {feature}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        role: lead
+        depends_on_steps: [7, 8]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as pre-implementation evidence collector for feature '{feature}' in repo {repo}. Combine tasks.md and analyze output into a single readiness pack."
+
+      - name: confidence-gate-pre-impl.challenger-a
+        title: "Confidence Gate Pre-Implementation Challenger A {feature}"
         target_cli: codex
         target_account: "{codex_account}"
-        execution_mode: batch
+        execution_mode: session
+        role: worker
+        depends_on_steps: [9]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run confidence-gate pre-implementation checks for feature '{feature}' in repo {repo}."
+        prompt: "Act as Codex challenger for pre-implementation readiness of feature '{feature}' in repo {repo}. Attack task quality, testability, dependency ordering, and rollback readiness."
+
+      - name: confidence-gate-pre-impl.challenger-b
+        title: "Confidence Gate Pre-Implementation Challenger B {feature}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [9]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Gemini challenger for pre-implementation readiness of feature '{feature}' in repo {repo}. Focus on missing user journeys, non-functional criteria, and spec-to-task gaps."
+
+      - name: confidence-gate-pre-impl.adjudicator
+        title: "Confidence Gate Pre-Implementation Adjudication {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: president
+        depends_on_steps: [10, 11]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as president-level adjudicator for pre-implementation readiness of feature '{feature}' in repo {repo}. Decide if implementation may begin and list required corrections otherwise."
 
       - name: speckit.implement
         title: "Speckit Implement {feature}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
+        role: lead
         critical: true
         on_failure: abort
         review_policy: codex_review
-        prompt: "Execute /speckit.implement in repo {repo}. Implement tasks.md for feature '{feature}' and run relevant test subsets."
+        prompt: "Execute /speckit.implement in repo {repo}. Implement tasks.md for feature '{feature}', run relevant test subsets, and summarize changed files plus residual risks."
+
+      - name: speckit.verify-work
+        title: "Speckit Verify Work {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [13]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Run verify on repo {repo} for feature '{feature}': tests, lint, and type-check. Return exact failing commands, root causes, and minimal corrective actions."
 
       - name: validate
         title: "Validate {feature}"
-        target_cli: codex
-        target_account: "{codex_account}"
-        execution_mode: batch
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [13]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run 14-dimension validate workflow for feature '{feature}' in repo {repo}."
+        prompt: "Run the 14-dimension validate workflow for feature '{feature}' in repo {repo}. Summarize blockers, warnings, monitors, and product-quality concerns."
 
-      - name: confidence-gate-post-impl
-        title: "Confidence Gate Post-Implementation {feature}"
-        target_cli: codex
-        target_account: "{codex_account}"
-        execution_mode: batch
+      - name: confidence-gate-post-impl.collector
+        title: "Confidence Gate Post-Implementation Collector {feature}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        role: lead
+        depends_on_steps: [14, 15]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Run confidence-gate post-implementation checks for feature '{feature}' in repo {repo}."
+        prompt: "Act as post-implementation evidence collector for feature '{feature}' in repo {repo}. Combine implementation, verify, validate, and residual-risk output into a single evidence pack."
+
+      - name: confidence-gate-post-impl.challenger-a
+        title: "Confidence Gate Post-Implementation Challenger A {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [16]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Codex challenger for post-implementation review of feature '{feature}' in repo {repo}. Attack correctness, regression safety, rollout readiness, and operational safeguards."
+
+      - name: confidence-gate-post-impl.challenger-b
+        title: "Confidence Gate Post-Implementation Challenger B {feature}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [16]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as Gemini challenger for post-implementation review of feature '{feature}' in repo {repo}. Focus on UX coherence, acceptance coverage, and hidden product regressions."
+
+      - name: confidence-gate-post-impl.adjudicator
+        title: "Confidence Gate Post-Implementation Adjudication {feature}"
+        target_cli: codex
+        target_account: "{codex_account}"
+        execution_mode: session
+        role: president
+        depends_on_steps: [17, 18]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as president-level adjudicator for post-implementation review of feature '{feature}' in repo {repo}. Decide whether the feature is ready to close and list mandatory follow-up actions if not."
 
   speckit_codex:
-    description: "Speckit lifecycle in codex-only session mode (no Claude dependency)."
+    description: "Speckit lifecycle in codex-only session mode when Claude is unavailable."
     steps:
       - name: speckit.specify
         title: "Speckit Specify {feature}"
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
@@ -264,6 +518,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
@@ -274,6 +529,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: lead
         critical: true
         on_failure: abort
         review_policy: codex_review
@@ -284,6 +540,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: president
         critical: false
         on_failure: abort
         review_policy: none
@@ -294,6 +551,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: lead
         critical: false
         on_failure: abort
         review_policy: none
@@ -304,6 +562,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: worker
         critical: false
         on_failure: abort
         review_policy: none
@@ -314,6 +573,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: president
         critical: false
         on_failure: abort
         review_policy: none
@@ -324,6 +584,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: lead
         critical: true
         on_failure: abort
         review_policy: codex_review
@@ -334,6 +595,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: worker
         critical: false
         on_failure: abort
         review_policy: none
@@ -344,6 +606,7 @@ templates:
         target_cli: codex
         target_account: "{codex_account}"
         execution_mode: session
+        role: president
         critical: false
         on_failure: abort
         review_policy: none

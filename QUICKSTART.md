@@ -157,6 +157,14 @@ Who executes commands in mesh:
 - `session workers`: execute CLI commands in tmux/upterm for `execution_mode=session`.
 - `review worker`: approves/rejects critical tasks in `review` state.
 
+Canonical template policy:
+
+- built-in `gsd` and `speckit` now run as interactive teams, not mixed batch/session pipelines
+- `lead` defaults to Claude for research, planning, artifact generation, and implementation
+- `president` defaults to Codex for adjudication and review-heavy checkpoints
+- `worker` sessions use Codex and Gemini for challenge, analyze, verify, and validate steps
+- `speckit_codex` remains the fallback template when Claude is unavailable
+
 Pipeline orchestration example (from BOSS terminal):
 
 ```bash
