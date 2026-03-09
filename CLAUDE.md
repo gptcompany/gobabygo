@@ -289,4 +289,4 @@ Important runtime note:
 - a session task gets requeued after ~5 minutes even though tmux is still alive: router or worker is still running old code without lease-renewal fixes; redeploy router + worker runtime.
 - a session opens tmux but blocks on theme/security/trust-folder/MCP prompts: this is CLI bootstrap drift under `mesh-worker`, not a router bus failure.
 - `mesh ui` is operator UX only; when in doubt, trust router task state plus `journalctl` on the session worker.
-- if you ask whether the repo is still in scope for `boss/president/lead/workers` multi-panel operation: yes for architecture and operator UX, but `lead` is still a UI/operator role rather than a first-class communication role in the router policy layer.
+- if you ask whether the repo is still in scope for `boss/president/lead/workers` multi-panel operation: yes. `lead` is now a first-class communication role in the router policy layer, with create/dispatch/visibility permissions and runtime communication edges to both `president` and `worker`.

@@ -167,6 +167,7 @@ Current runtime-enforced roles:
 
 - `boss`
 - `president`
+- `lead`
 - `worker`
 
 Those are enforced in the communication policy layer.
@@ -179,11 +180,19 @@ Current operator/UI roles:
 - `worker-*`
 - `verifier`
 
-Important distinction:
+Current runtime communication policy:
 
-- `lead` exists today as operator/layout role, not as a first-class router communication role
-- `verifier` exists operationally as review path / worker responsibility, not as a distinct communication enum
-- this is why the system is in scope with the target architecture, but not yet fully polished as a native multi-role runtime
+- `boss` communicates with `president`
+- `president` communicates with `boss`, `lead`, and `worker`
+- `lead` communicates with `president` and `worker`
+- `worker` communicates with `lead` and `president`
+
+Operational meaning:
+
+- `lead` is now a first-class runtime communication role
+- `lead` can create tasks, dispatch tasks, and view all tasks
+- direct `president` ↔ `worker` communication remains allowed for compatibility during the current transition
+- `verifier` still exists operationally as review path / worker responsibility, not as a distinct communication enum
 
 ## Current Live Runtime Decisions
 

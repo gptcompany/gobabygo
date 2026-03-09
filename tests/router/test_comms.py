@@ -1,11 +1,11 @@
 """Tests for the communication hierarchy policy enforcement.
 
 Covers:
-- Role validation: boss/president can create, worker cannot
-- Dispatch authorization: only president dispatches
+- Role validation: boss/president/lead can create, worker cannot
+- Dispatch authorization: president/lead dispatch
 - Task ownership: assigned worker can ack/complete, wrong worker cannot
 - Hierarchy edges: valid edges pass, invalid edges blocked
-- Visibility: boss/president view all, worker scoped
+- Visibility: boss/president/lead view all, worker scoped
 """
 
 from __future__ import annotations
@@ -56,6 +56,10 @@ class TestCanCreateTask:
         """President can create tasks."""
         assert policy.can_create_task("president") is True
 
+    def test_can_create_task_lead(self, policy: CommunicationPolicy) -> None:
+        """Lead can create tasks."""
+        assert policy.can_create_task("lead") is True
+
     def test_can_create_task_worker(self, policy: CommunicationPolicy) -> None:
         """Worker cannot create tasks."""
         assert policy.can_create_task("worker") is False
@@ -65,6 +69,10 @@ class TestCanDispatchTask:
     def test_can_dispatch_task_president(self, policy: CommunicationPolicy) -> None:
         """President can dispatch tasks to workers."""
         assert policy.can_dispatch_task("president") is True
+
+    def test_can_dispatch_task_lead(self, policy: CommunicationPolicy) -> None:
+        """Lead can dispatch tasks to workers."""
+        assert policy.can_dispatch_task("lead") is True
 
     def test_can_dispatch_task_worker(self, policy: CommunicationPolicy) -> None:
         """Worker cannot dispatch tasks."""
@@ -128,10 +136,34 @@ class TestValidateCommunication:
         """President can communicate with worker."""
         assert policy.validate_communication("president", "worker") is True
 
+    def test_validate_communication_president_to_lead(
+        self, policy: CommunicationPolicy
+    ) -> None:
+        """President can communicate with lead."""
+        assert policy.validate_communication("president", "lead") is True
+
+    def test_validate_communication_lead_to_president(
+        self, policy: CommunicationPolicy
+    ) -> None:
+        """Lead can communicate with president."""
+        assert policy.validate_communication("lead", "president") is True
+
+    def test_validate_communication_lead_to_worker(
+        self, policy: CommunicationPolicy
+    ) -> None:
+        """Lead can communicate with worker."""
+        assert policy.validate_communication("lead", "worker") is True
+
+    def test_validate_communication_worker_to_lead(
+        self, policy: CommunicationPolicy
+    ) -> None:
+        """Worker can communicate with lead."""
+        assert policy.validate_communication("worker", "lead") is True
+
     def test_validate_communication_worker_to_president(
         self, policy: CommunicationPolicy
     ) -> None:
-        """Worker can communicate with president."""
+        """Worker can still communicate with president for compatibility."""
         assert policy.validate_communication("worker", "president") is True
 
     def test_validate_communication_worker_to_worker(
@@ -152,6 +184,18 @@ class TestValidateCommunication:
         """Boss cannot communicate directly with worker (must go through president)."""
         assert policy.validate_communication("boss", "worker") is False
 
+    def test_validate_communication_boss_to_lead(
+        self, policy: CommunicationPolicy
+    ) -> None:
+        """Boss cannot communicate directly with lead."""
+        assert policy.validate_communication("boss", "lead") is False
+
+    def test_validate_communication_lead_to_boss(
+        self, policy: CommunicationPolicy
+    ) -> None:
+        """Lead cannot communicate directly with boss."""
+        assert policy.validate_communication("lead", "boss") is False
+
 
 # -- Visibility tests --
 
@@ -164,6 +208,10 @@ class TestCanViewAllTasks:
     def test_can_view_all_tasks_president(self, policy: CommunicationPolicy) -> None:
         """President can view all tasks."""
         assert policy.can_view_all_tasks("president") is True
+
+    def test_can_view_all_tasks_lead(self, policy: CommunicationPolicy) -> None:
+        """Lead can view all tasks."""
+        assert policy.can_view_all_tasks("lead") is True
 
     def test_can_view_all_tasks_worker(self, policy: CommunicationPolicy) -> None:
         """Worker has scoped visibility (cannot view all)."""

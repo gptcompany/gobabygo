@@ -95,6 +95,10 @@ Two operator-facing follow-ups were closed after the stack recovery:
 2. `mesh status` no longer drowns the operator in stale historical workers
    - default view shows active/recent workers only
    - `mesh status --all` shows the full audit-heavy table
+3. `lead` is now a first-class runtime role
+   - router policy roles are now `boss`, `president`, `lead`, `worker`
+   - `lead` can create tasks, dispatch tasks, and view all tasks
+   - direct `president` ↔ `worker` communication remains allowed for compatibility
 
 Important boundary:
 

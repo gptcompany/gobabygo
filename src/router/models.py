@@ -54,6 +54,7 @@ class TaskPhase(str, Enum):
 class CommunicationRole(str, Enum):
     boss = "boss"
     president = "president"
+    lead = "lead"
     worker = "worker"
 
 
