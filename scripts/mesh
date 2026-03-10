@@ -277,10 +277,11 @@ load_router_env() {
 
 latest_thread_for_repo() {
   local repo_name="${1:-}"
+  local repo_path="${2:-}"
   load_router_env
   local py_bin
   py_bin="$(detect_python)" || return $?
-  "$py_bin" - "$repo_name" <<'PY'
+  "$py_bin" - "$repo_name" "$repo_path" <<'PY'
 import json
 import os
 import sys
@@ -288,29 +289,53 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 repo_name = sys.argv[1]
-prefix = f"{repo_name}-"
+repo_path = sys.argv[2]
 base = os.environ.get("MESH_ROUTER_URL", "http://localhost:8780").rstrip("/")
 token = os.environ.get("MESH_AUTH_TOKEN", "")
-url = f"{base}/threads?limit=200"
+repo_targets = {repo_name}
+if repo_path:
+    repo_targets.add(repo_path)
+    repo_targets.add(os.path.basename(repo_path.rstrip("/")))
 
-req = Request(url)
-if token:
-    req.add_header("Authorization", f"Bearer {token}")
+def get_json(path: str):
+    req = Request(f"{base}{path}")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 try:
-    with urlopen(req, timeout=10) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    data = get_json("/tasks?limit=500")
 except HTTPError as e:
-    print(f"Error: /threads returned {e.code}", file=sys.stderr)
+    print(f"Error: /tasks returned {e.code}", file=sys.stderr)
     sys.exit(3)
 except URLError as e:
     print(f"Error: cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
     sys.exit(4)
 
-threads = data.get("threads", [])
-for thread in threads:
-    name = str(thread.get("name") or "")
-    if name.startswith(prefix):
+tasks = data.get("tasks", [])
+matches = []
+for task in tasks:
+    thread_id = str(task.get("thread_id") or "").strip()
+    task_repo = str(task.get("repo") or "").strip()
+    if not thread_id or not task_repo:
+        continue
+    if task_repo in repo_targets or os.path.basename(task_repo.rstrip("/")) in repo_targets:
+        matches.append(task)
+
+matches.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+seen = set()
+for task in matches:
+    thread_id = str(task.get("thread_id") or "").strip()
+    if thread_id in seen:
+        continue
+    seen.add(thread_id)
+    try:
+        thread = get_json(f"/threads/{thread_id}")
+    except Exception:
+        continue
+    name = str((thread or {}).get("name") or "")
+    if name:
         print(name)
         sys.exit(0)
 
@@ -328,7 +353,7 @@ case "$cmd" in
     if [[ -z "$thread_name" ]]; then
       repo_path="$(pwd -P)"
       repo="$(basename "$repo_path")"
-      thread_name="$(latest_thread_for_repo "$repo" || true)"
+      thread_name="$(latest_thread_for_repo "$repo" "$repo_path" || true)"
       if [[ -z "$thread_name" ]]; then
         echo "Error: no thread provided and no recent thread found on router for repo '$repo'." >&2
         echo "Use: mesh start \"<feature>\" or mesh thread <thread-name>" >&2

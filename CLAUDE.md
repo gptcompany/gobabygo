@@ -273,6 +273,7 @@ Current `mesh ui` behavior:
 - if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of staying a static shell
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
 - live attach resolution also runs on the WS during pane bootstrap, so it still works when the Mac operator host cannot reach the router directly
+- `mesh thread` with no explicit thread name now resolves the latest thread by current repo task metadata, not by assuming the thread name starts with the repo basename
 - this closes the gap where every pane previously opened as the same blank shell
 
 Mac iTerm2 setup (one-time):

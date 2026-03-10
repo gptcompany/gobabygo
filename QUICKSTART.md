@@ -251,6 +251,7 @@ Default behavior:
   - example: an active `lead` Codex step on repo `X` opens directly inside the `lead` pane
   - if no live session matches, the pane falls back to the normal static role shell
   - live attach resolution is performed again on the WS during pane bootstrap, so it still works even when the Mac host cannot reach the router directly
+- `mesh thread` without an explicit thread name now resolves the latest thread from router task metadata for the current repo path; it no longer depends on the thread name prefix matching the repo basename
 - each role can run a different remote init command
 - the policy is user-editable in one file instead of being hardcoded or split across env vars
 - Codex session worker service user -> `mesh-worker`
