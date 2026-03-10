@@ -466,7 +466,7 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 
 - `mesh ui` is operator UX only; it is not orchestration state.
 - `mesh ui` is now operationally useful by default, but it still does not replace router task state.
-- `wss` / `wsattach` now enable SSH keepalive + control persist by default to reduce idle pane freezes in iTerm2.
+- `wss` / `wsattach` now enable more aggressive SSH keepalive + control persist by default (`15s`, `count=12`, `ControlPersist=30m`) to reduce idle pane freezes in iTerm2.
 - `mesh status` hides historical stale/offline worker rows by default; use `mesh status --all` when you need the full audit-heavy view.
 - If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.
 - If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.

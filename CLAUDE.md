@@ -315,7 +315,7 @@ Launcher caveat:
 - `wss <repo>` still tries `/home/sam/<repo>`: your shell has a stale helper. Run `./scripts/install-shell-helpers.sh` then open a new shell (or `exec $SHELL -l`).
 - `wss <repo>` on WS still does self-SSH (`Permission denied (publickey)`): stale shell helper in current shell. Run `./scripts/install-shell-helpers.sh` and `exec $SHELL -l`.
 - `yazi`/`lf` exits without changing dir: use `yazicd`/`lfcd` (or aliases installed by helper).
-- iTerm2 pane becomes unresponsive after idle: refresh shell helpers; `wss`/`wsattach` now use SSH keepalive + control persist by default.
+- iTerm2 pane becomes unresponsive after idle: refresh shell helpers; `wss`/`wsattach` now use more aggressive SSH keepalive defaults (`15s`, `count=12`, `ControlPersist=30m`) plus reconnect-friendly SSH options.
 - multiple repos sharing context unexpectedly: check that the Claude profile is `isolated`, and do not reuse the same profile across unrelated work unless you accept shared history/state.
 - worker shell commands work but systemd workers still return `401`: local `~/.mesh/router.env` and `/etc/mesh-worker/*.env` are drifted; update both or run the token sync helper, then restart session workers.
 - a session task gets requeued after ~5 minutes even though tmux is still alive: router or worker is still running old code without lease-renewal fixes; redeploy router + worker runtime.

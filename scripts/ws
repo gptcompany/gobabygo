@@ -7,14 +7,16 @@ WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 mesh_ssh_opts() {
   local ctl_dir interval count persist
   ctl_dir="${MESH_SSH_CONTROL_DIR:-$HOME/.ssh/cm}"
-  interval="${MESH_SSH_SERVER_ALIVE_INTERVAL:-30}"
-  count="${MESH_SSH_SERVER_ALIVE_COUNT_MAX:-6}"
-  persist="${MESH_SSH_CONTROL_PERSIST:-10m}"
+  interval="${MESH_SSH_SERVER_ALIVE_INTERVAL:-15}"
+  count="${MESH_SSH_SERVER_ALIVE_COUNT_MAX:-12}"
+  persist="${MESH_SSH_CONTROL_PERSIST:-30m}"
   mkdir -p "$ctl_dir" 2>/dev/null || true
   printf '%s\n' \
     -o "ServerAliveInterval=${interval}" \
     -o "ServerAliveCountMax=${count}" \
     -o "TCPKeepAlive=yes" \
+    -o "ConnectTimeout=10" \
+    -o "ConnectionAttempts=3" \
     -o "ControlMaster=auto" \
     -o "ControlPersist=${persist}" \
     -o "ControlPath=${ctl_dir}/%C" \
