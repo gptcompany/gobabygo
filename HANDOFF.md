@@ -129,8 +129,29 @@ Expected now:
 - `ws-claude-session-dyn-01` idle with fresh heartbeat
 - `ws-codex-session-dyn-01` idle with fresh heartbeat
 
+## Current live rerun
+
+Fresh rerun started on `2026-03-10`:
+
+- thread id: `2221bbf6-d743-4449-83fd-550bf1168b79`
+- thread name: `rektslug-spec-016`
+- running task: `4630be01-1b88-4433-b2b1-50792134ac3d`
+- step `0`: `Speckit Specify spec-016`
+- worker: `ws-claude-session-dyn-01`
+- target account: `claude-samuele`
+- session id: `7975a13e-4ab1-4f5b-bb25-03412256fcf4`
+
+Operational note:
+
+- `./scripts/mesh run rektslug 016` emitted `409 duplicate_thread_name` after creating the thread and all 20 step tasks
+- treat this as launcher bug/noise until fixed
+- the authoritative state is the router:
+  - thread status is `active`
+  - step `0` is `running`
+  - queue depth is `0`
+
 ## Next operator step
 
-1. confirm Claude pool order in `mapping/account_pools.yaml`
-2. launch a fresh `spec-016` run on the recovered stack
-3. use `mesh ui rektslug` if you want the multi-panel operator layout while observing the rerun
+1. monitor `rektslug-spec-016` instead of reopening the old failed thread
+2. use `mesh ui rektslug` if you want the multi-panel operator layout while observing the rerun
+3. fix the `duplicate_thread_name` launcher noise after the feature run is stable

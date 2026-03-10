@@ -288,6 +288,25 @@ Important runtime note:
 - otherwise tasks can dispatch correctly but still fail later on provider auth/bootstrap
 - Claude profile rotation on limit is handled by the router, not by `ccs claude`: keep the isolated profiles listed in `mapping/account_pools.yaml` valid and authenticated under `/home/sam/.ccs`
 
+## Current Live Run
+
+Fresh rerun started on `2026-03-10`:
+
+- thread id: `2221bbf6-d743-4449-83fd-550bf1168b79`
+- thread name: `rektslug-spec-016`
+- running task: `4630be01-1b88-4433-b2b1-50792134ac3d`
+- step: `0` (`Speckit Specify spec-016`)
+- role: `lead`
+- target account: `claude-samuele`
+- assigned worker: `ws-claude-session-dyn-01`
+- session id: `7975a13e-4ab1-4f5b-bb25-03412256fcf4`
+
+Launcher caveat:
+
+- `./scripts/mesh run rektslug 016` created the thread and all 20 tasks, then still emitted `409 duplicate_thread_name`
+- this is launcher noise/bug, not a failed run
+- trust router thread/task state over the shell exit code
+
 ## Troubleshooting
 
 - `mesh status` fails on missing Python deps: use `uv sync --frozen`.
