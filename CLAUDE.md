@@ -51,6 +51,10 @@ Not yet production-clean:
 - auto-exit Gemini smoke `4ed1cac5-3a76-42bf-a42a-0fd1967b7c9d` completed with `GEMINI_AUTOEXIT_OK` without manual `/exit`
 - `upterm` logs now live under `~/.cache/gobabygo/upterm`; Gemini session `3cef0e56-9af3-43fb-b180-ff33c6b19cac` published a real attach handle via `attach_kind=upterm`
 - if a redundant Gemini smoke task is still `running` or `assigned` at the next session start, clean it before new tests instead of treating it as a provider/auth regression
+- fresh-repo Gemini write smoke uncovered two distinct bugs in `session_worker.py`:
+  - `auto_exit_on_success` could falsely trigger when `success_marker` already appeared inside the prompt text
+  - after a manual/session-bus resend, `auto_exit` still reused the old baseline instead of re-arming on the new inbound prompt
+- both bugs are fixed in repo and the Gemini worker runtime on `.111` has been redeployed; the remaining live gap is a final re-validation of fresh-repo write tasks after the latest redeploy
 - several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
 
 ## Current Handoff Snapshot

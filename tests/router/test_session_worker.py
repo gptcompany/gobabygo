@@ -14,6 +14,7 @@ from src.router.session_worker import (
     MeshSessionWorker,
     SessionNotFoundError,
     SessionWorkerConfig,
+    _capture_contains_prompt_text,
     _coerce_bool,
     _coerce_string_list,
     _compute_output_emit,
@@ -152,8 +153,40 @@ def test_coerce_string_list() -> None:
 def test_prompt_is_idle_and_auto_exit_success_detection() -> None:
     captured = "❯ Reply\n\n● GEMINI_OK\n\n❯ "
     assert _prompt_is_idle(captured) is True
-    assert _should_auto_exit_on_success(captured, ["GEMINI_OK"]) is True
-    assert _should_auto_exit_on_success(captured, ["OTHER"]) is False
+    assert _should_auto_exit_on_success(captured, ["GEMINI_OK"], delta_text="● GEMINI_OK") is True
+    assert _should_auto_exit_on_success(captured, ["OTHER"], delta_text="● GEMINI_OK") is False
+
+
+def test_auto_exit_success_detection_ignores_marker_present_only_in_prompt() -> None:
+    baseline = "❯ Reply with exactly GEMINI_E2E_OK.\n\n❯ "
+    captured = baseline
+    assert (
+        _should_auto_exit_on_success(
+            captured,
+            ["GEMINI_E2E_OK"],
+            baseline_capture=baseline,
+            delta_text="",
+        )
+        is False
+    )
+    assert (
+        _should_auto_exit_on_success(
+            "❯ Reply with exactly GEMINI_E2E_OK.\n\n● GEMINI_E2E_OK\n\n❯ ",
+            ["GEMINI_E2E_OK"],
+            baseline_capture=baseline,
+            delta_text="● GEMINI_E2E_OK",
+        )
+        is True
+    )
+
+
+def test_capture_contains_prompt_text_normalizes_whitespace() -> None:
+    captured = "❯  Inside this repository, create a file named GEMINI_E2E_OK.md\n\n❯ "
+    prompt = (
+        "Inside this repository, create a file named GEMINI_E2E_OK.md containing exactly one line:\n"
+        "GEMINI_FILE_OK."
+    )
+    assert _capture_contains_prompt_text(captured, prompt) is True
 
 
 # ---------------------------------------------------------------------------
@@ -866,6 +899,9 @@ class TestAttachCleanupInExecuteTask:
     @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
     @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_prepare_cli_runtime")
+    @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
     @patch.object(MeshSessionWorker, "_tmux_new_session")
     @patch.object(MeshSessionWorker, "_tmux_send_text")
     @patch.object(MeshSessionWorker, "_open_session", return_value="sid-1")
@@ -880,6 +916,9 @@ class TestAttachCleanupInExecuteTask:
         mock_open: Mock,
         mock_send_text: Mock,
         mock_tmux_new: Mock,
+        mock_wait_ready: Mock,
+        mock_ensure_prompt_delivered: Mock,
+        mock_prepare_runtime: Mock,
         mock_attach: Mock,
         mock_deliver: Mock,
         mock_capture: Mock,
@@ -902,7 +941,10 @@ class TestAttachCleanupInExecuteTask:
 
         assert call("/media/sam/1TB/rektaslug") in mock_isdir.mock_calls
         assert call("/media/sam/1TB/rektaslug", exist_ok=True) not in mock_makedirs.mock_calls
+        mock_prepare_runtime.assert_called_once_with("/media/sam/1TB/rektaslug", "claude-alt")
         mock_tmux_new.assert_called_once()
+        mock_wait_ready.assert_called_once()
+        mock_ensure_prompt_delivered.assert_called_once()
         mock_send_text.assert_called_once_with("mesh-claude-claude-alt-t-005", "hello")
         mock_complete.assert_called_once()
 
@@ -1051,11 +1093,16 @@ class TestAttachCleanupInExecuteTask:
         mock_report_failure.assert_not_called()
         assert "Initial session message sync failed for sid-sync" in caplog.text
 
-    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, True, False])
     @patch.object(
         MeshSessionWorker,
         "_tmux_capture_pane",
-        return_value="❯ Reply with exactly GEMINI_OK.\n\n● GEMINI_OK\n\n❯ ",
+        side_effect=[
+            "❯ Reply with exactly GEMINI_OK.\n\n❯ ",
+            "❯ Reply with exactly GEMINI_OK.\n\n❯ ",
+            "❯ Reply with exactly GEMINI_OK.\n\n● GEMINI_OK\n\n❯ ",
+            "❯ Reply with exactly GEMINI_OK.\n\n● GEMINI_OK\n\n❯ ",
+        ],
     )
     @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
@@ -1106,7 +1153,72 @@ class TestAttachCleanupInExecuteTask:
             call(expected_session, "/exit"),
         ])
         assert mock_ensure_prompt_submitted.call_count == 2
+        assert mock_capture.call_count == 4
         mock_close.assert_called_once_with("sid-auto-exit", state="closed")
+        mock_report_complete.assert_called_once()
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, True, False])
+    @patch.object(
+        MeshSessionWorker,
+        "_tmux_capture_pane",
+        side_effect=[
+            "Welcome back gpt!\nTips for getting started\n❯ Try \"edit <filepath> to...\"",
+            "Welcome back gpt!\nTips for getting started\n❯ Try \"edit <filepath> to...\"",
+            "❯ Reply with exactly GEMINI_OK.\n\n● GEMINI_OK\n\n❯ ",
+        ],
+    )
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-loop-resend")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.time.sleep")
+    def test_execute_task_resends_prompt_when_loop_stays_on_start_screen(
+        self,
+        mock_sleep: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_ensure_prompt_submitted: Mock,
+        mock_wait_ready: Mock,
+        mock_tmux_new: Mock,
+        mock_ensure_prompt_delivered: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+        worker.config.cli_type = "gemini"
+        worker._running = True
+        expected_session = worker._tmux_session_name("t-loop-resend", "gemini")
+
+        task = {
+            "task_id": "t-loop-resend",
+            "execution_mode": "session",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "Reply with exactly GEMINI_OK.",
+                "working_dir": "/media/sam/1TB/gobabygo",
+                "auto_exit_on_success": True,
+                "success_marker": "GEMINI_OK",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_send_text.assert_has_calls([
+            call(expected_session, "Reply with exactly GEMINI_OK."),
+            call(expected_session, "Reply with exactly GEMINI_OK."),
+            call(expected_session, "/exit"),
+        ])
+        assert mock_ensure_prompt_submitted.call_count == 3
         mock_report_complete.assert_called_once()
 
     @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
@@ -1413,6 +1525,50 @@ class TestTmuxOperations:
         ):
             worker._ensure_prompt_submitted("mysess")
         mock_send_key.assert_not_called()
+
+    @patch("src.router.session_worker.time.sleep")
+    def test_ensure_prompt_delivered_resends_when_welcome_screen_unchanged(self, mock_sleep: Mock) -> None:
+        worker = _make_worker(prompt_submit_retry_count=2, prompt_submit_retry_poll_s=0.2)
+        prompt = "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK."
+        baseline = 'Welcome back gpt!\n\n❯ Try "write a test for <filepath>"'
+        with (
+            patch.object(
+                worker,
+                "_tmux_capture_pane",
+                side_effect=[
+                    baseline,
+                    "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK.\n\n❯ ",
+                ],
+            ),
+            patch.object(worker, "_tmux_send_text") as mock_send_text,
+            patch.object(worker, "_ensure_prompt_submitted") as mock_ensure_submitted,
+        ):
+            worker._ensure_prompt_delivered("mysess", prompt, baseline)
+        mock_send_text.assert_called_once_with("mysess", prompt)
+        mock_ensure_submitted.assert_called_once_with("mysess")
+
+    @patch("src.router.session_worker.time.sleep")
+    def test_ensure_prompt_delivered_resends_when_start_screen_variant_changes(self, mock_sleep: Mock) -> None:
+        worker = _make_worker(prompt_submit_retry_count=2, prompt_submit_retry_poll_s=0.2)
+        prompt = "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK."
+        baseline = (
+            "Welcome back gpt!\nTips for getting started\n❯ Try \"write a test for <filepath>\""
+        )
+        with (
+            patch.object(
+                worker,
+                "_tmux_capture_pane",
+                side_effect=[
+                    "Welcome back gpt!\nTips for getting started\n❯ edit <filepath> to...",
+                    "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK.\n\n❯ ",
+                ],
+            ),
+            patch.object(worker, "_tmux_send_text") as mock_send_text,
+            patch.object(worker, "_ensure_prompt_submitted") as mock_ensure_submitted,
+        ):
+            worker._ensure_prompt_delivered("mysess", prompt, baseline)
+        mock_send_text.assert_called_once_with("mysess", prompt)
+        mock_ensure_submitted.assert_called_once_with("mysess")
 
     @patch("src.router.session_worker.subprocess.run")
     def test_send_key_repeat(self, mock_run: Mock) -> None:

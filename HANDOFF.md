@@ -201,3 +201,20 @@ Current interpretation:
 1. monitor `rektslug-spec-016` instead of reopening the old failed thread
 2. use `mesh ui rektslug` if you want the multi-panel operator layout while observing the rerun
 3. fix the `duplicate_thread_name` launcher noise after the feature run is stable
+
+## 2026-03-10 Gemini fresh-repo write follow-up
+
+- fresh-repo Gemini write smoke remains the last live checkpoint for session-first repo mutation on `ccs gemini`
+- what is already proven:
+  - spawn/orchestration works: `mesh -> router -> ws-gemini-session-dyn-01 -> tmux -> ccs gemini`
+  - text-only Gemini smoke already passed earlier (`GEMINI_OK`, `GEMINI_POSTDEPLOY_OK`, `GEMINI_AUTOEXIT_OK`)
+- what fresh-repo write smoke exposed:
+  1. `auto_exit_on_success` could falsely trigger when the success marker was already present in the prompt text
+  2. after a manual/session-bus resend, `auto_exit` still reused the old baseline instead of re-arming on the new inbound prompt
+- both fixes are now in repo:
+  - [src/router/session_worker.py](/media/sam/1TB/gobabygo/src/router/session_worker.py)
+  - [tests/router/test_session_worker.py](/media/sam/1TB/gobabygo/tests/router/test_session_worker.py)
+  - local result: `pytest -q tests/router/test_session_worker.py` -> `78 passed`
+- live runtime note:
+  - Gemini worker on `.111` was redeployed and restarted after the fixes
+  - a final fresh-repo write smoke still needs to be rerun from a clean temp repo to confirm actual file creation before calling Gemini repo-write E2E closed

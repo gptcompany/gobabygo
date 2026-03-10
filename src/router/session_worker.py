@@ -142,13 +142,51 @@ def _prompt_is_idle(captured: str) -> bool:
     return "❯" in body and not _last_prompt_line_has_content(body)
 
 
-def _should_auto_exit_on_success(captured: str, success_markers: list[str]) -> bool:
+def _normalize_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _prompt_snippet(prompt: str, *, max_chars: int = 48) -> str:
+    for line in str(prompt or "").splitlines():
+        normalized = _normalize_ws(line)
+        if normalized:
+            return normalized[:max_chars]
+    return ""
+
+
+def _capture_contains_prompt_text(captured: str, prompt: str) -> bool:
+    snippet = _prompt_snippet(prompt)
+    if not snippet:
+        return False
+    return snippet in _normalize_ws(captured)
+
+
+def _looks_like_start_screen(captured: str) -> bool:
+    body = str(captured or "")
+    lowered = body.lower()
+    return "welcome back" in lowered and "tips for getting started" in lowered
+
+
+def _should_auto_exit_on_success(
+    captured: str,
+    success_markers: list[str],
+    *,
+    baseline_capture: str = "",
+    delta_text: str = "",
+) -> bool:
     """Return True when the requested success markers are visible at an idle prompt."""
     if not success_markers:
         return False
     if not _prompt_is_idle(captured):
         return False
-    return any(marker in captured for marker in success_markers)
+    baseline = str(baseline_capture or "")
+    delta = str(delta_text or "")
+    for marker in success_markers:
+        if marker in delta:
+            return True
+        if captured.count(marker) > baseline.count(marker):
+            return True
+    return False
 
 
 def _detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
@@ -476,8 +514,10 @@ class MeshSessionWorker:
                     "CLI prompt readiness timeout for session %s; sending prompt anyway",
                     tmux_session_name,
                 )
+            pre_prompt_capture = self._tmux_capture_pane(tmux_session_name)
             self._tmux_send_text(tmux_session_name, prompt)
             self._ensure_prompt_submitted(tmux_session_name)
+            self._ensure_prompt_delivered(tmux_session_name, prompt, pre_prompt_capture)
 
             start = time.monotonic()
             after_seq = 0
@@ -502,6 +542,9 @@ class MeshSessionWorker:
             last_capture = ""
             last_emitted_capture = ""
             auto_exit_sent = False
+            auto_exit_baseline_capture = ""
+            prompt_delivery_confirmed = False
+            prompt_delivery_attempts = 0
             if auto_exit_on_success and not success_markers:
                 logger.warning(
                     "Task %s requested auto_exit_on_success without success_marker(s); session will stay open",
@@ -536,9 +579,30 @@ class MeshSessionWorker:
                         task_id,
                     )
                     break
+                if new_after_seq > after_seq:
+                    auto_exit_baseline_capture = ""
+                    prompt_delivery_confirmed = False
+                    prompt_delivery_attempts = 0
                 after_seq = max(after_seq, new_after_seq)
                 captured = self._tmux_capture_pane(tmux_session_name)
                 if captured:
+                    prior_capture = last_capture
+                    capture_emit = _compute_output_emit(prior_capture, captured)
+                    delta_text = capture_emit[0] if capture_emit else ""
+                    if not prompt_delivery_confirmed:
+                        if _capture_contains_prompt_text(captured, prompt) or not _looks_like_start_screen(captured):
+                            prompt_delivery_confirmed = True
+                        elif prompt_delivery_attempts < self.config.prompt_submit_retry_count:
+                            prompt_delivery_attempts += 1
+                            logger.info(
+                                "Prompt still stuck on start screen for %s; resending prompt attempt %d/%d",
+                                tmux_session_name,
+                                prompt_delivery_attempts,
+                                self.config.prompt_submit_retry_count,
+                            )
+                            self._tmux_send_text(tmux_session_name, prompt)
+                            self._ensure_prompt_submitted(tmux_session_name)
+                            continue
                     last_capture = captured
                     last_emitted_capture = self._emit_cli_output_if_changed(
                         session_id, captured, last_emitted_capture
@@ -566,10 +630,18 @@ class MeshSessionWorker:
                         if self._tmux_has_session(tmux_session_name):
                             self._tmux_kill_session(tmux_session_name)
                         return
+                    if auto_exit_on_success and success_markers and not auto_exit_baseline_capture:
+                        auto_exit_baseline_capture = captured
                     if (
                         auto_exit_on_success
                         and not auto_exit_sent
-                        and _should_auto_exit_on_success(captured, success_markers)
+                        and auto_exit_baseline_capture
+                        and _should_auto_exit_on_success(
+                            captured,
+                            success_markers,
+                            baseline_capture=auto_exit_baseline_capture,
+                            delta_text=delta_text,
+                        )
                     ):
                         logger.info(
                             "Auto-exit on success triggered for task %s using markers %s",
@@ -846,6 +918,26 @@ class MeshSessionWorker:
                 retries,
             )
             self._tmux_send_key(session_name, "Enter", repeat=1)
+
+    def _ensure_prompt_delivered(self, session_name: str, prompt: str, baseline_capture: str) -> None:
+        retries = max(0, int(self.config.prompt_submit_retry_count))
+        poll_s = max(0.05, float(self.config.prompt_submit_retry_poll_s))
+        baseline = str(baseline_capture or "").strip()
+        for attempt in range(retries):
+            time.sleep(poll_s)
+            captured = self._tmux_capture_pane(session_name)
+            if _capture_contains_prompt_text(captured, prompt):
+                return
+            if captured.strip() != baseline and not _looks_like_start_screen(captured):
+                return
+            logger.info(
+                "Prompt not visible and pane unchanged for %s; resending prompt attempt %d/%d",
+                session_name,
+                attempt + 1,
+                retries,
+            )
+            self._tmux_send_text(session_name, prompt)
+            self._ensure_prompt_submitted(session_name)
 
     def _emit_cli_output_if_changed(
         self,
