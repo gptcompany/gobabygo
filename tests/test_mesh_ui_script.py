@@ -46,3 +46,112 @@ def test_command_for_role_env_override_wins(tmp_path, monkeypatch):
     command = module._command_for_role("boss", "/media/sam/1TB/rektslug", "rektslug")
 
     assert command == "echo role=boss repo=rektslug"
+
+
+def test_select_live_sessions_prefers_exact_role_match():
+    module = _load_module()
+    session = {
+        "session_id": "sess-lead",
+        "cli_type": "codex",
+        "metadata": {
+            "tmux_session": "mesh-codex-codex-1234",
+            "working_dir": "/media/sam/1TB/demo",
+        },
+        "updated_at": "2026-03-10T19:20:00Z",
+        "created_at": "2026-03-10T19:10:00Z",
+    }
+    task = {
+        "task_id": "task-lead",
+        "repo": "/media/sam/1TB/demo",
+        "role": "lead",
+        "target_cli": "codex",
+        "status": "running",
+        "updated_at": "2026-03-10T19:21:00Z",
+    }
+
+    selected = module._select_live_sessions_for_roles(
+        ["lead", "worker-codex"],
+        "/media/sam/1TB/demo",
+        "demo",
+        [(session, task)],
+    )
+
+    assert "lead" in selected
+    assert "worker-codex" not in selected
+
+
+def test_build_tmux_attach_remote_init_uses_provider_runtime_user(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_load_provider_session_users",
+        lambda config_path=None: {"codex": "mesh-worker", "gemini": "sam"},
+    )
+    session = {
+        "session_id": "sess-1",
+        "cli_type": "codex",
+        "metadata": {"tmux_session": "mesh-codex-codex-abcd"},
+    }
+    task = {"title": "Speckit Specify snake game codex"}
+
+    remote_init = module._build_tmux_attach_remote_init("lead", session, task)
+
+    assert "sudo -u mesh-worker tmux attach -t mesh-codex-codex-abcd" in remote_init
+    assert "Speckit Specify snake game codex" in remote_init
+
+
+def test_discover_live_remote_inits_returns_attach_for_matching_role(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "lead", "worker-codex"],
+        max_panes_per_tab=5,
+        single_tab=False,
+        replace_tabs=True,
+        preset="team-4x3",
+        attach_live=True,
+    )
+    monkeypatch.setattr(module, "_load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(
+        module,
+        "_load_provider_session_users",
+        lambda config_path=None: {"codex": "mesh-worker"},
+    )
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/sessions?state=open&limit=200":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "sess-lead",
+                        "task_id": "task-lead",
+                        "cli_type": "codex",
+                        "metadata": {
+                            "tmux_session": "mesh-codex-codex-abcd",
+                            "working_dir": "/media/sam/1TB/demo",
+                        },
+                        "updated_at": "2026-03-10T19:20:00Z",
+                        "created_at": "2026-03-10T19:10:00Z",
+                    }
+                ]
+            }
+        if path == "/tasks/task-lead":
+            return {
+                "task_id": "task-lead",
+                "repo": "/media/sam/1TB/demo",
+                "role": "lead",
+                "target_cli": "codex",
+                "status": "running",
+                "title": "Speckit Specify snake game codex",
+                "updated_at": "2026-03-10T19:21:00Z",
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
+
+    remote_inits = module._discover_live_remote_inits(cfg)
+
+    assert "lead" in remote_inits
+    assert "worker-codex" not in remote_inits
+    assert "sudo -u mesh-worker tmux attach -t mesh-codex-codex-abcd" in remote_inits["lead"]

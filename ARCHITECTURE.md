@@ -79,6 +79,7 @@ Operator UI layout:
   - `worker-codex`
   - `worker-gemini`
   - `verifier`
+- if the router already has an open session for the same repo and matching role/provider, `mesh ui` attaches that pane to the live tmux session; otherwise it falls back to the static role shell bootstrap
 
 Important boundary:
 

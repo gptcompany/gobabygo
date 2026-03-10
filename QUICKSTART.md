@@ -247,6 +247,9 @@ mapping/operator_ui.yaml
 
 Default behavior:
 - `mesh ui` bootstraps each pane through `scripts/mesh_ui_role_shell.sh`
+- `mesh ui` now auto-attaches role panes to matching live tmux sessions when the router already has an open session for the same repo/role
+  - example: an active `lead` Codex step on repo `X` opens directly inside the `lead` pane
+  - if no live session matches, the pane falls back to the normal static role shell
 - each role can run a different remote init command
 - the policy is user-editable in one file instead of being hardcoded or split across env vars
 - Codex session worker service user -> `mesh-worker`
@@ -485,8 +488,8 @@ Note:
 
 ## Current Limitations
 
-- `mesh ui` is operator UX only; it is not orchestration state.
-- `mesh ui` is now operationally useful by default, but it still does not replace router task state.
+- `mesh ui` is operator UX plus live attach when available; it is not the source of truth for orchestration state.
+- router DB/task/thread state still wins over what a pane appears to show.
 - `wss` / `wsattach` now enable more aggressive SSH keepalive + control persist by default (`15s`, `count=12`, `ControlPersist=30m`) to reduce idle pane freezes in iTerm2.
 - `mesh status` hides historical stale/offline worker rows by default; use `mesh status --all` when you need the full audit-heavy view.
 - If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.

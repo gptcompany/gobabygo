@@ -270,6 +270,8 @@ Current `mesh ui` behavior:
 - pane boot commands are centralized in `mapping/operator_ui.yaml`
 - default launcher is `scripts/mesh_ui_role_shell.sh`
 - each role can have its own non-destructive bootstrap command
+- if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of staying a static shell
+- exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
 - this closes the gap where every pane previously opened as the same blank shell
 
 Mac iTerm2 setup (one-time):
@@ -361,7 +363,7 @@ Launcher caveat:
 - worker shell commands work but systemd workers still return `401`: local `~/.mesh/router.env` and `/etc/mesh-worker/*.env` are drifted; update both or run the token sync helper, then restart session workers.
 - a session task gets requeued after ~5 minutes even though tmux is still alive: router or worker is still running old code without lease-renewal fixes; redeploy router + worker runtime.
 - a session opens tmux but blocks on theme/security/trust-folder/MCP prompts: this is CLI bootstrap drift under `mesh-worker`, not a router bus failure.
-- `mesh ui` is operator UX only; when in doubt, trust router task state plus `journalctl` on the session worker.
+- `mesh ui` can now attach live tmux sessions, but it is still not the orchestration source of truth; when in doubt, trust router task state plus `journalctl` on the session worker.
 - Claude Code-backed session workers now wait longer for the `❯` prompt, add a short settle before `Enter`, and kill stale tmux sessions on retry. If a task still sits on the typed prompt, inspect the tmux pane before blaming provider auth.
 - Session workers now also re-check the bottom-most `❯` composer after the first send; if the prompt text is still pending, they retry `Enter` automatically instead of leaving the task stuck in the composer.
 - Claude rate-limit TUI (`You're out of extra usage`, `/rate-limit-options`, reset menu) is now treated as `account_exhausted` when detected live in the pane so the router can rotate to the next isolated Claude profile.
