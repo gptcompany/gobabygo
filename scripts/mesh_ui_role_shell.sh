@@ -119,7 +119,7 @@ if is_local_ws_host "$WS_HOST"; then
 fi
 
 mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
-exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "REMOTE_INIT_B64='$REMOTE_INIT_B64' bash -s" -- "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" <<'EOF'
+exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "stty -echo >/dev/null 2>&1 || true; REMOTE_INIT_B64='$REMOTE_INIT_B64' bash -s" -- "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" <<'EOF'
 set -euo pipefail
 target_dir="${1:?missing target_dir}"
 ws_repo_base="${2:?missing ws_repo_base}"
@@ -148,5 +148,6 @@ fi
 if [[ -n "$remote_init" ]]; then
   eval "$remote_init"
 fi
+stty echo >/dev/null 2>&1 || true
 exec "${SHELL:-/bin/bash}" -l
 EOF
