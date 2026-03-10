@@ -98,6 +98,11 @@ bootstrap_shell() {
     clear
   fi
   echo "[mesh:${role}] repo=${repo_name}"
+  if [[ -f "$HOME/.bashrc" ]]; then
+    # Load mesh/yazicd/ws helpers before executing bootstrap commands.
+    # Suppress noisy output from user shell customizations.
+    source "$HOME/.bashrc" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$remote_init" ]]; then
     eval "$remote_init"
   fi
@@ -128,6 +133,9 @@ if [[ -n "${TERM:-}" ]]; then
   clear
 fi
 echo "[mesh:${role}] repo=${repo_name}"
+if [[ -f "$HOME/.bashrc" ]]; then
+  source "$HOME/.bashrc" >/dev/null 2>&1 || true
+fi
 if [[ -n "$remote_init" ]]; then
   eval "$remote_init"
 fi
