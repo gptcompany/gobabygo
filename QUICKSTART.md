@@ -250,6 +250,7 @@ Default behavior:
 - `mesh ui` now auto-attaches role panes to matching live tmux sessions when the router already has an open session for the same repo/role
   - example: an active `lead` Codex step on repo `X` opens directly inside the `lead` pane
   - if no live session matches, the pane falls back to the normal static role shell
+  - live attach resolution is performed again on the WS during pane bootstrap, so it still works even when the Mac host cannot reach the router directly
 - each role can run a different remote init command
 - the policy is user-editable in one file instead of being hardcoded or split across env vars
 - Codex session worker service user -> `mesh-worker`

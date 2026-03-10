@@ -117,6 +117,7 @@ Important boundary:
 - `mesh ui` now also has live-attach semantics:
   - for a repo with an already-open session, panes try to attach to the matching tmux session instead of only opening static control shells
   - current mapping is conservative and prefers exact role matches before provider worker fallbacks
+  - attach resolution also runs on the WS during pane bootstrap so Mac-side router reachability is no longer a blocker
 - session semantic is now explicit:
   - `session` tasks still default to staying open until the CLI exits
   - per-task payload can request auto-close with:

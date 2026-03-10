@@ -4,7 +4,13 @@ set -euo pipefail
 ROLE="${1:?missing role}"
 REPO_INPUT="${2:?missing repo}"
 REPO_NAME="${3:?missing repo_name}"
-REMOTE_INIT="${4:-}"
+ROLE_SET="${4:-}"
+REMOTE_INIT="${5:-}"
+if [[ -z "$REMOTE_INIT" && -n "$ROLE_SET" && "$ROLE_SET" != *","* ]]; then
+  REMOTE_INIT="$ROLE_SET"
+  ROLE_SET="$ROLE"
+fi
+[[ -n "$ROLE_SET" ]] || ROLE_SET="$ROLE"
 REMOTE_INIT_B64=""
 
 WS_HOST="${MESH_WS_HOST:-sam@192.168.1.111}"
@@ -92,7 +98,7 @@ bootstrap_shell() {
   local role="$3"
   local repo_name="$4"
   local remote_init="$5"
-  local mesh_home mesh_script
+  local mesh_home mesh_script live_attach_helper live_attach
 
   if [[ -d "$target_dir" ]]; then
     cd "$target_dir"
@@ -114,6 +120,13 @@ bootstrap_shell() {
     mesh() { "$mesh_script" "$@"; }
     export MESH_HOME="$mesh_home"
   fi
+  live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
+  if [[ "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
+    live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$ROLE_SET" 2>/dev/null || true)"
+    if [[ -n "$live_attach" ]]; then
+      eval "$live_attach"
+    fi
+  fi
   if [[ -n "$remote_init" ]]; then
     eval "$remote_init"
   fi
@@ -132,6 +145,7 @@ role="${ROLE:?missing role}"
 repo_name="${REPO_NAME:?missing repo_name}"
 mesh_control_repo="${MESH_CONTROL_REPO:-/media/sam/1TB/gobabygo}"
 remote_init=""
+role_set="${ROLE_SET:-$role}"
 
 if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
   remote_init="$(printf "%s" "$REMOTE_INIT_B64" | base64 -d)"
@@ -157,6 +171,13 @@ if [[ -x "$mesh_script" ]]; then
   mesh() { "$mesh_script" "$@"; }
   export MESH_HOME="$mesh_home"
 fi
+live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
+if [[ "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
+  live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$role_set" 2>/dev/null || true)"
+  if [[ -n "$live_attach" ]]; then
+    eval "$live_attach"
+  fi
+fi
 if [[ -n "$remote_init" ]]; then
   eval "$remote_init"
 fi
@@ -164,6 +185,6 @@ exec "${SHELL:-/bin/bash}" -l
 '
 
 mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
-REMOTE_COMMAND="$(printf 'TARGET_DIR=%q WS_REPO_BASE=%q ROLE=%q REPO_NAME=%q REMOTE_INIT_B64=%q bash -lc %q' \
-  "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT_B64" "$REMOTE_BOOTSTRAP_SCRIPT")"
+REMOTE_COMMAND="$(printf 'TARGET_DIR=%q WS_REPO_BASE=%q ROLE=%q REPO_NAME=%q ROLE_SET=%q REMOTE_INIT_B64=%q bash -lc %q' \
+  "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$ROLE_SET" "$REMOTE_INIT_B64" "$REMOTE_BOOTSTRAP_SCRIPT")"
 exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "$REMOTE_COMMAND"

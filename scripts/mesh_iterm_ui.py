@@ -434,6 +434,7 @@ def _command_for_role(
     repo: str,
     repo_name: str,
     *,
+    all_roles: list[str] | None = None,
     live_remote_init: str = "",
 ) -> str:
     env_key = _role_env_key(role)
@@ -455,6 +456,7 @@ def _command_for_role(
             shlex.quote(role),
             shlex.quote(repo),
             shlex.quote(repo_name),
+            shlex.quote(",".join(all_roles or [role])),
             shlex.quote(remote_init),
         ]
     )
@@ -531,6 +533,7 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
                 role,
                 cfg.repo,
                 cfg.repo_name,
+                all_roles=cfg.roles,
                 live_remote_init=live_remote_inits.get(role, ""),
             )
             banner = f"clear; echo '[mesh:{role}] repo={cfg.repo_name}'; "
