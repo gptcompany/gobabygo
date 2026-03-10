@@ -624,7 +624,11 @@ templates:
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as team lead for demo feature '{feature}' in repo {repo}. Produce a concise implementation plan and summary."
+        prompt: "Act as team lead for demo feature '{feature}' in repo {repo}. Write a concise implementation plan to lead_plan.md and include the exact marker GEMINI_LEAD_OK in the file."
+        payload:
+          auto_exit_on_success: true
+          success_file_path: "lead_plan.md"
+          success_file_contains: "GEMINI_LEAD_OK"
 
       - name: gemini.demo.worker
         title: "Gemini Worker {feature}"
@@ -636,7 +640,11 @@ templates:
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as worker reviewer for demo feature '{feature}' in repo {repo}. Critique the lead output, identify concrete risks, and propose corrections."
+        prompt: "Act as worker reviewer for demo feature '{feature}' in repo {repo}. Read lead_plan.md, critique it, and write concrete risks plus corrections to worker_review.md. Include the exact marker GEMINI_WORKER_OK in the file."
+        payload:
+          auto_exit_on_success: true
+          success_file_path: "worker_review.md"
+          success_file_contains: "GEMINI_WORKER_OK"
 
       - name: gemini.demo.president
         title: "Gemini President {feature}"
@@ -648,4 +656,8 @@ templates:
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as president for demo feature '{feature}' in repo {repo}. Reconcile the lead and worker outputs, then produce a go/no-go decision with follow-up actions."
+        prompt: "Act as president for demo feature '{feature}' in repo {repo}. Read lead_plan.md and worker_review.md, then write a go/no-go decision plus follow-up actions to president_decision.md. Include the exact marker GEMINI_TEAM_OK in the file."
+        payload:
+          auto_exit_on_success: true
+          success_file_path: "president_decision.md"
+          success_file_contains: "GEMINI_TEAM_OK"

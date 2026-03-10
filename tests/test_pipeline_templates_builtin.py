@@ -47,3 +47,24 @@ def test_gemini_team_demo_is_gemini_only() -> None:
     assert steps
     assert {str(step.get("target_cli", "")).strip() for step in steps} == {"gemini"}
     assert {str(step.get("role", "")).strip() for step in steps} == {"president", "lead", "worker"}
+
+
+def test_gemini_team_demo_defines_file_based_auto_exit() -> None:
+    templates = _load_templates()
+    steps = templates["gemini_team_demo"]["steps"]
+    expected = {
+        "lead_plan.md": "GEMINI_LEAD_OK",
+        "worker_review.md": "GEMINI_WORKER_OK",
+        "president_decision.md": "GEMINI_TEAM_OK",
+    }
+    seen: dict[str, str] = {}
+    for step in steps:
+        payload = step.get("payload")
+        assert isinstance(payload, dict)
+        assert payload.get("auto_exit_on_success") is True
+        path = str(payload.get("success_file_path", "")).strip()
+        marker = str(payload.get("success_file_contains", "")).strip()
+        assert path
+        assert marker
+        seen[path] = marker
+    assert seen == expected

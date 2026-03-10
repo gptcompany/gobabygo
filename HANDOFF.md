@@ -233,6 +233,28 @@ Current interpretation:
   - artifact: `/tmp/mesh-gemini-e2e10/GEMINI_E2E_OK.md`
   - content: `GEMINI_FILE_OK`
 
+## 2026-03-10 Gemini team template E2E (`mesh start`)
+
+- canonical smoke template now supports template-driven payload extras from `mapping/pipeline_templates.yaml`
+- `gemini_team_demo` was upgraded from text-only prompts to deterministic file outputs with `auto_exit_on_success`
+- live E2E run used the actual operator path:
+  - repo: `/tmp/mesh-gemini-team-e2e-20260310-230556`
+  - command: `MESH_PIPELINE_TEMPLATE=gemini_team_demo /media/sam/1TB/gobabygo/scripts/mesh start "snake game e2e"`
+  - thread: `mesh-gemini-team-e2e-20260310-230556-snake-game-e2e-20260310-230556`
+  - thread id: `7e2ee09f-8db8-4688-8b9f-d22849012115`
+- task/result chain:
+  - step 0 task `d6fd968c-8445-44a4-8a8b-54d81a6d3e7d` -> `completed`
+  - step 1 task `f50f28f3-b6ab-42c7-92f4-f73ffe0973df` -> `completed`
+  - step 2 task `45797c4f-ecfb-4037-a4bc-f8f27e0e51ba` -> `completed`
+- artifacts verified on disk:
+  - `/tmp/mesh-gemini-team-e2e-20260310-230556/lead_plan.md` contains `GEMINI_LEAD_OK`
+  - `/tmp/mesh-gemini-team-e2e-20260310-230556/worker_review.md` contains `GEMINI_WORKER_OK`
+  - `/tmp/mesh-gemini-team-e2e-20260310-230556/president_decision.md` contains `GEMINI_TEAM_OK`
+- worker logs confirm artifact-driven auto-exit for all three Gemini session tasks
+- known launcher bug still present:
+  - `scripts/mesh start` creates the thread successfully and then can emit a late `409 duplicate_thread_name`
+  - this is noise after creation; the live thread above still completed correctly
+
 ## 2026-03-10 Factory Droid audit vs `claude-config`
 
 Checked local repo:

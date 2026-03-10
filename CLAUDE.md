@@ -207,6 +207,10 @@ Canonical template model:
 - `worker` challenge/validation uses Codex and Gemini session workers
 - `speckit_codex` remains the pure-Codex fallback when Claude capacity is unavailable
 - `gemini_team_demo` is the canonical cheap smoke/demo template and should be preferred for future test runs
+- `gemini_team_demo` now writes deterministic artifacts and auto-exits each step:
+  - `lead_plan.md` with `GEMINI_LEAD_OK`
+  - `worker_review.md` with `GEMINI_WORKER_OK`
+  - `president_decision.md` with `GEMINI_TEAM_OK`
 
 ## Minimal Daily Flow
 

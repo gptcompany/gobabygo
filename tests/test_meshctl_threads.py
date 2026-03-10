@@ -439,6 +439,53 @@ templates:
         assert step_b_body["on_failure"] == "retry"
         assert step_b_body["payload"]["working_dir"] == "/repo/demo"
 
+    @patch("src.meshctl.requests.post")
+    def test_pipeline_create_renders_template_payload_fields(
+        self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text(
+            """version: 1
+templates:
+  gemini-demo:
+    steps:
+      - name: demo-step
+        title: "Gemini Demo {feature}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        critical: false
+        on_failure: abort
+        role: worker
+        review_policy: none
+        prompt: "Write artifact for {feature}"
+        payload:
+          auto_exit_on_success: true
+          success_file_path: "{feature}-ok.txt"
+          success_file_contains: "OK:{project}"
+""",
+            encoding="utf-8",
+        )
+        mock_post.side_effect = [
+            _mock_response(201, {"thread_id": "t-1"}),
+            _mock_response(201, {"task_id": "task-1"}),
+        ]
+        args = _pipeline_create_args(
+            template="gemini-demo",
+            template_file=str(template_file),
+            repo="/repo/demo",
+            project="SnakeDemo",
+            feature="snake game",
+            thread_name="gemini-demo-thread",
+        )
+        cmd_pipeline_create(args)
+        step_call = mock_post.call_args_list[1]
+        payload = step_call.kwargs["json"]["payload"]
+        assert payload["auto_exit_on_success"] is True
+        assert payload["success_file_path"] == "snake game-ok.txt"
+        assert payload["success_file_contains"] == "OK:SnakeDemo"
+        assert payload["working_dir"] == "/repo/demo"
+
     def test_pipeline_create_unknown_template_exits(
         self, tmp_path, capsys: pytest.CaptureFixture[str]
     ) -> None:

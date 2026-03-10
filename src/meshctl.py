@@ -655,6 +655,20 @@ def _render_text(template: str, variables: dict[str, str]) -> str:
     return template.format_map(_StrictFormatDict(variables))
 
 
+def _render_template_value(value: object, variables: dict[str, str]) -> object:
+    """Render strings inside template payload helpers while preserving scalars."""
+    if isinstance(value, str):
+        return _render_text(value, variables)
+    if isinstance(value, list):
+        return [_render_template_value(item, variables) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _render_template_value(item, variables)
+            for key, item in value.items()
+        }
+    return value
+
+
 def _repo_slug(repo_path: str, project: str = "") -> str:
     """Build a stable repo slug for account/profile naming."""
     candidate = Path(repo_path.rstrip("/")).name or project or "repo"
@@ -811,10 +825,21 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
                 sys.exit(1)
             depends_on_steps.append(dep_idx)
 
+        payload_template = raw.get("payload", {})
+        if payload_template is None:
+            payload_template = {}
+        if not isinstance(payload_template, dict):
+            print(
+                f"Error: payload must be a mapping in step '{name}'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
         try:
             title = _render_text(title_template, variables)
             prompt = _render_text(prompt_template, variables)
             target_account = _render_text(account_template, variables)
+            payload_extra = _render_template_value(payload_template, variables)
         except KeyError as e:
             print(
                 f"Error: missing template variable '{e.args[0]}' in step '{name}'",
@@ -835,6 +860,7 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
             "role": role,
             "review_policy": review_policy,
             "depends_on_steps": depends_on_steps,
+            "payload_extra": payload_extra,
         })
 
     if args.dry_run:
@@ -895,6 +921,17 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
                 sys.exit(1)
             depends_on_task_ids.append(dep_task_id)
 
+        payload: dict[str, object] = {
+            "prompt": step["prompt"],
+            "working_dir": args.repo,
+            "pipeline_template": args.template,
+            "pipeline_step": step["name"],
+            "review_policy": step["review_policy"],
+        }
+        payload_extra = step.get("payload_extra")
+        if isinstance(payload_extra, dict):
+            payload.update(payload_extra)
+
         body: dict[str, object] = {
             "title": step["title"],
             "step_index": step["index"],
@@ -905,13 +942,7 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
             "execution_mode": step["execution_mode"],
             "critical": step["critical"],
             "on_failure": step["on_failure"],
-            "payload": {
-                "prompt": step["prompt"],
-                "working_dir": args.repo,
-                "pipeline_template": args.template,
-                "pipeline_step": step["name"],
-                "review_policy": step["review_policy"],
-            },
+            "payload": payload,
         }
         if depends_on_task_ids:
             body["depends_on"] = depends_on_task_ids

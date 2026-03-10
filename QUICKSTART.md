@@ -165,6 +165,7 @@ Canonical template policy:
 - `worker` sessions use Codex and Gemini for challenge, analyze, verify, and validate steps
 - `speckit_codex` remains the fallback template when Claude is unavailable
 - `gemini_team_demo` is the canonical smoke/demo template and should be used for all future tests to avoid consuming Claude/Codex quota
+- `gemini_team_demo` writes `lead_plan.md`, `worker_review.md`, and `president_decision.md`, each with deterministic success markers and automatic session exit
 
 Pipeline orchestration example (from BOSS terminal):
 
@@ -322,6 +323,12 @@ For smoke/demo tests, use Gemini only:
 export MESH_PIPELINE_TEMPLATE=gemini_team_demo
 mesh start "snake game demo"
 ```
+
+Canonical E2E smoke expectation:
+- step 0 (`lead`) writes `lead_plan.md` with `GEMINI_LEAD_OK`
+- step 1 (`worker`) writes `worker_review.md` with `GEMINI_WORKER_OK`
+- step 2 (`president`) writes `president_decision.md` with `GEMINI_TEAM_OK`
+- each Gemini session auto-exits when its expected file marker is present
 
 If you need explicit path/name mode:
 
