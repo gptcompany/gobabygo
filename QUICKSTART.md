@@ -164,6 +164,7 @@ Canonical template policy:
 - `president` defaults to Codex for adjudication and review-heavy checkpoints
 - `worker` sessions use Codex and Gemini for challenge, analyze, verify, and validate steps
 - `speckit_codex` remains the fallback template when Claude is unavailable
+- `gemini_team_demo` is the canonical smoke/demo template and should be used for all future tests to avoid consuming Claude/Codex quota
 
 Pipeline orchestration example (from BOSS terminal):
 
@@ -313,6 +314,13 @@ If Claude is disabled, switch to codex-only pipeline:
 
 ```bash
 export MESH_PIPELINE_TEMPLATE=speckit_codex
+```
+
+For smoke/demo tests, use Gemini only:
+
+```bash
+export MESH_PIPELINE_TEMPLATE=gemini_team_demo
+mesh start "snake game demo"
 ```
 
 If you need explicit path/name mode:

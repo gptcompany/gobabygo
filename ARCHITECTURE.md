@@ -122,6 +122,7 @@ Canonical built-in workflow templates are now session-native too:
 - `gsd`
 - `speckit`
 - `speckit_codex`
+- `gemini_team_demo`
 
 Meaning:
 
@@ -130,6 +131,7 @@ Meaning:
 - Claude is used primarily for `lead` creative work
 - Codex is used primarily for `president` adjudication/review and worker-side verification
 - Gemini is used as an independent worker challenger/validator where available
+- `gemini_team_demo` exists specifically for cheap smoke/demo validation without touching Claude/Codex quota
 
 ## Session Bus
 

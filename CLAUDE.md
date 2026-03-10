@@ -198,6 +198,7 @@ Controls:
 - `MESH_WS_HOST` (default `sam@192.168.1.111`)
 - `MESH_DEPLOY_MODE=auto|remote|local` (use `remote` from Mac if needed)
 - `MESH_PIPELINE_TEMPLATE=speckit_codex` when Claude is unavailable
+- for smoke/demo validation, prefer `MESH_PIPELINE_TEMPLATE=gemini_team_demo` to avoid burning Claude/Codex quota
 
 Canonical template model:
 - built-in `gsd` and `speckit` are now session-first team templates
@@ -205,6 +206,7 @@ Canonical template model:
 - `president` adjudication is Codex-first
 - `worker` challenge/validation uses Codex and Gemini session workers
 - `speckit_codex` remains the pure-Codex fallback when Claude capacity is unavailable
+- `gemini_team_demo` is the canonical cheap smoke/demo template and should be preferred for future test runs
 
 ## Minimal Daily Flow
 

@@ -611,3 +611,41 @@ templates:
         on_failure: abort
         review_policy: none
         prompt: "Run confidence-gate post-implementation checks for feature '{feature}' in repo {repo}."
+
+  gemini_team_demo:
+    description: "Gemini-only team template for smoke/demo runs. Use this to validate router/session/tmux orchestration without consuming Claude/Codex quota."
+    steps:
+      - name: gemini.demo.lead
+        title: "Gemini Lead {feature}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: lead
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as team lead for demo feature '{feature}' in repo {repo}. Produce a concise implementation plan and summary."
+
+      - name: gemini.demo.worker
+        title: "Gemini Worker {feature}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: worker
+        depends_on_steps: [0]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as worker reviewer for demo feature '{feature}' in repo {repo}. Critique the lead output, identify concrete risks, and propose corrections."
+
+      - name: gemini.demo.president
+        title: "Gemini President {feature}"
+        target_cli: gemini
+        target_account: "{gemini_account}"
+        execution_mode: session
+        role: president
+        depends_on_steps: [1]
+        critical: false
+        on_failure: abort
+        review_policy: none
+        prompt: "Act as president for demo feature '{feature}' in repo {repo}. Reconcile the lead and worker outputs, then produce a go/no-go decision with follow-up actions."
