@@ -211,12 +211,24 @@ def _should_auto_exit_on_success(
     return False
 
 
-def _success_file_matches(work_dir: str, success_file_path: str, success_file_contains: str = "") -> bool:
+def _success_file_matches(
+    work_dir: str,
+    success_file_path: str,
+    success_file_contains: str = "",
+    *,
+    min_mtime_ns: int | None = None,
+) -> bool:
     path = str(success_file_path or "").strip()
     if not path:
         return False
     resolved = path if os.path.isabs(path) else os.path.join(work_dir, path)
     if not os.path.isfile(resolved):
+        return False
+    try:
+        stat = os.stat(resolved)
+    except OSError:
+        return False
+    if min_mtime_ns is not None and stat.st_mtime_ns <= min_mtime_ns:
         return False
     marker = str(success_file_contains or "")
     if not marker:
@@ -492,6 +504,7 @@ class MeshSessionWorker:
         )
         success_file_path = str(payload.get("success_file_path") or "").strip()
         success_file_contains = str(payload.get("success_file_contains") or "")
+        success_file_min_mtime_ns = time.time_ns() if success_file_path else None
         exit_command = str(payload.get("exit_command") or "/exit").strip() or "/exit"
 
         logger.info("Starting interactive task %s (%s)", task_id, task.get("title", "untitled"))
@@ -713,6 +726,7 @@ class MeshSessionWorker:
                             work_dir,
                             success_file_path,
                             success_file_contains=success_file_contains,
+                            min_mtime_ns=success_file_min_mtime_ns,
                         )
                     ):
                         logger.info(

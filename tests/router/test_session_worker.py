@@ -41,6 +41,38 @@ def test_sanitize_session_name() -> None:
     assert name == "mesh-claude-work-task-1"
 
 
+def test_success_file_matches_rejects_stale_artifact(tmp_path) -> None:
+    target = tmp_path / "lead_plan.md"
+    target.write_text("GEMINI_LEAD_OK\n", encoding="utf-8")
+    stale_cutoff = target.stat().st_mtime_ns
+    assert (
+        _success_file_matches(
+            str(tmp_path),
+            "lead_plan.md",
+            "GEMINI_LEAD_OK",
+            min_mtime_ns=stale_cutoff,
+        )
+        is False
+    )
+
+
+def test_success_file_matches_accepts_updated_artifact_after_cutoff(tmp_path) -> None:
+    target = tmp_path / "lead_plan.md"
+    target.write_text("old\n", encoding="utf-8")
+    stale_cutoff = target.stat().st_mtime_ns
+    target.write_text("GEMINI_LEAD_OK\n", encoding="utf-8")
+    os.utime(target, ns=(stale_cutoff + 5_000_000, stale_cutoff + 5_000_000))
+    assert (
+        _success_file_matches(
+            str(tmp_path),
+            "lead_plan.md",
+            "GEMINI_LEAD_OK",
+            min_mtime_ns=stale_cutoff,
+        )
+        is True
+    )
+
+
 def test_session_worker_config_from_env() -> None:
     env = {
         "MESH_WORKER_ID": "ws-claude-session-01",

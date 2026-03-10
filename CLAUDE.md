@@ -211,6 +211,7 @@ Canonical template model:
   - `lead_plan.md` with `GEMINI_LEAD_OK`
   - `worker_review.md` with `GEMINI_WORKER_OK`
   - `president_decision.md` with `GEMINI_TEAM_OK`
+- artifact-driven auto-exit is now guarded against stale reruns: a pre-existing success file only counts if it was created or modified after the current task started
 
 ## Minimal Daily Flow
 

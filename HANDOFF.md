@@ -254,6 +254,9 @@ Current interpretation:
 - known launcher bug still present:
   - `scripts/mesh start` creates the thread successfully and then can emit a late `409 duplicate_thread_name`
   - this is noise after creation; the live thread above still completed correctly
+- review follow-up fixed:
+  - stale success artifacts can no longer satisfy `auto_exit_on_success` on reruns
+  - `session_worker.py` now requires `success_file_path` to be newer than the task start time before auto-exit triggers
 
 ## 2026-03-10 Factory Droid audit vs `claude-config`
 
