@@ -118,17 +118,16 @@ if is_local_ws_host "$WS_HOST"; then
   bootstrap_shell "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT"
 fi
 
-mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
-exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "stty -echo >/dev/null 2>&1 || true; REMOTE_INIT_B64='$REMOTE_INIT_B64' bash -s" -- "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" <<'EOF'
+REMOTE_BOOTSTRAP_SCRIPT='
 set -euo pipefail
-target_dir="${1:?missing target_dir}"
-ws_repo_base="${2:?missing ws_repo_base}"
-role="${3:?missing role}"
-repo_name="${4:?missing repo_name}"
+target_dir="${TARGET_DIR:?missing target_dir}"
+ws_repo_base="${WS_REPO_BASE:?missing ws_repo_base}"
+role="${ROLE:?missing role}"
+repo_name="${REPO_NAME:?missing repo_name}"
 remote_init=""
 
 if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
-  remote_init="$(printf '%s' "$REMOTE_INIT_B64" | base64 -d)"
+  remote_init="$(printf "%s" "$REMOTE_INIT_B64" | base64 -d)"
 fi
 
 if [[ -d "$target_dir" ]]; then
@@ -148,6 +147,10 @@ fi
 if [[ -n "$remote_init" ]]; then
   eval "$remote_init"
 fi
-stty echo >/dev/null 2>&1 || true
 exec "${SHELL:-/bin/bash}" -l
-EOF
+'
+
+mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
+REMOTE_COMMAND="$(printf 'TARGET_DIR=%q WS_REPO_BASE=%q ROLE=%q REPO_NAME=%q REMOTE_INIT_B64=%q bash -lc %q' \
+  "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT_B64" "$REMOTE_BOOTSTRAP_SCRIPT")"
+exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "$REMOTE_COMMAND"
