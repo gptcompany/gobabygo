@@ -217,4 +217,6 @@ Current interpretation:
   - local result: `pytest -q tests/router/test_session_worker.py` -> `78 passed`
 - live runtime note:
   - Gemini worker on `.111` was redeployed and restarted after the fixes
-  - a final fresh-repo write smoke still needs to be rerun from a clean temp repo to confirm actual file creation before calling Gemini repo-write E2E closed
+  - a later follow-up widened the Claude Code start-screen detector again, because partial home-screen captures were still bypassing the earlier heuristic
+  - current local result after that detector tweak: `pytest -q tests/router/test_session_worker.py` -> `80 passed`
+  - a final fresh-repo write smoke still needs to be rerun from a clean temp repo on the newest worker runtime to confirm actual file creation before calling Gemini repo-write E2E closed

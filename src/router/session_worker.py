@@ -164,7 +164,14 @@ def _capture_contains_prompt_text(captured: str, prompt: str) -> bool:
 def _looks_like_start_screen(captured: str) -> bool:
     body = str(captured or "")
     lowered = body.lower()
-    return "welcome back" in lowered and "tips for getting started" in lowered
+    if "welcome back" not in lowered:
+        return False
+    return (
+        "tips for getting started" in lowered
+        or "/model to try opus" in lowered
+        or "run /init to create" in lowered
+        or "❯ try " in body.lower()
+    )
 
 
 def _should_auto_exit_on_success(
@@ -590,7 +597,7 @@ class MeshSessionWorker:
                     capture_emit = _compute_output_emit(prior_capture, captured)
                     delta_text = capture_emit[0] if capture_emit else ""
                     if not prompt_delivery_confirmed:
-                        if _capture_contains_prompt_text(captured, prompt) or not _looks_like_start_screen(captured):
+                        if captured.strip() and not _looks_like_start_screen(captured):
                             prompt_delivery_confirmed = True
                         elif prompt_delivery_attempts < self.config.prompt_submit_retry_count:
                             prompt_delivery_attempts += 1
@@ -926,18 +933,19 @@ class MeshSessionWorker:
         for attempt in range(retries):
             time.sleep(poll_s)
             captured = self._tmux_capture_pane(session_name)
-            if _capture_contains_prompt_text(captured, prompt):
+            if not captured.strip():
+                continue
+            if not _looks_like_start_screen(captured):
                 return
-            if captured.strip() != baseline and not _looks_like_start_screen(captured):
-                return
-            logger.info(
-                "Prompt not visible and pane unchanged for %s; resending prompt attempt %d/%d",
-                session_name,
-                attempt + 1,
-                retries,
-            )
-            self._tmux_send_text(session_name, prompt)
-            self._ensure_prompt_submitted(session_name)
+            if captured.strip() == baseline or _capture_contains_prompt_text(captured, prompt):
+                logger.info(
+                    "Prompt not visible and pane unchanged for %s; resending prompt attempt %d/%d",
+                    session_name,
+                    attempt + 1,
+                    retries,
+                )
+                self._tmux_send_text(session_name, prompt)
+                self._ensure_prompt_submitted(session_name)
 
     def _emit_cli_output_if_changed(
         self,

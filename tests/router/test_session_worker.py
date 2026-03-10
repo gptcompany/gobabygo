@@ -21,6 +21,7 @@ from src.router.session_worker import (
     _detect_interactive_failure_screen,
     _discover_project_mcp_servers,
     _last_prompt_line_has_content,
+    _looks_like_start_screen,
     _parse_upterm_ssh_url,
     _prompt_is_idle,
     _sanitize_session_name,
@@ -187,6 +188,11 @@ def test_capture_contains_prompt_text_normalizes_whitespace() -> None:
         "GEMINI_FILE_OK."
     )
     assert _capture_contains_prompt_text(captured, prompt) is True
+
+
+def test_looks_like_start_screen_accepts_partial_claude_home_capture() -> None:
+    captured = "Welcome back gpt!\n\n  /model to try Opus 4.6\n\n❯ Try \"fix typecheck errors\""
+    assert _looks_like_start_screen(captured) is True
 
 
 # ---------------------------------------------------------------------------
@@ -1530,7 +1536,7 @@ class TestTmuxOperations:
     def test_ensure_prompt_delivered_resends_when_welcome_screen_unchanged(self, mock_sleep: Mock) -> None:
         worker = _make_worker(prompt_submit_retry_count=2, prompt_submit_retry_poll_s=0.2)
         prompt = "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK."
-        baseline = 'Welcome back gpt!\n\n❯ Try "write a test for <filepath>"'
+        baseline = 'Welcome back gpt!\nTips for getting started\n❯ Try "write a test for <filepath>"'
         with (
             patch.object(
                 worker,
@@ -1548,7 +1554,7 @@ class TestTmuxOperations:
         mock_ensure_submitted.assert_called_once_with("mysess")
 
     @patch("src.router.session_worker.time.sleep")
-    def test_ensure_prompt_delivered_resends_when_start_screen_variant_changes(self, mock_sleep: Mock) -> None:
+    def test_ensure_prompt_delivered_defers_start_screen_variant_change_to_main_loop(self, mock_sleep: Mock) -> None:
         worker = _make_worker(prompt_submit_retry_count=2, prompt_submit_retry_poll_s=0.2)
         prompt = "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK."
         baseline = (
@@ -1561,6 +1567,29 @@ class TestTmuxOperations:
                 side_effect=[
                     "Welcome back gpt!\nTips for getting started\n❯ edit <filepath> to...",
                     "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK.\n\n❯ ",
+                ],
+            ),
+            patch.object(worker, "_tmux_send_text") as mock_send_text,
+            patch.object(worker, "_ensure_prompt_submitted") as mock_ensure_submitted,
+        ):
+            worker._ensure_prompt_delivered("mysess", prompt, baseline)
+        mock_send_text.assert_not_called()
+        mock_ensure_submitted.assert_not_called()
+
+    @patch("src.router.session_worker.time.sleep")
+    def test_ensure_prompt_delivered_resends_when_start_screen_contains_prompt_text(self, mock_sleep: Mock) -> None:
+        worker = _make_worker(prompt_submit_retry_count=2, prompt_submit_retry_poll_s=0.2)
+        prompt = "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK."
+        baseline = (
+            "Welcome back gpt!\nTips for getting started\n❯ Try \"write a test for <filepath>\""
+        )
+        with (
+            patch.object(
+                worker,
+                "_tmux_capture_pane",
+                side_effect=[
+                    f"Welcome back gpt!\nTips for getting started\n❯ {prompt}",
+                    "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK.\n\n● GEMINI_E2E_OK\n\n❯ ",
                 ],
             ),
             patch.object(worker, "_tmux_send_text") as mock_send_text,

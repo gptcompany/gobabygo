@@ -54,7 +54,8 @@ Not yet production-clean:
 - fresh-repo Gemini write smoke uncovered two distinct bugs in `session_worker.py`:
   - `auto_exit_on_success` could falsely trigger when `success_marker` already appeared inside the prompt text
   - after a manual/session-bus resend, `auto_exit` still reused the old baseline instead of re-arming on the new inbound prompt
-- both bugs are fixed in repo and the Gemini worker runtime on `.111` has been redeployed; the remaining live gap is a final re-validation of fresh-repo write tasks after the latest redeploy
+- the start-screen detector was then widened again because partial Claude Code home captures were slipping past the earlier heuristic
+- Gemini worker runtime on `.111` has been redeployed with the widened detector; the remaining live gap is one final fresh-repo write rerun on the new runtime
 - several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
 
 ## Current Handoff Snapshot
