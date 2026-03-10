@@ -150,6 +150,33 @@ Operational note:
   - step `0` is `running`
   - queue depth is `0`
 
+## 2026-03-10 follow-up fix in repo (not yet assumed live)
+
+Three concrete issues were identified on the live rerun and fixed in repo:
+
+1. composer submit race
+   - symptom: `Speckit Specify` prompt remained typed in the bottom `❯` composer with no assistant turn
+   - live confirmation: a manual tmux `Enter` immediately moved Claude into `✻ Herding…`
+   - repo fix: session worker now polls the bottom-most composer and retries `Enter` until the composer clears
+
+2. Claude rate-limit TUI blocker
+   - symptom: session hit `You're out of extra usage` and stalled on `/rate-limit-options`
+   - repo fix: live pane detection now maps that screen to `account_exhausted`, allowing scheduler rotation to the next Claude profile
+
+3. router concurrent SQLite failure
+   - symptom: live router `.100` returned `POST /tasks/complete -> 500` and intermittent `POST /heartbeat -> 500`
+   - evidence: worker log reported `Task 4630be01-1b88-4433-b2b1-50792134ac3d completed` while router still showed step `0` as `running`
+   - repo fix: RouterDB now serializes more read/write paths with the existing `RLock`
+
+Current interpretation:
+
+- repo state is ahead of live runtime
+- until `.100` router and WS worker runtime are redeployed, `rektslug-spec-016` should be treated as contaminated by old runtime behavior
+- next clean validation should be:
+  1. deploy router + WS worker runtime from current `master`
+  2. verify `/tasks/complete` and `/heartbeat` stop returning `500`
+  3. rerun `./scripts/mesh run rektslug 016`
+
 ## Next operator step
 
 1. monitor `rektslug-spec-016` instead of reopening the old failed thread

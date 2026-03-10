@@ -18,6 +18,7 @@ import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any, Generator
 
@@ -202,18 +203,27 @@ def _decode_json_blob(raw: Any, *, default: Any) -> Any:
 
 def _retry_on_busy(func):
     """Decorator to retry on SQLITE_BUSY with exponential backoff."""
+    @wraps(func)
     def wrapper(*args, **kwargs):
-        last_err = None
-        for attempt in range(_BUSY_RETRIES):
-            try:
-                return func(*args, **kwargs)
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) or "SQLITE_BUSY" in str(e):
-                    last_err = e
-                    time.sleep(_BUSY_BACKOFFS_MS[attempt] / 1000.0)
-                else:
-                    raise
-        raise last_err  # type: ignore[misc]
+        lock = getattr(args[0], "_lock", None) if args else None
+
+        def _call():
+            last_err = None
+            for attempt in range(_BUSY_RETRIES):
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e) or "SQLITE_BUSY" in str(e):
+                        last_err = e
+                        time.sleep(_BUSY_BACKOFFS_MS[attempt] / 1000.0)
+                    else:
+                        raise
+            raise last_err  # type: ignore[misc]
+
+        if lock is None:
+            return _call()
+        with lock:
+            return _call()
     return wrapper
 
 
@@ -456,10 +466,11 @@ class RouterDB:
 
     def get_task(self, task_id: str) -> Task | None:
         """Get a task by ID, or None if not found."""
-        cur = self._conn.execute(
-            "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
+            )
+            row = cur.fetchone()
         return self._task_from_row(row) if row else None
 
     def list_tasks(
@@ -468,17 +479,18 @@ class RouterDB:
         limit: int = 100,
     ) -> list[Task]:
         """List tasks, optionally filtered by status. Ordered by created_at DESC."""
-        if status is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-                (status, limit),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            )
-        return [self._task_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            if status is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                    (status, limit),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                )
+            return [self._task_from_row(row) for row in cur.fetchall()]
 
     @_retry_on_busy
     def update_task_status(
@@ -542,11 +554,12 @@ class RouterDB:
 
     def get_events(self, task_id: str) -> list[TaskEvent]:
         """Get all events for a task, ordered chronologically (by event_id ASC)."""
-        cur = self._conn.execute(
-            "SELECT * FROM task_events WHERE task_id = ? ORDER BY event_id ASC",
-            (task_id,),
-        )
-        return [self._event_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM task_events WHERE task_id = ? ORDER BY event_id ASC",
+                (task_id,),
+            )
+            return [self._event_from_row(row) for row in cur.fetchall()]
 
     # -- Sessions --
 
@@ -909,21 +922,23 @@ class RouterDB:
 
     def get_worker(self, worker_id: str) -> Worker | None:
         """Get a worker by ID, or None if not found."""
-        cur = self._conn.execute(
-            "SELECT * FROM workers WHERE worker_id = ?", (worker_id,)
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM workers WHERE worker_id = ?", (worker_id,)
+            )
+            row = cur.fetchone()
         return self._worker_from_row(row) if row else None
 
     def list_workers(self, status: str | None = None) -> list[Worker]:
         """List workers, optionally filtered by status."""
-        if status is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM workers WHERE status = ?", (status,)
-            )
-        else:
-            cur = self._conn.execute("SELECT * FROM workers")
-        return [self._worker_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            if status is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM workers WHERE status = ?", (status,)
+                )
+            else:
+                cur = self._conn.execute("SELECT * FROM workers")
+            return [self._worker_from_row(row) for row in cur.fetchall()]
 
     @_retry_on_busy
     def update_worker(
@@ -948,11 +963,12 @@ class RouterDB:
 
     def list_stale_candidates(self, threshold_iso: str) -> list[Worker]:
         """Find workers whose last_heartbeat is older than threshold."""
-        cur = self._conn.execute(
-            "SELECT * FROM workers WHERE status IN ('idle', 'busy', 'draining') AND last_heartbeat < ?",
-            (threshold_iso,),
-        )
-        return [self._worker_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM workers WHERE status IN ('idle', 'busy', 'draining') AND last_heartbeat < ?",
+                (threshold_iso,),
+            )
+            return [self._worker_from_row(row) for row in cur.fetchall()]
 
     def find_worker_by_account(
         self,
@@ -962,19 +978,21 @@ class RouterDB:
         """Find an active worker with the given account_profile."""
         excluded = exclude_statuses or ["offline"]
         placeholders = ", ".join("?" for _ in excluded)
-        cur = self._conn.execute(
-            f"SELECT * FROM workers WHERE account_profile = ? AND status NOT IN ({placeholders}) LIMIT 1",
-            [account_profile] + excluded,
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                f"SELECT * FROM workers WHERE account_profile = ? AND status NOT IN ({placeholders}) LIMIT 1",
+                [account_profile] + excluded,
+            )
+            row = cur.fetchone()
         return self._worker_from_row(row) if row else None
 
     def list_worker_leases(self, worker_id: str) -> list[Lease]:
         """Get all active leases for a worker."""
-        cur = self._conn.execute(
-            "SELECT * FROM leases WHERE worker_id = ?", (worker_id,)
-        )
-        return [self._lease_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM leases WHERE worker_id = ?", (worker_id,)
+            )
+            return [self._lease_from_row(row) for row in cur.fetchall()]
 
     @_retry_on_busy
     def update_task_fields(
@@ -1003,49 +1021,54 @@ class RouterDB:
         before_iso: str | None = None,
     ) -> list[Task]:
         """List queued tasks, optionally only those created before a timestamp."""
-        if before_iso:
-            cur = self._conn.execute(
-                "SELECT * FROM tasks WHERE status = 'queued' AND created_at < ? ORDER BY priority DESC, created_at ASC",
-                (before_iso,),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority DESC, created_at ASC"
-            )
-        return [self._task_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            if before_iso:
+                cur = self._conn.execute(
+                    "SELECT * FROM tasks WHERE status = 'queued' AND created_at < ? ORDER BY priority DESC, created_at ASC",
+                    (before_iso,),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM tasks WHERE status = 'queued' ORDER BY priority DESC, created_at ASC"
+                )
+            return [self._task_from_row(row) for row in cur.fetchall()]
 
     def get_tasks_by_worker(self, worker_id: str, status: str | None = None) -> list[Task]:
         """Get tasks assigned to a worker, optionally filtered by status."""
-        if status is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM tasks WHERE assigned_worker = ? AND status = ? ORDER BY created_at ASC",
-                (worker_id, status),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM tasks WHERE assigned_worker = ? ORDER BY created_at ASC",
-                (worker_id,),
-            )
-        return [self._task_from_row(row) for row in cur.fetchall()]
+        with self._lock:
+            if status is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM tasks WHERE assigned_worker = ? AND status = ? ORDER BY created_at ASC",
+                    (worker_id, status),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM tasks WHERE assigned_worker = ? ORDER BY created_at ASC",
+                    (worker_id,),
+                )
+            return [self._task_from_row(row) for row in cur.fetchall()]
 
     def count_tasks_by_status(self, status: str) -> int:
         """Count tasks with a given status."""
-        cur = self._conn.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status = ?", (status,)
-        )
-        return cur.fetchone()[0]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status = ?", (status,)
+            )
+            return cur.fetchone()[0]
 
     def count_all_task_statuses(self) -> dict[str, int]:
         """Count tasks grouped by status in a single query."""
-        cur = self._conn.execute(
-            "SELECT status, COUNT(*) FROM tasks GROUP BY status"
-        )
-        return {row[0]: row[1] for row in cur.fetchall()}
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT status, COUNT(*) FROM tasks GROUP BY status"
+            )
+            return {row[0]: row[1] for row in cur.fetchall()}
 
     def count_dead_letters(self) -> int:
         """Count dead letter events."""
-        cur = self._conn.execute("SELECT COUNT(*) FROM dead_letter_events")
-        return cur.fetchone()[0]
+        with self._lock:
+            cur = self._conn.execute("SELECT COUNT(*) FROM dead_letter_events")
+            return cur.fetchone()[0]
 
     # -- Threads --
 
@@ -1077,17 +1100,19 @@ class RouterDB:
         return thread
 
     def get_thread(self, thread_id: str) -> Thread | None:
-        cur = self._conn.execute(
-            "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM threads WHERE thread_id = ?", (thread_id,)
+            )
+            row = cur.fetchone()
         return self._thread_from_row(row) if row else None
 
     def get_thread_by_name(self, name: str) -> Thread | None:
-        cur = self._conn.execute(
-            "SELECT * FROM threads WHERE name = ? LIMIT 1", (name,)
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM threads WHERE name = ? LIMIT 1", (name,)
+            )
+            row = cur.fetchone()
         return self._thread_from_row(row) if row else None
 
     def list_threads(
@@ -1179,10 +1204,11 @@ class RouterDB:
 
     def get_active_lease(self, task_id: str) -> Lease | None:
         """Get the active lease for a task, or None if no lease exists."""
-        cur = self._conn.execute(
-            "SELECT * FROM leases WHERE task_id = ?", (task_id,)
-        )
-        row = cur.fetchone()
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM leases WHERE task_id = ?", (task_id,)
+            )
+            row = cur.fetchone()
         return self._lease_from_row(row) if row else None
 
     @_retry_on_busy

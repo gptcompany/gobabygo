@@ -30,6 +30,12 @@ from src.router.provider_runtime import resolve_cli_command
 
 logger = logging.getLogger("mesh.session_worker")
 _CLAUDE_CODE_READY_MARKERS = ("❯",)
+_CLAUDE_RATE_LIMIT_SCREEN_MARKERS = (
+    "/rate-limit-options",
+    "what do you want to do?",
+    "stop and wait for limit to reset",
+    "upgrade your plan",
+)
 
 
 class SessionNotFoundError(RuntimeError):
@@ -87,6 +93,26 @@ def _compute_output_emit(
     }
 
 
+def _last_prompt_line_has_content(captured: str) -> bool:
+    """Return True when the bottom-most Claude Code composer still holds text."""
+    for line in reversed((captured or "").splitlines()):
+        normalized = line.replace("\xa0", " ").lstrip()
+        if normalized.startswith("❯"):
+            return bool(normalized[1:].strip())
+    return False
+
+
+def _detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
+    """Return a failure kind when the live TUI is stuck on a terminal error screen."""
+    failure_kind = classify_cli_failure(cli_type, captured)
+    if failure_kind != "account_exhausted":
+        return ""
+    body = str(captured or "").lower()
+    if any(marker in body for marker in _CLAUDE_RATE_LIMIT_SCREEN_MARKERS):
+        return failure_kind
+    return ""
+
+
 def _discover_project_mcp_servers(work_dir: str) -> list[str]:
     """Return MCP server names declared by ``work_dir/.mcp.json``."""
     mcp_path = os.path.join(work_dir, ".mcp.json")
@@ -126,6 +152,8 @@ class SessionWorkerConfig:
     startup_ready_timeout_s: float = 10.0
     startup_ready_poll_interval_s: float = 0.25
     tmux_send_settle_s: float = 0.1
+    prompt_submit_retry_count: int = 3
+    prompt_submit_retry_poll_s: float = 1.0
     tmux_bin: str = "tmux"
     tmux_capture_lines: int = 200
     output_emit_max_chars: int = 8000
@@ -174,6 +202,12 @@ class SessionWorkerConfig:
                 os.environ.get("MESH_SESSION_READY_POLL_INTERVAL_S", "0.25")
             ),
             tmux_send_settle_s=float(os.environ.get("MESH_TMUX_SEND_SETTLE_S", "0.1")),
+            prompt_submit_retry_count=int(
+                os.environ.get("MESH_PROMPT_SUBMIT_RETRY_COUNT", "3")
+            ),
+            prompt_submit_retry_poll_s=float(
+                os.environ.get("MESH_PROMPT_SUBMIT_RETRY_POLL_S", "1.0")
+            ),
             tmux_bin=os.environ.get("MESH_TMUX_BIN", "tmux"),
             tmux_capture_lines=int(os.environ.get("MESH_TMUX_CAPTURE_LINES", "200")),
             output_emit_max_chars=int(os.environ.get("MESH_OUTPUT_EMIT_MAX_CHARS", "8000")),
@@ -382,6 +416,7 @@ class MeshSessionWorker:
                     tmux_session_name,
                 )
             self._tmux_send_text(tmux_session_name, prompt)
+            self._ensure_prompt_submitted(tmux_session_name)
 
             start = time.monotonic()
             after_seq = 0
@@ -441,6 +476,29 @@ class MeshSessionWorker:
                     last_emitted_capture = self._emit_cli_output_if_changed(
                         session_id, captured, last_emitted_capture
                     )
+                    live_failure_kind = _detect_interactive_failure_screen(
+                        self.config.cli_type, captured
+                    )
+                    if live_failure_kind:
+                        self._send_session_message(
+                            session_id,
+                            direction="system",
+                            role="system",
+                            content=(
+                                "detected terminal CLI blocker; closing session so router can retry "
+                                "with another account"
+                            ),
+                            metadata={"error_kind": live_failure_kind},
+                        )
+                        self._report_failure(
+                            task_id,
+                            captured[-4000:],
+                            error_kind=live_failure_kind,
+                        )
+                        self._close_session(session_id, state="errored")
+                        if self._tmux_has_session(tmux_session_name):
+                            self._tmux_kill_session(tmux_session_name)
+                        return
                 time.sleep(self.config.session_poll_interval_s)
 
             final_snapshot = last_capture
@@ -683,6 +741,21 @@ class MeshSessionWorker:
                 return True
             time.sleep(poll_s)
         return False
+
+    def _ensure_prompt_submitted(self, session_name: str) -> None:
+        retries = max(0, int(self.config.prompt_submit_retry_count))
+        poll_s = max(0.05, float(self.config.prompt_submit_retry_poll_s))
+        for attempt in range(retries):
+            time.sleep(poll_s)
+            if not _last_prompt_line_has_content(self._tmux_capture_pane(session_name)):
+                return
+            logger.info(
+                "Composer still has pending text for %s; sending Enter retry %d/%d",
+                session_name,
+                attempt + 1,
+                retries,
+            )
+            self._tmux_send_key(session_name, "Enter", repeat=1)
 
     def _emit_cli_output_if_changed(
         self,

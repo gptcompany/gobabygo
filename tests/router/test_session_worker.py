@@ -15,7 +15,9 @@ from src.router.session_worker import (
     SessionNotFoundError,
     SessionWorkerConfig,
     _compute_output_emit,
+    _detect_interactive_failure_screen,
     _discover_project_mcp_servers,
+    _last_prompt_line_has_content,
     _parse_upterm_ssh_url,
     _sanitize_session_name,
 )
@@ -48,6 +50,8 @@ def test_session_worker_config_from_env() -> None:
         "MESH_SESSION_READY_TIMEOUT_S": "7",
         "MESH_SESSION_READY_POLL_INTERVAL_S": "0.2",
         "MESH_TMUX_SEND_SETTLE_S": "0.15",
+        "MESH_PROMPT_SUBMIT_RETRY_COUNT": "4",
+        "MESH_PROMPT_SUBMIT_RETRY_POLL_S": "0.4",
         "MESH_TMUX_SESSION_PREFIX": "meshx",
     }
     with patch.dict(os.environ, env):
@@ -67,6 +71,8 @@ def test_session_worker_config_from_env() -> None:
     assert cfg.startup_ready_timeout_s == 7.0
     assert cfg.startup_ready_poll_interval_s == 0.2
     assert cfg.tmux_send_settle_s == 0.15
+    assert cfg.prompt_submit_retry_count == 4
+    assert cfg.prompt_submit_retry_poll_s == 0.4
     assert cfg.tmux_session_prefix == "meshx"
 
 
@@ -106,6 +112,23 @@ def test_compute_output_emit_snapshot_on_reflow() -> None:
 
 def test_compute_output_emit_none_on_unchanged() -> None:
     assert _compute_output_emit("same", "same") is None
+
+
+def test_last_prompt_line_has_content_detects_pending_composer() -> None:
+    assert _last_prompt_line_has_content("header\n❯ Execute spec") is True
+    assert _last_prompt_line_has_content("header\n❯ Execute spec\n✻ Herding…\n❯ ") is False
+    assert _last_prompt_line_has_content("no prompt here") is False
+
+
+def test_detect_interactive_failure_screen_detects_rate_limit_menu() -> None:
+    captured = (
+        "You've hit your limit\n"
+        "❯ /rate-limit-options\n"
+        "What do you want to do?\n"
+        "1. Stop and wait for limit to reset\n"
+    )
+    assert _detect_interactive_failure_screen("claude", captured) == "account_exhausted"
+    assert _detect_interactive_failure_screen("codex", captured) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1027,6 +1050,65 @@ class TestAttachCleanupInExecuteTask:
         assert mock_report_failure.call_args.kwargs["error_kind"] == "account_exhausted"
         mock_close.assert_called_once_with("sid-limit", state="errored")
 
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, True])
+    @patch.object(
+        MeshSessionWorker,
+        "_tmux_capture_pane",
+        return_value=(
+            "You've hit your limit\n"
+            "❯ /rate-limit-options\n"
+            "What do you want to do?\n"
+            "1. Stop and wait for limit to reset\n"
+        ),
+    )
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
+    @patch.object(MeshSessionWorker, "_tmux_kill_session")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-rate-menu")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch("src.router.session_worker.time.sleep")
+    def test_live_rate_limit_menu_reports_failure_without_waiting_for_exit(
+        self,
+        mock_sleep: Mock,
+        mock_report_failure: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_kill: Mock,
+        mock_ensure_prompt_submitted: Mock,
+        mock_send_text: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+
+        task = {
+            "task_id": "t-limit-menu",
+            "execution_mode": "session",
+            "target_account": "claude-samuele",
+            "payload": {
+                "prompt": "/continue",
+                "working_dir": "/media/sam/1TB/rektslug",
+            },
+        }
+
+        worker._running = True
+        worker._execute_task(task)
+
+        mock_report_complete.assert_not_called()
+        mock_report_failure.assert_called_once()
+        assert mock_report_failure.call_args.kwargs["error_kind"] == "account_exhausted"
+        mock_close.assert_called_once_with("sid-rate-menu", state="errored")
+        mock_kill.assert_called_once_with(worker._tmux_session_name("t-limit-menu", "claude-samuele"))
+
 
 # ---------------------------------------------------------------------------
 # _deliver_inbound_messages
@@ -1203,6 +1285,26 @@ class TestTmuxOperations:
         assert mock_run.call_count == 1
         assert mock_run.call_args[0][0][4] == "Enter"
         mock_sleep.assert_not_called()
+
+    @patch("src.router.session_worker.time.sleep")
+    def test_ensure_prompt_submitted_retries_until_prompt_clears(self, mock_sleep: Mock) -> None:
+        worker = _make_worker(prompt_submit_retry_count=3, prompt_submit_retry_poll_s=0.2)
+        with (
+            patch.object(worker, "_tmux_capture_pane", side_effect=["header\n❯ pending", "header\n✻ Herding…\n❯ "]),
+            patch.object(worker, "_tmux_send_key") as mock_send_key,
+        ):
+            worker._ensure_prompt_submitted("mysess")
+        mock_send_key.assert_called_once_with("mysess", "Enter", repeat=1)
+
+    @patch("src.router.session_worker.time.sleep")
+    def test_ensure_prompt_submitted_skips_when_composer_empty(self, mock_sleep: Mock) -> None:
+        worker = _make_worker(prompt_submit_retry_count=2, prompt_submit_retry_poll_s=0.2)
+        with (
+            patch.object(worker, "_tmux_capture_pane", return_value="header\n✻ Herding…\n❯ "),
+            patch.object(worker, "_tmux_send_key") as mock_send_key,
+        ):
+            worker._ensure_prompt_submitted("mysess")
+        mock_send_key.assert_not_called()
 
     @patch("src.router.session_worker.subprocess.run")
     def test_send_key_repeat(self, mock_run: Mock) -> None:

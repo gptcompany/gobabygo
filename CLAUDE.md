@@ -322,4 +322,16 @@ Launcher caveat:
 - a session opens tmux but blocks on theme/security/trust-folder/MCP prompts: this is CLI bootstrap drift under `mesh-worker`, not a router bus failure.
 - `mesh ui` is operator UX only; when in doubt, trust router task state plus `journalctl` on the session worker.
 - Claude Code-backed session workers now wait longer for the `❯` prompt, add a short settle before `Enter`, and kill stale tmux sessions on retry. If a task still sits on the typed prompt, inspect the tmux pane before blaming provider auth.
+- Session workers now also re-check the bottom-most `❯` composer after the first send; if the prompt text is still pending, they retry `Enter` automatically instead of leaving the task stuck in the composer.
+- Claude rate-limit TUI (`You're out of extra usage`, `/rate-limit-options`, reset menu) is now treated as `account_exhausted` when detected live in the pane so the router can rotate to the next isolated Claude profile.
+- Router DB access is now serialized more aggressively with the existing `RLock` to reduce concurrent SQLite misuse that was surfacing live as `POST /heartbeat -> 500` and `POST /tasks/complete -> 500`.
 - if you ask whether the repo is still in scope for `boss/president/lead/workers` multi-panel operation: yes. `lead` is now a first-class communication role in the router policy layer, with create/dispatch/visibility permissions and runtime communication edges to both `president` and `worker`.
+
+Live note from `2026-03-10`:
+
+- the repo contains the composer-submit retry, live rate-limit detection, and RouterDB serialization fixes
+- the active `.100` router/worker runtime was still on older code when `rektslug-spec-016` hit:
+  - stuck composer before manual `Enter`
+  - Claude rate-limit menu on `claude-samuele`
+  - router `500` on `/tasks/complete` and intermittent `/heartbeat`
+- do not assume the live rerun reflects current repo behavior until router `.100` and WS worker runtime are redeployed

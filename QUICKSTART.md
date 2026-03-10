@@ -470,6 +470,9 @@ task creation, dispatch, ack, completion -- all in ~2 seconds.
 - `mesh status` hides historical stale/offline worker rows by default; use `mesh status --all` when you need the full audit-heavy view.
 - If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.
 - If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.
+- If the initial Claude prompt remains visibly typed in the bottom `❯` composer with no assistant turn, deploy the latest worker code: the session worker now retries `Enter` automatically until the composer clears.
+- If Claude lands on the `You're out of extra usage` / `/rate-limit-options` screen, deploy the latest worker code: the session worker now classifies that live TUI state as `account_exhausted` so the router can rotate to the next isolated Claude profile.
+- If router `.100` shows `POST /tasks/complete -> 500` or intermittent `POST /heartbeat -> 500`, deploy the latest RouterDB locking changes before debugging task logic; the symptom matched concurrent SQLite access on a shared connection.
 - `meshctl task cancel|fail` is intentionally conservative:
   - safe for `queued`, `assigned`, `blocked`, `review`
   - rejects `running` tasks because the live tmux session may still be executing
