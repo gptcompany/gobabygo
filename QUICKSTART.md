@@ -455,6 +455,10 @@ python -m src.meshctl submit \
   --payload '{"prompt":"Reply with exactly GEMINI_SMOKE_OK.","working_dir":"/media/sam/1TB/gobabygo"}'
 ```
 
+Note:
+- `session` tasks complete only when the CLI exits
+- for smoke tests, either include `/exit` in the prompt or send it after you verify the response
+
 ## Environment Variables
 
 | Variable | Default | Description |

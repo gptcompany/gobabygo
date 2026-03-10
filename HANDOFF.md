@@ -16,7 +16,7 @@ The operational recovery path was closed:
 Router `.100`:
 
 - clean release deployed under:
-  - `/opt/mesh-router/releases/86c3f2b`
+  - `/opt/mesh-router/releases/7070070`
   - `/opt/mesh-router/current`
 - router container is up and healthy on `0.0.0.0:8780`
 - UFW rule was added for `8780/tcp` from `192.168.1.0/24`
@@ -106,8 +106,20 @@ Important boundary:
 - the default operator view is now clean even if the DB keeps those rows
 - Gemini session runtime now runs as `sam`, matching the validated local `ccs gemini` runtime
 - latest worker code adds longer Claude Code prompt readiness wait, a short tmux send-settle delay, and stale tmux cleanup on retry
-- Gemini smoke `9f67c914-3588-44c1-9001-2718791f0954` completed with `GEMINI_OK` after manual `Enter` plus `/exit`; this validates provider runtime and session wiring
-- if `065248f0-e810-4ade-928a-d97ee172d7df` or another redundant Gemini smoke is still live at next session start, clean it before opening new tests
+- Gemini smoke `9f67c914-3588-44c1-9001-2718791f0954` completed with `GEMINI_OK`; that earlier run still needed manual `Enter` plus `/exit` because the old worker runtime was still live
+- after deploy of router release `7070070` and restart of the Gemini session worker, post-deploy smoke `40836700-a56c-4bb6-b1e5-a3f4b852f017` completed with `GEMINI_POSTDEPLOY_OK`
+- this validates the full live path:
+  - router `.100`
+  - WS session worker
+  - tmux session
+  - `ccs gemini`
+  - Claude Code frontend on Gemini provider
+- important session semantic:
+  - a `session` task is only marked `completed` when the CLI process exits
+  - for ad-hoc smoke tasks, include `/exit` in the prompt or send it after you have captured the result
+- remaining Gemini-specific issue:
+  - `upterm` attach still fails under current service hardening because the worker tries to write `/tmp/upterm-*.log` and gets `Errno 30 Read-only file system`
+- if another redundant Gemini smoke is still live at next session start, clean it before opening new tests
 
 ## Next session checks
 
