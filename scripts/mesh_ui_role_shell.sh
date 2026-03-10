@@ -5,6 +5,7 @@ ROLE="${1:?missing role}"
 REPO_INPUT="${2:?missing repo}"
 REPO_NAME="${3:?missing repo_name}"
 REMOTE_INIT="${4:-}"
+REMOTE_INIT_B64=""
 
 WS_HOST="${MESH_WS_HOST:-sam@192.168.1.111}"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
@@ -80,6 +81,10 @@ else
   TARGET_DIR="${WS_REPO_BASE}/${REPO_INPUT}"
 fi
 
+if [[ -n "$REMOTE_INIT" ]]; then
+  REMOTE_INIT_B64="$(printf '%s' "$REMOTE_INIT" | base64 | tr -d '\n')"
+fi
+
 bootstrap_shell() {
   local target_dir="$1"
   local ws_repo_base="$2"
@@ -114,13 +119,17 @@ if is_local_ws_host "$WS_HOST"; then
 fi
 
 mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
-exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "bash -s" -- "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT" <<'EOF'
+exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "REMOTE_INIT_B64='$REMOTE_INIT_B64' bash -s" -- "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" <<'EOF'
 set -euo pipefail
 target_dir="${1:?missing target_dir}"
 ws_repo_base="${2:?missing ws_repo_base}"
 role="${3:?missing role}"
 repo_name="${4:?missing repo_name}"
-remote_init="${5:-}"
+remote_init=""
+
+if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
+  remote_init="$(printf '%s' "$REMOTE_INIT_B64" | base64 -d)"
+fi
 
 if [[ -d "$target_dir" ]]; then
   cd "$target_dir"
