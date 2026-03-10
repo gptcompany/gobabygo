@@ -440,6 +440,21 @@ python -m pytest tests/smoke/test_e2e_live.py -v
 This starts router + worker in-process and verifies the full lifecycle:
 task creation, dispatch, ack, completion -- all in ~2 seconds.
 
+## Manual Session Smoke
+
+For ad-hoc live validation against a session worker, prefer explicit session mode:
+
+```bash
+source ~/.mesh/router.env
+python -m src.meshctl submit \
+  --title "Gemini Smoke" \
+  --cli gemini \
+  --account gemini \
+  --phase test \
+  --mode session \
+  --payload '{"prompt":"Reply with exactly GEMINI_SMOKE_OK.","working_dir":"/media/sam/1TB/gobabygo"}'
+```
+
 ## Environment Variables
 
 | Variable | Default | Description |

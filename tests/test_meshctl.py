@@ -540,6 +540,7 @@ def _submit_args(
     cli: str | None = None,
     account: str | None = None,
     phase: str | None = None,
+    mode: str | None = None,
     priority: int | None = None,
     payload: str | None = None,
 ) -> argparse.Namespace:
@@ -549,6 +550,7 @@ def _submit_args(
         cli=cli,
         account=account,
         phase=phase,
+        mode=mode,
         priority=priority,
         payload=payload,
     )
@@ -682,6 +684,7 @@ class TestSubmitCommand:
             cli="codex",
             account="clientA",
             phase="test",
+            mode="session",
             priority=5,
             payload='{"prompt": "Run tests"}',
         ))
@@ -692,6 +695,7 @@ class TestSubmitCommand:
         assert body["target_cli"] == "codex"
         assert body["target_account"] == "clientA"
         assert body["phase"] == "test"
+        assert body["execution_mode"] == "session"
         assert body["priority"] == 5
         assert body["payload"] == {"prompt": "Run tests"}
 

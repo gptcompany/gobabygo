@@ -66,6 +66,13 @@ _mesh_ssh_opts() {
     -o "IPQoS=none"
 }
 
+_mesh_collect_ssh_opts() {
+  local opt
+  while IFS= read -r opt; do
+    [[ -n "$opt" ]] && printf '%s\0' "$opt"
+  done < <(_mesh_ssh_opts)
+}
+
 lfcd() {
   command -v lf >/dev/null 2>&1 || { echo "lf not found"; return 127; }
   local tmp rc dir
@@ -130,7 +137,9 @@ wss() {
   }
   ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
-  mapfile -t ssh_opts < <(_mesh_ssh_opts)
+  while IFS= read -r -d '' opt; do
+    ssh_opts+=("$opt")
+  done < <(_mesh_collect_ssh_opts)
   if _is_local_ws_host "$ws_host"; then
     if [[ $# -eq 0 ]]; then
       return 0
@@ -182,7 +191,9 @@ wsattach() {
     echo "Usage: wsattach <tmux-session>"
     return 1
   fi
-  mapfile -t ssh_opts < <(_mesh_ssh_opts)
+  while IFS= read -r -d '' opt; do
+    ssh_opts+=("$opt")
+  done < <(_mesh_collect_ssh_opts)
   command ssh "${ssh_opts[@]}" -t "$ws_host" "bash -lc '
 if id mesh-worker >/dev/null 2>&1; then exec sudo -u mesh-worker tmux attach -t \"$session\"; fi
 if id mesh >/dev/null 2>&1; then exec sudo -u mesh tmux attach -t \"$session\"; fi

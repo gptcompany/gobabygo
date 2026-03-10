@@ -518,6 +518,8 @@ def cmd_submit(args: argparse.Namespace) -> None:
         body["target_account"] = args.account
     if args.phase:
         body["phase"] = args.phase
+    if args.mode:
+        body["execution_mode"] = args.mode
     if args.priority is not None:
         body["priority"] = args.priority
     if args.payload:
@@ -1278,6 +1280,7 @@ submit_parser.add_argument("--title", required=True, help="Task title")
 submit_parser.add_argument("--cli", default=None, help="Target CLI type (claude/codex/gemini)")
 submit_parser.add_argument("--account", default=None, help="Target account profile")
 submit_parser.add_argument("--phase", default=None, help="Task phase")
+submit_parser.add_argument("--mode", default=None, help="Execution mode (batch/session)")
 submit_parser.add_argument("--priority", type=int, default=None, help="Priority (higher = first)")
 submit_parser.add_argument("--payload", default=None, help="JSON payload string")
 
