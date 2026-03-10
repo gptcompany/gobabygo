@@ -28,6 +28,19 @@ mesh_ssh_opts() {
     -o "IPQoS=none"
 }
 
+mesh_ssh_ui_opts() {
+  local opt
+  while IFS= read -r opt; do
+    case "$opt" in
+      *ControlMaster=*|*ControlPersist=*|*ControlPath=*)
+        ;;
+      *)
+        printf '%s\n' "$opt"
+        ;;
+    esac
+  done < <(mesh_ssh_opts)
+}
+
 is_local_ws_host() {
   local host="$1"
   local target target_ip
@@ -81,7 +94,9 @@ bootstrap_shell() {
     cd "$ws_repo_base"
   fi
 
-  clear
+  if [[ -n "${TERM:-}" ]]; then
+    clear
+  fi
   echo "[mesh:${role}] repo=${repo_name}"
   if [[ -n "$remote_init" ]]; then
     eval "$remote_init"
@@ -93,8 +108,8 @@ if is_local_ws_host "$WS_HOST"; then
   bootstrap_shell "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT"
 fi
 
-mapfile -t SSH_OPTS < <(mesh_ssh_opts)
-exec ssh "${SSH_OPTS[@]}" -t "$WS_HOST" "bash -s" -- "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT" <<'EOF'
+mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
+exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "bash -s" -- "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT" <<'EOF'
 set -euo pipefail
 target_dir="${1:?missing target_dir}"
 ws_repo_base="${2:?missing ws_repo_base}"
@@ -109,7 +124,9 @@ else
   cd "$ws_repo_base"
 fi
 
-clear
+if [[ -n "${TERM:-}" ]]; then
+  clear
+fi
 echo "[mesh:${role}] repo=${repo_name}"
 if [[ -n "$remote_init" ]]; then
   eval "$remote_init"
