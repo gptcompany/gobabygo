@@ -114,11 +114,18 @@ Important boundary:
   - tmux session
   - `ccs gemini`
   - Claude Code frontend on Gemini provider
-- important session semantic:
-  - a `session` task is only marked `completed` when the CLI process exits
-  - for ad-hoc smoke tasks, include `/exit` in the prompt or send it after you have captured the result
-- remaining Gemini-specific issue:
-  - `upterm` attach still fails under current service hardening because the worker tries to write `/tmp/upterm-*.log` and gets `Errno 30 Read-only file system`
+- session semantic is now explicit:
+  - `session` tasks still default to staying open until the CLI exits
+  - per-task payload can request auto-close with:
+    - `auto_exit_on_success: true`
+    - `success_marker` or `success_markers`
+    - optional `exit_command`
+- auto-exit smoke `4ed1cac5-3a76-42bf-a42a-0fd1967b7c9d` completed with `GEMINI_AUTOEXIT_OK` without manual `/exit`
+- `upterm` attach path is now fixed:
+  - worker logs are written under `~/.cache/gobabygo/upterm`
+  - closed session `3cef0e56-9af3-43fb-b180-ff33c6b19cac` published:
+    - `attach_kind: upterm`
+    - `attach_target: ssh://uptermd.upterm.dev:22`
 - if another redundant Gemini smoke is still live at next session start, clean it before opening new tests
 
 ## Next session checks

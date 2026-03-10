@@ -14,12 +14,16 @@ from src.router.session_worker import (
     MeshSessionWorker,
     SessionNotFoundError,
     SessionWorkerConfig,
+    _coerce_bool,
+    _coerce_string_list,
     _compute_output_emit,
     _detect_interactive_failure_screen,
     _discover_project_mcp_servers,
     _last_prompt_line_has_content,
     _parse_upterm_ssh_url,
+    _prompt_is_idle,
     _sanitize_session_name,
+    _should_auto_exit_on_success,
 )
 
 
@@ -131,6 +135,27 @@ def test_detect_interactive_failure_screen_detects_rate_limit_menu() -> None:
     assert _detect_interactive_failure_screen("codex", captured) == ""
 
 
+def test_coerce_bool() -> None:
+    assert _coerce_bool(True) is True
+    assert _coerce_bool("1") is True
+    assert _coerce_bool("yes") is True
+    assert _coerce_bool("0") is False
+    assert _coerce_bool(None, default=True) is True
+
+
+def test_coerce_string_list() -> None:
+    assert _coerce_string_list("GEMINI_OK") == ["GEMINI_OK"]
+    assert _coerce_string_list(["A", " ", "B"]) == ["A", "B"]
+    assert _coerce_string_list(None) == []
+
+
+def test_prompt_is_idle_and_auto_exit_success_detection() -> None:
+    captured = "❯ Reply\n\n● GEMINI_OK\n\n❯ "
+    assert _prompt_is_idle(captured) is True
+    assert _should_auto_exit_on_success(captured, ["GEMINI_OK"]) is True
+    assert _should_auto_exit_on_success(captured, ["OTHER"]) is False
+
+
 # ---------------------------------------------------------------------------
 # Config env for attach fields
 # ---------------------------------------------------------------------------
@@ -143,6 +168,7 @@ def test_config_from_env_attach_fields() -> None:
         "MESH_UPTERM_READY_TIMEOUT": "5.0",
         "MESH_UPTERM_ACCEPT": "0",
         "MESH_UPTERM_SKIP_HOST_KEY_CHECK": "0",
+        "MESH_RUNTIME_STATE_DIR": "/var/lib/mesh-runtime",
         "MESH_SSH_TMUX_USER": "operator",
         "MESH_SSH_TMUX_HOST": "10.0.0.5",
     }
@@ -153,6 +179,7 @@ def test_config_from_env_attach_fields() -> None:
     assert cfg.upterm_ready_timeout == 5.0
     assert cfg.upterm_accept is False
     assert cfg.upterm_skip_host_key_check is False
+    assert cfg.runtime_state_dir == "/var/lib/mesh-runtime"
     assert cfg.ssh_tmux_user == "operator"
     assert cfg.ssh_tmux_host == "10.0.0.5"
 
@@ -164,6 +191,7 @@ def test_config_defaults_attach_fields() -> None:
     assert cfg.upterm_ready_timeout == 10.0
     assert cfg.upterm_accept is True
     assert cfg.upterm_skip_host_key_check is True
+    assert cfg.runtime_state_dir.endswith(".cache/gobabygo")
     assert cfg.ssh_tmux_user == ""
     assert cfg.ssh_tmux_host == ""
 
@@ -272,6 +300,7 @@ def _make_worker(**overrides) -> MeshSessionWorker:
     cfg = SessionWorkerConfig(
         worker_id="ws-test-01",
         router_url="http://localhost:8780",
+        runtime_state_dir="/tmp/mesh-runtime-tests",
         upterm_bin="/usr/bin/upterm",
         upterm_ready_timeout=0.6,
         provider_runtime_config="",
@@ -386,6 +415,7 @@ class TestCreateAttachHandle:
 class TestStartUpterm:
 
     @patch("src.router.session_worker.os.path.exists", return_value=True)
+    @patch("src.router.session_worker.os.makedirs")
     @patch("src.router.session_worker.os.remove")
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
     @patch("builtins.open", new_callable=mock_open)
@@ -396,12 +426,14 @@ class TestStartUpterm:
         mock_open_file: Mock,
         mock_poll: Mock,
         mock_remove: Mock,
+        mock_makedirs: Mock,
         mock_exists: Mock,
     ) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
         mock_poll.return_value = "ssh://tok@host:22"
         worker = _make_worker()
+        expected_log_path = os.path.join(worker.config.runtime_state_dir, "upterm", "upterm-mesh-sess.log")
 
         p, target = worker._start_upterm("mesh-sess")
 
@@ -414,11 +446,12 @@ class TestStartUpterm:
         assert "--force-command" in popen_args
         fc_idx = popen_args.index("--force-command")
         assert "tmux attach -t mesh-sess" in popen_args[fc_idx + 1]
-        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.log")
-        mock_remove.assert_called_once_with("/tmp/upterm-mesh-sess.log")
-        mock_poll.assert_called_once_with("/tmp/upterm-mesh-sess.log", proc)
+        mock_exists.assert_called_once_with(expected_log_path)
+        mock_remove.assert_called_once_with(expected_log_path)
+        mock_poll.assert_called_once_with(expected_log_path, proc)
 
     @patch("src.router.session_worker.os.path.exists", return_value=False)
+    @patch("src.router.session_worker.os.makedirs")
     @patch("src.router.session_worker.os.remove")
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
     @patch("builtins.open", new_callable=mock_open)
@@ -429,25 +462,30 @@ class TestStartUpterm:
         mock_open_file: Mock,
         mock_poll: Mock,
         mock_remove: Mock,
+        mock_makedirs: Mock,
         mock_exists: Mock,
     ) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
         mock_poll.return_value = "ssh://tok@host:22"
         worker = _make_worker()
+        expected_log_path = os.path.join(worker.config.runtime_state_dir, "upterm", "upterm-mesh-sess.log")
 
         p, target = worker._start_upterm("mesh-sess")
 
         assert p is proc
         assert target == "ssh://tok@host:22"
-        mock_exists.assert_called_once_with("/tmp/upterm-mesh-sess.log")
+        mock_exists.assert_called_once_with(expected_log_path)
         mock_remove.assert_not_called()
-        mock_poll.assert_called_once_with("/tmp/upterm-mesh-sess.log", proc)
+        mock_poll.assert_called_once_with(expected_log_path, proc)
 
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
+    @patch("src.router.session_worker.os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen")
-    def test_with_server_flag(self, mock_popen: Mock, mock_open_file: Mock, mock_poll: Mock) -> None:
+    def test_with_server_flag(
+        self, mock_popen: Mock, mock_open_file: Mock, mock_makedirs: Mock, mock_poll: Mock
+    ) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
         mock_poll.return_value = "ssh://tok@host:22"
@@ -460,10 +498,11 @@ class TestStartUpterm:
         assert "ssh://custom:22" in popen_args
 
     @patch.object(MeshSessionWorker, "_poll_upterm_target")
+    @patch("src.router.session_worker.os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen")
     def test_can_disable_accept_and_host_key_skip(
-        self, mock_popen: Mock, mock_open_file: Mock, mock_poll: Mock
+        self, mock_popen: Mock, mock_open_file: Mock, mock_makedirs: Mock, mock_poll: Mock
     ) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
@@ -476,15 +515,19 @@ class TestStartUpterm:
         assert "--accept" not in popen_args
         assert "--skip-host-key-check" not in popen_args
 
+    @patch("src.router.session_worker.os.makedirs")
     @patch("src.router.session_worker.subprocess.Popen", side_effect=FileNotFoundError)
-    def test_binary_not_found(self, mock_popen: Mock) -> None:
+    def test_binary_not_found(self, mock_popen: Mock, mock_makedirs: Mock) -> None:
         worker = _make_worker()
         p, target = worker._start_upterm("mesh-sess")
         assert p is None
         assert target is None
 
+    @patch("src.router.session_worker.os.makedirs")
     @patch("src.router.session_worker.subprocess.Popen", side_effect=PermissionError("denied"))
-    def test_launch_oserror_logs_actual_error(self, mock_popen: Mock, caplog: pytest.LogCaptureFixture) -> None:
+    def test_launch_oserror_logs_actual_error(
+        self, mock_popen: Mock, mock_makedirs: Mock, caplog: pytest.LogCaptureFixture
+    ) -> None:
         worker = _make_worker()
         with caplog.at_level("WARNING"):
             p, target = worker._start_upterm("mesh-sess")
@@ -495,20 +538,27 @@ class TestStartUpterm:
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_poll_upterm_target", return_value=None)
+    @patch("src.router.session_worker.os.makedirs")
     @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen")
     def test_poll_timeout_kills_process(
-        self, mock_popen: Mock, mock_open_file: Mock, mock_poll: Mock, mock_stop: Mock
+        self,
+        mock_popen: Mock,
+        mock_open_file: Mock,
+        mock_makedirs: Mock,
+        mock_poll: Mock,
+        mock_stop: Mock,
     ) -> None:
         proc = MagicMock(spec=subprocess.Popen)
         mock_popen.return_value = proc
         worker = _make_worker()
+        expected_log_path = os.path.join(worker.config.runtime_state_dir, "upterm", "upterm-mesh-sess.log")
 
         p, target = worker._start_upterm("mesh-sess")
 
         assert p is None
         assert target is None
-        mock_stop.assert_called_once_with(proc, log_path="/tmp/upterm-mesh-sess.log")
+        mock_stop.assert_called_once_with(proc, log_path=expected_log_path)
 
 
 # ---------------------------------------------------------------------------
@@ -724,7 +774,7 @@ class TestAttachCleanupInExecuteTask:
         # tmux_session_name: mesh-claude-work-t-001
         mock_stop.assert_called_once_with(
             upterm_proc,
-            log_path="/tmp/upterm-mesh-claude-work-t-001.log",
+            log_path=worker._upterm_log_path("mesh-claude-work-t-001"),
         )
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
@@ -791,7 +841,7 @@ class TestAttachCleanupInExecuteTask:
         # tmux_session_name: mesh-claude-work-t-003
         mock_stop.assert_called_once_with(
             upterm_proc,
-            log_path="/tmp/upterm-mesh-claude-work-t-003.log",
+            log_path=worker._upterm_log_path("mesh-claude-work-t-003"),
         )
 
     def test_no_cleanup_when_no_attach(self) -> None:
@@ -1000,6 +1050,64 @@ class TestAttachCleanupInExecuteTask:
         mock_report_complete.assert_called_once()
         mock_report_failure.assert_not_called()
         assert "Initial session message sync failed for sid-sync" in caplog.text
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(
+        MeshSessionWorker,
+        "_tmux_capture_pane",
+        return_value="❯ Reply with exactly GEMINI_OK.\n\n● GEMINI_OK\n\n❯ ",
+    )
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-auto-exit")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.time.sleep")
+    def test_auto_exit_on_success_sends_exit_command_and_completes(
+        self,
+        mock_sleep: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_ensure_prompt_submitted: Mock,
+        mock_wait_ready: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+        worker.config.cli_type = "gemini"
+        worker._running = True
+        expected_session = worker._tmux_session_name("t-auto-exit", "gemini")
+
+        task = {
+            "task_id": "t-auto-exit",
+            "execution_mode": "session",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "Reply with exactly GEMINI_OK.",
+                "working_dir": "/media/sam/1TB/gobabygo",
+                "auto_exit_on_success": True,
+                "success_marker": "GEMINI_OK",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_send_text.assert_has_calls([
+            call(expected_session, "Reply with exactly GEMINI_OK."),
+            call(expected_session, "/exit"),
+        ])
+        assert mock_ensure_prompt_submitted.call_count == 2
+        mock_close.assert_called_once_with("sid-auto-exit", state="closed")
+        mock_report_complete.assert_called_once()
 
     @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
     @patch.object(

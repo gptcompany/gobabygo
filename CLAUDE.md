@@ -46,8 +46,10 @@ Not yet production-clean:
 - Gemini session runtime now runs as `sam`
 - initial Gemini smoke `9f67c914-3588-44c1-9001-2718791f0954` produced `GEMINI_OK` via `ccs gemini` under Claude Code frontend; that earlier run still needed manual `Enter` plus `/exit` because the old worker runtime was still live
 - post-deploy Gemini smoke `40836700-a56c-4bb6-b1e5-a3f4b852f017` produced `GEMINI_POSTDEPLOY_OK` on router release `7070070` with the new worker runtime
-- `session` tasks are only marked `completed` when the CLI process exits; for ad-hoc smoke tasks include `/exit` in the prompt or send it after verifying the response
-- `upterm` attach still fails under current service hardening because the worker tries to write `/tmp/upterm-*.log` and gets `Errno 30 Read-only file system`
+- `session` tasks still default to staying open until the CLI exits
+- task payload now supports `auto_exit_on_success=true` plus `success_marker`/`success_markers` and optional `exit_command`
+- auto-exit Gemini smoke `4ed1cac5-3a76-42bf-a42a-0fd1967b7c9d` completed with `GEMINI_AUTOEXIT_OK` without manual `/exit`
+- `upterm` logs now live under `~/.cache/gobabygo/upterm`; Gemini session `3cef0e56-9af3-43fb-b180-ff33c6b19cac` published a real attach handle via `attach_kind=upterm`
 - if a redundant Gemini smoke task is still `running` or `assigned` at the next session start, clean it before new tests instead of treating it as a provider/auth regression
 - several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
 

@@ -102,6 +102,55 @@ def _last_prompt_line_has_content(captured: str) -> bool:
     return False
 
 
+def _coerce_bool(value: object, *, default: bool = False) -> bool:
+    """Parse common JSON/env-ish truthy values."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _coerce_string_list(value: object) -> list[str]:
+    """Normalize a string or list payload field into non-empty strings."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        item = value.strip()
+        return [item] if item else []
+    if isinstance(value, (list, tuple, set)):
+        items: list[str] = []
+        for raw in value:
+            item = str(raw).strip()
+            if item:
+                items.append(item)
+        return items
+    item = str(value).strip()
+    return [item] if item else []
+
+
+def _prompt_is_idle(captured: str) -> bool:
+    """Return True when Claude Code is back at an empty ready prompt."""
+    body = str(captured or "")
+    return "❯" in body and not _last_prompt_line_has_content(body)
+
+
+def _should_auto_exit_on_success(captured: str, success_markers: list[str]) -> bool:
+    """Return True when the requested success markers are visible at an idle prompt."""
+    if not success_markers:
+        return False
+    if not _prompt_is_idle(captured):
+        return False
+    return any(marker in captured for marker in success_markers)
+
+
 def _detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
     """Return a failure kind when the live TUI is stuck on a terminal error screen."""
     failure_kind = classify_cli_failure(cli_type, captured)
@@ -160,6 +209,9 @@ class SessionWorkerConfig:
     tmux_session_prefix: str = "mesh"
     task_timeout: int = 7200  # Hard ceiling for interactive sessions (2h)
     auto_complete_on_exit: bool = True
+    runtime_state_dir: str = field(
+        default_factory=lambda: os.path.join(os.path.expanduser("~"), ".cache", "gobabygo")
+    )
     upterm_bin: str = "upterm"
     upterm_server: str = ""
     upterm_ready_timeout: float = 10.0
@@ -214,6 +266,10 @@ class SessionWorkerConfig:
             tmux_session_prefix=os.environ.get("MESH_TMUX_SESSION_PREFIX", "mesh"),
             task_timeout=int(os.environ.get("MESH_TASK_TIMEOUT_S", "7200")),
             auto_complete_on_exit=os.environ.get("MESH_AUTO_COMPLETE_ON_EXIT", "1").strip() != "0",
+            runtime_state_dir=os.environ.get(
+                "MESH_RUNTIME_STATE_DIR",
+                os.path.join(os.path.expanduser("~"), ".cache", "gobabygo"),
+            ),
             upterm_bin=os.environ.get("MESH_UPTERM_BIN", "upterm"),
             upterm_server=os.environ.get("MESH_UPTERM_SERVER", ""),
             upterm_ready_timeout=float(os.environ.get("MESH_UPTERM_READY_TIMEOUT", "10.0")),
@@ -353,6 +409,11 @@ class MeshSessionWorker:
         execution_mode = str(task.get("execution_mode", "batch")).strip() or "batch"
         target_account = str(task.get("target_account") or self.config.account_profile).strip() or self.config.account_profile
         work_dir = payload.get("working_dir", self.config.work_dir)
+        auto_exit_on_success = _coerce_bool(payload.get("auto_exit_on_success"), default=False)
+        success_markers = _coerce_string_list(
+            payload.get("success_markers", payload.get("success_marker"))
+        )
+        exit_command = str(payload.get("exit_command") or "/exit").strip() or "/exit"
 
         logger.info("Starting interactive task %s (%s)", task_id, task.get("title", "untitled"))
 
@@ -440,6 +501,12 @@ class MeshSessionWorker:
                 after_seq = max(int(m.get("seq") or 0) for m in msgs)
             last_capture = ""
             last_emitted_capture = ""
+            auto_exit_sent = False
+            if auto_exit_on_success and not success_markers:
+                logger.warning(
+                    "Task %s requested auto_exit_on_success without success_marker(s); session will stay open",
+                    task_id,
+                )
 
             while self._running:
                 # Safety cap for abandoned sessions
@@ -499,6 +566,29 @@ class MeshSessionWorker:
                         if self._tmux_has_session(tmux_session_name):
                             self._tmux_kill_session(tmux_session_name)
                         return
+                    if (
+                        auto_exit_on_success
+                        and not auto_exit_sent
+                        and _should_auto_exit_on_success(captured, success_markers)
+                    ):
+                        logger.info(
+                            "Auto-exit on success triggered for task %s using markers %s",
+                            task_id,
+                            success_markers,
+                        )
+                        self._send_session_message(
+                            session_id,
+                            direction="system",
+                            role="system",
+                            content="auto_exit_on_success triggered; sending exit command",
+                            metadata={
+                                "exit_command": exit_command,
+                                "success_markers": success_markers,
+                            },
+                        )
+                        self._tmux_send_text(tmux_session_name, exit_command)
+                        self._ensure_prompt_submitted(tmux_session_name)
+                        auto_exit_sent = True
                 time.sleep(self.config.session_poll_interval_s)
 
             final_snapshot = last_capture
@@ -555,7 +645,7 @@ class MeshSessionWorker:
             self._report_failure(task_id, f"unexpected: {e}")
         finally:
             if upterm_proc is not None:
-                log_path = f"/tmp/upterm-{tmux_session_name}.log" if tmux_session_name else None
+                log_path = self._upterm_log_path(tmux_session_name) if tmux_session_name else None
                 self._stop_upterm(upterm_proc, log_path=log_path)
 
     def _prepare_cli_runtime(self, work_dir: str, target_account: str) -> None:
@@ -812,6 +902,11 @@ class MeshSessionWorker:
         logger.info("No attach handle available for %s, continuing without", tmux_session)
         return None, None
 
+    def _upterm_log_path(self, tmux_session: str) -> str:
+        log_dir = os.path.join(self.config.runtime_state_dir, "upterm")
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, f"upterm-{tmux_session}.log")
+
     def _start_upterm(
         self, tmux_session: str
     ) -> tuple[subprocess.Popen | None, str | None]:
@@ -819,7 +914,7 @@ class MeshSessionWorker:
 
         Returns ``(process, ssh_url)`` or ``(None, None)`` on failure.
         """
-        log_path = f"/tmp/upterm-{tmux_session}.log"
+        log_path = self._upterm_log_path(tmux_session)
         if os.path.exists(log_path):
             try:
                 os.remove(log_path)

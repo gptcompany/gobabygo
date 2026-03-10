@@ -452,12 +452,13 @@ python -m src.meshctl submit \
   --account gemini \
   --phase test \
   --mode session \
-  --payload '{"prompt":"Reply with exactly GEMINI_SMOKE_OK.","working_dir":"/media/sam/1TB/gobabygo"}'
+  --payload '{"prompt":"Reply with exactly GEMINI_SMOKE_OK.","working_dir":"/media/sam/1TB/gobabygo","auto_exit_on_success":true,"success_marker":"GEMINI_SMOKE_OK"}'
 ```
 
 Note:
-- `session` tasks complete only when the CLI exits
-- for smoke tests, either include `/exit` in the prompt or send it after you verify the response
+- `session` tasks stay open by default until the CLI exits
+- for smoke tests, prefer `auto_exit_on_success=true` with a deterministic `success_marker`
+- optional payload field `exit_command` defaults to `/exit`
 
 ## Environment Variables
 
@@ -473,6 +474,7 @@ Note:
 | `MESH_ACCOUNT_PROFILE` | `work` | Worker default account/profile identifier (still valid for exact-match routing) |
 | `MESH_ALLOWED_ACCOUNTS` | `""` | Optional CSV allowlist published as capabilities (`foo,bar,*` -> `account:foo`, `account:bar`, `account:*`) for dynamic target account routing |
 | `MESH_PROVIDER_RUNTIME_CONFIG` | repo default | Optional provider runtime policy file. `""` disables central policy and falls back to `MESH_CLI_COMMAND`. |
+| `MESH_RUNTIME_STATE_DIR` | `~/.cache/gobabygo` | Session worker writable state dir used for helper files such as `upterm` logs. |
 | `MESH_LONGPOLL_TIMEOUT_S` | `25` | Long-poll block duration (seconds) |
 | `MESH_DEFAULT_EXECUTION_MODE` | `batch` | Router code default when task omits execution mode (`batch\|session`). Deploy template sets `session` in `deploy/mesh-router.env`. |
 | `MESH_SESSION_FALLBACK_TO_BATCH` | `0` | Router code default. If `1`, session tasks may fallback to batch workers when no session worker is available. Deploy template keeps `0` for session-first hard mode. |
@@ -491,11 +493,11 @@ Note:
 - If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.
 - If the initial Claude prompt remains visibly typed in the bottom `❯` composer with no assistant turn, deploy the latest worker code: the session worker now retries `Enter` automatically until the composer clears.
 - If Claude lands on the `You're out of extra usage` / `/rate-limit-options` screen, deploy the latest worker code: the session worker now classifies that live TUI state as `account_exhausted` so the router can rotate to the next isolated Claude profile.
+- If you need ad-hoc session tasks to finish without manual `/exit`, set `auto_exit_on_success=true` with a deterministic `success_marker`.
 - If router `.100` shows `POST /tasks/complete -> 500` or intermittent `POST /heartbeat -> 500`, deploy the latest RouterDB locking changes before debugging task logic; the symptom matched concurrent SQLite access on a shared connection.
 - `meshctl task cancel|fail` is intentionally conservative:
   - safe for `queued`, `assigned`, `blocked`, `review`
   - rejects `running` tasks because the live tmux session may still be executing
 - A clean unattended demo still requires:
-  - `upterm` installation
   - preseeded Claude/Codex runtime under `/home/mesh-worker`
   - unattended CLI bootstrap under `mesh-worker` (no theme/security/trust-folder/MCP first-run prompts)
