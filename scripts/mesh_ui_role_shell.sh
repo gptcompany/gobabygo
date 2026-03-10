@@ -29,16 +29,16 @@ mesh_ssh_opts() {
 }
 
 mesh_ssh_ui_opts() {
-  local opt
-  while IFS= read -r opt; do
-    case "$opt" in
-      *ControlMaster=*|*ControlPersist=*|*ControlPath=*)
-        ;;
-      *)
-        printf '%s\n' "$opt"
-        ;;
-    esac
-  done < <(mesh_ssh_opts)
+  local interval count
+  interval="${MESH_SSH_SERVER_ALIVE_INTERVAL:-15}"
+  count="${MESH_SSH_SERVER_ALIVE_COUNT_MAX:-12}"
+  printf '%s\n' \
+    -o "ServerAliveInterval=${interval}" \
+    -o "ServerAliveCountMax=${count}" \
+    -o "TCPKeepAlive=yes" \
+    -o "ConnectTimeout=10" \
+    -o "ConnectionAttempts=3" \
+    -o "IPQoS=none"
 }
 
 is_local_ws_host() {
