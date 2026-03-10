@@ -9,6 +9,7 @@ REMOTE_INIT_B64=""
 
 WS_HOST="${MESH_WS_HOST:-sam@192.168.1.111}"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
+MESH_CONTROL_REPO="${MESH_CONTROL_REPO:-/media/sam/1TB/gobabygo}"
 
 mesh_ssh_opts() {
   local ctl_dir interval count persist
@@ -91,6 +92,7 @@ bootstrap_shell() {
   local role="$3"
   local repo_name="$4"
   local remote_init="$5"
+  local mesh_home mesh_script
 
   if [[ -d "$target_dir" ]]; then
     cd "$target_dir"
@@ -103,10 +105,14 @@ bootstrap_shell() {
     clear
   fi
   echo "[mesh:${role}] repo=${repo_name}"
-  if [[ -f "$HOME/.bashrc" ]]; then
-    # Load mesh/yazicd/ws helpers before executing bootstrap commands.
-    # Suppress noisy output from user shell customizations.
-    source "$HOME/.bashrc" >/dev/null 2>&1 || true
+  mesh_home="$MESH_CONTROL_REPO"
+  if [[ ! -x "$mesh_home/scripts/mesh" && -x "$ws_repo_base/gobabygo/scripts/mesh" ]]; then
+    mesh_home="$ws_repo_base/gobabygo"
+  fi
+  mesh_script="$mesh_home/scripts/mesh"
+  if [[ -x "$mesh_script" ]]; then
+    mesh() { "$mesh_script" "$@"; }
+    export MESH_HOME="$mesh_home"
   fi
   if [[ -n "$remote_init" ]]; then
     eval "$remote_init"
@@ -124,6 +130,7 @@ target_dir="${TARGET_DIR:?missing target_dir}"
 ws_repo_base="${WS_REPO_BASE:?missing ws_repo_base}"
 role="${ROLE:?missing role}"
 repo_name="${REPO_NAME:?missing repo_name}"
+mesh_control_repo="${MESH_CONTROL_REPO:-/media/sam/1TB/gobabygo}"
 remote_init=""
 
 if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
@@ -141,8 +148,14 @@ if [[ -n "${TERM:-}" ]]; then
   clear
 fi
 echo "[mesh:${role}] repo=${repo_name}"
-if [[ -f "$HOME/.bashrc" ]]; then
-  source "$HOME/.bashrc" >/dev/null 2>&1 || true
+mesh_home="$mesh_control_repo"
+if [[ ! -x "$mesh_home/scripts/mesh" && -x "$ws_repo_base/gobabygo/scripts/mesh" ]]; then
+  mesh_home="$ws_repo_base/gobabygo"
+fi
+mesh_script="$mesh_home/scripts/mesh"
+if [[ -x "$mesh_script" ]]; then
+  mesh() { "$mesh_script" "$@"; }
+  export MESH_HOME="$mesh_home"
 fi
 if [[ -n "$remote_init" ]]; then
   eval "$remote_init"
