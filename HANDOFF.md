@@ -204,19 +204,55 @@ Current interpretation:
 
 ## 2026-03-10 Gemini fresh-repo write follow-up
 
-- fresh-repo Gemini write smoke remains the last live checkpoint for session-first repo mutation on `ccs gemini`
+- fresh-repo Gemini write smoke is now closed as a live checkpoint for session-first repo mutation on `ccs gemini`
 - what is already proven:
   - spawn/orchestration works: `mesh -> router -> ws-gemini-session-dyn-01 -> tmux -> ccs gemini`
   - text-only Gemini smoke already passed earlier (`GEMINI_OK`, `GEMINI_POSTDEPLOY_OK`, `GEMINI_AUTOEXIT_OK`)
 - what fresh-repo write smoke exposed:
   1. `auto_exit_on_success` could falsely trigger when the success marker was already present in the prompt text
   2. after a manual/session-bus resend, `auto_exit` still reused the old baseline instead of re-arming on the new inbound prompt
+  3. a Claude Code home banner could remain visible while Gemini was already thinking or invoking tools, causing false prompt replays
 - both fixes are now in repo:
   - [src/router/session_worker.py](/media/sam/1TB/gobabygo/src/router/session_worker.py)
   - [tests/router/test_session_worker.py](/media/sam/1TB/gobabygo/tests/router/test_session_worker.py)
-  - local result: `pytest -q tests/router/test_session_worker.py` -> `78 passed`
+  - local result after the full follow-up set: `pytest -q tests/router/test_session_worker.py` -> `84 passed`
 - live runtime note:
   - Gemini worker on `.111` was redeployed and restarted after the fixes
-  - a later follow-up widened the Claude Code start-screen detector again, because partial home-screen captures were still bypassing the earlier heuristic
-  - current local result after that detector tweak: `pytest -q tests/router/test_session_worker.py` -> `80 passed`
-  - a final fresh-repo write smoke still needs to be rerun from a clean temp repo on the newest worker runtime to confirm actual file creation before calling Gemini repo-write E2E closed
+  - a later follow-up widened the Claude Code start-screen detector again, because partial home-screen captures were still bypassing the earlier heuristic while Gemini was already doing work
+  - session worker also now supports artifact-driven completion for smoke tasks using `success_file_path` and optional `success_file_contains`
+- final live rerun:
+  - task: `f9197066-ec87-4e45-a198-dbee9b90ba59`
+  - status: `completed`
+  - worker: `ws-gemini-session-dyn-01`
+  - session: `ea96832c-c369-4df5-b63b-3eb0f14ae467`
+  - repo: `/tmp/mesh-gemini-e2e10`
+  - artifact: `/tmp/mesh-gemini-e2e10/GEMINI_E2E_OK.md`
+  - content: `GEMINI_FILE_OK`
+
+## 2026-03-10 Factory Droid audit vs `claude-config`
+
+Checked local repo:
+
+- `/media/sam/1TB/claude-config`
+
+Observed directly there:
+
+- portable/high-likelihood assets:
+  - `CLAUDE.md`
+  - `agents/*.md`
+  - many markdown command/skill assets under `commands/` and `skills/`
+- migration-risk assets:
+  - `hooks/hooks.json`
+  - `settings.json`
+  - scripts wired through Claude Code hook events and `$HOME/.claude/...` paths
+
+Official references checked:
+
+- `https://docs.factory.ai/cli/configuration/plugins`
+- `https://docs.factory.ai/cli/configuration/custom-droids`
+- `https://docs.factory.ai/reference/hooks-reference`
+
+Conclusion:
+
+- Factory Droid is a strong compatibility target for Claude-style agents/plugins
+- it is not safe to claim `100%` compatibility with a hook-heavy `claude-config` repo without a dedicated migration pass

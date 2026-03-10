@@ -54,9 +54,39 @@ Not yet production-clean:
 - fresh-repo Gemini write smoke uncovered two distinct bugs in `session_worker.py`:
   - `auto_exit_on_success` could falsely trigger when `success_marker` already appeared inside the prompt text
   - after a manual/session-bus resend, `auto_exit` still reused the old baseline instead of re-arming on the new inbound prompt
-- the start-screen detector was then widened again because partial Claude Code home captures were slipping past the earlier heuristic
-- Gemini worker runtime on `.111` has been redeployed with the widened detector; the remaining live gap is one final fresh-repo write rerun on the new runtime
+- the start-screen detector was then widened again because partial Claude Code home captures were slipping past the earlier heuristic while Gemini was already thinking or invoking tools
+- fresh-repo Gemini write rerun `f9197066-ec87-4e45-a198-dbee9b90ba59` is now `completed`
+  - repo: `/tmp/mesh-gemini-e2e10`
+  - worker: `ws-gemini-session-dyn-01`
+  - session: `ea96832c-c369-4df5-b63b-3eb0f14ae467`
+  - artifact written: `/tmp/mesh-gemini-e2e10/GEMINI_E2E_OK.md`
+  - content: `GEMINI_FILE_OK`
+- session worker now also supports artifact-driven smoke completion with:
+  - `auto_exit_on_success: true`
+  - `success_file_path`
+  - optional `success_file_contains`
 - several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
+
+## Factory Droid Compatibility
+
+Official references checked:
+
+- Factory plugins: `https://docs.factory.ai/cli/configuration/plugins`
+- Factory custom droids / Claude agent import: `https://docs.factory.ai/cli/configuration/custom-droids`
+- Factory hook model: `https://docs.factory.ai/reference/hooks-reference`
+
+Practical conclusion for `/media/sam/1TB/claude-config`:
+
+- high compatibility:
+  - `CLAUDE.md`
+  - `.claude/agents`-style markdown agents
+  - many command/skill markdown assets
+- not safe to assume `100%` compatibility:
+  - Claude Code hook lifecycle in `hooks/hooks.json`
+  - `settings.json` matchers and hook wiring
+  - scripts that assume `$HOME/.claude/...` paths or Claude-specific event names
+
+Use Factory Droid as a strong reference and likely migration target for agents/plugins, not as a guaranteed drop-in replacement for a hook-heavy `claude-config` repo.
 
 ## Current Handoff Snapshot
 

@@ -161,10 +161,25 @@ def _capture_contains_prompt_text(captured: str, prompt: str) -> bool:
     return snippet in _normalize_ws(captured)
 
 
+def _capture_shows_activity(captured: str) -> bool:
+    body = str(captured or "")
+    lowered = body.lower()
+    if "press up to edit queued messages" in lowered:
+        return True
+    if "· flowing" in lowered or "✻ " in body or "⎿" in body:
+        return True
+    return any(
+        line.lstrip().startswith("● ")
+        for line in body.splitlines()
+    )
+
+
 def _looks_like_start_screen(captured: str) -> bool:
     body = str(captured or "")
     lowered = body.lower()
     if "welcome back" not in lowered:
+        return False
+    if _capture_shows_activity(body):
         return False
     return (
         "tips for getting started" in lowered
@@ -194,6 +209,23 @@ def _should_auto_exit_on_success(
         if captured.count(marker) > baseline.count(marker):
             return True
     return False
+
+
+def _success_file_matches(work_dir: str, success_file_path: str, success_file_contains: str = "") -> bool:
+    path = str(success_file_path or "").strip()
+    if not path:
+        return False
+    resolved = path if os.path.isabs(path) else os.path.join(work_dir, path)
+    if not os.path.isfile(resolved):
+        return False
+    marker = str(success_file_contains or "")
+    if not marker:
+        return True
+    try:
+        with open(resolved, encoding="utf-8") as fh:
+            return marker in fh.read()
+    except OSError:
+        return False
 
 
 def _detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
@@ -458,6 +490,8 @@ class MeshSessionWorker:
         success_markers = _coerce_string_list(
             payload.get("success_markers", payload.get("success_marker"))
         )
+        success_file_path = str(payload.get("success_file_path") or "").strip()
+        success_file_contains = str(payload.get("success_file_contains") or "")
         exit_command = str(payload.get("exit_command") or "/exit").strip() or "/exit"
 
         logger.info("Starting interactive task %s (%s)", task_id, task.get("title", "untitled"))
@@ -552,9 +586,9 @@ class MeshSessionWorker:
             auto_exit_baseline_capture = ""
             prompt_delivery_confirmed = False
             prompt_delivery_attempts = 0
-            if auto_exit_on_success and not success_markers:
+            if auto_exit_on_success and not success_markers and not success_file_path:
                 logger.warning(
-                    "Task %s requested auto_exit_on_success without success_marker(s); session will stay open",
+                    "Task %s requested auto_exit_on_success without success markers or success file; session will stay open",
                     task_id,
                 )
 
@@ -597,7 +631,10 @@ class MeshSessionWorker:
                     capture_emit = _compute_output_emit(prior_capture, captured)
                     delta_text = capture_emit[0] if capture_emit else ""
                     if not prompt_delivery_confirmed:
-                        if captured.strip() and not _looks_like_start_screen(captured):
+                        if captured.strip() and (
+                            not _looks_like_start_screen(captured)
+                            or _capture_shows_activity(captured)
+                        ):
                             prompt_delivery_confirmed = True
                         elif prompt_delivery_attempts < self.config.prompt_submit_retry_count:
                             prompt_delivery_attempts += 1
@@ -663,6 +700,35 @@ class MeshSessionWorker:
                             metadata={
                                 "exit_command": exit_command,
                                 "success_markers": success_markers,
+                            },
+                        )
+                        self._tmux_send_text(tmux_session_name, exit_command)
+                        self._ensure_prompt_submitted(tmux_session_name)
+                        auto_exit_sent = True
+                    elif (
+                        auto_exit_on_success
+                        and not auto_exit_sent
+                        and success_file_path
+                        and _success_file_matches(
+                            work_dir,
+                            success_file_path,
+                            success_file_contains=success_file_contains,
+                        )
+                    ):
+                        logger.info(
+                            "Auto-exit on artifact success triggered for task %s using file %s",
+                            task_id,
+                            success_file_path,
+                        )
+                        self._send_session_message(
+                            session_id,
+                            direction="system",
+                            role="system",
+                            content="auto_exit_on_success triggered by success_file_path; sending exit command",
+                            metadata={
+                                "exit_command": exit_command,
+                                "success_file_path": success_file_path,
+                                "success_file_contains": success_file_contains,
                             },
                         )
                         self._tmux_send_text(tmux_session_name, exit_command)
