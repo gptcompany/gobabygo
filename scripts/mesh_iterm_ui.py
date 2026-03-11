@@ -2,7 +2,7 @@
 """Open a GobabyGo operator layout in iTerm2 using the iTerm2 Python API.
 
 Default roles:
-  boss, president, lead, worker-claude, worker-codex, worker-gemini, verifier
+  boss, president, lead, worker-codex, worker-gemini, verifier
 
 Each pane runs `wss <repo>` by default, so the shell lands on WS in target repo.
 You can override per-role boot commands with env vars:
@@ -36,7 +36,6 @@ DEFAULT_ROLES = [
     "boss",
     "president",
     "lead",
-    "worker-claude",
     "worker-codex",
     "worker-gemini",
     "verifier",
@@ -79,8 +78,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-panes-per-tab",
         type=int,
-        default=int(os.environ.get("MESH_UI_MAX_PANES_PER_TAB", "5")),
-        help="Maximum panes per tab (default: 5).",
+        default=int(os.environ.get("MESH_UI_MAX_PANES_PER_TAB", "3")),
+        help="Maximum panes per tab (default: 3).",
     )
     parser.add_argument(
         "--single-tab",
@@ -100,8 +99,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--preset",
         choices=["team-4x3", "auto"],
-        default=os.environ.get("MESH_UI_PRESET", "team-4x3"),
-        help="Layout preset. team-4x3 = 2 tabs (4 panes + 3 panes). auto = chunk by max panes.",
+        default=os.environ.get("MESH_UI_PRESET", "auto"),
+        help="Layout preset. auto = chunk by max panes (default); team-4x3 = legacy 2 tabs (4 panes + 3 panes).",
     )
     return parser.parse_args()
 

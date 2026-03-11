@@ -186,6 +186,8 @@ usage() {
 Usage:
   ./scripts/mesh status
   ./scripts/mesh thread [thread-name]
+  ./scripts/mesh sessions [repo|session|role]
+  ./scripts/mesh attach [repo|session|role]
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui [repo-name|repo-path] [--single-tab] [--max-panes-per-tab N]
@@ -199,6 +201,11 @@ Env:
 
 Examples:
   ./scripts/mesh status
+  ./scripts/mesh sessions
+  ./scripts/mesh sessions snake-game
+  ./scripts/mesh attach
+  ./scripts/mesh attach snake-game
+  ./scripts/mesh attach --all
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui rektslug
@@ -363,6 +370,80 @@ case "$cmd" in
       fi
     fi
     run_meshctl thread status "$thread_name"
+    ;;
+  sessions)
+    py_bin="$(detect_python)" || exit $?
+    session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
+    if [[ ! -f "$session_script" ]]; then
+      echo "Error: missing session CLI script at $session_script" >&2
+      exit 1
+    fi
+    exec "$py_bin" "$session_script" list "${@:2}"
+    ;;
+  attach)
+    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+    py_bin="$(detect_python)" || exit $?
+    session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
+    if [[ ! -f "$session_script" ]]; then
+      echo "Error: missing session CLI script at $session_script" >&2
+      exit 1
+    fi
+    session_runner=("$py_bin" "$session_script")
+    if uv_bin="$(detect_uv)"; then
+      session_runner=("$uv_bin" run --with questionary -- python "$session_script")
+    fi
+    selection_json="$("${session_runner[@]}" resolve --ws-host "$ws_host" "${@:2}")" || exit $?
+    selection_env="$(MESH_SELECTION_JSON="$selection_json" "$py_bin" - <<'PY'
+import json
+import shlex
+import os
+
+payload = json.loads(os.environ["MESH_SELECTION_JSON"])
+selection = payload.get("selection") or {}
+attach = payload.get("attach") or {}
+values = {
+    "MESH_ATTACH_MODE": attach.get("mode", ""),
+    "MESH_ATTACH_SSH_TARGET": attach.get("ssh_target", ""),
+    "MESH_ATTACH_SSH_PORT": attach.get("ssh_port", ""),
+    "MESH_ATTACH_REMOTE_CMD": attach.get("remote_cmd", ""),
+    "MESH_ATTACH_SESSION_ID": selection.get("session_id", ""),
+    "MESH_ATTACH_REPO": selection.get("repo", ""),
+    "MESH_ATTACH_ROLE": selection.get("role", ""),
+    "MESH_ATTACH_CLI": selection.get("cli_type", ""),
+}
+for key, value in values.items():
+    print(f"{key}={shlex.quote(str(value or ''))}")
+PY
+)" || exit $?
+    eval "$selection_env"
+
+    if [[ "${MESH_ATTACH_MODE:-}" == "unavailable" || -z "${MESH_ATTACH_MODE:-}" ]]; then
+      echo "Error: selected session has no attach handle or tmux session metadata." >&2
+      exit 1
+    fi
+
+    echo "[mesh attach] session=${MESH_ATTACH_SESSION_ID:0:12} repo=${MESH_ATTACH_REPO:-?} role=${MESH_ATTACH_ROLE:-?} cli=${MESH_ATTACH_CLI:-?}"
+
+    ssh_port_args=()
+    if [[ -n "${MESH_ATTACH_SSH_PORT:-}" && "${MESH_ATTACH_SSH_PORT:-}" != "22" ]]; then
+      ssh_port_args=(-p "$MESH_ATTACH_SSH_PORT")
+    fi
+
+    case "${MESH_ATTACH_MODE}" in
+      upterm)
+        exec ssh -tt "${ssh_port_args[@]}" "$MESH_ATTACH_SSH_TARGET"
+        ;;
+      ssh_tmux|ws_tmux)
+        if is_local_host "$MESH_ATTACH_SSH_TARGET"; then
+          exec bash -lc "$MESH_ATTACH_REMOTE_CMD"
+        fi
+        exec ssh -tt "${ssh_port_args[@]}" "$MESH_ATTACH_SSH_TARGET" "bash -lc $(printf '%q' "$MESH_ATTACH_REMOTE_CMD")"
+        ;;
+      *)
+        echo "Error: unsupported attach mode '${MESH_ATTACH_MODE}'" >&2
+        exit 1
+        ;;
+    esac
     ;;
   bootstrap)
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"

@@ -199,6 +199,8 @@ This enables:
 - `wsattach <tmux-session>` (attach robusto: auto-detect utente tmux service)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh ui <repo>` (iTerm2 layout auto tabs/panes for BOSS/PRESIDENT/LEAD/WORKERS)
+- `mesh sessions [repo|session|role]` (lista umana, router API-backed)
+- `mesh attach [repo|session|role]` (picker semplice + attach senza ricordare il nome tmux)
 - `yazi` / `lf` aliases to `yazicd` / `lfcd` (keep selected directory on exit)
 
 Ultra-short operator commands:
@@ -208,10 +210,16 @@ mesh bootstrap
 mesh deploy
 mesh status
 mesh status --all               # show historical stale/offline workers too
-mesh ui rektslug               # iTerm2 preset team-4x3 (2 tab: 4 pane + 3 pane)
+mesh sessions                   # list live sessions for current repo
+mesh sessions --all             # list live sessions across repos
+mesh sessions snake-game        # filter by repo / session / role
+mesh attach                     # interactive attach for current repo
+mesh attach --all               # interactive attach across repos
+mesh attach snake-game          # same, filtered to target repo
+mesh ui rektslug               # iTerm2 default operator view (2 tab: 3 pane + 3 pane)
 mesh ui rektslug --single-tab  # iTerm2: one-tab, multi-pane
 mesh ui rektslug --keep-existing  # keep prior mesh-ui tabs
-mesh ui rektslug --preset auto --max-panes-per-tab 5  # old chunk behavior
+mesh ui rektslug --roles boss,president,lead,worker-claude,worker-codex,worker-gemini,verifier --preset team-4x3  # legacy wide view
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
@@ -220,6 +228,8 @@ python -m src.meshctl task fail <task-id> --reason "stuck review"
 wss <repo>
 wsattach <tmux-session>
 ```
+
+`mesh sessions` / `mesh attach` use the router session API as source of truth. By default they scope to the current repo and only look at live/open sessions; use `--all` for cross-repo inspection. `wsattach` remains a low-level fallback when you already know the tmux session name.
 
 `mesh bootstrap` now:
 - keeps worker envs simple; runtime command resolution is policy-driven via `mapping/provider_runtime.yaml`

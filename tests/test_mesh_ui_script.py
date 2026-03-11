@@ -155,3 +155,20 @@ def test_discover_live_remote_inits_returns_attach_for_matching_role(monkeypatch
     assert "lead" in remote_inits
     assert "worker-codex" not in remote_inits
     assert "sudo -u mesh-worker tmux attach -t mesh-codex-codex-abcd" in remote_inits["lead"]
+
+
+def test_default_ui_roles_fit_two_tabs_with_three_panes():
+    module = _load_module()
+
+    assert module.DEFAULT_ROLES == [
+        "boss",
+        "president",
+        "lead",
+        "worker-codex",
+        "worker-gemini",
+        "verifier",
+    ]
+    assert module._split_groups(module.DEFAULT_ROLES, 3) == [
+        ["boss", "president", "lead"],
+        ["worker-codex", "worker-gemini", "verifier"],
+    ]

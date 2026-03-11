@@ -296,6 +296,8 @@ Provided commands:
 
 - `mesh` -> global wrapper for `scripts/mesh`
 - `mesh ui <repo>` -> iTerm2 Python API layout (tabs/panes for operator roles)
+- `mesh sessions [repo|session|role]` -> list live sessions from router API/DB
+- `mesh attach [repo|session|role]` -> interactive picker + attach without memorizing tmux names
 - `wss` / `wss <repo>` -> SSH WS shortcut
 - `wsattach <tmux-session>` -> attach tmux on WS (auto-detect service user)
 - `yazi`/`lf` -> mapped to `yazicd`/`lfcd` (keep selected directory)
@@ -306,6 +308,8 @@ Current `mesh ui` behavior:
 - default launcher is `scripts/mesh_ui_role_shell.sh`
 - each role can have its own non-destructive bootstrap command
 - if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of staying a static shell
+- default operator layout is now repo-centric `2 tabs x 3 panes` (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened on demand via explicit `--roles`
+- for single-session inspection, prefer `mesh sessions` / `mesh attach`; they are router-backed, default to the current repo, and use `--all` only when you intentionally want cross-repo selection
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
 - live attach resolution also runs on the WS during pane bootstrap, so it still works when the Mac operator host cannot reach the router directly
 - `mesh thread` with no explicit thread name now resolves the latest thread by current repo task metadata, not by assuming the thread name starts with the repo basename
