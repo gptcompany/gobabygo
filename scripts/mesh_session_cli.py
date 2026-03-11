@@ -281,7 +281,8 @@ def select_choice(
         raise ValueError("multiple sessions matched; refine the query")
 
     print(render_choices_table(filtered), file=sys.stderr)
-    raw = prompt_fn(f"Select session [1-{len(filtered)}]: ").strip()
+    print(f"Select session [1-{len(filtered)}]: ", end="", file=sys.stderr, flush=True)
+    raw = prompt_fn("").strip()
     if not raw:
         raise ValueError("selection cancelled")
     if not raw.isdigit():

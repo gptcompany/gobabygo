@@ -83,6 +83,26 @@ detect_uv() {
   return 1
 }
 
+run_with_optional_questionary() {
+  local py_bin="$1"
+  local script="$2"
+  shift 2
+
+  if python_has_module "$py_bin" questionary; then
+    "$py_bin" "$script" "$@"
+    return $?
+  fi
+
+  if uv_bin="$(detect_uv)"; then
+    if "$uv_bin" run --with questionary -- python "$script" "$@"; then
+      return 0
+    fi
+    echo "[mesh] warning: questionary bootstrap failed; falling back to plain prompt." >&2
+  fi
+
+  "$py_bin" "$script" "$@"
+}
+
 run_meshctl() {
   ensure_router_env
 
@@ -184,6 +204,7 @@ ensure_router_env() {
 usage() {
   cat <<'EOF'
 Usage:
+  ./scripts/mesh
   ./scripts/mesh status
   ./scripts/mesh thread [thread-name]
   ./scripts/mesh sessions [repo|session|role]
@@ -200,6 +221,7 @@ Env:
   MESH_PIPELINE_TEMPLATE   default: speckit
 
 Examples:
+  ./scripts/mesh
   ./scripts/mesh status
   ./scripts/mesh sessions
   ./scripts/mesh sessions snake-game
@@ -354,6 +376,34 @@ PY
 
 cmd="${1:-}"
 case "$cmd" in
+  "")
+    if [[ ! -t 0 || ! -t 1 ]]; then
+      usage
+      exit 0
+    fi
+    py_bin="$(detect_python)" || exit $?
+    menu_script="${REPO_ROOT}/scripts/mesh_menu_cli.py"
+    if [[ ! -f "$menu_script" ]]; then
+      echo "Error: missing menu CLI script at $menu_script" >&2
+      exit 1
+    fi
+    menu_json="$(run_with_optional_questionary "$py_bin" "$menu_script")" || exit $?
+    menu_cmdline="$(MESH_MENU_JSON="$menu_json" "$py_bin" - <<'PY'
+import json
+import os
+import shlex
+
+payload = json.loads(os.environ["MESH_MENU_JSON"])
+argv = payload.get("argv") or []
+print(" ".join(shlex.quote(str(arg)) for arg in argv))
+PY
+)" || exit $?
+    if [[ -z "$menu_cmdline" ]]; then
+      exit 0
+    fi
+    eval "set -- $menu_cmdline"
+    exec "$0" "$@"
+    ;;
   status)
     run_meshctl status
     ;;
@@ -388,11 +438,7 @@ case "$cmd" in
       echo "Error: missing session CLI script at $session_script" >&2
       exit 1
     fi
-    session_runner=("$py_bin" "$session_script")
-    if uv_bin="$(detect_uv)"; then
-      session_runner=("$uv_bin" run --with questionary -- python "$session_script")
-    fi
-    selection_json="$("${session_runner[@]}" resolve --ws-host "$ws_host" "${@:2}")" || exit $?
+    selection_json="$(run_with_optional_questionary "$py_bin" "$session_script" resolve --ws-host "$ws_host" "${@:2}")" || exit $?
     selection_env="$(MESH_SELECTION_JSON="$selection_json" "$py_bin" - <<'PY'
 import json
 import shlex
@@ -876,7 +922,7 @@ EOF
       "${PIPELINE_ACCOUNT_ARGS[@]}"
     echo "Started thread: $thread_name"
     ;;
-  ""|-h|--help|help)
+  -h|--help|help)
     usage
     ;;
   *)

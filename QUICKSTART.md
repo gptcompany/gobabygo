@@ -198,6 +198,7 @@ This enables:
 - `wss` / `wss <repo>` (quick SSH to WS)
 - `wsattach <tmux-session>` (attach robusto: auto-detect utente tmux service)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
+- `mesh` with no args (interactive current-repo launcher: `attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` (iTerm2 layout auto tabs/panes for BOSS/PRESIDENT/LEAD/WORKERS)
 - `mesh sessions [repo|session|role]` (lista umana, router API-backed)
 - `mesh attach [repo|session|role]` (picker semplice + attach senza ricordare il nome tmux)
@@ -208,6 +209,7 @@ Ultra-short operator commands:
 ```bash
 mesh bootstrap
 mesh deploy
+mesh                          # interactive launcher for current repo
 mesh status
 mesh status --all               # show historical stale/offline workers too
 mesh sessions                   # list live sessions for current repo
@@ -229,7 +231,7 @@ wss <repo>
 wsattach <tmux-session>
 ```
 
-`mesh sessions` / `mesh attach` use the router session API as source of truth. By default they scope to the current repo and only look at live/open sessions; use `--all` for cross-repo inspection. `wsattach` remains a low-level fallback when you already know the tmux session name.
+`mesh` with no args now opens a small interactive launcher for the current repo and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh sessions` / `mesh attach` use the router session API as source of truth. By default they scope to the current repo and only look at live/open sessions; use `--all` for cross-repo inspection. `wsattach` remains a low-level fallback when you already know the tmux session name.
 
 `mesh bootstrap` now:
 - keeps worker envs simple; runtime command resolution is policy-driven via `mapping/provider_runtime.yaml`
