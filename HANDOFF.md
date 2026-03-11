@@ -448,3 +448,62 @@ Known follow-up not yet implemented:
 
 - there is still no remote kill/ack control channel for live tmux sessions during deregistration
 - current safety policy is therefore "fail active task, do not requeue it"
+
+## 2026-03-11 live deploy + Gemini post-deploy E2E
+
+Deployment state closed:
+
+- router `.100` now runs release `1478f35` from:
+  - `/opt/mesh-router/releases/1478f35`
+  - `/opt/mesh-router/current -> /opt/mesh-router/releases/1478f35`
+- `mesh-router` container was rebuilt and came back `healthy`
+- WS `.111` runtime files copied into:
+  - `/opt/mesh-worker/src/router/`
+- restarted session workers:
+  - `mesh-session-worker@mesh-session-claude-work`
+  - `mesh-session-worker@mesh-session-codex-work`
+  - `mesh-session-worker@mesh-session-gemini-work`
+
+Operational drift found live:
+
+- `/etc/mesh-worker/*.env` still contained `MESH_AUTH_TOKEN=__REPLACE_WITH_TOKEN__`
+- consequence:
+  - session workers looped on `401 Unauthorized` during `/register`
+- fix applied live:
+  - replaced placeholder token with the live router token
+  - rewrote `/home/sam/.mesh/router.env` with the same `.100` URL + token
+
+Post-deploy Gemini-only validation:
+
+1. first live thread:
+   - `direct-gemini-101645`
+   - failed correctly because `working_dir` was outside `MESH_ALLOWED_WORK_DIRS`
+   - this validates the new path boundary enforcement
+2. second live thread:
+   - `allowed-gemini-103009`
+   - failed correctly because `/tmp/mesh-tasks/...` was allowlisted but not writable by `sam`
+3. final live thread:
+   - `final-gemini-104529`
+   - thread id: `7c8cd19a-c2fc-4dce-9a91-419124c2a48b`
+   - repo: `/tmp/mesh-tasks/mesh-gemini-postdeploy-final`
+   - all 3 steps `completed`
+
+Final artifact verification on disk:
+
+- `/tmp/mesh-tasks/mesh-gemini-postdeploy-final/lead_plan.md`
+  - contains `GEMINI_LEAD_OK`
+- `/tmp/mesh-tasks/mesh-gemini-postdeploy-final/worker_review.md`
+  - contains `GEMINI_WORKER_OK`
+- `/tmp/mesh-tasks/mesh-gemini-postdeploy-final/president_decision.md`
+  - contains `GEMINI_TEAM_OK`
+
+Interpretation:
+
+- router deploy is live
+- worker hardening is live
+- provider path used for validation remained Gemini-only
+- the new safety guards are not theoretical:
+  - auth drift blocks worker registration
+  - workdir boundary blocks out-of-scope repos
+  - allowlisted but unwritable roots still fail fast
+- after fixing those runtime preconditions, Gemini-only team E2E completes on the deployed stack

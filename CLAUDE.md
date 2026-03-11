@@ -53,6 +53,23 @@ Not yet production-clean:
 - auto-exit Gemini smoke `4ed1cac5-3a76-42bf-a42a-0fd1967b7c9d` completed with `GEMINI_AUTOEXIT_OK` without manual `/exit`
 - `upterm` logs now live under `~/.cache/gobabygo/upterm`; Gemini session `3cef0e56-9af3-43fb-b180-ff33c6b19cac` published a real attach handle via `attach_kind=upterm`
 - if a redundant Gemini smoke task is still `running` or `assigned` at the next session start, clean it before new tests instead of treating it as a provider/auth regression
+- live deploy `1478f35` is now on router `.100` under `/opt/mesh-router/releases/1478f35`
+- WS `.111` session workers were restarted on the updated `/opt/mesh-worker/src/router` runtime
+- a real post-deploy Gemini-only E2E completed on the live stack:
+  - thread: `final-gemini-104529`
+  - thread id: `7c8cd19a-c2fc-4dce-9a91-419124c2a48b`
+  - repo: `/tmp/mesh-tasks/mesh-gemini-postdeploy-final`
+  - all 3 steps `completed`
+  - artifacts verified on disk:
+    - `lead_plan.md` -> `GEMINI_LEAD_OK`
+    - `worker_review.md` -> `GEMINI_WORKER_OK`
+    - `president_decision.md` -> `GEMINI_TEAM_OK`
+- two live failures before that final smoke were expected and useful:
+  - out-of-bounds repo under `/tmp/mesh-gemini-direct-*` was rejected by `MESH_ALLOWED_WORK_DIRS`
+  - allowlisted repo under `/tmp/mesh-tasks/...` initially failed because the directory tree was not writable by `sam`
+- worker auth drift was also real on WS:
+  - `/etc/mesh-worker/*.env` still contained `__REPLACE_WITH_TOKEN__`
+  - after replacing that with the live router token, Gemini/Codex/Claude session workers registered again on `.100`
 - fresh-repo Gemini write smoke uncovered two distinct bugs in `session_worker.py`:
   - `auto_exit_on_success` could falsely trigger when `success_marker` already appeared inside the prompt text
   - after a manual/session-bus resend, `auto_exit` still reused the old baseline instead of re-arming on the new inbound prompt
