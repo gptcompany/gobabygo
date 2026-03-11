@@ -277,8 +277,8 @@ class SessionWorkerConfig:
     account_profile: str = "work"
     auth_token: str | None = None
     heartbeat_interval: float = 5.0
-    heartbeat_timeout: float = 3.0
-    control_plane_timeout: float = 15.0
+    heartbeat_timeout: float = 5.0
+    control_plane_timeout: float = 30.0
     longpoll_timeout: float = 25.0
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor", "interactive"])
     allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
@@ -327,8 +327,8 @@ class SessionWorkerConfig:
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
             capabilities=capabilities,
             allowed_accounts=allowed_accounts,
-            heartbeat_timeout=float(os.environ.get("MESH_HEARTBEAT_TIMEOUT_S", "3")),
-            control_plane_timeout=float(os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "15")),
+            heartbeat_timeout=float(os.environ.get("MESH_HEARTBEAT_TIMEOUT_S", "5")),
+            control_plane_timeout=float(os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "30")),
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
             provider_runtime_config=os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG"),

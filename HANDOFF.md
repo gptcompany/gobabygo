@@ -380,3 +380,43 @@ Conclusion:
     - `lead_plan.md`
     - `worker_review.md`
     - `president_decision.md`
+
+## 2026-03-11 session worker timeout hardening
+
+- repo change:
+  - `src/router/session_worker.py`
+  - default `heartbeat_timeout`: `3s -> 5s`
+  - default `control_plane_timeout`: `15s -> 30s`
+- deploy env templates updated:
+  - `deploy/mesh-session-claude-work.env`
+  - `deploy/mesh-session-codex-work.env`
+  - `deploy/mesh-session-gemini-work.env`
+  - `deploy/mesh-session-codex-review.env`
+  - each now sets:
+    - `MESH_HEARTBEAT_TIMEOUT_S=5`
+    - `MESH_CONTROL_PLANE_TIMEOUT_S=30`
+- live WS state:
+  - the same values were written into `/etc/mesh-worker/*.env`
+  - restarted:
+    - `mesh-session-worker@mesh-session-claude-work`
+    - `mesh-session-worker@mesh-session-codex-work`
+    - `mesh-session-worker@mesh-session-gemini-work`
+    - `mesh-session-worker@mesh-session-codex-review`
+  - all restarted services came back `active`
+- tests:
+  - `pytest -q tests/router/test_session_worker.py`
+  - `86 passed`
+- live post-restart smoke:
+  - repo: `/tmp/mesh-gemini-timeoutharden`
+  - thread:
+    - `mesh-gemini-timeoutharden-timeout-harden-check-20260311-005348`
+    - thread id: `eb912cf2-56fb-4aed-8035-267337932a19`
+  - result:
+    - `lead` completed
+    - `worker` completed
+    - `president` stayed `running`
+    - `president_decision.md` was never created
+- interpretation:
+  - the timeout hardening is deployed live
+  - it does not regress the already-working Gemini path
+  - but it does **not** close a separate Gemini president edge case on this specific smoke

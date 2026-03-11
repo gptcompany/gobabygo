@@ -65,6 +65,15 @@ Not yet production-clean:
   - `auto_exit_on_success: true`
   - `success_file_path`
   - optional `success_file_contains`
+- session worker timeouts are now less aggressive by default:
+  - `MESH_HEARTBEAT_TIMEOUT_S=5`
+  - `MESH_CONTROL_PLANE_TIMEOUT_S=30`
+  - the same values were applied live to the WS session worker env files and the services were restarted
+- post-hardening Gemini smoke `mesh-gemini-timeoutharden-timeout-harden-check-20260311-005348` is intentionally **not** treated as green:
+  - `lead` completed
+  - `worker` completed
+  - `president` remained `running` without producing `president_decision.md`
+  - this means timeout hardening is live, but one Gemini president edge case still exists under the current runtime
 - several offline historical worker records still remain in the router DB for audit history; they are not active incidents by themselves
 
 ## Factory Droid Compatibility
