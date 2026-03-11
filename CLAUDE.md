@@ -377,6 +377,7 @@ Launcher caveat:
 - Session workers now also re-check the bottom-most `❯` composer after the first send; if the prompt text is still pending, they retry `Enter` automatically instead of leaving the task stuck in the composer.
 - Claude rate-limit TUI (`You're out of extra usage`, `/rate-limit-options`, reset menu) is now treated as `account_exhausted` when detected live in the pane so the router can rotate to the next isolated Claude profile.
 - Router DB access is now serialized more aggressively with the existing `RLock` to reduce concurrent SQLite misuse that was surfacing live as `POST /heartbeat -> 500` and `POST /tasks/complete -> 500`.
+- `scripts/mesh` no longer falls through from the `uv` path to the fallback Python path inside `run_meshctl()`. This was the real cause of the late `409 duplicate_thread_name` noise after a successful `mesh start`.
 - if you ask whether the repo is still in scope for `boss/president/lead/workers` multi-panel operation: yes. `lead` is now a first-class communication role in the router policy layer, with create/dispatch/visibility permissions and runtime communication edges to both `president` and `worker`.
 
 Live note from `2026-03-10`:
@@ -424,3 +425,31 @@ Live note from `2026-03-10`:
     - `/sessions/messages`
     - sometimes `mesh thread` without explicit thread name
   - these timeouts delay observability, but did **not** invalidate the Gemini rerun proof above
+
+## 2026-03-11 launcher post-fix validation
+
+- root cause of the late `409 duplicate_thread_name` was in `scripts/mesh`, not the router:
+  - `run_meshctl()` invoked `uv run -- python -m src.meshctl ...`
+  - then continued into the fallback `python3 -m src.meshctl ...`
+  - the second invocation hit the already-created thread name and emitted the misleading `409`
+- repo fix:
+  - `run_meshctl()` now returns immediately after the first successful path (`uv` or fallback python)
+- regression test:
+  - `tests/test_deploy_scripts.py::TestMeshScript::test_mesh_status_does_not_fall_through_from_uv_to_python`
+- live Gemini-only validation after the fix:
+  - repo: `/tmp/mesh-gemini-dupfix`
+  - command:
+    - `MESH_PIPELINE_TEMPLATE=gemini_team_demo /media/sam/1TB/gobabygo/scripts/mesh start 'dupfix e2e'`
+  - thread:
+    - `mesh-gemini-dupfix-dupfix-e2e-20260311-003958`
+    - thread id: `b94692c3-3610-4961-a7c5-8f50c2a5e26a`
+  - output was clean:
+    - `Pipeline thread created: ...`
+    - `Started thread: ...`
+    - no trailing `409 duplicate_thread_name`
+  - final thread state:
+    - `completed`
+  - artifacts:
+    - `/tmp/mesh-gemini-dupfix/lead_plan.md`
+    - `/tmp/mesh-gemini-dupfix/worker_review.md`
+    - `/tmp/mesh-gemini-dupfix/president_decision.md`

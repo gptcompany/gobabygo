@@ -351,3 +351,32 @@ Conclusion:
 - interpretation:
   - router timeout issue is real but intermittent
   - at the end of this turn the system is back in a clean, idle, Gemini-test-ready state
+
+## 2026-03-11 launcher fix for `duplicate_thread_name`
+
+- root cause:
+  - `scripts/mesh` function `run_meshctl()` executed the `uv` path first
+  - then fell through into the fallback `python3` path
+  - this invoked `src.meshctl` twice and produced the misleading late `409 duplicate_thread_name`
+- repo fix:
+  - `run_meshctl()` now returns immediately after the first execution path
+- regression test added:
+  - `tests/test_deploy_scripts.py`
+  - verifies `./scripts/mesh status` with fake `uv` does not fall through into `python3`
+- live validation run after the fix:
+  - repo: `/tmp/mesh-gemini-dupfix`
+  - command:
+    - `MESH_PIPELINE_TEMPLATE=gemini_team_demo /media/sam/1TB/gobabygo/scripts/mesh start 'dupfix e2e'`
+  - thread:
+    - `mesh-gemini-dupfix-dupfix-e2e-20260311-003958`
+    - thread id: `b94692c3-3610-4961-a7c5-8f50c2a5e26a`
+  - clean launcher output:
+    - `Pipeline thread created: ...`
+    - `Started thread: ...`
+    - no `409 duplicate_thread_name`
+  - final thread status:
+    - `completed`
+  - artifacts written:
+    - `lead_plan.md`
+    - `worker_review.md`
+    - `president_decision.md`

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 DEPLOY_DIR = Path(__file__).parent.parent / "deploy"
+REPO_ROOT = Path(__file__).parent.parent
 
 
 class TestShellScriptSyntax:
@@ -156,3 +158,50 @@ class TestBootOrderDoc:
         assert ".111" in content
         assert ".112" in content
         assert "10.0.0.1" in content
+
+
+class TestMeshScript:
+    """Regression tests for the operator shell wrapper."""
+
+    def test_mesh_status_does_not_fall_through_from_uv_to_python(self, tmp_path):
+        fakebin = tmp_path / "bin"
+        fakebin.mkdir()
+        log_path = tmp_path / "invocations.log"
+
+        uv_path = fakebin / "uv"
+        uv_path.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo \"uv:$*\" >> {log_path}\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        uv_path.chmod(0o755)
+
+        python_path = fakebin / "python3"
+        python_path.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo \"python3:$*\" >> {log_path}\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        python_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fakebin}:{env['PATH']}"
+        env["HOME"] = str(tmp_path)
+        env["MESH_ROUTER_URL"] = "http://127.0.0.1:8780"
+        env["MESH_AUTH_TOKEN"] = "test-token"
+        env["MESH_ENV_FILE"] = str(tmp_path / ".env.mesh")
+        env["MESH_PIPELINE_TEMPLATE"] = "gemini_team_demo"
+
+        result = subprocess.run(
+            ["bash", str(REPO_ROOT / "scripts" / "mesh"), "status"],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        log_lines = log_path.read_text(encoding="utf-8").splitlines()
+        assert log_lines == ["uv:run -- python -m src.meshctl status"]
