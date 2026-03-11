@@ -326,3 +326,28 @@ Conclusion:
 - residual blocker after this checkpoint:
   - router `.100` still shows intermittent timeouts on `/heartbeat` and `/sessions/messages`
   - this affects observability and helper commands more than execution
+
+## 2026-03-11 cleanup and current operator state
+
+- stale demo thread cleaned:
+  - thread: `mesh-gemini-rerun-20260310-235052-rerun-guard-20260310-235052`
+  - final state:
+    - lead `completed`
+    - worker `canceled`
+    - president `canceled`
+  - thread status now shows `failed` instead of misleading `active`
+- temporary demo repos removed:
+  - `/tmp/mesh-gemini-*`
+  - `/tmp/mesh-*demo*`
+  - `/media/sam/1TB/gobabygo/_mesh-snake-game-demo`
+- workspace residue intentionally left untouched:
+  - `Screenshot 2026-03-07 at 11.38.30.png`
+- final live spot-check after cleanup:
+  - `./scripts/mesh status --all` shows all three main workers idle
+  - direct router probe returned fast `200` responses for:
+    - `/health`
+    - `/workers`
+    - `/threads?limit=5`
+- interpretation:
+  - router timeout issue is real but intermittent
+  - at the end of this turn the system is back in a clean, idle, Gemini-test-ready state
