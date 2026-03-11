@@ -26,6 +26,7 @@ render_attach_command = bridge_mod.render_attach_command
 render_notification = bridge_mod.render_notification
 load_repo_rooms = bridge_mod.load_repo_rooms
 build_trace_id = bridge_mod.build_trace_id
+parse_matrix_command = bridge_mod.parse_matrix_command
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +178,7 @@ class TestRenderNotification:
         assert "rektslug" in plain
         assert "ssh tok123@upterm.example:22" in plain
         assert "quick text reply" in plain.lower()
+        assert "!mesh send sess-001" in plain
         assert "<b>Input Requested</b>" in html
 
     def test_approval_needed(self):
@@ -184,6 +186,7 @@ class TestRenderNotification:
         plain, _html = render_notification("approval_needed", task=task)
         assert "Approval Needed" in plain
         assert task["task_id"][:12] in plain
+        assert "!mesh approve task-001" in plain
 
     def test_thread_failed(self):
         thread = make_thread(status="failed")
@@ -211,6 +214,33 @@ class TestTraceId:
         a = build_trace_id("input_requested", session_id="s1", message_seq=7)
         b = build_trace_id("input_requested", session_id="s1", message_seq=8)
         assert a != b
+
+
+class TestParseMatrixCommand:
+    def test_parses_prefixed_send_command(self):
+        event = {
+            "type": "m.room.message",
+            "event_id": "$evt1",
+            "sender": "@sam:matrix.example",
+            "content": {"body": "!mesh send sess-123 continue with option 2"},
+        }
+
+        cmd = parse_matrix_command(event, "!mesh")
+
+        assert cmd is not None
+        assert cmd.command == "send"
+        assert cmd.target == "sess-123"
+        assert cmd.text == "continue with option 2"
+
+    def test_ignores_normal_room_text(self):
+        event = {
+            "type": "m.room.message",
+            "event_id": "$evt1",
+            "sender": "@sam:matrix.example",
+            "content": {"body": "looks good to me"},
+        }
+
+        assert parse_matrix_command(event, "!mesh") is None
 
 
 # ===========================================================================
@@ -449,6 +479,10 @@ class TestBridgeRunOnce:
         config = make_config()
         bridge = MatrixBridge(config)
         mock_router = MagicMock(spec=RouterClient)
+        mock_router.get_sessions.return_value = []
+        mock_router.get_session_messages.return_value = []
+        mock_router.get_tasks.return_value = []
+        mock_router.get_threads.return_value = []
         bridge.router = mock_router
         bridge.detector = TriggerDetector(config, mock_router, bridge.state)
         bridge.matrix = MagicMock(spec=MatrixClient)
@@ -547,6 +581,140 @@ class TestBridgeRunOnce:
         assert sent == 0
 
 
+class TestMatrixInboundCommands:
+    def _make_bridge(self):
+        config = make_config()
+        bridge = MatrixBridge(config)
+        mock_router = MagicMock(spec=RouterClient)
+        mock_router.get_sessions.return_value = []
+        mock_router.get_session_messages.return_value = []
+        mock_router.get_tasks.return_value = []
+        mock_router.get_threads.return_value = []
+        bridge.router = mock_router
+        bridge.detector = MagicMock()
+        bridge.detector.poll.return_value = []
+        bridge.matrix = MagicMock(spec=MatrixClient)
+        return bridge
+
+    def test_handles_approve_command(self):
+        bridge = self._make_bridge()
+        bridge.matrix.sync.return_value = {
+            "next_batch": "s1",
+            "rooms": {
+                "join": {
+                    "!rektslug:matrix.example": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "type": "m.room.message",
+                                    "event_id": "$evt1",
+                                    "sender": "@sam:matrix.example",
+                                    "content": {"body": "!mesh approve task-001"},
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        bridge.matrix.send_message.return_value = True
+        bridge.router.get_tasks.side_effect = lambda status=None: [
+            make_task(task_id="task-001", status="review", repo="rektslug")
+        ] if status == "review" else []
+        bridge.router.approve_review_task.return_value = {"status": "approved"}
+        bridge.repo_rooms = {"rektslug": "!rektslug:matrix.example"}
+
+        sent = bridge.run_once()
+
+        assert sent == 0
+        bridge.router.approve_review_task.assert_called_once_with("task-001", "matrix-operator")
+        bridge.matrix.send_message.assert_called_once_with("!rektslug:matrix.example", "Approved task-001 -> approved")
+
+    def test_handles_send_command(self):
+        bridge = self._make_bridge()
+        bridge.matrix.sync.return_value = {
+            "next_batch": "s1",
+            "rooms": {
+                "join": {
+                    "!snake:matrix.example": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "type": "m.room.message",
+                                    "event_id": "$evt2",
+                                    "sender": "@sam:matrix.example",
+                                    "content": {"body": "!mesh send sess-001 continue"},
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        bridge.matrix.send_message.return_value = True
+        bridge.router.get_tasks.return_value = [
+            {"task_id": "task-001", "repo": "/media/sam/1TB/snake-game"},
+        ]
+        bridge.router.get_sessions.return_value = [
+            make_session(session_id="sess-001", task_id="task-001"),
+        ]
+        bridge.router.send_session_message.return_value = {"status": "accepted"}
+        bridge.repo_rooms = {"snake-game": "!snake:matrix.example"}
+
+        sent = bridge.run_once()
+
+        assert sent == 0
+        bridge.router.send_session_message.assert_called_once_with("sess-001", "continue")
+        bridge.matrix.send_message.assert_called_once_with("!snake:matrix.example", "Sent message to sess-001")
+
+    def test_handles_enter_command(self):
+        bridge = self._make_bridge()
+        bridge.matrix.sync.return_value = {
+            "next_batch": "s1",
+            "rooms": {
+                "join": {
+                    "!snake:matrix.example": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "type": "m.room.message",
+                                    "event_id": "$evt3",
+                                    "sender": "@sam:matrix.example",
+                                    "content": {"body": "!mesh enter sess-001"},
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        bridge.matrix.send_message.return_value = True
+        bridge.router.get_tasks.return_value = [
+            {"task_id": "task-001", "repo": "/media/sam/1TB/snake-game"},
+        ]
+        bridge.router.get_sessions.return_value = [
+            make_session(session_id="sess-001", task_id="task-001"),
+        ]
+        bridge.router.send_session_key.return_value = {"status": "accepted"}
+        bridge.repo_rooms = {"snake-game": "!snake:matrix.example"}
+
+        bridge.run_once()
+
+        bridge.router.send_session_key.assert_called_once_with("sess-001", "Enter")
+        bridge.matrix.send_message.assert_called_once_with("!snake:matrix.example", "Sent Enter to sess-001")
+
+    def test_seed_state_primes_matrix_since(self):
+        bridge = self._make_bridge()
+        bridge.router.get_sessions.return_value = []
+        bridge.router.get_tasks.return_value = []
+        bridge.router.get_threads.return_value = []
+        bridge.matrix.sync.return_value = {"next_batch": "seed-token"}
+
+        bridge._seed_state()
+
+        assert bridge.state.matrix_since == "seed-token"
+
+
 # ===========================================================================
 # Unit: load_repo_rooms
 # ===========================================================================
@@ -580,7 +748,16 @@ class TestLoadRepoRooms:
 
 
 class TestBridgeConfigFromEnv:
-    def test_missing_required_var(self):
+    def test_missing_required_var(self, monkeypatch):
+        for key in (
+            "MESH_ROUTER_URL",
+            "MESH_AUTH_TOKEN",
+            "MESH_MATRIX_HOMESERVER",
+            "MESH_MATRIX_ACCESS_TOKEN",
+            "MESH_MATRIX_DEFAULT_ROOM",
+            "MESH_MATRIX_UNROUTED_ROOM",
+        ):
+            monkeypatch.delenv(key, raising=False)
         with pytest.raises(SystemExit, match="MESH_ROUTER_URL"):
             BridgeConfig.from_env()
 
@@ -601,6 +778,8 @@ class TestBridgeConfigFromEnv:
         assert cfg.poll_interval_s == 5.0
         assert cfg.matrix_unrouted_room == "!unrouted:example"
         assert cfg.matrix_boss_room is None
+        assert cfg.matrix_command_prefix == "!mesh"
+        assert cfg.matrix_verifier_id == "matrix-operator"
 
 
 # ===========================================================================
@@ -640,7 +819,7 @@ class TestRouterClientRecordNotification:
             with MagicMock() as mock_sleep:
                 import time
                 # Patch time.sleep in the bridge module's RouterClient
-                with patch("mesh-matrix-bridge.time.sleep", mock_sleep):
+                with patch.object(bridge_mod.time, "sleep", mock_sleep):
                     ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
                     assert ok is True
                     assert mock_post.call_count == 2
@@ -663,7 +842,7 @@ class TestRouterClientRecordNotification:
             mock_post.return_value = None
             
             with MagicMock() as mock_sleep:
-                with patch("mesh-matrix-bridge.time.sleep", mock_sleep):
+                with patch.object(bridge_mod.time, "sleep", mock_sleep):
                     ok = client.record_notification({"trace_id": "ntf_01234567890abcdef0123"})
                     assert ok is False
                     assert mock_post.call_count == 2

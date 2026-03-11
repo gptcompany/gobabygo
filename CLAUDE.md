@@ -294,7 +294,7 @@ source ~/.zshrc   # or ~/.bashrc
 
 Provided commands:
 
-- `mesh` -> global wrapper for `scripts/mesh`; with no args it opens the current-repo launcher (`attach`, `sessions`, `ui`, `start`)
+- `mesh` -> global wrapper for `scripts/mesh`; with no args it opens the current-repo-root launcher (`attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` -> iTerm2 Python API layout (tabs/panes for operator roles)
 - `mesh sessions [repo|session|role]` -> list live sessions from router API/DB
 - `mesh attach [repo|session|role]` -> interactive picker + attach without memorizing tmux names
@@ -310,12 +310,22 @@ Current `mesh ui` behavior:
 - if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of staying a static shell
 - default operator layout is now repo-centric `2 tabs x 3 panes` (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened on demand via explicit `--roles`
 - for single-session inspection, prefer `mesh sessions` / `mesh attach`; they are router-backed, default to the current repo, and use `--all` only when you intentionally want cross-repo selection
-- `mesh` with no args is the shortest repo-local operator entrypoint after `wss` + `yazicd`
+- `mesh` with no args is the shortest repo-local operator entrypoint after `wss` + `yazicd`; `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` now resolve the git repo root even when launched from nested subdirectories
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
 - live attach resolution also runs on the WS during pane bootstrap, so it still works when the Mac operator host cannot reach the router directly
 - `mesh thread` with no explicit thread name now resolves the latest thread by current repo task metadata, not by assuming the thread name starts with the repo basename
 - if attach is not possible, `worker-*` and `verifier` panes explicitly warn that they are detached control shells on the WS, not the live worker runtime
 - this closes the gap where every pane previously opened as the same blank shell
+
+Matrix bridge now supports simple inbound room commands via router API:
+
+- `!mesh approve <task-id-prefix>`
+- `!mesh reject <task-id-prefix> <reason>`
+- `!mesh send <session-id-prefix> <text>`
+- `!mesh enter <session-id-prefix>`
+- `!mesh interrupt <session-id-prefix>`
+
+Resolution is router-backed and repo-room-aware; in a mapped repo room the bridge only resolves review tasks and open sessions for that repo.
 
 Mac iTerm2 setup (one-time):
 

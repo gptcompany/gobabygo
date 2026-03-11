@@ -22,12 +22,12 @@ def _load_module():
 def test_build_default_actions_are_repo_aware():
     module = _load_module()
 
-    actions = module.build_default_actions("snake-game")
+    actions = module.build_default_actions_for_repo("/tmp/snake-game", "snake-game")
 
     assert [action.argv for action in actions] == [
         ("attach",),
         ("sessions",),
-        ("ui",),
+        ("ui", "/tmp/snake-game"),
         ("start",),
         ("attach", "--all"),
         (),
@@ -38,17 +38,17 @@ def test_build_default_actions_are_repo_aware():
 
 def test_select_action_prefers_questionary_when_available(monkeypatch):
     module = _load_module()
-    actions = module.build_default_actions("snake-game")
+    actions = module.build_default_actions_for_repo("/tmp/snake-game", "snake-game")
     monkeypatch.setattr(module, "_questionary_select_action", lambda actions: actions[2])
 
     selected = module.select_action(actions, interactive=True)
 
-    assert selected.argv == ("ui",)
+    assert selected.argv == ("ui", "/tmp/snake-game")
 
 
 def test_select_action_falls_back_to_numeric_prompt(monkeypatch, capsys):
     module = _load_module()
-    actions = module.build_default_actions("snake-game")
+    actions = module.build_default_actions_for_repo("/tmp/snake-game", "snake-game")
 
     def fail_questionary(_actions):
         raise RuntimeError("questionary unavailable")

@@ -271,6 +271,17 @@ resolve_repo_path_and_name() {
   RESOLVED_REPO_NAME="$repo_name"
 }
 
+resolve_current_repo_context() {
+  local repo_root=""
+  if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$repo_root" ]]; then
+    CURRENT_REPO_PATH="$repo_root"
+    CURRENT_REPO_NAME="$(basename "$repo_root")"
+    return 0
+  fi
+  CURRENT_REPO_PATH="$(pwd -P)"
+  CURRENT_REPO_NAME="$(basename "$CURRENT_REPO_PATH")"
+}
+
 slugify() {
   local text="${1:-}"
   text="$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')"
@@ -415,8 +426,9 @@ PY
   thread)
     thread_name="${2:-}"
     if [[ -z "$thread_name" ]]; then
-      repo_path="$(pwd -P)"
-      repo="$(basename "$repo_path")"
+      resolve_current_repo_context
+      repo_path="$CURRENT_REPO_PATH"
+      repo="$CURRENT_REPO_NAME"
       thread_name="$(latest_thread_for_repo "$repo" "$repo_path" || true)"
       if [[ -z "$thread_name" ]]; then
         echo "Error: no thread provided and no recent thread found on router for repo '$repo'." >&2
@@ -707,13 +719,15 @@ EOF
     ;;
   ui)
     ui_args=("${@:2}")
+    if [[ ${#ui_args[@]} -eq 0 ]]; then
+      resolve_current_repo_context
+      ui_args=("$CURRENT_REPO_PATH")
+    fi
     if [[ "$(uname -s)" != "Darwin" ]]; then
       if [[ -n "${MESH_UI_FORWARD_HOST:-}" ]]; then
         forward_args=("${ui_args[@]}")
         # Normalize first positional argument (repo) to absolute WS path before forwarding.
-        if [[ ${#forward_args[@]} -eq 0 ]]; then
-          forward_args=("$(pwd -P)")
-        elif [[ "${forward_args[0]}" != -* ]]; then
+        if [[ "${forward_args[0]}" != -* ]]; then
           resolve_repo_path_and_name "${forward_args[0]}"
           forward_args[0]="$RESOLVED_REPO_PATH"
         fi
@@ -881,8 +895,9 @@ EOF
       feature="$(gen_feature_label)"
     fi
 
-    repo_path="$(pwd -P)"
-    repo="$(basename "$repo_path")"
+    resolve_current_repo_context
+    repo_path="$CURRENT_REPO_PATH"
+    repo="$CURRENT_REPO_NAME"
     build_pipeline_account_args "$repo"
     feature_slug="$(slugify "$feature")"
     ts="$(date +%Y%m%d-%H%M%S)"
@@ -906,8 +921,9 @@ EOF
     # Uses current directory as target repo.
     if [[ -n "$input_a" && -z "$input_b" ]]; then
       phase="$input_a"
-      repo_path="$(pwd -P)"
-      repo="$(basename "$repo_path")"
+      resolve_current_repo_context
+      repo_path="$CURRENT_REPO_PATH"
+      repo="$CURRENT_REPO_NAME"
     # Explicit mode: mesh run <repo-name|repo-path> <phase>
     elif [[ -n "$input_a" && -n "$input_b" ]]; then
       resolve_repo_path_and_name "$input_a"

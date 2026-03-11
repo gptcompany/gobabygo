@@ -109,8 +109,9 @@ Current expectation:
 - `ccs codex` and `ccs gemini` keep the Claude Code frontend and route inference through a provider bridge. MCP, memory, slash commands, and session UX stay Claude Code-native.
 - `mesh ui <repo>` is part of the intended operator flow and opens panels for `boss`, `president`, `lead`, `worker-claude`, `worker-codex`, `worker-gemini`, and `verifier`. It now boots each pane through a central role policy and auto-attaches to live tmux sessions when the router already has a matching open session for that repo/role. The runtime source of truth is still the router DB, not iTerm2.
 - `mesh ui` now defaults to a repo-centric `2 tabs x 3 panes` operator layout (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened only when you ask for it explicitly.
-- `mesh` with no arguments now opens a small interactive launcher for the current repo (`attach`, `sessions`, `ui`, `start`, plus `attach --all`).
+- `mesh` with no arguments now opens a small interactive launcher for the current repo root (`attach`, `sessions`, `ui`, `start`, plus `attach --all`).
 - For a simpler one-session workflow, `mesh sessions` and `mesh attach` are router-backed operator commands: they default to live sessions for the current repo, support `--all` for cross-repo selection, and only use tmux at the final attach step.
+- The Matrix bridge now supports explicit room commands (`!mesh approve`, `!mesh reject`, `!mesh send`, `!mesh enter`, `!mesh interrupt`) resolved against the router API/DB, scoped to the repo room when topology maps one.
 - If `mesh ui` cannot attach a live `worker-*` or `verifier` session, the pane is now explicitly labeled as a detached control shell on the WS. It is not the live worker runtime.
 - `mesh status` now hides historical stale/offline worker rows by default; use `--all` when you explicitly want the full audit-heavy worker table.
 - Runtime roles are now `boss`, `president`, `lead`, and `worker`. `lead` is first-class in the router policy layer and acts as a coordinator between `president` and workers while direct `president` ↔ `worker` communication remains allowed for compatibility.

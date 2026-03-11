@@ -20,6 +20,7 @@ import time
 import hashlib
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote, urlencode
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -39,6 +40,8 @@ class BridgeConfig:
     matrix_unrouted_room: str
     poll_interval_s: float = 10.0
     matrix_boss_room: str | None = None
+    matrix_command_prefix: str = "!mesh"
+    matrix_verifier_id: str = "matrix-operator"
     input_patterns: list[re.Pattern[str]] = field(default_factory=list)
     request_timeout_s: float = 10.0
     topology_path: str | None = None
@@ -66,6 +69,8 @@ class BridgeConfig:
             matrix_unrouted_room=req("MESH_MATRIX_UNROUTED_ROOM"),
             poll_interval_s=float(os.environ.get("MESH_MATRIX_POLL_INTERVAL_S", "10")),
             matrix_boss_room=os.environ.get("MESH_MATRIX_BOSS_ROOM"),
+            matrix_command_prefix=os.environ.get("MESH_MATRIX_COMMAND_PREFIX", "!mesh").strip() or "!mesh",
+            matrix_verifier_id=os.environ.get("MESH_MATRIX_VERIFIER_ID", "matrix-operator").strip() or "matrix-operator",
             input_patterns=[combined],
             request_timeout_s=float(os.environ.get("MESH_MATRIX_REQUEST_TIMEOUT_S", "10")),
             topology_path=os.environ.get("MESH_TOPOLOGY_PATH"),
@@ -88,6 +93,19 @@ class BridgeState:
     thread_statuses: dict[str, str] = field(default_factory=dict)
     # set of open session_ids from last poll
     open_sessions: set[str] = field(default_factory=set)
+    # matrix sync token for inbound room commands
+    matrix_since: str | None = None
+
+
+@dataclass(frozen=True)
+class MatrixCommand:
+    room_id: str
+    sender: str
+    event_id: str
+    command: str
+    target: str
+    text: str
+    body: str
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +214,35 @@ class RouterClient:
         data = self._get("/threads", params)
         return (data or {}).get("threads", [])
 
+    def approve_review_task(self, task_id: str, verifier_id: str) -> Any:
+        return self._post("/tasks/review/approve", {"task_id": task_id, "verifier_id": verifier_id})
+
+    def reject_review_task(self, task_id: str, verifier_id: str, reason: str) -> Any:
+        return self._post(
+            "/tasks/review/reject",
+            {"task_id": task_id, "verifier_id": verifier_id, "reason": reason},
+        )
+
+    def send_session_message(self, session_id: str, content: str) -> Any:
+        return self._post(
+            "/sessions/send",
+            {
+                "session_id": session_id,
+                "direction": "in",
+                "role": "operator",
+                "content": content,
+            },
+        )
+
+    def send_session_key(self, session_id: str, key: str, repeat: int = 1) -> Any:
+        return self._post(
+            "/sessions/send-key",
+            {"session_id": session_id, "key": key, "repeat": repeat},
+        )
+
+    def signal_session(self, session_id: str, signal_name: str) -> Any:
+        return self._post("/sessions/signal", {"session_id": session_id, "signal": signal_name})
+
     def record_notification(self, payload: dict[str, Any]) -> bool:
         """Record notification in router ledger with retry logic."""
         for attempt in range(2):
@@ -234,7 +281,7 @@ class MatrixClient:
         """Send a text message (with optional HTML) to a Matrix room."""
         self._txn_id += 1
         url = (
-            f"{self._base}/_matrix/client/v3/rooms/{room_id}"
+            f"{self._base}/_matrix/client/v3/rooms/{quote(room_id, safe='')}"
             f"/send/m.room.message/{self._txn_id}"
         )
         content: dict[str, str] = {
@@ -257,6 +304,21 @@ class MatrixClient:
         except (HTTPError, URLError, TimeoutError) as exc:
             logger.error("Matrix send error: %s", exc)
             return False
+
+    def sync(self, since: str | None = None, timeout_ms: int = 0) -> dict[str, Any] | None:
+        params = {"timeout": str(timeout_ms)}
+        if since:
+            params["since"] = since
+        url = f"{self._base}/_matrix/client/v3/sync?{urlencode(params)}"
+        req = Request(url, method="GET")
+        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Accept", "application/json")
+        try:
+            with urlopen(req, timeout=self._timeout) as resp:
+                return json.loads(resp.read())
+        except (HTTPError, URLError, TimeoutError) as exc:
+            logger.error("Matrix sync error: %s", exc)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +344,7 @@ def render_notification(
     trigger: str,
     *,
     trace_id: str | None = None,
+    command_prefix: str = "!mesh",
     repo: str | None = None,
     session: dict | None = None,
     task: dict | None = None,
@@ -337,6 +400,18 @@ def render_notification(
     if trigger == "input_requested":
         lines.append("_Quick text reply for simple input only; full control requires terminal attach._")
         html_lines.append("<em>Quick text reply for simple input only; full control requires terminal attach.</em>")
+        if session:
+            sid = session.get("session_id", "?")[:12]
+            lines.append(f"Reply in room: `{command_prefix} send {sid} <text>` or `{command_prefix} enter {sid}`")
+            html_lines.append(
+                f"Reply in room: <code>{command_prefix} send {sid} &lt;text&gt;</code> or <code>{command_prefix} enter {sid}</code>"
+            )
+    if trigger == "approval_needed" and task:
+        tid = task.get("task_id", "?")[:12]
+        lines.append(f"Reply in room: `{command_prefix} approve {tid}` or `{command_prefix} reject {tid} <reason>`")
+        html_lines.append(
+            f"Reply in room: <code>{command_prefix} approve {tid}</code> or <code>{command_prefix} reject {tid} &lt;reason&gt;</code>"
+        )
 
     plain = "\n".join(lines)
     html = "<br>".join(html_lines)
@@ -492,6 +567,55 @@ class TriggerDetector:
         return task_repo_map.get(task_id)
 
 
+def parse_matrix_command(event: dict[str, Any], command_prefix: str) -> MatrixCommand | None:
+    if event.get("type") != "m.room.message":
+        return None
+    content = event.get("content")
+    if not isinstance(content, dict):
+        return None
+    body = str(content.get("body") or "").strip()
+    if not body:
+        return None
+
+    prefixes: list[str] = []
+    for candidate in (command_prefix, command_prefix.lstrip("!/"), "mesh"):
+        candidate = candidate.strip()
+        if candidate and candidate.lower() not in {item.lower() for item in prefixes}:
+            prefixes.append(candidate)
+
+    rest: str | None = None
+    for prefix in prefixes:
+        if body.lower() == prefix.lower():
+            rest = ""
+            break
+        marker = f"{prefix} "
+        if body.lower().startswith(marker.lower()):
+            rest = body[len(marker):].strip()
+            break
+    if rest is None:
+        return None
+
+    if not rest:
+        command = "help"
+        target = ""
+        text = ""
+    else:
+        parts = rest.split(maxsplit=2)
+        command = parts[0].strip().lower()
+        target = parts[1].strip() if len(parts) >= 2 else ""
+        text = parts[2].strip() if len(parts) >= 3 else ""
+
+    return MatrixCommand(
+        room_id="",
+        sender=str(event.get("sender") or "").strip(),
+        event_id=str(event.get("event_id") or "").strip(),
+        command=command,
+        target=target,
+        text=text,
+        body=body,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bridge main loop
 # ---------------------------------------------------------------------------
@@ -511,6 +635,196 @@ class MatrixBridge:
         self.detector = TriggerDetector(config, self.router, self.state)
         self.repo_rooms = load_repo_rooms(config.topology_path)
         self._running = True
+
+    def _room_repo_scope(self, room_id: str) -> str | None:
+        for repo_name, mapped_room in self.repo_rooms.items():
+            if repo_name.startswith("__"):
+                continue
+            if mapped_room == room_id:
+                return repo_name
+        return None
+
+    def _allowed_command_rooms(self) -> set[str]:
+        rooms = {
+            self.config.matrix_default_room,
+            self.config.matrix_unrouted_room,
+        }
+        if self.config.matrix_boss_room:
+            rooms.add(self.config.matrix_boss_room)
+        for room_id in self.repo_rooms.values():
+            if room_id:
+                rooms.add(room_id)
+        return rooms
+
+    def _seed_matrix_since(self) -> None:
+        snapshot = self.matrix.sync(since=None, timeout_ms=0)
+        if snapshot:
+            self.state.matrix_since = snapshot.get("next_batch") or self.state.matrix_since
+
+    def _poll_matrix_commands(self) -> list[MatrixCommand]:
+        snapshot = self.matrix.sync(since=self.state.matrix_since, timeout_ms=0)
+        if not snapshot:
+            return []
+        self.state.matrix_since = snapshot.get("next_batch") or self.state.matrix_since
+        rooms = ((snapshot.get("rooms") or {}).get("join") or {})
+        allowed_rooms = self._allowed_command_rooms()
+        commands: list[MatrixCommand] = []
+        for room_id, room_payload in rooms.items():
+            if room_id not in allowed_rooms:
+                continue
+            for event in (((room_payload or {}).get("timeline") or {}).get("events") or []):
+                parsed = parse_matrix_command(event, self.config.matrix_command_prefix)
+                if parsed is None:
+                    continue
+                commands.append(
+                    MatrixCommand(
+                        room_id=room_id,
+                        sender=parsed.sender,
+                        event_id=parsed.event_id,
+                        command=parsed.command,
+                        target=parsed.target,
+                        text=parsed.text,
+                        body=parsed.body,
+                    )
+                )
+        return commands
+
+    def _repo_matches_scope(self, repo_value: str | None, repo_scope: str | None) -> bool:
+        if not repo_scope:
+            return True
+        repo_text = str(repo_value or "").strip()
+        if not repo_text:
+            return False
+        return repo_text == repo_scope or os.path.basename(repo_text.rstrip("/")) == repo_scope
+
+    def _resolve_review_task(self, prefix: str, room_id: str) -> tuple[dict[str, Any] | None, str | None]:
+        repo_scope = self._room_repo_scope(room_id)
+        tasks = [
+            task for task in self.router.get_tasks(status="review")
+            if self._repo_matches_scope(task.get("repo"), repo_scope)
+        ]
+        needle = prefix.strip().lower()
+        matches = [task for task in tasks if str(task.get("task_id") or "").lower().startswith(needle)]
+        if not matches:
+            return None, f"no review task matches '{prefix}'"
+        if len(matches) > 1:
+            options = ", ".join(str(task.get("task_id", ""))[:12] for task in matches[:5])
+            return None, f"multiple review tasks match '{prefix}': {options}"
+        return matches[0], None
+
+    def _resolve_open_session(self, prefix: str, room_id: str) -> tuple[dict[str, Any] | None, str | None]:
+        repo_scope = self._room_repo_scope(room_id)
+        task_repo_map = {
+            task.get("task_id"): task.get("repo")
+            for task in self.router.get_tasks()
+            if task.get("task_id")
+        }
+        sessions = []
+        for session in self.router.get_sessions(state="open"):
+            repo_value = task_repo_map.get(session.get("task_id"))
+            if repo_value is None:
+                meta = session.get("metadata") or {}
+                repo_value = meta.get("working_dir")
+            if self._repo_matches_scope(repo_value, repo_scope):
+                sessions.append(session)
+
+        needle = prefix.strip().lower()
+        matches = [session for session in sessions if str(session.get("session_id") or "").lower().startswith(needle)]
+        if not matches:
+            return None, f"no open session matches '{prefix}'"
+        if len(matches) > 1:
+            options = ", ".join(str(session.get("session_id", ""))[:12] for session in matches[:5])
+            return None, f"multiple open sessions match '{prefix}': {options}"
+        return matches[0], None
+
+    def _command_help(self) -> str:
+        prefix = self.config.matrix_command_prefix
+        return "\n".join(
+            [
+                "Mesh room commands:",
+                f"- {prefix} approve <task-id-prefix>",
+                f"- {prefix} reject <task-id-prefix> <reason>",
+                f"- {prefix} send <session-id-prefix> <text>",
+                f"- {prefix} enter <session-id-prefix>",
+                f"- {prefix} interrupt <session-id-prefix>",
+            ]
+        )
+
+    def _handle_matrix_command(self, cmd: MatrixCommand) -> str:
+        prefix = self.config.matrix_command_prefix
+        if cmd.command in {"", "help"}:
+            return self._command_help()
+
+        if cmd.command == "approve":
+            if not cmd.target:
+                return f"Usage: {prefix} approve <task-id-prefix>"
+            task, error = self._resolve_review_task(cmd.target, cmd.room_id)
+            if error:
+                return f"Error: {error}"
+            result = self.router.approve_review_task(task["task_id"], self.config.matrix_verifier_id)
+            if not result:
+                return "Error: router approval request failed"
+            return f"Approved {task['task_id'][:12]} -> {str(result.get('status') or 'unknown')}"
+
+        if cmd.command == "reject":
+            if not cmd.target or not cmd.text:
+                return f"Usage: {prefix} reject <task-id-prefix> <reason>"
+            task, error = self._resolve_review_task(cmd.target, cmd.room_id)
+            if error:
+                return f"Error: {error}"
+            result = self.router.reject_review_task(task["task_id"], self.config.matrix_verifier_id, cmd.text)
+            if not result:
+                return "Error: router rejection request failed"
+            suffix = ""
+            if result.get("fix_task_id"):
+                suffix = f" fix={str(result['fix_task_id'])[:12]}"
+            return f"Rejected {task['task_id'][:12]} -> {str(result.get('status') or 'unknown')}{suffix}"
+
+        if cmd.command == "send":
+            if not cmd.target or not cmd.text:
+                return f"Usage: {prefix} send <session-id-prefix> <text>"
+            session, error = self._resolve_open_session(cmd.target, cmd.room_id)
+            if error:
+                return f"Error: {error}"
+            result = self.router.send_session_message(session["session_id"], cmd.text)
+            if not result:
+                return "Error: router session message request failed"
+            return f"Sent message to {session['session_id'][:12]}"
+
+        if cmd.command == "enter":
+            if not cmd.target:
+                return f"Usage: {prefix} enter <session-id-prefix>"
+            session, error = self._resolve_open_session(cmd.target, cmd.room_id)
+            if error:
+                return f"Error: {error}"
+            result = self.router.send_session_key(session["session_id"], "Enter")
+            if not result:
+                return "Error: router send-key request failed"
+            return f"Sent Enter to {session['session_id'][:12]}"
+
+        if cmd.command == "interrupt":
+            if not cmd.target:
+                return f"Usage: {prefix} interrupt <session-id-prefix>"
+            session, error = self._resolve_open_session(cmd.target, cmd.room_id)
+            if error:
+                return f"Error: {error}"
+            result = self.router.signal_session(session["session_id"], "interrupt")
+            if not result:
+                return "Error: router signal request failed"
+            return f"Sent interrupt to {session['session_id'][:12]}"
+
+        return f"Unknown command '{cmd.command}'. Use `{prefix} help`."
+
+    def _process_inbound_commands(self) -> int:
+        handled = 0
+        for cmd in self._poll_matrix_commands():
+            reply = self._handle_matrix_command(cmd)
+            if self.matrix.send_message(cmd.room_id, reply):
+                handled += 1
+                logger.info("Handled matrix command room=%s sender=%s body=%s", cmd.room_id, cmd.sender, cmd.body)
+            else:
+                logger.warning("Failed to reply to matrix command room=%s body=%s", cmd.room_id, cmd.body)
+        return handled
 
     def _resolve_room(self, repo: str | None) -> str:
         """Pick the right Matrix room for a notification."""
@@ -564,6 +878,7 @@ class MatrixBridge:
             plain, html = render_notification(
                 trigger,
                 trace_id=trace_id,
+                command_prefix=self.config.matrix_command_prefix,
                 repo=repo,
                 session=notif.get("session"),
                 task=notif.get("task"),
@@ -593,6 +908,10 @@ class MatrixBridge:
                     status="failed",
                     error="matrix_send_failed",
                 )
+
+        handled_commands = self._process_inbound_commands()
+        if handled_commands:
+            logger.info("Cycle: %d Matrix commands handled", handled_commands)
 
         return sent
 
@@ -637,6 +956,8 @@ class MatrixBridge:
         threads = self.router.get_threads()
         for t in threads:
             self.state.thread_statuses[t["thread_id"]] = t.get("status", "")
+
+        self._seed_matrix_since()
 
         logger.info(
             "Seeded: %d sessions, %d review tasks, %d threads",

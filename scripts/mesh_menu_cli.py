@@ -22,11 +22,16 @@ class MenuAction:
 
 
 def build_default_actions(repo_name: str) -> list[MenuAction]:
+    return build_default_actions_for_repo("", repo_name)
+
+
+def build_default_actions_for_repo(repo_path: str, repo_name: str) -> list[MenuAction]:
     target = repo_name or "current repo"
+    ui_argv = ("ui", repo_path) if repo_path else ("ui",)
     return [
         MenuAction("attach", f"Attach live session ({target})", "Open the live session picker for this repo.", ("attach",)),
         MenuAction("sessions", f"List live sessions ({target})", "Show active router-backed sessions for this repo.", ("sessions",)),
-        MenuAction("ui", f"Open operator UI ({target})", "Launch the iTerm2 operator layout for this repo.", ("ui",)),
+        MenuAction("ui", f"Open operator UI ({target})", "Launch the iTerm2 operator layout for this repo.", ui_argv),
         MenuAction("start", f"Start new thread ({target})", "Create a new pipeline run with an auto-generated label.", ("start",)),
         MenuAction("attach_all", "Attach live session (all repos)", "Cross-repo live session picker.", ("attach", "--all")),
         MenuAction("quit", "Quit", "Exit without running a mesh subcommand.", ()),
@@ -112,8 +117,8 @@ def _emit_payload(payload: dict[str, object], output_path: str) -> None:
 
 def main() -> int:
     args = _parse_args()
-    _, repo_name = detect_repo_context()
-    actions = build_default_actions(repo_name)
+    repo_path, repo_name = detect_repo_context()
+    actions = build_default_actions_for_repo(repo_path, repo_name)
     try:
         selected = select_action(actions, interactive=sys.stdin.isatty())
     except ValueError as exc:
