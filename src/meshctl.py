@@ -1413,7 +1413,7 @@ thread_handoff_parser.add_argument("--json", action="store_true", dest="json_out
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main() -> None:
     parsed_args = parser.parse_args()
     if getattr(parsed_args, "statuses", None) is None:
         parsed_args.statuses = ["offline"]
@@ -1460,3 +1460,6 @@ if __name__ == "__main__":
     else:
         parser.print_help()
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

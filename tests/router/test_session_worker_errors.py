@@ -36,9 +36,10 @@ def test_interactive_task_timeout(worker):
     worker._open_session = MagicMock(return_value="sess-123")
     worker._tmux_session_name = MagicMock(return_value="tmux-sess")
     worker._tmux_new_session = MagicMock()
+    worker._create_attach_handle = MagicMock(return_value=({"attach_kind": "upterm"}, None))
     
     # We patch monotonic to simulate time passing
-    times = [0.0, 0.05, 0.2]  # start, first check (pass), second check (timeout)
+    times = [0.0, 0.05, 10000.0]  # start, first check (pass), second check (timeout)
     with patch("time.monotonic", side_effect=times):
         worker._execute_task(task)
 
