@@ -285,3 +285,44 @@ Conclusion:
 
 - Factory Droid is a strong compatibility target for Claude-style agents/plugins
 - it is not safe to claim `100%` compatibility with a hook-heavy `claude-config` repo without a dedicated migration pass
+
+## 2026-03-11 follow-up: Gemini auth recovery and stale-artifact rerun proof
+
+- live Gemini provider failure reproduced:
+  - CLIProxy returned `500 auth_unavailable: no auth available`
+  - this was provider/runtime state, not mesh orchestration and not the stale-file fix
+- live recovery that worked under `sam`:
+  - `ccs gemini --use samuele.morzenti`
+  - `ccs cliproxy restart`
+  - validation command returned success:
+    - `ccs gemini --print -p "Reply with exactly GEMINI_AUTH_OK"` -> `GEMINI_AUTH_OK`
+- stuck rerun-guard task recovered on the live tmux pane:
+  - thread: `mesh-gemini-rerun-20260310-235052-rerun-guard-20260310-235052`
+  - lead task: `24921f17-8749-48a1-8cab-955bdbad0293`
+  - repo: `/tmp/mesh-gemini-rerun-20260310-235052`
+  - artifact written after recovery: `lead_plan.md` with `GEMINI_LEAD_OK`
+- final proof of the review fix used the repo that already contained all three success files:
+  - repo: `/tmp/mesh-gemini-team-e2e-20260310-230556`
+  - existing pre-rerun artifacts:
+    - `lead_plan.md`
+    - `worker_review.md`
+    - `president_decision.md`
+  - rerun thread:
+    - `mesh-gemini-team-e2e-20260310-230556-rerun-stale-artifact-proof-20260311-001545`
+    - thread id: `e38fd28d-b5b9-4680-8173-f22f188bd628`
+  - tasks:
+    - `45a31fe8-7981-4bd8-82d3-d99621c45620` lead
+    - `0ead5ccf-a8e5-495e-886f-2b7bc7ad847f` worker
+    - `534f3416-12f0-4872-855e-e4188463ecbb` president
+- decisive live observation:
+  - immediately after launch, step `0` was still `running`
+  - Gemini worker was `busy`
+  - stale `lead_plan.md` therefore did **not** trigger false auto-exit
+- final rewritten artifact mtimes from the rerun:
+  - `lead_plan.md` -> `1773188198.5144885830`
+  - `worker_review.md` -> `1773188328.8796516460`
+  - `president_decision.md` -> `1773188427.2637878150`
+- worker journal confirms all three tasks completed via fresh artifact writes, not stale-file reuse
+- residual blocker after this checkpoint:
+  - router `.100` still shows intermittent timeouts on `/heartbeat` and `/sessions/messages`
+  - this affects observability and helper commands more than execution

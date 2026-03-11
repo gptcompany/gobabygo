@@ -387,3 +387,40 @@ Live note from `2026-03-10`:
   - Claude rate-limit menu on `claude-samuele`
   - router `500` on `/tasks/complete` and intermittent `/heartbeat`
 - do not assume the live rerun reflects current repo behavior until router `.100` and WS worker runtime are redeployed
+
+## 2026-03-11 Gemini rerun proof
+
+- Gemini auth/runtime was briefly broken again under `ccs gemini`:
+  - live CLIProxy error: `500 auth_unavailable: no auth available`
+  - recovery that worked live under `sam`:
+    - `ccs gemini --use samuele.morzenti`
+    - `ccs cliproxy restart`
+  - post-restart proof:
+    - `ccs gemini --print -p "Reply with exactly GEMINI_AUTH_OK"` returned `GEMINI_AUTH_OK`
+- the stale-artifact review fix is now proven live, not just in tests:
+  - repo reused on purpose: `/tmp/mesh-gemini-team-e2e-20260310-230556`
+  - existing files before rerun:
+    - `lead_plan.md`
+    - `worker_review.md`
+    - `president_decision.md`
+  - rerun thread:
+    - `mesh-gemini-team-e2e-20260310-230556-rerun-stale-artifact-proof-20260311-001545`
+    - thread id: `e38fd28d-b5b9-4680-8173-f22f188bd628`
+  - tasks:
+    - lead: `45a31fe8-7981-4bd8-82d3-d99621c45620`
+    - worker: `0ead5ccf-a8e5-495e-886f-2b7bc7ad847f`
+    - president: `534f3416-12f0-4872-855e-e4188463ecbb`
+- decisive live evidence:
+  - a few seconds after launch, step `0` was still `running` and Gemini worker was `busy`
+  - therefore the old `lead_plan.md` did **not** trigger immediate auto-exit
+  - later all three files were rewritten with fresh mtimes:
+    - `lead_plan.md` -> `1773188198.5144885830`
+    - `worker_review.md` -> `1773188328.8796516460`
+    - `president_decision.md` -> `1773188427.2637878150`
+  - worker journal confirms all three tasks completed through artifact-driven auto-exit on the rewritten files
+- residual live issue is now narrower and infrastructure-only:
+  - router `.100` intermittently times out on:
+    - `/heartbeat`
+    - `/sessions/messages`
+    - sometimes `mesh thread` without explicit thread name
+  - these timeouts delay observability, but did **not** invalidate the Gemini rerun proof above
