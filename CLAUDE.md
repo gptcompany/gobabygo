@@ -482,6 +482,30 @@ Live note from `2026-03-10`:
     - `/tmp/mesh-gemini-dupfix/lead_plan.md`
     - `/tmp/mesh-gemini-dupfix/worker_review.md`
     - `/tmp/mesh-gemini-dupfix/president_decision.md`
+- canonical Gemini rerun on allowlisted `/media` root:
+  - live env normalization added:
+    - `MESH_ALLOWED_WORK_DIRS=/tmp/mesh-tasks,/media/sam/1TB`
+  - canonical repo:
+    - `/media/sam/1TB/mesh-gemini-canonical-smoke`
+  - first canonical run proved path acceptance on `/media/sam/1TB`, but exposed a different bootstrap bug:
+    - Gemini home showed a suggestion row like `❯ Try "how do I log an error?"`
+    - `session_worker.py` treated that as pending composer text and retried `Enter` without really bootstrapping the prompt
+  - repo/runtime fix:
+    - commit `b5103d1` `Handle Gemini home screen prompt bootstrap`
+    - `_last_prompt_line_has_content()` ignores Gemini home suggestion rows
+    - `_looks_like_start_screen()` recognizes the Gemini home screen without requiring `welcome back`
+  - clean rerun after live deploy of `b5103d1`:
+    - command:
+      - `MESH_PIPELINE_TEMPLATE=gemini_team_demo ./scripts/mesh start "canonical gemini smoke rerun 20260311-1320"`
+    - thread:
+      - `mesh-gemini-canonical-smoke-canonical-gemini-smoke-rerun-20260311-1320-20260311-131941`
+      - thread id: `7a06053e-18b3-4433-bafc-34a838acc891`
+    - final thread state:
+      - `completed`
+    - artifacts verified:
+      - `/media/sam/1TB/mesh-gemini-canonical-smoke/lead_plan.md`
+      - `/media/sam/1TB/mesh-gemini-canonical-smoke/worker_review.md`
+      - `/media/sam/1TB/mesh-gemini-canonical-smoke/president_decision.md`
 
 ## 2026-03-11 hardening pass
 

@@ -517,3 +517,44 @@ Interpretation:
   - workdir boundary blocks out-of-scope repos
   - allowlisted but unwritable roots still fail fast
 - after fixing those runtime preconditions, Gemini-only team E2E completes on the deployed stack
+
+Canonical root validation follow-up:
+
+4. canonical rerun after live env normalization:
+   - live envs updated to include:
+     - `MESH_ALLOWED_WORK_DIRS=/tmp/mesh-tasks,/media/sam/1TB`
+   - canonical repo prepared at:
+     - `/media/sam/1TB/mesh-gemini-canonical-smoke`
+   - first canonical thread:
+     - `mesh-gemini-canonical-smoke-canonical-gemini-smoke-20260311-1200-20260311-123550`
+     - thread id: `d1ea02e1-ccab-4797-8aa6-f822310d7158`
+   - result:
+     - router accepted the canonical repo path under `/media/sam/1TB`
+     - Gemini session worker opened the repo correctly
+     - run eventually completed, but the first lead artifact was contaminated by an initial stuck session and was not a clean validation artifact set
+5. root cause of the canonical smoke stall:
+   - Gemini home rendered a suggestion row like `❯ Try "how do I log an error?"`
+   - `session_worker.py` treated that line as pending composer text, so it only retried `Enter`
+   - `_looks_like_start_screen()` also under-detected the Gemini home screen because it required `welcome back`
+   - repo fix:
+     - commit `b5103d1` `Handle Gemini home screen prompt bootstrap`
+     - `_last_prompt_line_has_content()` now ignores Gemini home suggestion rows
+     - `_looks_like_start_screen()` now accepts the Gemini home screen without requiring `welcome back`
+   - targeted regression coverage:
+     - `tests/router/test_session_worker.py`
+6. final clean canonical rerun after deploying `b5103d1` live:
+   - command:
+     - `MESH_PIPELINE_TEMPLATE=gemini_team_demo ./scripts/mesh start "canonical gemini smoke rerun 20260311-1320"`
+   - thread:
+     - `mesh-gemini-canonical-smoke-canonical-gemini-smoke-rerun-20260311-1320-20260311-131941`
+     - thread id: `7a06053e-18b3-4433-bafc-34a838acc891`
+   - repo:
+     - `/media/sam/1TB/mesh-gemini-canonical-smoke`
+   - all 3 steps `completed`
+   - artifact verification on disk:
+     - `/media/sam/1TB/mesh-gemini-canonical-smoke/lead_plan.md`
+       - contains `GEMINI_LEAD_OK`
+     - `/media/sam/1TB/mesh-gemini-canonical-smoke/worker_review.md`
+       - contains `GEMINI_WORKER_OK`
+     - `/media/sam/1TB/mesh-gemini-canonical-smoke/president_decision.md`
+       - contains `GEMINI_TEAM_OK`
