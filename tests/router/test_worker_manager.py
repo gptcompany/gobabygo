@@ -110,7 +110,7 @@ class TestDeregisterWorker:
         assert ok is False
         assert msg == "not_found"
 
-    def test_deregister_busy_requeues_tasks(self, wm, db):
+    def test_deregister_busy_fails_tasks_without_requeue(self, wm, db):
         from src.router.models import Lease
 
         w = _make_worker()
@@ -124,10 +124,11 @@ class TestDeregisterWorker:
 
         ok, msg = wm.deregister_worker("w1")
         assert ok is True
-        # Task should be requeued with attempt+1
+        # Task should fail terminally to avoid dual execution while the host
+        # tmux session may still be alive.
         t = db.get_task("t1")
-        assert t.status == TaskStatus.queued
-        assert t.attempt == 2
+        assert t.status == TaskStatus.failed
+        assert t.attempt == 1
         assert t.assigned_worker is None
 
     def test_deregister_busy_max_attempts_fails_task(self, wm, db):
@@ -146,7 +147,7 @@ class TestDeregisterWorker:
         t = db.get_task("t1")
         assert t.status == TaskStatus.failed
 
-    def test_deregister_draining_requeues_assigned_task(self, wm, db):
+    def test_deregister_draining_fails_assigned_task(self, wm, db):
         from src.router.models import Lease
 
         w = _make_worker()
@@ -161,8 +162,8 @@ class TestDeregisterWorker:
         assert ok is True
         assert msg == "deregistered"
         t = db.get_task("t1")
-        assert t.status == TaskStatus.queued
-        assert t.attempt == 2
+        assert t.status == TaskStatus.failed
+        assert t.attempt == 1
         assert t.assigned_worker is None
 
 

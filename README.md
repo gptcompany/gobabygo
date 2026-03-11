@@ -108,8 +108,13 @@ Current expectation:
 - Claude account autoswitch is router-driven, not CCS-provider-driven: worker failures tagged as `account_exhausted` rotate the next task attempt to the next isolated profile from `mapping/account_pools.yaml`.
 - `ccs codex` and `ccs gemini` keep the Claude Code frontend and route inference through a provider bridge. MCP, memory, slash commands, and session UX stay Claude Code-native.
 - `mesh ui <repo>` is part of the intended operator flow and opens panels for `boss`, `president`, `lead`, `worker-claude`, `worker-codex`, `worker-gemini`, and `verifier`. It now boots each pane through a central role policy and auto-attaches to live tmux sessions when the router already has a matching open session for that repo/role. The runtime source of truth is still the router DB, not iTerm2.
+- If `mesh ui` cannot attach a live `worker-*` or `verifier` session, the pane is now explicitly labeled as a detached control shell on the WS. It is not the live worker runtime.
 - `mesh status` now hides historical stale/offline worker rows by default; use `--all` when you explicitly want the full audit-heavy worker table.
 - Runtime roles are now `boss`, `president`, `lead`, and `worker`. `lead` is first-class in the router policy layer and acts as a coordinator between `president` and workers while direct `president` ↔ `worker` communication remains allowed for compatibility.
+- Worker execution paths are now bounded by `MESH_ALLOWED_WORK_DIRS`. Session and batch workers reject task payloads that resolve outside those roots.
+- Worker deregistration is now conservative: active tasks are failed, not requeued, until there is a real remote-kill handshake for live tmux sessions. This avoids dual execution on the same repo.
+- Account exhaustion rotation now applies to `claude`, `codex`, and `gemini` when their failure output matches configured quota/rate-limit signatures.
+- Scheduler dispatch now requires a fresh worker heartbeat before leasing work, reducing 5-minute blackholes on recently-dead workers.
 - Historical architecture notes remain in [kiss_mesh/README.md](kiss_mesh/README.md).
 - Canonical architecture for the current runtime is now in [ARCHITECTURE.md](/media/sam/1TB/gobabygo/ARCHITECTURE.md).
 - Quick operator guidance is in [QUICKSTART.md](/media/sam/1TB/gobabygo/QUICKSTART.md).

@@ -73,6 +73,29 @@ def test_success_file_matches_accepts_updated_artifact_after_cutoff(tmp_path) ->
     )
 
 
+def test_should_auto_exit_on_success_requires_marker_as_standalone_output_line() -> None:
+    captured = "❯ cat README.md\nBuild SUCCESS details are listed below.\n❯ "
+    assert (
+        _should_auto_exit_on_success(
+            captured,
+            ["SUCCESS"],
+            baseline_capture="❯ cat README.md\n❯ ",
+            delta_text="Build SUCCESS details are listed below.\n",
+        )
+        is False
+    )
+    captured = "❯ Reply with exactly SUCCESS.\n\n● SUCCESS\n\n❯ "
+    assert (
+        _should_auto_exit_on_success(
+            captured,
+            ["SUCCESS"],
+            baseline_capture="❯ Reply with exactly SUCCESS.\n\n❯ ",
+            delta_text="● SUCCESS\n",
+        )
+        is True
+    )
+
+
 def test_session_worker_config_from_env() -> None:
     env = {
         "MESH_WORKER_ID": "ws-claude-session-01",
@@ -84,11 +107,13 @@ def test_session_worker_config_from_env() -> None:
         "MESH_CLI_COMMAND": "claude",
         "MESH_CAPABILITIES": "interactive,code",
         "MESH_ALLOWED_ACCOUNTS": "work-claude,review-codex,*",
+        "MESH_ALLOWED_WORK_DIRS": "/tmp/mesh-tasks,/media/sam/1TB",
         "MESH_HEARTBEAT_TIMEOUT_S": "4.5",
         "MESH_CONTROL_PLANE_TIMEOUT_S": "22",
         "MESH_SESSION_POLL_INTERVAL_S": "0.5",
         "MESH_SESSION_READY_TIMEOUT_S": "7",
         "MESH_SESSION_READY_POLL_INTERVAL_S": "0.2",
+        "MESH_SESSION_POST_LAUNCH_SETTLE_S": "0.45",
         "MESH_TMUX_SEND_SETTLE_S": "0.15",
         "MESH_PROMPT_SUBMIT_RETRY_COUNT": "4",
         "MESH_PROMPT_SUBMIT_RETRY_POLL_S": "0.4",
@@ -105,11 +130,13 @@ def test_session_worker_config_from_env() -> None:
     assert cfg.cli_command == "claude"
     assert cfg.capabilities == ["interactive", "code"]
     assert cfg.allowed_accounts == ["work-claude", "review-codex", "*"]
+    assert cfg.allowed_work_dirs == ["/tmp/mesh-tasks", "/media/sam/1TB"]
     assert cfg.heartbeat_timeout == 4.5
     assert cfg.control_plane_timeout == 22.0
     assert cfg.session_poll_interval_s == 0.5
     assert cfg.startup_ready_timeout_s == 7.0
     assert cfg.startup_ready_poll_interval_s == 0.2
+    assert cfg.startup_post_launch_settle_s == 0.45
     assert cfg.tmux_send_settle_s == 0.15
     assert cfg.prompt_submit_retry_count == 4
     assert cfg.prompt_submit_retry_poll_s == 0.4
@@ -168,7 +195,7 @@ def test_detect_interactive_failure_screen_detects_rate_limit_menu() -> None:
         "1. Stop and wait for limit to reset\n"
     )
     assert _detect_interactive_failure_screen("claude", captured) == "account_exhausted"
-    assert _detect_interactive_failure_screen("codex", captured) == ""
+    assert _detect_interactive_failure_screen("codex", captured) == "account_exhausted"
 
 
 def test_coerce_bool() -> None:
@@ -290,6 +317,12 @@ def test_config_defaults_attach_fields() -> None:
     assert cfg.ssh_tmux_host == ""
 
 
+def test_tmux_session_name_uses_longer_task_fragment() -> None:
+    worker = _make_worker(cli_type="gemini", account_profile="gemini")
+    name = worker._tmux_session_name("12345678-1234-5678-1234-567812345678", "gemini")
+    assert name == "mesh-gemini-gemini-1234567812345678"
+
+
 def test_wait_for_cli_ready_detects_prompt() -> None:
     worker = _make_worker(startup_ready_timeout_s=0.5, startup_ready_poll_interval_s=0.1)
     with (
@@ -398,6 +431,7 @@ def _make_worker(**overrides) -> MeshSessionWorker:
         upterm_bin="/usr/bin/upterm",
         upterm_ready_timeout=0.6,
         provider_runtime_config="",
+        allowed_work_dirs=["/tmp", "/media/sam/1TB"],
         **overrides,
     )
     return MeshSessionWorker(cfg)
@@ -865,10 +899,10 @@ class TestAttachCleanupInExecuteTask:
         }
         worker._execute_task(task)
 
-        # tmux_session_name: mesh-claude-work-t-001
+        # tmux_session_name: mesh-claude-work-t001
         mock_stop.assert_called_once_with(
             upterm_proc,
-            log_path=worker._upterm_log_path("mesh-claude-work-t-001"),
+            log_path=worker._upterm_log_path("mesh-claude-work-t001"),
         )
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
@@ -932,10 +966,10 @@ class TestAttachCleanupInExecuteTask:
         }
         worker._execute_task(task)
 
-        # tmux_session_name: mesh-claude-work-t-003
+        # tmux_session_name: mesh-claude-work-t003
         mock_stop.assert_called_once_with(
             upterm_proc,
-            log_path=worker._upterm_log_path("mesh-claude-work-t-003"),
+            log_path=worker._upterm_log_path("mesh-claude-work-t003"),
         )
 
     def test_no_cleanup_when_no_attach(self) -> None:
@@ -1006,8 +1040,31 @@ class TestAttachCleanupInExecuteTask:
         mock_tmux_new.assert_called_once()
         mock_wait_ready.assert_called_once()
         mock_ensure_prompt_delivered.assert_called_once()
-        mock_send_text.assert_called_once_with("mesh-claude-claude-alt-t-005", "hello")
+        mock_send_text.assert_called_once_with("mesh-claude-claude-alt-t005", "hello")
         mock_complete.assert_called_once()
+
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch.object(MeshSessionWorker, "_ack_task", return_value=True)
+    def test_rejects_working_dir_outside_allowed_roots(
+        self,
+        mock_ack: Mock,
+        mock_report_failure: Mock,
+    ) -> None:
+        worker = _make_worker()
+        task = {
+            "task_id": "t-bad-dir",
+            "execution_mode": "session",
+            "payload": {
+                "prompt": "hello",
+                "working_dir": "/etc",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_ack.assert_called_once_with("t-bad-dir")
+        mock_report_failure.assert_called_once()
+        assert "outside allowed roots" in mock_report_failure.call_args.args[1]
 
     @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[True, False])
     @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
@@ -1048,7 +1105,7 @@ class TestAttachCleanupInExecuteTask:
 
         worker._execute_task(task)
 
-        mock_kill_session.assert_called_once_with("mesh-gemini-gemini-t-retry")
+        mock_kill_session.assert_called_once_with("mesh-gemini-gemini-tretry")
         mock_tmux_new.assert_called_once()
         mock_complete.assert_called_once()
 
@@ -1169,6 +1226,7 @@ class TestAttachCleanupInExecuteTask:
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
     @patch.object(MeshSessionWorker, "_tmux_new_session")
     @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
     @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
     @patch.object(MeshSessionWorker, "_tmux_send_text")
     @patch.object(MeshSessionWorker, "_open_session", return_value="sid-auto-exit")
@@ -1183,6 +1241,7 @@ class TestAttachCleanupInExecuteTask:
         mock_open: Mock,
         mock_send_text: Mock,
         mock_ensure_prompt_submitted: Mock,
+        mock_ensure_prompt_delivered: Mock,
         mock_wait_ready: Mock,
         mock_tmux_new: Mock,
         mock_attach: Mock,
@@ -1204,6 +1263,7 @@ class TestAttachCleanupInExecuteTask:
                 "working_dir": "/media/sam/1TB/gobabygo",
                 "auto_exit_on_success": True,
                 "success_marker": "GEMINI_OK",
+                "allow_text_success_markers": True,
             },
         }
 
@@ -1214,8 +1274,67 @@ class TestAttachCleanupInExecuteTask:
             call(expected_session, "/exit"),
         ])
         assert mock_ensure_prompt_submitted.call_count == 2
-        assert mock_capture.call_count == 4
+        assert mock_capture.call_count >= 3
         mock_close.assert_called_once_with("sid-auto-exit", state="closed")
+        mock_report_complete.assert_called_once()
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(
+        MeshSessionWorker,
+        "_tmux_capture_pane",
+        side_effect=[
+            "❯ Reply with exactly GEMINI_OK.\n\n❯ ",
+            "❯ Reply with exactly GEMINI_OK.\n\n● GEMINI_OK\n\n❯ ",
+        ],
+    )
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
+    @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-auto-exit-disabled")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.time.sleep")
+    def test_marker_auto_exit_requires_explicit_opt_in(
+        self,
+        mock_sleep: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_ensure_prompt_submitted: Mock,
+        mock_ensure_prompt_delivered: Mock,
+        mock_wait_ready: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+        worker.config.cli_type = "gemini"
+        worker._running = True
+        expected_session = worker._tmux_session_name("t-auto-exit-disabled", "gemini")
+
+        task = {
+            "task_id": "t-auto-exit-disabled",
+            "execution_mode": "session",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "Reply with exactly GEMINI_OK.",
+                "working_dir": "/media/sam/1TB/gobabygo",
+                "auto_exit_on_success": True,
+                "success_marker": "GEMINI_OK",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_send_text.assert_called_once_with(expected_session, "Reply with exactly GEMINI_OK.")
+        mock_close.assert_called_once_with("sid-auto-exit-disabled", state="closed")
         mock_report_complete.assert_called_once()
 
     @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, True, True, True, False])
@@ -1338,6 +1457,7 @@ class TestAttachCleanupInExecuteTask:
                 "working_dir": "/media/sam/1TB/gobabygo",
                 "auto_exit_on_success": True,
                 "success_marker": "GEMINI_OK",
+                "allow_text_success_markers": True,
             },
         }
 

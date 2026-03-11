@@ -24,6 +24,7 @@ import requests
 
 from src.router.failure_classifier import classify_cli_failure
 from src.router.provider_runtime import resolve_cli_command
+from src.router.workdir_guard import parse_allowed_work_dirs, resolve_work_dir
 
 logger = logging.getLogger("mesh.worker")
 
@@ -42,6 +43,7 @@ class WorkerConfig:
     longpoll_timeout: float = 25.0  # Must match server MESH_LONGPOLL_TIMEOUT_S
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor"])
     allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
+    allowed_work_dirs: list[str] = field(default_factory=list)  # MESH_ALLOWED_WORK_DIRS=/repo/root,/tmp/mesh-tasks
     execution_modes: list[str] = field(default_factory=lambda: ["batch"])
     cli_command: str = "claude"  # Template supports {target_account}, {account_profile}, {worker_account_profile}
     provider_runtime_config: str | None = None  # None=repo default, ""=disabled
@@ -60,6 +62,10 @@ class WorkerConfig:
         )
         raw_allowed = os.environ.get("MESH_ALLOWED_ACCOUNTS", "").strip()
         allowed_accounts = [a.strip() for a in raw_allowed.split(",") if a.strip()]
+        allowed_work_dirs = parse_allowed_work_dirs(
+            os.environ.get("MESH_ALLOWED_WORK_DIRS", "").strip(),
+            default_work_dir=os.environ.get("MESH_WORK_DIR", "/tmp/mesh-tasks"),
+        )
         return cls(
             worker_id=os.environ.get("MESH_WORKER_ID", "ws-unknown-01"),
             router_url=os.environ.get("MESH_ROUTER_URL", "http://localhost:8780"),
@@ -68,6 +74,7 @@ class WorkerConfig:
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
             capabilities=capabilities,
             allowed_accounts=allowed_accounts,
+            allowed_work_dirs=allowed_work_dirs,
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
             provider_runtime_config=os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG"),
@@ -264,7 +271,11 @@ class MeshWorker:
             )
             cmd_parts = shlex.split(cmd_base)
             full_cmd = cmd_parts + ["--print", "-p", prompt]
-            work_dir = payload.get("working_dir", self.config.work_dir)
+            work_dir = resolve_work_dir(
+                payload.get("working_dir", self.config.work_dir),
+                default_work_dir=self.config.work_dir,
+                allowed_roots=self.config.allowed_work_dirs,
+            )
 
             # Dry-run path
             if self.config.dry_run:

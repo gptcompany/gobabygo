@@ -255,10 +255,10 @@ def _default_remote_init_for_role(role: str) -> str:
         "boss": "mesh status || true; printf '\\n[mesh:boss] Next: mesh thread | mesh start | mesh run <phase>\\n'",
         "president": "mesh thread || true; printf '\\n[mesh:president] Next: inspect the latest thread and coordinate delegation.\\n'",
         "lead": "git status --short || true; printf '\\n[mesh:lead] Next: inspect repo state, branch, and implementation boundaries.\\n'",
-        "worker-claude": "printf '[mesh:worker-claude] Claude worker shell ready in %s\\n' \"$PWD\"",
-        "worker-codex": "printf '[mesh:worker-codex] Codex worker shell ready in %s\\n' \"$PWD\"",
-        "worker-gemini": "printf '[mesh:worker-gemini] Gemini worker shell ready in %s\\n' \"$PWD\"",
-        "verifier": "printf '[mesh:verifier] Review/verifier shell ready in %s\\n' \"$PWD\"",
+        "worker-claude": "printf '[mesh:worker-claude] Detached control shell ready in %s\\n' \"$PWD\"",
+        "worker-codex": "printf '[mesh:worker-codex] Detached control shell ready in %s\\n' \"$PWD\"",
+        "worker-gemini": "printf '[mesh:worker-gemini] Detached control shell ready in %s\\n' \"$PWD\"",
+        "verifier": "printf '[mesh:verifier] Detached control shell ready in %s\\n' \"$PWD\"",
     }
     return defaults.get(role, "")
 

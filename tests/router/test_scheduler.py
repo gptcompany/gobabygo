@@ -42,13 +42,14 @@ def _add_worker(
     cli=CLIType.claude,
     status="idle",
     idle_since=None,
+    last_heartbeat=None,
     execution_modes=None,
     capabilities=None,
 ):
     w = Worker(
         worker_id=worker_id, machine="ws1", cli_type=cli,
         account_profile=account, status=status,
-        last_heartbeat=_now(), idle_since=idle_since or _now(),
+        last_heartbeat=last_heartbeat or _now(), idle_since=idle_since or _now(),
         execution_modes=execution_modes or ["batch"],
         capabilities=capabilities or [],
     )
@@ -217,6 +218,18 @@ class TestDispatch:
         result = sched.dispatch()
         assert result is not None
         assert result.task.task_id == "t1"
+
+    def test_skips_idle_worker_with_stale_heartbeat(self, db):
+        sched = Scheduler(db=db, lease_duration_s=300, dispatch_freshness_s=15)
+        _add_worker(
+            db,
+            "w1",
+            "work",
+            last_heartbeat=_past(60),
+            idle_since=_past(120),
+        )
+        _add_task(db, "t1")
+        assert sched.dispatch() is None
 
     def test_no_candidates(self, sched, db):
         # Worker has different CLI
@@ -437,6 +450,37 @@ providers:
         t = db.get_task("t1")
         assert t.status == TaskStatus.failed
 
+    def test_gemini_account_exhausted_rotates_target_account(self, db, tmp_path):
+        account_config = tmp_path / "account_pools.yaml"
+        account_config.write_text(
+            """
+providers:
+  gemini:
+    default_account: gemini-a
+    accounts:
+      - gemini-a
+      - gemini-b
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        sched = Scheduler(db=db, lease_duration_s=300, account_pool_config=str(account_config))
+        _add_worker(db, "w1", "work", cli=CLIType.gemini, capabilities=["account:*"])
+        _add_task(db, "t1", target_cli=CLIType.gemini, target_account="gemini-a")
+        sched.dispatch()
+        sched.ack_task("t1", "w1")
+
+        assert sched.report_failure(
+            "t1",
+            "w1",
+            "RESOURCE_EXHAUSTED: quota exceeded",
+            error_kind="account_exhausted",
+        ) is True
+
+        t = db.get_task("t1")
+        assert t.status == TaskStatus.queued
+        assert t.target_account == "gemini-b"
+
 
 class TestDrainingAutoRetire:
     """Tests for draining worker auto-retire on task complete/fail."""
@@ -464,6 +508,16 @@ class TestDrainingAutoRetire:
         sched.ack_task("t1", "w1")
         db.update_worker("w1", {"status": "draining"})
         assert sched.report_failure("t1", "w1", "test error") is True
+        w = db.get_worker("w1")
+        assert w.status == "offline"
+
+    def test_offline_worker_is_not_forced_back_to_idle_on_late_completion(self, sched, db):
+        _add_worker(db, "w1", "work")
+        _add_task(db, "t1")
+        assert sched.dispatch() is not None
+        assert sched.ack_task("t1", "w1") is True
+        db.update_worker("w1", {"status": "offline"})
+        assert sched.complete_task("t1", "w1") is True
         w = db.get_worker("w1")
         assert w.status == "offline"
 

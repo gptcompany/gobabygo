@@ -11,9 +11,8 @@ import logging
 from datetime import datetime, timezone
 
 from src.router.db import RouterDB
-from src.router.heartbeat import requeue_task
 from src.router.longpoll import LongPollRegistry
-from src.router.models import TaskEvent, Worker
+from src.router.models import TaskEvent, TaskStatus, Worker
 
 logger = logging.getLogger(__name__)
 
@@ -147,20 +146,44 @@ class WorkerManager:
             return False, "not_found"
 
         with self._db.transaction() as conn:
-            # Deregistration is immediate retirement: requeue any active work,
-            # regardless of whether the worker was marked busy, draining, or idle.
+            # Deregistration is conservative: never requeue live work because the
+            # underlying tmux/CLI may still be executing on the host. Terminally
+            # fail active attempts to preserve exactly-once semantics.
             leases = self._db.list_worker_leases(worker_id)
+            active_task_ids: list[str] = []
             for lease in leases:
                 task = self._db.get_task(lease.task_id)
                 if task and task.status.value in ("assigned", "running"):
                     self._db.expire_lease(lease.lease_id, conn=conn)
-                    requeue_task(
-                        self._db,
+                    transitioned = self._db.update_task_status(
                         task.task_id,
-                        "deregister",
-                        self._max_attempts,
+                        task.status,
+                        TaskStatus.failed,
                         conn=conn,
                     )
+                    if transitioned:
+                        active_task_ids.append(task.task_id)
+                        self._db.update_task_fields(
+                            task.task_id,
+                            {
+                                "assigned_worker": None,
+                                "lease_expires_at": None,
+                            },
+                            conn=conn,
+                        )
+                        self._db.insert_event(
+                            TaskEvent(
+                                task_id=task.task_id,
+                                event_type="worker_deregistered_task_failed",
+                                payload={
+                                    "worker_id": worker_id,
+                                    "reason": "worker_deregistered_without_remote_kill",
+                                    "previous_status": task.status.value,
+                                },
+                                idempotency_key=_uuid4(),
+                            ),
+                            conn=conn,
+                        )
 
             # Set worker offline
             self._db.update_worker(
@@ -177,7 +200,10 @@ class WorkerManager:
                 TaskEvent(
                     task_id=worker_id,
                     event_type="worker_deregistered",
-                    payload={"worker_id": worker_id},
+                    payload={
+                        "worker_id": worker_id,
+                        "active_tasks_failed": active_task_ids,
+                    },
                     idempotency_key=_uuid4(),
                 ),
                 conn=conn,

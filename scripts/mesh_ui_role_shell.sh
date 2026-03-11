@@ -127,6 +127,9 @@ bootstrap_shell() {
       eval "$live_attach"
     fi
   fi
+  if [[ -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
+    printf '[mesh:%s] WARNING: no active mesh session attached. This is a detached control shell on the WS, not the live worker runtime.\n' "$role"
+  fi
   if [[ -n "$remote_init" ]]; then
     eval "$remote_init"
   fi
@@ -177,6 +180,9 @@ if [[ "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
   if [[ -n "$live_attach" ]]; then
     eval "$live_attach"
   fi
+fi
+if [[ -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
+  printf "[mesh:%s] WARNING: no active mesh session attached. This is a detached control shell on the WS, not the live worker runtime.\n" "$role"
 fi
 if [[ -n "$remote_init" ]]; then
   eval "$remote_init"

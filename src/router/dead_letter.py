@@ -23,6 +23,8 @@ def write_dead_letter(
     to_status: str,
     reason: str,
     payload: dict | None = None,
+    *,
+    conn=None,
 ) -> str:
     """Write a dead-letter entry for a rejected transition.
 
@@ -41,13 +43,15 @@ def write_dead_letter(
     ts = _utc_now()
     payload_json = json.dumps(payload) if payload else "{}"
 
-    db._conn.execute(
+    target = conn or db._conn
+    target.execute(
         """INSERT INTO dead_letter_events
         (dl_id, task_id, attempted_from, attempted_to, reason, original_payload, ts)
         VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (dl_id, task_id, from_status, to_status, reason, payload_json, ts),
     )
-    db._conn.commit()
+    if conn is None:
+        db._conn.commit()
     return dl_id
 
 

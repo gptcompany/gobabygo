@@ -85,6 +85,7 @@ Important boundary:
 
 - these panes are operator affordances
 - orchestration truth still lives in router DB + worker/session records
+- when live attach is unavailable, `worker-*` and `verifier` panes are detached control shells on the WS, not the live worker runtime
 ```
 
 ## Execution Model
@@ -222,10 +223,20 @@ These decisions are already reflected in code/docs:
 - `MESH_ENFORCE_SESSION_ONLY=1` where enabled in deploy/runtime policy
 - lease renewal on heartbeat
 - worker deregistration and recovery loops
+- worker dispatch requires a fresh heartbeat before idle workers receive a new lease
+- worker `working_dir` resolution is bounded by `MESH_ALLOWED_WORK_DIRS`
+- text-marker `auto_exit_on_success` uses strict standalone marker lines and is intended for smoke/demo paths unless paired with `success_file_path`
 - central provider runtime resolution
 - centralized provider account pool selection
 - current Claude binary path on WS session runtime should resolve to `/usr/local/bin/claude`
 - router bind is externally reachable on `.100:8780`
+
+## Hardening Decisions (2026-03-11)
+
+- `deregister_worker()` no longer requeues active `assigned`/`running` tasks. It now fails them terminally and clears assignment metadata until a real remote kill/ack path exists for live tmux sessions.
+- startup recovery now routes state repair through `fsm.apply_transition()` inside the same DB transaction instead of bypassing FSM invariants
+- account pool rotation is no longer Claude-only; Codex and Gemini now classify quota/rate-limit failures as `account_exhausted` too
+- tmux session naming uses a longer task fragment to reduce collision risk under parallel load
 
 ## Current Live Continuation State
 

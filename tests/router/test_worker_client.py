@@ -146,6 +146,7 @@ class TestWorkerConfig:
             "MESH_EXECUTION_MODES": "session,batch",
             "MESH_CAPABILITIES": "code,review",
             "MESH_ALLOWED_ACCOUNTS": "clientA,clientB,*",
+            "MESH_ALLOWED_WORK_DIRS": "/tmp/mesh-tasks,/media/sam/1TB",
         }
         with patch.dict(os.environ, env):
             config = WorkerConfig.from_env()
@@ -157,6 +158,7 @@ class TestWorkerConfig:
             assert config.execution_modes == ["session", "batch"]
             assert config.capabilities == ["code", "review"]
             assert config.allowed_accounts == ["clientA", "clientB", "*"]
+            assert config.allowed_work_dirs == ["/tmp/mesh-tasks", "/media/sam/1TB"]
 
     def test_registration_capabilities_includes_allowed_accounts(self):
         config = WorkerConfig(
@@ -611,6 +613,34 @@ class TestCLIExecution:
         error = MockRouterHandler.fail_calls[0].get("error", "")
         assert "exit_code=1" in error
         assert "something broke" in error
+
+    @patch("src.router.worker_client.subprocess.run")
+    def test_rejects_working_dir_outside_allowed_roots(self, mock_run, mock_router):
+        MockRouterHandler.task_to_serve = {
+            "task_id": "task-bad-dir",
+            "title": "bad dir",
+            "payload": {"prompt": "Do something", "working_dir": "/etc"},
+        }
+
+        config = WorkerConfig(
+            worker_id="ws-test-01",
+            router_url=mock_router,
+            longpoll_timeout=0.05,
+            allowed_work_dirs=["/tmp/mesh-tasks", "/media/sam/1TB"],
+        )
+        worker = MeshWorker(config)
+        worker._running = True
+
+        thread = threading.Thread(target=worker._poll_loop)
+        thread.daemon = True
+        thread.start()
+        time.sleep(0.5)
+        worker._running = False
+        thread.join(timeout=2)
+
+        mock_run.assert_not_called()
+        assert len(MockRouterHandler.fail_calls) == 1
+        assert "outside allowed roots" in MockRouterHandler.fail_calls[0].get("error", "")
 
     @patch("src.router.worker_client.subprocess.run")
     def test_subprocess_rate_limit_sets_error_kind(self, mock_run, mock_router):

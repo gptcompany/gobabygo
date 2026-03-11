@@ -25,7 +25,9 @@ Verified on the real `.100` router + `.111` WS stack:
 
 - router dispatches session tasks to tmux-backed session workers
 - `working_dir` is honored by session workers when the repo path is correct
+- `working_dir` is now bounded by `MESH_ALLOWED_WORK_DIRS`; out-of-bounds payload paths are rejected before tmux or subprocess execution
 - worker deregistration and periodic recovery are live
+- worker deregistration no longer requeues active tasks; it now fails them conservatively until a real remote tmux-kill handshake exists
 - lease renewal on heartbeat is implemented and tested, so healthy long-lived sessions are no longer requeued after the 5-minute lease window
 - `claude` runtime resolution is policy-driven (`ccs {target_account}` for real CCS profiles)
 - `codex` and `gemini` runtime resolution use Claude Code as frontend plus CCS/CLIProxy provider routing
@@ -290,6 +292,7 @@ Current `mesh ui` behavior:
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
 - live attach resolution also runs on the WS during pane bootstrap, so it still works when the Mac operator host cannot reach the router directly
 - `mesh thread` with no explicit thread name now resolves the latest thread by current repo task metadata, not by assuming the thread name starts with the repo basename
+- if attach is not possible, `worker-*` and `verifier` panes explicitly warn that they are detached control shells on the WS, not the live worker runtime
 - this closes the gap where every pane previously opened as the same blank shell
 
 Mac iTerm2 setup (one-time):
@@ -462,3 +465,11 @@ Live note from `2026-03-10`:
     - `/tmp/mesh-gemini-dupfix/lead_plan.md`
     - `/tmp/mesh-gemini-dupfix/worker_review.md`
     - `/tmp/mesh-gemini-dupfix/president_decision.md`
+
+## 2026-03-11 hardening pass
+
+- startup recovery now uses `fsm.apply_transition()` inside the recovery transaction instead of bypassing FSM guardrails
+- account exhaustion rotation is no longer Claude-only; Codex and Gemini now classify provider-specific quota/rate-limit failures as `account_exhausted`
+- scheduler dispatch now requires a fresh heartbeat before an `idle` worker can be leased
+- text-marker auto-exit is stricter: it is opt-in without `success_file_path` and only matches standalone marker lines, not arbitrary substrings in the pane buffer
+- tmux session naming uses a longer task fragment to reduce collision risk under parallel load

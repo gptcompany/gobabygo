@@ -27,6 +27,7 @@ import requests
 
 from src.router.failure_classifier import classify_cli_failure
 from src.router.provider_runtime import resolve_cli_command
+from src.router.workdir_guard import parse_allowed_work_dirs, resolve_work_dir
 
 logger = logging.getLogger("mesh.session_worker")
 _CLAUDE_CODE_READY_MARKERS = ("❯",)
@@ -204,11 +205,29 @@ def _should_auto_exit_on_success(
     baseline = str(baseline_capture or "")
     delta = str(delta_text or "")
     for marker in success_markers:
-        if marker in delta:
+        if _count_marker_lines(delta, marker) > 0:
             return True
-        if captured.count(marker) > baseline.count(marker):
+        if _count_marker_lines(captured, marker) > _count_marker_lines(baseline, marker):
             return True
     return False
+
+
+def _count_marker_lines(text: str, marker: str) -> int:
+    normalized_marker = str(marker or "").strip()
+    if not normalized_marker:
+        return 0
+    accepted = {
+        normalized_marker,
+        f"● {normalized_marker}",
+        f"• {normalized_marker}",
+        f"- {normalized_marker}",
+        f"* {normalized_marker}",
+    }
+    count = 0
+    for line in str(text or "").splitlines():
+        if line.strip() in accepted:
+            count += 1
+    return count
 
 
 def _success_file_matches(
@@ -282,6 +301,7 @@ class SessionWorkerConfig:
     longpoll_timeout: float = 25.0
     capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor", "interactive"])
     allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
+    allowed_work_dirs: list[str] = field(default_factory=list)  # MESH_ALLOWED_WORK_DIRS=/repo/root,/tmp/mesh-tasks
     execution_modes: list[str] = field(default_factory=lambda: ["session"])
     cli_command: str = "claude"  # supports {target_account}, {account_profile}, {worker_account_profile}
     provider_runtime_config: str | None = None  # None=repo default, ""=disabled
@@ -289,6 +309,7 @@ class SessionWorkerConfig:
     session_poll_interval_s: float = 1.0
     startup_ready_timeout_s: float = 10.0
     startup_ready_poll_interval_s: float = 0.25
+    startup_post_launch_settle_s: float = 0.35
     tmux_send_settle_s: float = 0.1
     prompt_submit_retry_count: int = 3
     prompt_submit_retry_poll_s: float = 1.0
@@ -319,6 +340,10 @@ class SessionWorkerConfig:
         )
         raw_allowed = os.environ.get("MESH_ALLOWED_ACCOUNTS", "").strip()
         allowed_accounts = [a.strip() for a in raw_allowed.split(",") if a.strip()]
+        allowed_work_dirs = parse_allowed_work_dirs(
+            os.environ.get("MESH_ALLOWED_WORK_DIRS", "").strip(),
+            default_work_dir=os.environ.get("MESH_WORK_DIR", "/tmp/mesh-tasks"),
+        )
         return cls(
             worker_id=os.environ.get("MESH_WORKER_ID", "ws-unknown-session-01"),
             router_url=os.environ.get("MESH_ROUTER_URL", "http://localhost:8780"),
@@ -327,6 +352,7 @@ class SessionWorkerConfig:
             auth_token=os.environ.get("MESH_AUTH_TOKEN"),
             capabilities=capabilities,
             allowed_accounts=allowed_accounts,
+            allowed_work_dirs=allowed_work_dirs,
             heartbeat_timeout=float(os.environ.get("MESH_HEARTBEAT_TIMEOUT_S", "5")),
             control_plane_timeout=float(os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "30")),
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
@@ -341,6 +367,9 @@ class SessionWorkerConfig:
             startup_ready_timeout_s=float(os.environ.get("MESH_SESSION_READY_TIMEOUT_S", "10.0")),
             startup_ready_poll_interval_s=float(
                 os.environ.get("MESH_SESSION_READY_POLL_INTERVAL_S", "0.25")
+            ),
+            startup_post_launch_settle_s=float(
+                os.environ.get("MESH_SESSION_POST_LAUNCH_SETTLE_S", "0.35")
             ),
             tmux_send_settle_s=float(os.environ.get("MESH_TMUX_SEND_SETTLE_S", "0.1")),
             prompt_submit_retry_count=int(
@@ -497,10 +526,13 @@ class MeshSessionWorker:
         prompt = str(payload.get("prompt", ""))
         execution_mode = str(task.get("execution_mode", "batch")).strip() or "batch"
         target_account = str(task.get("target_account") or self.config.account_profile).strip() or self.config.account_profile
-        work_dir = payload.get("working_dir", self.config.work_dir)
+        requested_work_dir = payload.get("working_dir", self.config.work_dir)
         auto_exit_on_success = _coerce_bool(payload.get("auto_exit_on_success"), default=False)
         success_markers = _coerce_string_list(
             payload.get("success_markers", payload.get("success_marker"))
+        )
+        allow_text_success_markers = _coerce_bool(
+            payload.get("allow_text_success_markers"), default=False
         )
         success_file_path = str(payload.get("success_file_path") or "").strip()
         success_file_contains = str(payload.get("success_file_contains") or "")
@@ -524,7 +556,18 @@ class MeshSessionWorker:
             if not prompt:
                 self._report_failure(task_id, "missing payload.prompt")
                 return
+            if success_markers and not success_file_path and not allow_text_success_markers:
+                logger.warning(
+                    "Task %s requested marker-based auto-exit without success_file_path; disabling unstructured marker checks",
+                    task_id,
+                )
+                success_markers = []
 
+            work_dir = resolve_work_dir(
+                requested_work_dir,
+                default_work_dir=self.config.work_dir,
+                allowed_roots=self.config.allowed_work_dirs,
+            )
             if os.path.isdir(work_dir):
                 pass
             else:
@@ -545,6 +588,7 @@ class MeshSessionWorker:
                 )
                 self._tmux_kill_session(tmux_session_name)
             self._tmux_new_session(tmux_session_name, work_dir, cmd_base)
+            time.sleep(max(0.0, float(self.config.startup_post_launch_settle_s)))
 
             attach_meta, upterm_proc = self._create_attach_handle(tmux_session_name)
 
@@ -887,7 +931,8 @@ class MeshSessionWorker:
 
     def _tmux_session_name(self, task_id: str, target_account: str | None = None) -> str:
         account = (target_account or self.config.account_profile or "work").strip() or "work"
-        base = f"{self.config.tmux_session_prefix}-{self.config.cli_type}-{account}-{task_id[:8]}"
+        task_fragment = re.sub(r"[^A-Za-z0-9]+", "", str(task_id))[:16] or "task"
+        base = f"{self.config.tmux_session_prefix}-{self.config.cli_type}-{account}-{task_fragment}"
         return _sanitize_session_name(base)
 
     def _tmux_new_session(self, session_name: str, work_dir: str, cli_command: str) -> None:

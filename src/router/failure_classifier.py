@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-_CLAUDE_ACCOUNT_EXHAUSTED_PATTERNS = (
+_GENERIC_ACCOUNT_EXHAUSTED_PATTERNS = (
     "you've hit your limit",
     "you hit your limit",
     "you're out of extra usage",
@@ -19,6 +19,23 @@ _CLAUDE_ACCOUNT_EXHAUSTED_PATTERNS = (
     "429\t",
 )
 
+_PROVIDER_ACCOUNT_EXHAUSTED_PATTERNS = {
+    "codex": (
+        "rate_limit_exceeded",
+        "rate limit reached",
+        "rate limit exceeded",
+        "insufficient_quota",
+        "too many requests",
+    ),
+    "gemini": (
+        "resource_exhausted",
+        "resource exhausted",
+        "quota exceeded",
+        "exceeded your current quota",
+        "429 resource",
+    ),
+}
+
 
 def classify_cli_failure(cli_type: str, text: str) -> str:
     """Return a machine-readable failure kind for *text*.
@@ -32,8 +49,9 @@ def classify_cli_failure(cli_type: str, text: str) -> str:
     if not body:
         return ""
 
-    if provider == "claude":
-        for pattern in _CLAUDE_ACCOUNT_EXHAUSTED_PATTERNS:
-            if pattern in body:
-                return "account_exhausted"
+    patterns = list(_GENERIC_ACCOUNT_EXHAUSTED_PATTERNS)
+    patterns.extend(_PROVIDER_ACCOUNT_EXHAUSTED_PATTERNS.get(provider, ()))
+    for pattern in patterns:
+        if pattern in body:
+            return "account_exhausted"
     return ""

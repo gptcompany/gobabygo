@@ -95,6 +95,7 @@ Operational note:
 - session worker Unix user is policy-driven, not hardcoded
 - default policy runs Claude sessions as `sam` and Codex sessions as `mesh-worker`
 - provider/runtime state therefore must exist under the Unix user selected in `mapping/provider_runtime.yaml`
+- `MESH_ALLOWED_WORK_DIRS` should include every repo root you expect workers to enter; payload `working_dir` outside those roots is now rejected by both session and batch workers
 
 ## 2c. Start an External Review Worker (Codex Verifier)
 
@@ -166,6 +167,7 @@ Canonical template policy:
 - `speckit_codex` remains the fallback template when Claude is unavailable
 - `gemini_team_demo` is the canonical smoke/demo template and should be used for all future tests to avoid consuming Claude/Codex quota
 - `gemini_team_demo` writes `lead_plan.md`, `worker_review.md`, and `president_decision.md`, each with deterministic success markers and automatic session exit
+- text-marker auto-exit without `success_file_path` is now opt-in only and only matches standalone marker lines, not arbitrary substrings printed by tools
 
 Pipeline orchestration example (from BOSS terminal):
 
@@ -252,6 +254,7 @@ Default behavior:
 - `mesh ui` now auto-attaches role panes to matching live tmux sessions when the router already has an open session for the same repo/role
   - example: an active `lead` Codex step on repo `X` opens directly inside the `lead` pane
   - if no live session matches, the pane falls back to the normal static role shell
+  - that fallback is explicitly labeled as a detached control shell on the WS so operators do not mistake it for the live worker runtime
   - live attach resolution is performed again on the WS during pane bootstrap, so it still works even when the Mac host cannot reach the router directly
 - `mesh thread` without an explicit thread name now resolves the latest thread from router task metadata for the current repo path; it no longer depends on the thread name prefix matching the repo basename
 - each role can run a different remote init command
@@ -388,6 +391,8 @@ Verified live behavior on the current stack:
 - long-lived interactive sessions now renew leases on heartbeat and are not requeued after the 5-minute lease window
 - real account-scoped Claude CCS profiles are supported (`ccs <profile>`, not `ccs claude`)
 - Claude limit recovery now rotates across those isolated profiles on retry when worker output matches `429`, `You've hit your limit`, `You're out of extra usage`, or `rate limit error`
+- Codex/Gemini quota detection now feeds the same `account_exhausted` retry path when their output matches provider-specific rate-limit or quota strings
+- scheduler dispatch now requires a fresh worker heartbeat before leasing work to an `idle` worker
 - Docker router reachability is controlled by `MESH_ROUTER_BIND_HOST` in `deploy/compose.yml`; for multi-host WS/router setups it must not stay pinned to `127.0.0.1`
 
 Known operational gaps:

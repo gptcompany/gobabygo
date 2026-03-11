@@ -54,6 +54,7 @@ class Scheduler:
         db: RouterDB,
         lease_duration_s: int = 300,
         review_timeout_s: int = 3600,
+        dispatch_freshness_s: int = 15,
         session_fallback_to_batch: bool = False,
         longpoll_registry: LongPollRegistry | None = None,
         topology: Topology | None = None,
@@ -62,6 +63,7 @@ class Scheduler:
         self._db = db
         self._lease_duration_s = lease_duration_s
         self._review_timeout_s = review_timeout_s
+        self._dispatch_freshness_s = dispatch_freshness_s
         self._session_fallback_to_batch = session_fallback_to_batch
         self._verifier = VerifierGate()
         self._longpoll_registry = longpoll_registry
@@ -192,11 +194,15 @@ class Scheduler:
         ).isoformat()
 
         try:
+            heartbeat_fresh_after = (
+                datetime.now(timezone.utc) - timedelta(seconds=self._dispatch_freshness_s)
+            ).isoformat()
             with self._db.transaction() as conn:
                 # CAS: verify worker still idle
                 cur = conn.execute(
-                    "UPDATE workers SET status = 'busy' WHERE worker_id = ? AND status = 'idle'",
-                    (worker.worker_id,),
+                    "UPDATE workers SET status = 'busy' "
+                    "WHERE worker_id = ? AND status = 'idle' AND last_heartbeat >= ?",
+                    (worker.worker_id, heartbeat_fresh_after),
                 )
                 if cur.rowcount == 0:
                     raise _CASFailure()
@@ -305,11 +311,18 @@ class Scheduler:
                     "Draining worker %s has %d remaining tasks",
                     worker_id, len(remaining),
                 )
-        else:
+        elif status == "busy":
             self._db.update_worker(
                 worker_id,
                 {"status": "idle", "idle_since": _utc_now()},
                 conn=conn,
+            )
+        else:
+            logger.info(
+                "Preserving worker %s status=%s after task finalization (%s)",
+                worker_id,
+                status,
+                reason,
             )
 
     def complete_task(
@@ -454,11 +467,12 @@ class Scheduler:
             return False
 
         detected_kind = error_kind or classify_cli_failure(task.target_cli.value, reason)
-        if task.target_cli == CLIType.claude and detected_kind == "account_exhausted":
-            pool = get_account_pool("claude", config_path=self._account_pool_config)
+        provider_name = task.target_cli.value
+        if detected_kind == "account_exhausted":
+            pool = get_account_pool(provider_name, config_path=self._account_pool_config)
             max_attempts = max(3, len(pool.accounts)) if pool else 3
             next_account = next_account_for_provider(
-                "claude",
+                provider_name,
                 task.target_account,
                 config_path=self._account_pool_config,
             )

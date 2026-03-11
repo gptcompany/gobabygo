@@ -6,18 +6,9 @@ Recovers consistent state on startup by:
 - Respecting max_attempts (3) to prevent infinite requeue loops
 - Logging all recovery actions as TaskEvent entries
 
-Recovery uses direct CAS (db.update_task_status) rather than FSM apply_transition
-because:
-1. Recovery transitions (running->queued, assigned->queued) are not in the FSM
-   transition table — they are recovery-only paths that bypass normal workflow.
-2. Recovery needs atomic compound operations (lease expiry + status change +
-   attempt update + event insert) in a single transaction. The FSM manages
-   its own transactions and cannot participate in recovery's compound txn.
-3. The FSM validates normal workflow transitions; recovery is a startup
-   consistency-restoration operation, not a normal workflow step.
-
-Recovery is idempotent: running it twice on the same state produces
-the same result (no double-requeue).
+Recovery uses FSM transitions inside the same DB transaction so startup repair
+respects the same transition guardrails and dead-letter instrumentation as the
+rest of the control-plane.
 """
 
 from __future__ import annotations
@@ -26,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from src.router.db import RouterDB
+from src.router.fsm import TransitionRequest, apply_transition
 from src.router.models import TaskEvent, TaskStatus
 
 
@@ -102,10 +94,17 @@ def recover_on_startup(db: RouterDB, max_attempts: int = 3) -> RecoveryResult:
             if task.attempt < max_attempts:
                 # Requeue with attempt+1 (recovery-only: running/assigned -> queued)
                 new_attempt = task.attempt + 1
-                transitioned = db.update_task_status(
-                    task_id, task.status, TaskStatus.queued, conn=conn
+                transition = apply_transition(
+                    db,
+                    TransitionRequest(
+                        task_id=task_id,
+                        from_status=task.status,
+                        to_status=TaskStatus.queued,
+                        reason="recovery_expired_lease",
+                    ),
+                    conn=conn,
                 )
-                if transitioned:
+                if transition.success:
                     conn.execute(
                         "UPDATE tasks SET attempt = ?, updated_at = ? WHERE task_id = ?",
                         (new_attempt, now, task_id),
@@ -133,10 +132,17 @@ def recover_on_startup(db: RouterDB, max_attempts: int = 3) -> RecoveryResult:
                     )
             else:
                 # Max attempts reached — terminal failure
-                transitioned = db.update_task_status(
-                    task_id, task.status, TaskStatus.failed, conn=conn
+                transition = apply_transition(
+                    db,
+                    TransitionRequest(
+                        task_id=task_id,
+                        from_status=task.status,
+                        to_status=TaskStatus.failed,
+                        reason="recovery_max_attempts_exceeded",
+                    ),
+                    conn=conn,
                 )
-                if transitioned:
+                if transition.success:
                     # Escalation event
                     event = TaskEvent(
                         task_id=task_id,
@@ -190,10 +196,17 @@ def recover_on_startup(db: RouterDB, max_attempts: int = 3) -> RecoveryResult:
 
             if task.attempt < max_attempts:
                 new_attempt = task.attempt + 1
-                transitioned = db.update_task_status(
-                    task_id, task.status, TaskStatus.queued, conn=conn
+                transition = apply_transition(
+                    db,
+                    TransitionRequest(
+                        task_id=task_id,
+                        from_status=task.status,
+                        to_status=TaskStatus.queued,
+                        reason="recovery_orphaned_task",
+                    ),
+                    conn=conn,
                 )
-                if transitioned:
+                if transition.success:
                     conn.execute(
                         "UPDATE tasks SET attempt = ?, updated_at = ? WHERE task_id = ?",
                         (new_attempt, now, task_id),
@@ -218,10 +231,17 @@ def recover_on_startup(db: RouterDB, max_attempts: int = 3) -> RecoveryResult:
                         f"CAS failed for orphaned task {task_id}: expected {task.status.value}"
                     )
             else:
-                transitioned = db.update_task_status(
-                    task_id, task.status, TaskStatus.failed, conn=conn
+                transition = apply_transition(
+                    db,
+                    TransitionRequest(
+                        task_id=task_id,
+                        from_status=task.status,
+                        to_status=TaskStatus.failed,
+                        reason="recovery_max_attempts_exceeded_orphaned",
+                    ),
+                    conn=conn,
                 )
-                if transitioned:
+                if transition.success:
                     event = TaskEvent(
                         task_id=task_id,
                         event_type="recovery_max_attempts_exceeded",

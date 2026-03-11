@@ -420,3 +420,31 @@ Conclusion:
   - the timeout hardening is deployed live
   - it does not regress the already-working Gemini path
   - but it does **not** close a separate Gemini president edge case on this specific smoke
+
+## 2026-03-11 hardening pass
+
+Repo fixes now in place and locally validated:
+
+- `deregister_worker()` no longer requeues live `assigned`/`running` tasks. It fails them conservatively and clears worker/lease metadata to avoid dual execution on the same repo while the old tmux might still be alive.
+- startup recovery now uses `fsm.apply_transition()` inside the recovery transaction instead of bypassing FSM guardrails
+- `working_dir` is now bounded by `MESH_ALLOWED_WORK_DIRS` for both session and batch workers
+- `mesh ui` fallback `worker-*` / `verifier` panes now warn explicitly when they are detached control shells instead of live worker sessions
+- account exhaustion detection and router-side rotation now apply to `codex` and `gemini` too, not only `claude`
+- scheduler dispatch now requires a fresh worker heartbeat before assigning a 5-minute lease
+- tmux session naming uses a longer task fragment to reduce collision risk
+- text-marker `auto_exit_on_success` is stricter:
+  - no implicit text-marker auto-exit without opt-in
+  - standalone marker lines only
+  - stale artifact success remains blocked by the existing `mtime` guard
+
+Local validation after the hardening pass:
+
+- command:
+  - `pytest -q tests/router/test_workdir_guard.py tests/router/test_worker_client.py tests/router/test_worker_manager.py tests/router/test_failure_classifier.py tests/router/test_recovery.py tests/router/test_scheduler.py tests/router/test_session_worker.py tests/test_mesh_ui_script.py`
+- result:
+  - `244 passed`
+
+Known follow-up not yet implemented:
+
+- there is still no remote kill/ack control channel for live tmux sessions during deregistration
+- current safety policy is therefore "fail active task, do not requeue it"

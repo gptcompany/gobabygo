@@ -10,4 +10,6 @@ def test_classify_claude_account_exhausted_patterns() -> None:
 
 
 def test_classify_cli_failure_ignores_non_claude() -> None:
-    assert classify_cli_failure("codex", "You've hit your limit") == ""
+    assert classify_cli_failure("codex", "rate_limit_exceeded") == "account_exhausted"
+    assert classify_cli_failure("gemini", "RESOURCE_EXHAUSTED: quota exceeded") == "account_exhausted"
+    assert classify_cli_failure("codex", "plain failure") == ""

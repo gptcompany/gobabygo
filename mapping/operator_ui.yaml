@@ -15,13 +15,13 @@ roles:
       printf '\n[mesh:lead] Next: inspect repo state, branch, and implementation boundaries.\n'
   worker-claude:
     remote_init: >-
-      printf '[mesh:worker-claude] Claude worker shell ready in %s\n' "$PWD"
+      printf '[mesh:worker-claude] Detached control shell ready in %s\n' "$PWD"
   worker-codex:
     remote_init: >-
-      printf '[mesh:worker-codex] Codex worker shell ready in %s\n' "$PWD"
+      printf '[mesh:worker-codex] Detached control shell ready in %s\n' "$PWD"
   worker-gemini:
     remote_init: >-
-      printf '[mesh:worker-gemini] Gemini worker shell ready in %s\n' "$PWD"
+      printf '[mesh:worker-gemini] Detached control shell ready in %s\n' "$PWD"
   verifier:
     remote_init: >-
-      printf '[mesh:verifier] Review/verifier shell ready in %s\n' "$PWD"
+      printf '[mesh:verifier] Detached control shell ready in %s\n' "$PWD"

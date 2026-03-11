@@ -21,9 +21,15 @@ from src.router.models import TaskEvent, TaskStatus
 # The actual import happens inside apply_transition.
 
 ALLOWED_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
-    TaskStatus.queued: {TaskStatus.assigned, TaskStatus.canceled},
-    TaskStatus.assigned: {TaskStatus.blocked, TaskStatus.running, TaskStatus.canceled},
-    TaskStatus.blocked: {TaskStatus.queued, TaskStatus.canceled},
+    TaskStatus.queued: {TaskStatus.assigned, TaskStatus.failed, TaskStatus.canceled},
+    TaskStatus.assigned: {
+        TaskStatus.queued,
+        TaskStatus.blocked,
+        TaskStatus.running,
+        TaskStatus.failed,
+        TaskStatus.canceled,
+    },
+    TaskStatus.blocked: {TaskStatus.queued, TaskStatus.failed, TaskStatus.canceled},
     TaskStatus.running: {
         TaskStatus.queued,  # step retry (on_failure=retry)
         TaskStatus.review,
@@ -86,7 +92,7 @@ class TransitionResult:
     event_id: str | None = None
 
 
-def apply_transition(db, request: TransitionRequest) -> TransitionResult:
+def apply_transition(db, request: TransitionRequest, *, conn=None) -> TransitionResult:
     """Apply a state transition atomically.
 
     1. Validates the transition against ALLOWED_TRANSITIONS.
@@ -116,6 +122,7 @@ def apply_transition(db, request: TransitionRequest) -> TransitionResult:
             to_status=request.to_status.value,
             reason=reason,
             payload={"request_reason": request.reason, "ts": request.timestamp},
+            conn=conn,
         )
         return TransitionResult(success=False, reason=reason)
 
@@ -133,8 +140,19 @@ def apply_transition(db, request: TransitionRequest) -> TransitionResult:
     )
 
     try:
-        with db.transaction() as conn:
-            # CAS update
+        if conn is None:
+            with db.transaction() as txn:
+                # CAS update
+                cas_ok = db.update_task_status(
+                    task_id=request.task_id,
+                    old_status=request.from_status,
+                    new_status=request.to_status,
+                    conn=txn,
+                )
+                if not cas_ok:
+                    raise _CASFailure()
+                db.insert_event(event, conn=txn)
+        else:
             cas_ok = db.update_task_status(
                 task_id=request.task_id,
                 old_status=request.from_status,
@@ -142,11 +160,7 @@ def apply_transition(db, request: TransitionRequest) -> TransitionResult:
                 conn=conn,
             )
             if not cas_ok:
-                # CAS failed — concurrent modification or wrong current state.
-                # We must raise to trigger rollback, then write dead-letter outside txn.
                 raise _CASFailure()
-
-            # Insert transition event
             db.insert_event(event, conn=conn)
 
     except _CASFailure:
@@ -161,6 +175,7 @@ def apply_transition(db, request: TransitionRequest) -> TransitionResult:
             to_status=request.to_status.value,
             reason=reason,
             payload={"request_reason": request.reason, "ts": request.timestamp},
+            conn=conn,
         )
         return TransitionResult(success=False, reason=reason)
 
