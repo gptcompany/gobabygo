@@ -96,10 +96,24 @@ def _compute_output_emit(
 
 def _last_prompt_line_has_content(captured: str) -> bool:
     """Return True when the bottom-most Claude Code composer still holds text."""
+    lowered_capture = str(captured or "").lower()
     for line in reversed((captured or "").splitlines()):
         normalized = line.replace("\xa0", " ").lstrip()
         if normalized.startswith("❯"):
-            return bool(normalized[1:].strip())
+            prompt_text = normalized[1:].strip()
+            if not prompt_text:
+                return False
+            # Gemini home can render a suggestion row like `❯ Try "..."` above the
+            # real empty composer; that row should not be treated as pending input.
+            if (
+                prompt_text.lower().startswith("try ")
+                and (
+                    "/model to try" in lowered_capture
+                    or "bypass permissions on" in lowered_capture
+                )
+            ):
+                return False
+            return True
     return False
 
 
@@ -178,12 +192,11 @@ def _capture_shows_activity(captured: str) -> bool:
 def _looks_like_start_screen(captured: str) -> bool:
     body = str(captured or "")
     lowered = body.lower()
-    if "welcome back" not in lowered:
-        return False
     if _capture_shows_activity(body):
         return False
     return (
-        "tips for getting started" in lowered
+        "welcome back" in lowered
+        or "tips for getting started" in lowered
         or "/model to try opus" in lowered
         or "run /init to create" in lowered
         or "❯ try " in body.lower()

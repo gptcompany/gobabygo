@@ -187,6 +187,17 @@ def test_last_prompt_line_has_content_detects_pending_composer() -> None:
     assert _last_prompt_line_has_content("no prompt here") is False
 
 
+def test_last_prompt_line_has_content_ignores_gemini_home_suggestion_row() -> None:
+    captured = (
+        '[i] Thinking: auto (config: auto)\n'
+        '  /model to try Opus 4.6\n'
+        '❯ Try "how do I log an error?"\n'
+        '  sam@5610:/repo [gemini-3-pro-preview]…\n'
+        '  ⏵⏵ bypass permissions on (shift+tab to cycle)\n'
+    )
+    assert _last_prompt_line_has_content(captured) is False
+
+
 def test_detect_interactive_failure_screen_detects_rate_limit_menu() -> None:
     captured = (
         "You've hit your limit\n"
@@ -253,6 +264,17 @@ def test_capture_contains_prompt_text_normalizes_whitespace() -> None:
 
 def test_looks_like_start_screen_accepts_partial_claude_home_capture() -> None:
     captured = "Welcome back gpt!\n\n  /model to try Opus 4.6\n\n❯ Try \"fix typecheck errors\""
+    assert _looks_like_start_screen(captured) is True
+
+
+def test_looks_like_start_screen_accepts_gemini_home_without_welcome_back() -> None:
+    captured = (
+        "[OK] WebSearch: Ready (Gemini)\n"
+        "  /model to try Opus 4.6\n"
+        "❯ Try \"how do I log an error?\"\n"
+        "  sam@5610:/repo [gemini-3-pro-preview]…\n"
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+    )
     assert _looks_like_start_screen(captured) is True
 
 
