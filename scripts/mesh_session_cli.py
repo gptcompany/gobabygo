@@ -474,12 +474,25 @@ def _parse_args() -> argparse.Namespace:
         default=os.environ.get("MESH_WS_HOST", "sam@192.168.1.111"),
         help="WS SSH target for tmux fallback.",
     )
+    resolve_parser.add_argument(
+        "--output",
+        default="",
+        help="Optional file path for the resolved JSON payload.",
+    )
     return parser.parse_args()
 
 
 def _print_error(message: str) -> int:
     print(f"Error: {message}", file=sys.stderr)
     return 1
+
+
+def _emit_payload(payload: dict[str, Any], output_path: str) -> None:
+    encoded = json.dumps(payload)
+    if output_path:
+        Path(output_path).write_text(encoded, encoding="utf-8")
+        return
+    print(encoded)
 
 
 def main() -> int:
@@ -521,7 +534,7 @@ def main() -> int:
         "selection": asdict(selected),
         "attach": build_attach_spec(selected, args.ws_host),
     }
-    print(json.dumps(payload))
+    _emit_payload(payload, getattr(args, "output", ""))
     return 0
 
 

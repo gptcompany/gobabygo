@@ -63,6 +63,7 @@ def test_select_action_falls_back_to_numeric_prompt(monkeypatch, capsys):
 
 def test_main_outputs_selected_command(monkeypatch):
     module = _load_module()
+    monkeypatch.setattr(module.sys, "argv", ["mesh_menu_cli.py"])
     monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/tmp/snake-game", "snake-game"))
     monkeypatch.setattr(
         module,
@@ -87,6 +88,7 @@ def test_main_outputs_selected_command(monkeypatch):
 
 def test_main_can_return_quit(monkeypatch):
     module = _load_module()
+    monkeypatch.setattr(module.sys, "argv", ["mesh_menu_cli.py"])
     monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/tmp/snake-game", "snake-game"))
     monkeypatch.setattr(
         module,
@@ -103,3 +105,26 @@ def test_main_can_return_quit(monkeypatch):
     assert rc == 0
     payload = json.loads(out.getvalue())
     assert payload["argv"] == []
+
+
+def test_main_can_write_payload_to_file(tmp_path, monkeypatch):
+    module = _load_module()
+    output_path = tmp_path / "menu.json"
+    monkeypatch.setattr(module.sys, "argv", ["mesh_menu_cli.py", "--output", str(output_path)])
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/tmp/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "select_action",
+        lambda actions, **kwargs: actions[1],
+    )
+    monkeypatch.setattr(module.sys, "stdin", io.StringIO())
+    monkeypatch.setattr(module.sys.stdin, "isatty", lambda: False)
+    out = io.StringIO()
+    monkeypatch.setattr(module.sys, "stdout", out)
+
+    rc = module.main()
+
+    assert rc == 0
+    assert out.getvalue() == ""
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["argv"] == ["sessions"]

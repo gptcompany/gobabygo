@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -333,3 +334,12 @@ def test_detect_repo_context_uses_git_root(tmp_path):
 
     assert repo_path == str(repo_root)
     assert repo_name == "repo"
+
+
+def test_emit_payload_can_write_to_file(tmp_path):
+    module = _load_module()
+    output_path = tmp_path / "payload.json"
+
+    module._emit_payload({"ok": True}, str(output_path))
+
+    assert json.loads(output_path.read_text(encoding="utf-8")) == {"ok": True}

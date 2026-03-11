@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+from pathlib import Path
 import sys
 from dataclasses import asdict, dataclass
 from typing import Callable
@@ -90,7 +92,26 @@ def select_action(
     return actions[index - 1]
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Select a default mesh action.")
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Optional file path for the resolved JSON payload.",
+    )
+    return parser.parse_args()
+
+
+def _emit_payload(payload: dict[str, object], output_path: str) -> None:
+    encoded = json.dumps(payload)
+    if output_path:
+        Path(output_path).write_text(encoded, encoding="utf-8")
+        return
+    print(encoded)
+
+
 def main() -> int:
+    args = _parse_args()
     _, repo_name = detect_repo_context()
     actions = build_default_actions(repo_name)
     try:
@@ -98,7 +119,7 @@ def main() -> int:
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    print(json.dumps({"argv": list(selected.argv), "action": asdict(selected)}))
+    _emit_payload({"argv": list(selected.argv), "action": asdict(selected)}, args.output)
     return 0
 
 
