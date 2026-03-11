@@ -489,7 +489,17 @@ apply_session_service_override() {
 bootstrap_mesh_worker_runtime() {
   sudo mkdir -p /home/mesh-worker/.ccs/instances
   sudo mkdir -p /home/mesh-worker/.claude
+  sudo mkdir -p /tmp/mesh-tasks
   sudo chown -R mesh-worker:mesh /home/mesh-worker/.ccs /home/mesh-worker/.claude
+  if getent group sam >/dev/null 2>&1; then
+    sudo chown -R mesh-worker:sam /tmp/mesh-tasks
+  else
+    sudo chown -R mesh-worker:mesh-worker /tmp/mesh-tasks
+    echo "[WARN] group 'sam' missing; /tmp/mesh-tasks kept on mesh-worker:mesh-worker"
+  fi
+  sudo chmod 2775 /tmp/mesh-tasks
+  sudo find /tmp/mesh-tasks -type d -exec chmod 2775 {} +
+  sudo find /tmp/mesh-tasks -type f -exec chmod ug+rw {} +
 
   if ! sudo -u mesh-worker env PATH=/usr/local/bin:/usr/bin:/bin bash -lc 'command -v ccs >/dev/null 2>&1' \
     && [[ -x /home/sam/.npm-global/bin/ccs ]]; then

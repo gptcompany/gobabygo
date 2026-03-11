@@ -24,6 +24,22 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+normalize_task_root() {
+    local task_root="/tmp/mesh-tasks"
+
+    mkdir -p "$task_root"
+    if getent group sam >/dev/null 2>&1; then
+        chown -R mesh-worker:sam "$task_root"
+        echo "  task root owner: mesh-worker:sam"
+    else
+        chown -R mesh-worker:mesh-worker "$task_root"
+        echo "  WARNING: group 'sam' missing; task root kept on mesh-worker:mesh-worker"
+    fi
+    chmod 2775 "$task_root"
+    find "$task_root" -type d -exec chmod 2775 {} +
+    find "$task_root" -type f -exec chmod ug+rw {} +
+}
+
 echo "=== Deploying Mesh Workers (local) ==="
 
 # 1. Create service user
@@ -42,7 +58,8 @@ fi
 # 2. Create directories
 echo "[2/7] Creating directories..."
 mkdir -p /etc/mesh-worker /opt/mesh-worker /home/mesh-worker/.mesh/agents /tmp/mesh-tasks
-chown -R mesh-worker:mesh-worker /opt/mesh-worker /home/mesh-worker/.mesh /tmp/mesh-tasks
+chown -R mesh-worker:mesh-worker /opt/mesh-worker /home/mesh-worker/.mesh
+normalize_task_root
 echo "  dirs: OK"
 
 # 3. Copy source code

@@ -7,6 +7,21 @@ set -euo pipefail
 MODE="${1:?Usage: $0 router|worker}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+normalize_task_root() {
+  local task_root="/tmp/mesh-tasks"
+
+  sudo mkdir -p "$task_root"
+  if getent group sam >/dev/null 2>&1; then
+    sudo chown -R mesh-worker:sam "$task_root"
+  else
+    sudo chown -R mesh-worker:mesh-worker "$task_root"
+    echo "WARNING: group 'sam' missing; task root kept on mesh-worker:mesh-worker"
+  fi
+  sudo chmod 2775 "$task_root"
+  sudo find "$task_root" -type d -exec chmod 2775 {} +
+  sudo find "$task_root" -type f -exec chmod ug+rw {} +
+}
+
 case "$MODE" in
   router)
     echo "=== Installing Mesh Router (VPS) ==="
@@ -70,6 +85,7 @@ case "$MODE" in
     sudo mkdir -p /home/mesh-worker/.mesh/agents
     sudo chown -R mesh-worker:mesh-worker /opt/mesh-worker
     sudo chown -R mesh-worker /home/mesh-worker/.mesh
+    normalize_task_root
 
     # 3. Install project (minimal: only production files)
     for item in src pyproject.toml schemas deploy; do

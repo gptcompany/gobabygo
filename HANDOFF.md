@@ -482,6 +482,16 @@ Post-deploy Gemini-only validation:
 2. second live thread:
    - `allowed-gemini-103009`
    - failed correctly because `/tmp/mesh-tasks/...` was allowlisted but not writable by `sam`
+   - root cause:
+     - `mapping/provider_runtime.yaml` runs Gemini session workers as `sam`
+     - at the time of the incident, `deploy/deploy-workers.sh` recreated `/tmp/mesh-tasks` as `mesh-worker:mesh-worker`
+   - required live remediation before rerun:
+     - make `/tmp/mesh-tasks` writable by `sam` again before launching the next Gemini smoke
+     - reproducible example: `sudo chown -R sam:sam /tmp/mesh-tasks`
+     - equivalent ACLs were also acceptable as a live workaround
+   - follow-up repo fix:
+     - `deploy/deploy-workers.sh`, `deploy/install.sh`, and `scripts/mesh bootstrap` now normalize `/tmp/mesh-tasks` for shared `mesh-worker`/`sam` access
+     - worker unit templates now set `UMask=0002` so new repo content stays group-writable across provider-specific service users
 3. final live thread:
    - `final-gemini-104529`
    - thread id: `7c8cd19a-c2fc-4dce-9a91-419124c2a48b`

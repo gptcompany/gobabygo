@@ -14,6 +14,7 @@ EnvironmentFile=/etc/mesh-worker/%i.env
 ExecStart=/opt/mesh-worker/venv/bin/python -m src.router.review_worker
 Restart=always
 RestartSec=10
+UMask=0002
 
 # Security hardening
 NoNewPrivileges=true

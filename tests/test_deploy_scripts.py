@@ -16,6 +16,7 @@ class TestShellScriptSyntax:
     """Validate shell scripts with bash -n (syntax check)."""
 
     @pytest.mark.parametrize("script", [
+        "deploy-workers.sh",
         "install.sh",
         "verify-network.sh",
         "ufw-setup.sh",
@@ -68,6 +69,28 @@ class TestSystemdUnits:
     def test_worker_template_uses_instance_variable(self):
         content = (DEPLOY_DIR / "mesh-worker@.service").read_text()
         assert "%i" in content
+
+    @pytest.mark.parametrize("unit_name", [
+        "mesh-worker@.service",
+        "mesh-review-worker@.service",
+        "mesh-session-worker@.service",
+    ])
+    def test_worker_units_keep_group_writable_umask(self, unit_name):
+        content = (DEPLOY_DIR / unit_name).read_text()
+        assert "UMask=0002" in content
+
+    def test_deploy_workers_normalizes_shared_task_root(self):
+        content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
+        assert 'local task_root="/tmp/mesh-tasks"' in content
+        assert "mesh-worker:sam" in content
+        assert 'chmod 2775 "$task_root"' in content
+        assert 'find "$task_root" -type d -exec chmod 2775 {} +' in content
+
+    def test_install_worker_normalizes_shared_task_root(self):
+        content = (DEPLOY_DIR / "install.sh").read_text()
+        assert 'local task_root="/tmp/mesh-tasks"' in content
+        assert "mesh-worker:sam" in content
+        assert 'chmod 2775 "$task_root"' in content
 
 
 class TestEnvironmentFiles:
