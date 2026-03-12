@@ -316,6 +316,7 @@ Recommended WS runtime split:
   - `MESH_ROUTER_URL`
   - `MESH_AUTH_TOKEN`
   - `MESH_ALLOWED_WORK_DIRS`
+- the checked-in `deploy/mesh-*.env` templates now intentionally omit those shared keys
 
 Examples:
 

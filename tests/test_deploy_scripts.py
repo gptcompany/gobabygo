@@ -132,11 +132,13 @@ class TestEnvironmentFiles:
         "mesh-worker-codex-work.env",
         "mesh-worker-gemini-work.env",
     ])
-    def test_worker_env_has_placeholder_token(self, worker_env):
+    def test_worker_env_omits_shared_router_fields(self, worker_env):
         content = (DEPLOY_DIR / worker_env).read_text()
-        assert "__REPLACE_WITH_TOKEN__" in content
         assert "MESH_WORKER_ID" in content
-        assert "MESH_ROUTER_URL" in content
+        assert "MESH_CLI_TYPE" in content
+        assert "MESH_ROUTER_URL" not in content
+        assert "MESH_AUTH_TOKEN" not in content
+        assert "MESH_ALLOWED_WORK_DIRS" not in content
 
     def test_worker_common_env_exists(self):
         path = DEPLOY_DIR / "mesh-worker.common.env"
@@ -162,11 +164,20 @@ class TestEnvironmentFiles:
         "mesh-session-codex-work.env",
         "mesh-session-gemini-work.env",
     ])
-    def test_session_worker_env_has_placeholder_token(self, session_env):
+    def test_session_worker_env_omits_shared_router_fields(self, session_env):
         content = (DEPLOY_DIR / session_env).read_text()
-        assert "__REPLACE_WITH_TOKEN__" in content
         assert "MESH_WORKER_ID" in content
-        assert "MESH_ROUTER_URL" in content
+        assert "MESH_EXECUTION_MODES=session" in content
+        assert "MESH_ROUTER_URL" not in content
+        assert "MESH_AUTH_TOKEN" not in content
+        assert "MESH_ALLOWED_WORK_DIRS" not in content
+
+    def test_review_worker_env_omits_shared_router_fields(self):
+        content = (DEPLOY_DIR / "mesh-review-codex.env").read_text()
+        assert "MESH_REVIEWER_ID=" in content
+        assert "MESH_ROUTER_URL" not in content
+        assert "MESH_AUTH_TOKEN" not in content
+        assert "MESH_ALLOWED_WORK_DIRS" not in content
 
     def test_no_plaintext_tokens(self):
         """Ensure no real tokens are accidentally committed."""
