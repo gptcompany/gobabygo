@@ -61,6 +61,8 @@ sudo install -d -m 0755 /etc/mesh-router/config
 sudo cp deploy/compose.env.example /etc/mesh-router/compose.env
 sudoedit /etc/mesh-router/mesh-matrix-bridge.docker.env
 sudo cp deploy/topology.v1.4.production.yml /etc/mesh-router/config/
+sudo chown root:$USER /etc/mesh-router/compose.env
+sudo chmod 0640 /etc/mesh-router/compose.env
 ```
 
 `/etc/mesh-router/compose.env` deve contenere almeno:
@@ -85,6 +87,10 @@ In questo modo:
 - room IDs / homeserver / topology path non dipendono dal worktree
 - i rebuild da checkout pulito non perdono la config live
 - il bridge continua a leggere il topology file da `/app/config/...`
+
+Nota permessi:
+- `deploy/live-compose.sh` gira come utente operatore, quindi `/etc/mesh-router/compose.env`
+  deve essere leggibile da quell'utente
 
 ## Cosa NON cambia
 

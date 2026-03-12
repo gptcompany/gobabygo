@@ -184,6 +184,7 @@ class TestDockerComposeConfig:
         content = (DEPLOY_DIR / "live-compose.sh").read_text()
         assert "/etc/mesh-router/compose.env" in content
         assert "docker compose --env-file" in content
+        assert "compose env file is not readable" in content
 
     def test_live_compose_script_is_executable(self):
         script_path = DEPLOY_DIR / "live-compose.sh"
