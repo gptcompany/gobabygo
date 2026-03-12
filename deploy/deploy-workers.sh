@@ -9,9 +9,14 @@ TOKEN="${1:?Usage: sudo $0 <auth_token> [--dry-run]}"
 DRY_RUN="${2:-}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-WORKERS=("claude-work" "codex-work" "gemini-work")
+BATCH_WORKERS=()
 SESSION_WORKERS=()
 REVIEW_WORKERS=()
+
+for src_env in "${PROJECT_ROOT}"/deploy/mesh-worker-*.env; do
+    [ -f "$src_env" ] || continue
+    BATCH_WORKERS+=("$(basename "$src_env" .env | sed 's/^mesh-worker-//')")
+done
 
 for src_env in "${PROJECT_ROOT}"/deploy/mesh-session-*.env; do
     [ -f "$src_env" ] || continue
@@ -24,9 +29,9 @@ for src_env in "${PROJECT_ROOT}"/deploy/mesh-review-*.env; do
 done
 
 if [[ "$DRY_RUN" == "--dry-run" ]]; then
-    echo "[DRY-RUN] Would deploy ${#WORKERS[@]} batch, ${#SESSION_WORKERS[@]} session, ${#REVIEW_WORKERS[@]} review workers locally"
+    echo "[DRY-RUN] Would deploy ${#BATCH_WORKERS[@]} batch, ${#SESSION_WORKERS[@]} session, ${#REVIEW_WORKERS[@]} review workers locally"
     echo "[DRY-RUN] Token: ${TOKEN:0:8}..."
-    echo "[DRY-RUN] Batch workers: ${WORKERS[*]}"
+    echo "[DRY-RUN] Batch workers: ${BATCH_WORKERS[*]:-(none)}"
     echo "[DRY-RUN] Session workers: ${SESSION_WORKERS[*]:-(none)}"
     echo "[DRY-RUN] Review workers: ${REVIEW_WORKERS[*]:-(none)}"
     echo "[DRY-RUN] Steps: mesh-worker user, copy code, venv, env files, systemd"
@@ -159,7 +164,7 @@ for common_env in "${PROJECT_ROOT}"/deploy/*.common.env; do
     echo "  $(basename "$common_env"): OK"
 done
 
-for worker in "${WORKERS[@]}"; do
+for worker in "${BATCH_WORKERS[@]}"; do
     SRC_ENV="${PROJECT_ROOT}/deploy/mesh-worker-${worker}.env"
     DST_ENV="/etc/mesh-worker/${worker}.env"
 
@@ -207,7 +212,7 @@ if [ -f "${PROJECT_ROOT}/deploy/mesh-review-worker@.service" ]; then
 fi
 systemctl daemon-reload
 
-for worker in "${WORKERS[@]}"; do
+for worker in "${BATCH_WORKERS[@]}"; do
     systemctl enable "mesh-worker@${worker}.service"
     echo "  enabled: mesh-worker@${worker}"
 done
@@ -223,7 +228,7 @@ echo "  systemd: OK"
 
 # 7. Start workers
 echo "[7/7] Starting workers..."
-for worker in "${WORKERS[@]}"; do
+for worker in "${BATCH_WORKERS[@]}"; do
     systemctl restart "mesh-worker@${worker}.service"
     echo "  started: mesh-worker@${worker}"
 done
@@ -241,7 +246,7 @@ sleep 3
 echo ""
 echo "=== Verifying ==="
 ALL_OK=true
-for worker in "${WORKERS[@]}"; do
+for worker in "${BATCH_WORKERS[@]}"; do
     if systemctl is-active --quiet "mesh-worker@${worker}.service"; then
         echo "  mesh-worker@${worker}: ACTIVE"
     else
@@ -271,7 +276,7 @@ done
 
 echo ""
 if $ALL_OK; then
-    total_workers=$((${#WORKERS[@]} + ${#SESSION_WORKERS[@]} + ${#REVIEW_WORKERS[@]}))
+    total_workers=$((${#BATCH_WORKERS[@]} + ${#SESSION_WORKERS[@]} + ${#REVIEW_WORKERS[@]}))
     echo "=== All ${total_workers} workers deployed and running ==="
 else
     echo "=== Some workers failed to start — check logs above ==="

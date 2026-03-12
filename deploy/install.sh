@@ -53,20 +53,28 @@ install_worker_instance_env() {
 }
 
 enable_worker_instances() {
-    local prefix="$1"
-    local unit="$2"
     local env_path
     local name
+    local unit
 
-    for env_path in /etc/mesh-worker/${prefix}*.env; do
+    for env_path in /etc/mesh-worker/*.env; do
       [ -e "$env_path" ] || continue
       name="$(basename "$env_path" .env)"
-      case "$prefix" in
-        mesh-worker-)
-          name="${name#mesh-worker-}"
+      case "$name" in
+        common|*.common)
+          continue
+          ;;
+        mesh-session-*)
+          unit="mesh-session-worker@${name}.service"
+          ;;
+        mesh-review-*)
+          unit="mesh-review-worker@${name}.service"
+          ;;
+        *)
+          unit="mesh-worker@${name}.service"
           ;;
       esac
-      sudo systemctl enable "${unit}@${name}.service"
+      sudo systemctl enable "$unit"
     done
 }
 
@@ -176,11 +184,7 @@ case "$MODE" in
     sudo systemctl daemon-reload
 
     # Enable known worker instances
-    enable_worker_instances "claude-work" "mesh-worker"
-    enable_worker_instances "codex-work" "mesh-worker"
-    enable_worker_instances "gemini-work" "mesh-worker"
-    enable_worker_instances "mesh-session-" "mesh-session-worker"
-    enable_worker_instances "mesh-review-" "mesh-review-worker"
+    enable_worker_instances
 
     echo "=== Workers installed. Start batch with: sudo systemctl start mesh-worker@claude-work ==="
     echo "=== Interactive session workers available: mesh-session-worker@mesh-session-claude-work ==="

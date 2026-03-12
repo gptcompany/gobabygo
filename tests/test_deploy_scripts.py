@@ -106,6 +106,7 @@ class TestSystemdUnits:
         assert 'chmod 2775 "$task_root"' in content
         assert 'find "$task_root" -type d -exec chmod 2775 {} +' in content
         assert '"${PROJECT_ROOT}"/deploy/*.common.env' in content
+        assert 'BATCH_WORKERS+=("$(basename "$src_env" .env | sed ' in content
 
     def test_install_worker_normalizes_shared_task_root(self):
         content = (DEPLOY_DIR / "install.sh").read_text()
@@ -127,8 +128,9 @@ class TestSystemdUnits:
 
     def test_install_worker_enables_session_and_review_instances(self):
         content = (DEPLOY_DIR / "install.sh").read_text()
-        assert 'enable_worker_instances "mesh-session-" "mesh-session-worker"' in content
-        assert 'enable_worker_instances "mesh-review-" "mesh-review-worker"' in content
+        assert 'for env_path in /etc/mesh-worker/*.env; do' in content
+        assert 'mesh-session-worker@${name}.service' in content
+        assert 'mesh-review-worker@${name}.service' in content
 
 
 class TestEnvironmentFiles:
