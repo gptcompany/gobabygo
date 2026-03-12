@@ -77,7 +77,7 @@ def test_find_stale_runtime_state_collects_only_safe_candidates(db: RouterDB) ->
 
     db.insert_thread(Thread(thread_id="thread-pending", name="thread-pending", status=ThreadStatus.pending))
 
-    sessions, threads = find_stale_runtime_state(db)
+    sessions, threads, skipped_taskless = find_stale_runtime_state(db)
 
     assert sorted((item.session_id, item.to_state, item.reason) for item in sessions) == [
         ("sess-complete", "closed", "task_completed"),
@@ -88,6 +88,23 @@ def test_find_stale_runtime_state_collects_only_safe_candidates(db: RouterDB) ->
         ("thread-complete", "completed"),
         ("thread-failed", "failed"),
     ]
+    assert skipped_taskless == 1
+
+
+def test_find_stale_runtime_state_can_include_taskless_sessions(db: RouterDB) -> None:
+    db.insert_worker(_worker())
+    db.insert_session(Session(session_id="sess-taskless", worker_id="w1", task_id=None))
+
+    sessions, threads, skipped_taskless = find_stale_runtime_state(
+        db,
+        include_taskless_sessions=True,
+    )
+
+    assert [(item.session_id, item.to_state, item.reason) for item in sessions] == [
+        ("sess-taskless", "closed", "taskless_session")
+    ]
+    assert threads == []
+    assert skipped_taskless == 0
 
 
 def test_cleanup_stale_runtime_state_apply_updates_rows_and_creates_backup(db: RouterDB, tmp_path: Path) -> None:
@@ -137,6 +154,15 @@ def test_cleanup_stale_runtime_state_dry_run_makes_no_changes(db: RouterDB) -> N
     session = db.get_session("sess-failed")
     assert session is not None
     assert session.state.value == "open"
+
+
+def test_cleanup_stale_runtime_state_reports_skipped_taskless_sessions(db: RouterDB) -> None:
+    db.insert_worker(_worker())
+    db.insert_session(Session(session_id="sess-taskless", worker_id="w1", task_id=None))
+
+    report = cleanup_stale_runtime_state(db, apply=False)
+
+    assert report.skipped_taskless_sessions == 1
 
 
 def test_find_stale_runtime_state_rejects_invalid_limits(db: RouterDB) -> None:

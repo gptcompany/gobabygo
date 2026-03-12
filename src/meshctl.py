@@ -628,6 +628,7 @@ def cmd_cleanup_stale_state(args: argparse.Namespace) -> None:
         "backup": bool(args.apply) and not bool(args.no_backup),
         "session_limit": int(args.session_limit),
         "thread_limit": int(args.thread_limit),
+        "include_taskless_sessions": bool(args.include_taskless_sessions),
     }
 
     try:
@@ -654,6 +655,7 @@ def cmd_cleanup_stale_state(args: argparse.Namespace) -> None:
 
         sessions = data.get("sessions") or []
         threads = data.get("threads") or []
+        skipped_taskless = int(data.get("skipped_taskless_sessions", 0))
         print(
             "Sessions: "
             f"{len(sessions)} candidate(s), {int(data.get('updated_sessions', 0))} updated"
@@ -671,6 +673,11 @@ def cmd_cleanup_stale_state(args: argparse.Namespace) -> None:
             print(
                 f"- thread {str(item.get('thread_id', ''))[:12]} -> "
                 f"{item.get('to_status', '?')} ({item.get('reason', 'unknown')})"
+            )
+        if skipped_taskless:
+            print(
+                "Skipped taskless open sessions: "
+                f"{skipped_taskless} (rerun with --include-taskless-sessions to include them)"
             )
         return
     if resp.status_code == 400:
@@ -1428,6 +1435,11 @@ cleanup_stale_state_parser.add_argument(
     type=int,
     default=1000,
     help="Max non-terminal threads per status bucket to scan (default: 1000).",
+)
+cleanup_stale_state_parser.add_argument(
+    "--include-taskless-sessions",
+    action="store_true",
+    help="Also close open sessions without task_id. Default skips them.",
 )
 cleanup_stale_state_parser.add_argument(
     "--json",

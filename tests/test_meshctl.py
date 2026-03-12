@@ -79,6 +79,7 @@ def _cleanup_stale_state_args(
     no_backup: bool = False,
     session_limit: int = 1000,
     thread_limit: int = 1000,
+    include_taskless_sessions: bool = False,
     json_output: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
@@ -88,6 +89,7 @@ def _cleanup_stale_state_args(
         no_backup=no_backup,
         session_limit=session_limit,
         thread_limit=thread_limit,
+        include_taskless_sessions=include_taskless_sessions,
         json_output=json_output,
     )
 
@@ -814,6 +816,7 @@ class TestCleanupCommands:
                     }
                 ],
                 "threads": [],
+                "skipped_taskless_sessions": 2,
                 "updated_sessions": 0,
                 "updated_threads": 0,
             },
@@ -823,6 +826,7 @@ class TestCleanupCommands:
         out = capsys.readouterr().out
         assert "Cleanup stale-state: dry_run" in out
         assert "sess-1234567" in out
+        assert "Skipped taskless open sessions: 2" in out
         call_kwargs = mock_post.call_args
         assert call_kwargs.args[0].endswith("/admin/cleanup-stale-state")
         assert call_kwargs.kwargs["json"] == {
@@ -830,6 +834,7 @@ class TestCleanupCommands:
             "backup": False,
             "session_limit": 1000,
             "thread_limit": 1000,
+            "include_taskless_sessions": False,
         }
 
     @patch("src.meshctl.requests.post")
@@ -847,6 +852,7 @@ class TestCleanupCommands:
                 "backup_path": "/tmp/router.db.pre_cleanup.bak",
                 "sessions": [],
                 "threads": [],
+                "skipped_taskless_sessions": 0,
                 "updated_sessions": 1,
                 "updated_threads": 2,
             },
@@ -863,7 +869,33 @@ class TestCleanupCommands:
             "backup": False,
             "session_limit": 1000,
             "thread_limit": 1000,
+            "include_taskless_sessions": False,
         }
+
+    @patch("src.meshctl.requests.post")
+    def test_cleanup_stale_state_include_taskless(
+        self,
+        mock_post: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            200,
+            {
+                "status": "dry_run",
+                "backup_path": None,
+                "sessions": [],
+                "threads": [],
+                "skipped_taskless_sessions": 0,
+                "updated_sessions": 0,
+                "updated_threads": 0,
+            },
+        )
+
+        cmd_cleanup_stale_state(_cleanup_stale_state_args(include_taskless_sessions=True))
+
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.kwargs["json"]["include_taskless_sessions"] is True
 
     @patch("src.meshctl.requests.post")
     def test_cleanup_stale_state_invalid_request(

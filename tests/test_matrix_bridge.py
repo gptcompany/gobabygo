@@ -43,6 +43,7 @@ def make_config(**overrides: Any) -> BridgeConfig:
         matrix_unrouted_room="!unrouted:matrix.example",
         poll_interval_s=1.0,
         matrix_boss_room="!boss:matrix.example",
+        matrix_allowed_senders=frozenset({"@sam:matrix.example"}),
         input_patterns=[re.compile(r"approve|continue|press enter|y/n|select", re.IGNORECASE)],
         request_timeout_s=5.0,
     )
@@ -750,6 +751,35 @@ class TestMatrixInboundCommands:
         bridge.router.approve_review_task.assert_called_once_with("task-001", "matrix-operator")
         bridge.matrix.send_message.assert_called_once_with("!rektslug:matrix.example", "Approved task-001 -> approved")
 
+    def test_ignores_unauthorized_sender(self):
+        bridge = self._make_bridge()
+        bridge.matrix.sync.return_value = {
+            "next_batch": "s1",
+            "rooms": {
+                "join": {
+                    "!rektslug:matrix.example": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "type": "m.room.message",
+                                    "event_id": "$evt1",
+                                    "sender": "@intruder:matrix.example",
+                                    "content": {"body": "!mesh approve task-001"},
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        bridge.repo_rooms = {"rektslug": "!rektslug:matrix.example"}
+
+        sent = bridge.run_once()
+
+        assert sent == 0
+        bridge.router.approve_review_task.assert_not_called()
+        bridge.matrix.send_message.assert_not_called()
+
     def test_handles_send_command(self):
         bridge = self._make_bridge()
         bridge.matrix.sync.return_value = {
@@ -928,6 +958,7 @@ class TestBridgeConfigFromEnv:
             "MESH_MATRIX_DEFAULT_ROOM": "!room:example",
             "MESH_MATRIX_UNROUTED_ROOM": "!unrouted:example",
             "MESH_MATRIX_POLL_INTERVAL_S": "5",
+            "MESH_MATRIX_ALLOWED_SENDERS": "@sam:matrix.example,@sam-android:matrix.example",
         }
         for k, v in env.items():
             monkeypatch.setenv(k, v)
@@ -937,6 +968,9 @@ class TestBridgeConfigFromEnv:
         assert cfg.matrix_unrouted_room == "!unrouted:example"
         assert cfg.matrix_boss_room is None
         assert cfg.matrix_command_prefix == "!mesh"
+        assert cfg.matrix_allowed_senders == frozenset(
+            {"@sam:matrix.example", "@sam-android:matrix.example"}
+        )
         assert cfg.matrix_verifier_id == "matrix-operator"
 
 

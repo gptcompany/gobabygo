@@ -564,6 +564,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             self._send_json(400, {"error": "invalid_limit"})
             return
+        include_taskless_sessions = bool(data.get("include_taskless_sessions", False))
 
         db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
         try:
@@ -573,6 +574,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 create_backup=create_backup,
                 session_limit=session_limit,
                 thread_limit=thread_limit,
+                include_taskless_sessions=include_taskless_sessions,
             )
         except ValueError as e:
             self._send_json(400, {"error": "invalid_request", "detail": str(e)})

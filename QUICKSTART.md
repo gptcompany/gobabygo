@@ -157,11 +157,13 @@ Conservative stale-state cleanup from the operator host:
 ```bash
 python -m src.meshctl cleanup stale-state
 python -m src.meshctl cleanup stale-state --apply
+python -m src.meshctl cleanup stale-state --include-taskless-sessions
 ```
 
 Dry-run is the default. `--apply` creates a DB backup on the router before it
 closes open sessions linked to terminal/missing tasks and reconciles thread rows
-whose computed status is already terminal.
+whose computed status is already terminal. Taskless open sessions are skipped by
+default and require `--include-taskless-sessions`.
 
 Who executes commands in mesh:
 - `BOSS` (human operator): starts orchestration (`meshctl pipeline create`, manual task/thread API calls).

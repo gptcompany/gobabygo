@@ -279,6 +279,7 @@ python -m src.meshctl task cancel <task-id> --reason "stuck queued"
 python -m src.meshctl task fail <task-id> --reason "stuck review"
 python -m src.meshctl cleanup stale-state          # dry-run stale sessions/threads
 python -m src.meshctl cleanup stale-state --apply  # backup DB, then reconcile
+python -m src.meshctl cleanup stale-state --include-taskless-sessions
 ```
 
 Use these for non-running tasks. They are intentionally conservative:
@@ -326,6 +327,7 @@ Matrix bridge now supports simple inbound room commands via router API:
 - `!mesh send <session-id-prefix> <text>`
 - `!mesh enter <session-id-prefix>`
 - `!mesh interrupt <session-id-prefix>`
+- configure `MESH_MATRIX_ALLOWED_SENDERS` so only trusted MXIDs can issue those commands
 
 Docker live config note:
 

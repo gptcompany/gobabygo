@@ -42,6 +42,7 @@ class RuntimeCleanupReport:
     backup_path: str | None
     sessions: list[SessionCleanupCandidate]
     threads: list[ThreadCleanupCandidate]
+    skipped_taskless_sessions: int
     updated_sessions: int
     updated_threads: int
     generated_at: str
@@ -52,6 +53,7 @@ class RuntimeCleanupReport:
             "backup_path": self.backup_path,
             "sessions": [asdict(item) for item in self.sessions],
             "threads": [asdict(item) for item in self.threads],
+            "skipped_taskless_sessions": self.skipped_taskless_sessions,
             "updated_sessions": self.updated_sessions,
             "updated_threads": self.updated_threads,
             "generated_at": self.generated_at,
@@ -69,14 +71,28 @@ def find_stale_runtime_state(
     *,
     session_limit: int = 1000,
     thread_limit: int = 1000,
-) -> tuple[list[SessionCleanupCandidate], list[ThreadCleanupCandidate]]:
+    include_taskless_sessions: bool = False,
+) -> tuple[list[SessionCleanupCandidate], list[ThreadCleanupCandidate], int]:
     """Collect conservative cleanup candidates for stale sessions/threads."""
     session_limit = _validate_limit("session_limit", session_limit)
     thread_limit = _validate_limit("thread_limit", thread_limit)
 
     session_candidates: list[SessionCleanupCandidate] = []
+    skipped_taskless_sessions = 0
     for session in db.list_sessions(state=SessionState.open.value, limit=session_limit):
         if not session.task_id:
+            if include_taskless_sessions:
+                session_candidates.append(
+                    SessionCleanupCandidate(
+                        session_id=session.session_id,
+                        task_id=None,
+                        from_state=SessionState.open.value,
+                        to_state=SessionState.closed.value,
+                        reason="taskless_session",
+                    )
+                )
+            else:
+                skipped_taskless_sessions += 1
             continue
         task = db.get_task(session.task_id)
         if task is None:
@@ -128,7 +144,7 @@ def find_stale_runtime_state(
                 )
             )
 
-    return session_candidates, thread_candidates
+    return session_candidates, thread_candidates, skipped_taskless_sessions
 
 
 def cleanup_stale_runtime_state(
@@ -138,16 +154,18 @@ def cleanup_stale_runtime_state(
     create_backup: bool = True,
     session_limit: int = 1000,
     thread_limit: int = 1000,
+    include_taskless_sessions: bool = False,
 ) -> RuntimeCleanupReport:
     """Close stale open sessions and reconcile stale thread statuses.
 
     Dry-run by default. Only sessions linked to missing or terminal tasks are touched.
     Task-less open sessions are ignored deliberately because they can be operator-owned.
     """
-    sessions, threads = find_stale_runtime_state(
+    sessions, threads, skipped_taskless_sessions = find_stale_runtime_state(
         db,
         session_limit=session_limit,
         thread_limit=thread_limit,
+        include_taskless_sessions=include_taskless_sessions,
     )
 
     backup_path: str | None = None
@@ -186,6 +204,7 @@ def cleanup_stale_runtime_state(
         backup_path=backup_path,
         sessions=sessions,
         threads=threads,
+        skipped_taskless_sessions=skipped_taskless_sessions,
         updated_sessions=updated_sessions,
         updated_threads=updated_threads,
         generated_at=strftime("%Y-%m-%dT%H:%M:%SZ", gmtime()),

@@ -10,11 +10,25 @@ DRY_RUN="${2:-}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 WORKERS=("claude-work" "codex-work" "gemini-work")
+SESSION_WORKERS=()
+REVIEW_WORKERS=()
+
+for src_env in "${PROJECT_ROOT}"/deploy/mesh-session-*.env; do
+    [ -f "$src_env" ] || continue
+    SESSION_WORKERS+=("$(basename "$src_env" .env)")
+done
+
+for src_env in "${PROJECT_ROOT}"/deploy/mesh-review-*.env; do
+    [ -f "$src_env" ] || continue
+    REVIEW_WORKERS+=("$(basename "$src_env" .env)")
+done
 
 if [[ "$DRY_RUN" == "--dry-run" ]]; then
-    echo "[DRY-RUN] Would deploy ${#WORKERS[@]} workers locally"
+    echo "[DRY-RUN] Would deploy ${#WORKERS[@]} batch, ${#SESSION_WORKERS[@]} session, ${#REVIEW_WORKERS[@]} review workers locally"
     echo "[DRY-RUN] Token: ${TOKEN:0:8}..."
-    echo "[DRY-RUN] Workers: ${WORKERS[*]}"
+    echo "[DRY-RUN] Batch workers: ${WORKERS[*]}"
+    echo "[DRY-RUN] Session workers: ${SESSION_WORKERS[*]:-(none)}"
+    echo "[DRY-RUN] Review workers: ${REVIEW_WORKERS[*]:-(none)}"
     echo "[DRY-RUN] Steps: mesh-worker user, copy code, venv, env files, systemd"
     exit 0
 fi
@@ -197,6 +211,14 @@ for worker in "${WORKERS[@]}"; do
     systemctl enable "mesh-worker@${worker}.service"
     echo "  enabled: mesh-worker@${worker}"
 done
+for worker in "${SESSION_WORKERS[@]}"; do
+    systemctl enable "mesh-session-worker@${worker}.service"
+    echo "  enabled: mesh-session-worker@${worker}"
+done
+for worker in "${REVIEW_WORKERS[@]}"; do
+    systemctl enable "mesh-review-worker@${worker}.service"
+    echo "  enabled: mesh-review-worker@${worker}"
+done
 echo "  systemd: OK"
 
 # 7. Start workers
@@ -204,6 +226,14 @@ echo "[7/7] Starting workers..."
 for worker in "${WORKERS[@]}"; do
     systemctl restart "mesh-worker@${worker}.service"
     echo "  started: mesh-worker@${worker}"
+done
+for worker in "${SESSION_WORKERS[@]}"; do
+    systemctl restart "mesh-session-worker@${worker}.service"
+    echo "  started: mesh-session-worker@${worker}"
+done
+for worker in "${REVIEW_WORKERS[@]}"; do
+    systemctl restart "mesh-review-worker@${worker}.service"
+    echo "  started: mesh-review-worker@${worker}"
 done
 
 sleep 3
@@ -220,10 +250,29 @@ for worker in "${WORKERS[@]}"; do
         ALL_OK=false
     fi
 done
+for worker in "${SESSION_WORKERS[@]}"; do
+    if systemctl is-active --quiet "mesh-session-worker@${worker}.service"; then
+        echo "  mesh-session-worker@${worker}: ACTIVE"
+    else
+        echo "  mesh-session-worker@${worker}: FAILED"
+        echo "    Check: journalctl -u mesh-session-worker@${worker} -n 20"
+        ALL_OK=false
+    fi
+done
+for worker in "${REVIEW_WORKERS[@]}"; do
+    if systemctl is-active --quiet "mesh-review-worker@${worker}.service"; then
+        echo "  mesh-review-worker@${worker}: ACTIVE"
+    else
+        echo "  mesh-review-worker@${worker}: FAILED"
+        echo "    Check: journalctl -u mesh-review-worker@${worker} -n 20"
+        ALL_OK=false
+    fi
+done
 
 echo ""
 if $ALL_OK; then
-    echo "=== All ${#WORKERS[@]} workers deployed and running ==="
+    total_workers=$((${#WORKERS[@]} + ${#SESSION_WORKERS[@]} + ${#REVIEW_WORKERS[@]}))
+    echo "=== All ${total_workers} workers deployed and running ==="
 else
     echo "=== Some workers failed to start — check logs above ==="
 fi

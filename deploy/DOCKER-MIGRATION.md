@@ -74,6 +74,13 @@ MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=/etc/mesh-router/mesh-matrix-bridge.docker.en
 MESH_MATRIX_BRIDGE_CONFIG_DIR=/etc/mesh-router/config
 ```
 
+`/etc/mesh-router/mesh-matrix-bridge.docker.env` should also define a sender
+allowlist for inbound room commands, for example:
+
+```bash
+MESH_MATRIX_ALLOWED_SENDERS=@sam:matrix.lan,@sam-android:matrix.lan
+```
+
 Poi usa sempre:
 
 ```bash

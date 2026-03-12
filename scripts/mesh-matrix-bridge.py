@@ -43,6 +43,7 @@ class BridgeConfig:
     poll_interval_s: float = 10.0
     matrix_boss_room: str | None = None
     matrix_command_prefix: str = "!mesh"
+    matrix_allowed_senders: frozenset[str] = field(default_factory=frozenset)
     matrix_verifier_id: str = "matrix-operator"
     input_patterns: list[re.Pattern[str]] = field(default_factory=list)
     request_timeout_s: float = 10.0
@@ -55,6 +56,13 @@ class BridgeConfig:
             if not val:
                 raise SystemExit(f"Missing required env var: {key}")
             return val
+
+        raw_allowed_senders = os.environ.get("MESH_MATRIX_ALLOWED_SENDERS", "")
+        allowed_senders = frozenset(
+            entry.strip()
+            for entry in raw_allowed_senders.replace("\n", ",").split(",")
+            if entry.strip()
+        )
 
         raw_patterns = os.environ.get(
             "MESH_MATRIX_INPUT_PATTERNS",
@@ -72,6 +80,7 @@ class BridgeConfig:
             poll_interval_s=float(os.environ.get("MESH_MATRIX_POLL_INTERVAL_S", "10")),
             matrix_boss_room=os.environ.get("MESH_MATRIX_BOSS_ROOM"),
             matrix_command_prefix=os.environ.get("MESH_MATRIX_COMMAND_PREFIX", "!mesh").strip() or "!mesh",
+            matrix_allowed_senders=allowed_senders,
             matrix_verifier_id=os.environ.get("MESH_MATRIX_VERIFIER_ID", "matrix-operator").strip() or "matrix-operator",
             input_patterns=[combined],
             request_timeout_s=float(os.environ.get("MESH_MATRIX_REQUEST_TIMEOUT_S", "10")),
@@ -683,6 +692,14 @@ class MatrixBridge:
                 rooms.add(room_id)
         return rooms
 
+    def _is_allowed_sender(self, sender: str) -> bool:
+        allowed = self.config.matrix_allowed_senders
+        if not allowed:
+            return False
+        if "*" in allowed:
+            return True
+        return sender in allowed
+
     def _seed_matrix_since(self) -> None:
         snapshot = self.matrix.sync(since=None, timeout_ms=0)
         if snapshot:
@@ -702,6 +719,14 @@ class MatrixBridge:
             for event in (((room_payload or {}).get("timeline") or {}).get("events") or []):
                 parsed = parse_matrix_command(event, self.config.matrix_command_prefix)
                 if parsed is None:
+                    continue
+                if not self._is_allowed_sender(parsed.sender):
+                    logger.warning(
+                        "Ignored matrix command from unauthorized sender room=%s sender=%s body=%s",
+                        room_id,
+                        parsed.sender,
+                        parsed.body,
+                    )
                     continue
                 commands.append(
                     MatrixCommand(

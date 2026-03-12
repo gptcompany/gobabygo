@@ -41,11 +41,13 @@ Router DB cleanup:
 - repeatable conservative cleanup is now available via:
   - `python -m src.meshctl cleanup stale-state`
   - `python -m src.meshctl cleanup stale-state --apply`
+  - `python -m src.meshctl cleanup stale-state --include-taskless-sessions`
 - Docker bridge live config is now meant to live outside git via:
   - `/etc/mesh-router/compose.env`
   - `/etc/mesh-router/mesh-matrix-bridge.docker.env`
   - `/etc/mesh-router/config/`
   - use `./deploy/live-compose.sh ...` for rebuild/restart
+  - set `MESH_MATRIX_ALLOWED_SENDERS` there before enabling inbound room commands
 - WS shared worker/runtime config is now meant to live in `/etc/mesh-worker/common.env`
   with role defaults in `/etc/mesh-worker/mesh-worker.batch.common.env` and
   `/etc/mesh-worker/mesh-session.common.env`, leaving only per-instance deltas

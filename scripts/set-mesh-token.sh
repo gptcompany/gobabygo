@@ -222,17 +222,28 @@ done
 
 sudo systemctl daemon-reload
 
-# Session workers (primary)
-for inst in mesh-session-claude-work mesh-session-codex-work mesh-session-codex-review; do
-  if [[ -f "/etc/mesh-worker/${inst}.env" ]]; then
-    sudo systemctl restart "mesh-session-worker@${inst}" || true
-  fi
+declare -a units=()
+for f in "${files[@]}"; do
+  name="$(basename "$f" .env)"
+  case "$name" in
+    common|*.common)
+      continue
+      ;;
+    mesh-session-*)
+      units+=("mesh-session-worker@${name}")
+      ;;
+    mesh-review-*)
+      units+=("mesh-review-worker@${name}")
+      ;;
+    *)
+      units+=("mesh-worker@${name}")
+      ;;
+  esac
 done
 
-# Review worker (if deployed)
-if [[ -f "/etc/mesh-worker/mesh-review-codex.env" ]]; then
-  sudo systemctl restart mesh-review-worker@mesh-review-codex || true
-fi
+for unit in "${units[@]}"; do
+  sudo systemctl restart "$unit" || true
+done
 
 echo "Worker env files updated and services restarted."
 REMOTE_WORKER

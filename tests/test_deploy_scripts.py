@@ -118,6 +118,8 @@ class TestSystemdUnits:
     def test_deploy_worker_installs_review_worker_template(self):
         content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
         assert "mesh-review-worker@.service" in content
+        assert 'mesh-session-worker@${worker}.service' in content
+        assert 'mesh-review-worker@${worker}.service' in content
 
     def test_install_worker_strips_batch_template_prefix(self):
         content = (DEPLOY_DIR / "install.sh").read_text()
@@ -240,6 +242,10 @@ class TestEnvironmentFiles:
         assert "MESH_MATRIX_BRIDGE_CONFIG_DIR=" in content
         assert "MESH_ROUTER_BIND_HOST=" in content
 
+    def test_matrix_bridge_env_example_documents_sender_allowlist(self):
+        content = (DEPLOY_DIR / "mesh-matrix-bridge.docker.env").read_text()
+        assert "MESH_MATRIX_ALLOWED_SENDERS=" in content
+
 
 class TestDockerComposeConfig:
     def test_compose_uses_overrideable_bridge_env_file(self):
@@ -273,6 +279,13 @@ class TestOperatorEnvFallbacks:
         content = (REPO_ROOT / "scripts" / "iterm-mesh-shell.sh").read_text()
         assert 'WORKER_COMMON_ENV="/etc/mesh-worker/common.env"' in content
         assert "set -a" in content
+
+    def test_set_mesh_token_restarts_all_worker_families(self):
+        content = (REPO_ROOT / "scripts" / "set-mesh-token.sh").read_text()
+        assert 'case "$name" in' in content
+        assert 'mesh-session-worker@${name}' in content
+        assert 'mesh-review-worker@${name}' in content
+        assert 'mesh-worker@${name}' in content
 
 
 class TestBootOrderDoc:

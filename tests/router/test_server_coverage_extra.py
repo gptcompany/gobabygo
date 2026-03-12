@@ -133,6 +133,31 @@ class TestServerCoverageExtra:
         assert body["status"] == "dry_run"
         assert body["updated_sessions"] == 0
         assert body["sessions"][0]["session_id"] == "s1"
+        assert body["skipped_taskless_sessions"] == 0
+
+    def test_handle_cleanup_stale_state_can_include_taskless_sessions(self, server_url):
+        requests.post(f"{server_url}/register", json={
+            "worker_id": "w1",
+            "machine": "m1",
+            "cli_type": "claude",
+            "account_profile": "default",
+        })
+        requests.post(f"{server_url}/sessions/open", json={
+            "session_id": "s-taskless",
+            "worker_id": "w1",
+            "cli_type": "claude",
+        })
+
+        resp = requests.post(
+            f"{server_url}/admin/cleanup-stale-state",
+            json={"apply": False, "include_taskless_sessions": True},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sessions"][0]["session_id"] == "s-taskless"
+        assert body["sessions"][0]["reason"] == "taskless_session"
+        assert body["skipped_taskless_sessions"] == 0
 
     def test_handle_cleanup_stale_state_invalid_limit(self, server_url):
         resp = requests.post(
