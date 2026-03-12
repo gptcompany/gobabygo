@@ -10,6 +10,7 @@ User=mesh-worker
 Group=mesh
 SupplementaryGroups=sam
 WorkingDirectory=/opt/mesh-worker
+EnvironmentFile=-/etc/mesh-worker/mesh-session.common.env
 EnvironmentFile=/etc/mesh-worker/%i.env
 EnvironmentFile=-/etc/mesh-worker/common.env
 ExecStart=/opt/mesh-worker/venv/bin/python -m src.router.session_worker

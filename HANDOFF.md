@@ -47,8 +47,11 @@ Router DB cleanup:
   - `/etc/mesh-router/config/`
   - use `./deploy/live-compose.sh ...` for rebuild/restart
 - WS shared worker/runtime config is now meant to live in `/etc/mesh-worker/common.env`
-  with only per-instance deltas left in `/etc/mesh-worker/*.env`
-- checked-in worker env templates now omit shared router/token/allowed-root keys to reduce reintroduced drift
+  with role defaults in `/etc/mesh-worker/mesh-worker.batch.common.env` and
+  `/etc/mesh-worker/mesh-session.common.env`, leaving only per-instance deltas
+  in `/etc/mesh-worker/*.env`
+- checked-in worker env templates now omit shared router/token/allowed-root keys
+  and repeated batch/session defaults to reduce reintroduced drift
 
 ## Current live state
 

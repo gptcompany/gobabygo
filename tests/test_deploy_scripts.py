@@ -89,20 +89,35 @@ class TestSystemdUnits:
         content = (DEPLOY_DIR / unit_name).read_text()
         assert "EnvironmentFile=-/etc/mesh-worker/common.env" in content
 
+    def test_worker_template_loads_batch_defaults_before_instance_env(self):
+        content = (DEPLOY_DIR / "mesh-worker@.service").read_text()
+        assert "EnvironmentFile=-/etc/mesh-worker/mesh-worker.batch.common.env" in content
+        assert content.index("mesh-worker.batch.common.env") < content.index("/etc/mesh-worker/%i.env")
+
+    def test_session_template_loads_session_defaults_before_instance_env(self):
+        content = (DEPLOY_DIR / "mesh-session-worker@.service").read_text()
+        assert "EnvironmentFile=-/etc/mesh-worker/mesh-session.common.env" in content
+        assert content.index("mesh-session.common.env") < content.index("/etc/mesh-worker/%i.env")
+
     def test_deploy_workers_normalizes_shared_task_root(self):
         content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
         assert 'local task_root="/tmp/mesh-tasks"' in content
         assert "mesh-worker:sam" in content
         assert 'chmod 2775 "$task_root"' in content
         assert 'find "$task_root" -type d -exec chmod 2775 {} +' in content
-        assert 'install_common_worker_env "${PROJECT_ROOT}/deploy/mesh-worker.common.env"' in content
+        assert '"${PROJECT_ROOT}"/deploy/*.common.env' in content
 
     def test_install_worker_normalizes_shared_task_root(self):
         content = (DEPLOY_DIR / "install.sh").read_text()
         assert 'local task_root="/tmp/mesh-tasks"' in content
         assert "mesh-worker:sam" in content
         assert 'chmod 2775 "$task_root"' in content
-        assert 'install_worker_common_env deploy/mesh-worker.common.env' in content
+        assert 'for common_env in deploy/*.common.env; do' in content
+        assert "mesh-review-worker@.service" in content
+
+    def test_deploy_worker_installs_review_worker_template(self):
+        content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
+        assert "mesh-review-worker@.service" in content
 
 
 class TestEnvironmentFiles:
@@ -150,6 +165,28 @@ class TestEnvironmentFiles:
         assert "MESH_AUTH_TOKEN=__REPLACE_WITH_TOKEN__" in content
         assert "MESH_ALLOWED_WORK_DIRS=" in content
 
+    def test_batch_common_env_exists(self):
+        path = DEPLOY_DIR / "mesh-worker.batch.common.env"
+        assert path.exists()
+
+    def test_batch_common_env_has_shared_batch_defaults(self):
+        content = (DEPLOY_DIR / "mesh-worker.batch.common.env").read_text()
+        assert "MESH_LONGPOLL_TIMEOUT_S=25" in content
+        assert "MESH_DRY_RUN=1" in content
+        assert "MESH_WORK_DIR=/tmp/mesh-tasks" in content
+        assert "MESH_TASK_TIMEOUT_S=1800" in content
+
+    def test_session_common_env_exists(self):
+        path = DEPLOY_DIR / "mesh-session.common.env"
+        assert path.exists()
+
+    def test_session_common_env_has_shared_session_defaults(self):
+        content = (DEPLOY_DIR / "mesh-session.common.env").read_text()
+        assert "MESH_HEARTBEAT_TIMEOUT_S=5" in content
+        assert "MESH_EXECUTION_MODES=session" in content
+        assert "MESH_WORK_DIR=/tmp/mesh-tasks" in content
+        assert "MESH_AUTO_COMPLETE_ON_EXIT=1" in content
+
     @pytest.mark.parametrize("session_env", [
         "mesh-session-claude-work.env",
         "mesh-session-codex-work.env",
@@ -167,7 +204,7 @@ class TestEnvironmentFiles:
     def test_session_worker_env_omits_shared_router_fields(self, session_env):
         content = (DEPLOY_DIR / session_env).read_text()
         assert "MESH_WORKER_ID" in content
-        assert "MESH_EXECUTION_MODES=session" in content
+        assert "MESH_EXECUTION_MODES=session" not in content
         assert "MESH_ROUTER_URL" not in content
         assert "MESH_AUTH_TOKEN" not in content
         assert "MESH_ALLOWED_WORK_DIRS" not in content

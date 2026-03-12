@@ -24,7 +24,7 @@ normalize_task_root() {
 
 install_worker_common_env() {
     local src="$1"
-    local dst="/etc/mesh-worker/common.env"
+    local dst="/etc/mesh-worker/$(basename "$src")"
 
     sudo cp "$src" "$dst"
     if getent group sam >/dev/null 2>&1; then
@@ -118,12 +118,15 @@ case "$MODE" in
     fi
 
     # 5. Copy env file templates (owned by service user)
-    install_worker_common_env deploy/mesh-worker.common.env
+    for common_env in deploy/*.common.env; do
+      [ -e "$common_env" ] || continue
+      install_worker_common_env "$common_env"
+    done
 
-    # Includes batch (`mesh-worker-*`) and interactive session (`mesh-session-*`) templates.
-    for env_file in deploy/mesh-*.env; do
+    # Includes batch (`mesh-worker-*`), interactive session (`mesh-session-*`),
+    # and review (`mesh-review-*`) templates.
+    for env_file in deploy/mesh-worker-*.env deploy/mesh-session-*.env deploy/mesh-review-*.env; do
       [ -e "$env_file" ] || continue
-      [[ "$(basename "$env_file")" == "mesh-worker.common.env" ]] && continue
       name=$(basename "$env_file" .env)
       sudo cp "$env_file" "/etc/mesh-worker/${name}.env"
       sudo chown mesh-worker "/etc/mesh-worker/${name}.env"
@@ -135,6 +138,9 @@ case "$MODE" in
     sudo cp deploy/mesh-worker@.service /etc/systemd/system/
     if [ -f deploy/mesh-session-worker@.service ]; then
       sudo cp deploy/mesh-session-worker@.service /etc/systemd/system/
+    fi
+    if [ -f deploy/mesh-review-worker@.service ]; then
+      sudo cp deploy/mesh-review-worker@.service /etc/systemd/system/
     fi
     sudo systemctl daemon-reload
 

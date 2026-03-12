@@ -340,10 +340,13 @@ Docker live config note:
 WS worker runtime config note:
 
 - shared WS worker values now belong in `/etc/mesh-worker/common.env`
+- batch worker defaults belong in `/etc/mesh-worker/mesh-worker.batch.common.env`
+- session worker defaults belong in `/etc/mesh-worker/mesh-session.common.env`
 - keep only per-instance values in `/etc/mesh-worker/<instance>.env`
-- service units load `common.env` after the instance env, so shared live values override stale per-instance copies
+- service units load role-specific `*.common.env` before the instance env, then `common.env` after it,
+  so shared live values still override stale per-instance copies
 - `mesh`, `mesh ui`, and `mesh attach` now treat `/etc/mesh-worker/common.env` as the primary WS fallback before scanning per-worker env files
-- checked-in `deploy/mesh-*.env` templates intentionally omit shared router/token/allowed-root keys now
+- checked-in `deploy/mesh-*.env` templates intentionally omit shared router/token/allowed-root keys and repeated batch/session defaults now
 
 Resolution is router-backed and repo-room-aware; in a mapped repo room the bridge only resolves review tasks and open sessions for that repo.
 

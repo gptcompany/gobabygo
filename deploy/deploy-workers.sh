@@ -42,7 +42,7 @@ normalize_task_root() {
 
 install_common_worker_env() {
     local src="$1"
-    local dst="/etc/mesh-worker/common.env"
+    local dst="/etc/mesh-worker/$(basename "$src")"
 
     sed "s/__REPLACE_WITH_TOKEN__/${TOKEN}/" "$src" > "$dst"
     if getent group sam >/dev/null 2>&1; then
@@ -139,8 +139,11 @@ echo "  venv + deps: OK"
 
 # 5. Copy env files with real token
 echo "[5/7] Configuring env files..."
-install_common_worker_env "${PROJECT_ROOT}/deploy/mesh-worker.common.env"
-echo "  common.env: OK"
+for common_env in "${PROJECT_ROOT}"/deploy/*.common.env; do
+    [ -f "$common_env" ] || continue
+    install_common_worker_env "$common_env"
+    echo "  $(basename "$common_env"): OK"
+done
 
 for worker in "${WORKERS[@]}"; do
     SRC_ENV="${PROJECT_ROOT}/deploy/mesh-worker-${worker}.env"
@@ -168,11 +171,25 @@ for SRC_ENV in "${PROJECT_ROOT}"/deploy/mesh-session-*.env; do
     echo "  ${name}.env: OK (session template)"
 done
 
+# Optional review worker env templates.
+for SRC_ENV in "${PROJECT_ROOT}"/deploy/mesh-review-*.env; do
+    [ -f "$SRC_ENV" ] || continue
+    name="$(basename "$SRC_ENV" .env)"
+    DST_ENV="/etc/mesh-worker/${name}.env"
+    sed "s/__REPLACE_WITH_TOKEN__/${TOKEN}/" "$SRC_ENV" > "$DST_ENV"
+    chown mesh-worker:mesh-worker "$DST_ENV"
+    chmod 600 "$DST_ENV"
+    echo "  ${name}.env: OK (review template)"
+done
+
 # 6. Install systemd template unit
 echo "[6/7] Installing systemd service..."
 cp "${PROJECT_ROOT}/deploy/mesh-worker@.service" /etc/systemd/system/mesh-worker@.service
 if [ -f "${PROJECT_ROOT}/deploy/mesh-session-worker@.service" ]; then
     cp "${PROJECT_ROOT}/deploy/mesh-session-worker@.service" /etc/systemd/system/mesh-session-worker@.service
+fi
+if [ -f "${PROJECT_ROOT}/deploy/mesh-review-worker@.service" ]; then
+    cp "${PROJECT_ROOT}/deploy/mesh-review-worker@.service" /etc/systemd/system/mesh-review-worker@.service
 fi
 systemctl daemon-reload
 

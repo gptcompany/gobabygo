@@ -311,12 +311,16 @@ Override/disable:
 Recommended WS runtime split:
 
 - shared values in `/etc/mesh-worker/common.env`
+- batch defaults in `/etc/mesh-worker/mesh-worker.batch.common.env`
+- interactive session defaults in `/etc/mesh-worker/mesh-session.common.env`
 - instance-specific values in `/etc/mesh-worker/<instance>.env`
-- service units load `common.env` after the instance env, so shared live overrides win for:
+- service units load role-specific `*.common.env` before the instance env and `common.env` after it
+- shared live overrides still win for:
   - `MESH_ROUTER_URL`
   - `MESH_AUTH_TOKEN`
   - `MESH_ALLOWED_WORK_DIRS`
-- the checked-in `deploy/mesh-*.env` templates now intentionally omit those shared keys
+- the checked-in `deploy/mesh-*.env` templates now intentionally omit both the shared router keys
+  and the repeated batch/session defaults
 
 Examples:
 
