@@ -450,6 +450,8 @@ def build_trace_id(
 class TriggerDetector:
     """Detect notification triggers from router state changes."""
 
+    ACTIVE_SESSION_TASK_STATUSES = frozenset({"assigned", "running", "review", "blocked"})
+
     def __init__(
         self,
         config: BridgeConfig,
@@ -470,13 +472,27 @@ class TriggerDetector:
             for t in all_tasks
             if t.get("task_id")
         }
+        task_status_map = {
+            t.get("task_id"): t.get("status")
+            for t in all_tasks
+            if t.get("task_id")
+        }
 
         # --- Session messages: detect input_requested ---
         sessions = self._router.get_sessions(state="open")
-        current_open = {s["session_id"] for s in sessions}
-        session_map = {s["session_id"]: s for s in sessions}
-
+        active_sessions = []
         for session in sessions:
+            task_id = session.get("task_id")
+            if not task_id:
+                continue
+            if task_status_map.get(task_id) not in self.ACTIVE_SESSION_TASK_STATUSES:
+                continue
+            active_sessions.append(session)
+
+        current_open = {s["session_id"] for s in active_sessions}
+        session_map = {s["session_id"]: s for s in active_sessions}
+
+        for session in active_sessions:
             sid = session["session_id"]
             last_seq = self._state.session_seqs.get(sid, 0)
             messages = self._router.get_session_messages(sid, after_seq=last_seq)

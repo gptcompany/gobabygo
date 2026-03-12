@@ -254,6 +254,7 @@ class TestTriggerDetectorInputRequested:
         self.router = MagicMock(spec=RouterClient)
         self.state = BridgeState()
         self.detector = TriggerDetector(self.config, self.router, self.state)
+        self.active_tasks = [make_task(task_id="task-001", status="running")]
 
     def test_detects_input_pattern_in_outbound_message(self):
         session = make_session()
@@ -261,7 +262,7 @@ class TestTriggerDetectorInputRequested:
         self.router.get_session_messages.return_value = [
             make_message(1, "Please approve the deployment (y/n)"),
         ]
-        self.router.get_tasks.return_value = []
+        self.router.get_tasks.return_value = self.active_tasks
         self.router.get_threads.return_value = []
 
         notifications = self.detector.poll()
@@ -275,7 +276,7 @@ class TestTriggerDetectorInputRequested:
         self.router.get_session_messages.return_value = [
             make_message(1, "approve this", direction="in"),
         ]
-        self.router.get_tasks.return_value = []
+        self.router.get_tasks.return_value = self.active_tasks
         self.router.get_threads.return_value = []
 
         notifications = self.detector.poll()
@@ -289,7 +290,7 @@ class TestTriggerDetectorInputRequested:
         self.router.get_session_messages.return_value = [
             make_message(6, "continue?"),
         ]
-        self.router.get_tasks.return_value = []
+        self.router.get_tasks.return_value = self.active_tasks
         self.router.get_threads.return_value = []
 
         notifications = self.detector.poll()
@@ -303,7 +304,7 @@ class TestTriggerDetectorInputRequested:
         self.router.get_session_messages.return_value = [
             make_message(1, "approve this?"),
         ]
-        self.router.get_tasks.return_value = []
+        self.router.get_tasks.return_value = self.active_tasks
         self.router.get_threads.return_value = []
 
         self.detector.poll()
@@ -316,7 +317,7 @@ class TestTriggerDetectorInputRequested:
     def test_suppresses_repeated_prompts_until_operator_input(self):
         session = make_session()
         self.router.get_sessions.return_value = [session]
-        self.router.get_tasks.return_value = []
+        self.router.get_tasks.return_value = self.active_tasks
         self.router.get_threads.return_value = []
 
         self.router.get_session_messages.return_value = [
@@ -339,7 +340,7 @@ class TestTriggerDetectorInputRequested:
     def test_retriggers_after_operator_input(self):
         session = make_session()
         self.router.get_sessions.return_value = [session]
-        self.router.get_tasks.return_value = []
+        self.router.get_tasks.return_value = self.active_tasks
         self.router.get_threads.return_value = []
 
         self.router.get_session_messages.return_value = [
@@ -365,7 +366,7 @@ class TestTriggerDetectorInputRequested:
     def test_clears_pending_input_when_session_closes(self):
         session = make_session()
         self.router.get_sessions.return_value = [session]
-        self.router.get_tasks.return_value = []
+        self.router.get_tasks.return_value = self.active_tasks
         self.router.get_threads.return_value = []
         self.router.get_session_messages.return_value = [
             make_message(1, "approve this?"),
@@ -383,15 +384,39 @@ class TestTriggerDetectorInputRequested:
     def test_no_match_for_normal_output(self):
         session = make_session()
         self.router.get_sessions.return_value = [session]
-        self.router.get_session_messages.return_value = [
-            make_message(1, "Compiling src/main.rs... done."),
-        ]
-        self.router.get_tasks.return_value = []
+        self.router.get_session_messages.return_value = [make_message(1, "Compiling src/main.rs... done.")]
+        self.router.get_tasks.return_value = [make_task(task_id="task-001", status="running")]
         self.router.get_threads.return_value = []
 
         notifications = self.detector.poll()
         input_notifs = [n for n in notifications if n["trigger"] == "input_requested"]
         assert len(input_notifs) == 0
+
+    def test_ignores_open_session_with_terminal_task(self):
+        session = make_session()
+        self.router.get_sessions.return_value = [session]
+        self.router.get_session_messages.return_value = [make_message(1, "approve this?")]
+        self.router.get_tasks.side_effect = lambda status=None: (
+            [] if status == "review" else [make_task(task_id="task-001", status="failed")]
+        )
+        self.router.get_threads.return_value = []
+
+        notifications = self.detector.poll()
+
+        assert notifications == []
+        self.router.get_session_messages.assert_not_called()
+
+    def test_ignores_open_session_without_task(self):
+        session = make_session(task_id=None)
+        self.router.get_sessions.return_value = [session]
+        self.router.get_session_messages.return_value = [make_message(1, "approve this?")]
+        self.router.get_tasks.return_value = []
+        self.router.get_threads.return_value = []
+
+        notifications = self.detector.poll()
+
+        assert notifications == []
+        self.router.get_session_messages.assert_not_called()
 
 
 # ===========================================================================
@@ -565,7 +590,9 @@ class TestBridgeRunOnce:
         bridge.router.get_session_messages.return_value = [
             make_message(1, "Do you approve? (y/n)"),
         ]
-        bridge.router.get_tasks.return_value = []
+        bridge.router.get_tasks.side_effect = lambda status=None: (
+            [] if status == "review" else [make_task(task_id="task-001", status="running", repo=None)]
+        )
         bridge.router.get_threads.return_value = []
 
         sent = bridge.run_once()
@@ -587,7 +614,7 @@ class TestBridgeRunOnce:
         bridge.router.get_sessions.return_value = [session]
         bridge.router.get_session_messages.return_value = [make_message(1, "Do you approve? (y/n)")]
         bridge.router.get_tasks.side_effect = lambda status=None: (
-            [] if status == "review" else [make_task(task_id="task-001", repo="rektslug", status="queued")]
+            [] if status == "review" else [make_task(task_id="task-001", repo="rektslug", status="running")]
         )
         bridge.router.get_threads.return_value = []
 
