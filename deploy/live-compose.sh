@@ -14,4 +14,4 @@ fi
 
 echo "[warn] compose env file not found: $ENV_FILE" >&2
 echo "[warn] falling back to current shell environment" >&2
-exec docker compose -f "$SCRIPT_DIR/compose.yml" "$@"
+exec env COMPOSE_DISABLE_ENV_FILE=1 docker compose -f "$SCRIPT_DIR/compose.yml" "$@"

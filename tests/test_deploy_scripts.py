@@ -125,6 +125,11 @@ class TestSystemdUnits:
         content = (DEPLOY_DIR / "install.sh").read_text()
         assert 'name="${name#mesh-worker-}"' in content
 
+    def test_install_worker_enables_session_and_review_instances(self):
+        content = (DEPLOY_DIR / "install.sh").read_text()
+        assert 'enable_worker_instances "mesh-session-" "mesh-session-worker"' in content
+        assert 'enable_worker_instances "mesh-review-" "mesh-review-worker"' in content
+
 
 class TestEnvironmentFiles:
     """Validate environment file templates."""
@@ -264,6 +269,7 @@ class TestDockerComposeConfig:
         assert "/etc/mesh-router/compose.env" in content
         assert "docker compose --env-file" in content
         assert "compose env file is not readable" in content
+        assert "COMPOSE_DISABLE_ENV_FILE=1" in content
 
     def test_live_compose_script_is_executable(self):
         script_path = DEPLOY_DIR / "live-compose.sh"

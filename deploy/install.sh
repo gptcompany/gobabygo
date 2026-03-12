@@ -52,6 +52,24 @@ install_worker_instance_env() {
     sudo chmod 600 "/etc/mesh-worker/${name}.env"
 }
 
+enable_worker_instances() {
+    local prefix="$1"
+    local unit="$2"
+    local env_path
+    local name
+
+    for env_path in /etc/mesh-worker/${prefix}*.env; do
+      [ -e "$env_path" ] || continue
+      name="$(basename "$env_path" .env)"
+      case "$prefix" in
+        mesh-worker-)
+          name="${name#mesh-worker-}"
+          ;;
+      esac
+      sudo systemctl enable "${unit}@${name}.service"
+    done
+}
+
 case "$MODE" in
   router)
     echo "=== Installing Mesh Router (VPS) ==="
@@ -158,9 +176,11 @@ case "$MODE" in
     sudo systemctl daemon-reload
 
     # Enable known worker instances
-    sudo systemctl enable mesh-worker@claude-work.service
-    sudo systemctl enable mesh-worker@codex-work.service
-    sudo systemctl enable mesh-worker@gemini-work.service
+    enable_worker_instances "claude-work" "mesh-worker"
+    enable_worker_instances "codex-work" "mesh-worker"
+    enable_worker_instances "gemini-work" "mesh-worker"
+    enable_worker_instances "mesh-session-" "mesh-session-worker"
+    enable_worker_instances "mesh-review-" "mesh-review-worker"
 
     echo "=== Workers installed. Start batch with: sudo systemctl start mesh-worker@claude-work ==="
     echo "=== Interactive session workers available: mesh-session-worker@mesh-session-claude-work ==="
