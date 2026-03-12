@@ -115,6 +115,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         except _CLIENT_DISCONNECT_ERRORS:
             logger.info("Client disconnected during GET %s", self.path)
         except Exception as e:
+            logger.exception("Unhandled GET %s", self.path)
             self._send_json(500, {"error": "internal_error", "details": str(e)})
 
     def do_POST(self) -> None:
@@ -182,6 +183,7 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         except _CLIENT_DISCONNECT_ERRORS:
             logger.info("Client disconnected during POST %s", self.path)
         except Exception as e:
+            logger.exception("Unhandled POST %s", self.path)
             self._send_json(500, {"error": "internal_error", "details": str(e)})
 
     # --- Endpoint implementations ---

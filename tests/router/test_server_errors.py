@@ -39,14 +39,16 @@ def mock_server_url():
     server.shutdown()
 
 
-def test_server_500_on_db_error_get(mock_server_url):
+def test_server_500_on_db_error_get(mock_server_url, caplog):
     """Test that a DB error during a GET request returns a 500 error."""
     resp = requests.get(f"{mock_server_url}/workers/w1")
     assert resp.status_code == 500
     assert "Simulated DB error" in resp.text
+    assert "Unhandled GET /workers/w1" in caplog.text
 
-def test_server_500_on_db_error_post(mock_server_url):
+def test_server_500_on_db_error_post(mock_server_url, caplog):
     """Test that a DB error during a POST request returns a 500 error."""
     resp = requests.post(f"{mock_server_url}/tasks", json={"title": "test", "phase": "implement"})
     assert resp.status_code == 500
     assert "Simulated DB error" in resp.text
+    assert "Unhandled POST /tasks" in caplog.text
