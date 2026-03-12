@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
+import time
 import uuid
 
 import pytest
@@ -422,6 +424,47 @@ def test_transaction_rollback(db: RouterDB, sample_task: Task, sample_worker: Wo
     assert task is not None
     assert task.status == TaskStatus.queued
     assert db.get_active_lease(sample_task.task_id) is None
+
+
+def test_transaction_serializes_cross_thread_writes(tmp_path) -> None:
+    db = RouterDB(str(tmp_path / "router.db"), check_same_thread=False)
+    db.init_schema()
+    entered = threading.Event()
+    release = threading.Event()
+    errors: list[Exception] = []
+    completed: list[str] = []
+
+    def worker(name: str, gate: threading.Event | None = None) -> None:
+        try:
+            if gate is not None:
+                gate.wait(timeout=2)
+            with db.transaction() as conn:
+                if name == "t1":
+                    entered.set()
+                    release.wait(timeout=2)
+                conn.execute(
+                    "INSERT INTO workers (worker_id, machine, cli_type, account_profile, capabilities, execution_modes, role, status, last_heartbeat, idle_since, stale_since, concurrency) "
+                    "VALUES (?, '', 'claude', 'default', '[]', '[\"batch\"]', 'worker', 'idle', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00', NULL, 1)",
+                    (name,),
+                )
+            completed.append(name)
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    t1 = threading.Thread(target=worker, args=("t1",))
+    t2 = threading.Thread(target=worker, args=("t2", entered))
+    t1.start()
+    entered.wait(timeout=2)
+    t2.start()
+    time.sleep(0.1)
+    release.set()
+    t1.join(timeout=2)
+    t2.join(timeout=2)
+
+    assert errors == []
+    assert completed == ["t1", "t2"]
+    workers = {w.worker_id for w in db.list_workers()}
+    assert workers == {"t1", "t2"}
 
 
 def test_insert_notification_ledger_once_duplicate_does_not_leave_open_transaction(db: RouterDB) -> None:

@@ -368,13 +368,28 @@ class RouterDB:
         preventing concurrent writers from interleaving.
         Commits on success, rolls back on exception.
         """
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield self._conn
-            self._conn.execute("COMMIT")
-        except Exception:
-            self._conn.execute("ROLLBACK")
-            raise
+        with self._lock:
+            last_err: sqlite3.OperationalError | None = None
+            for attempt in range(_BUSY_RETRIES):
+                try:
+                    self._conn.execute("BEGIN IMMEDIATE")
+                    break
+                except sqlite3.OperationalError as exc:
+                    if "database is locked" in str(exc) or "SQLITE_BUSY" in str(exc):
+                        last_err = exc
+                        time.sleep(_BUSY_BACKOFFS_MS[attempt] / 1000.0)
+                        continue
+                    raise
+            else:
+                raise last_err  # type: ignore[misc]
+
+            try:
+                yield self._conn
+                self._conn.execute("COMMIT")
+            except Exception:
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
 
     # -- Tasks --
 
