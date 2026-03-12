@@ -119,6 +119,10 @@ class TestSystemdUnits:
         content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
         assert "mesh-review-worker@.service" in content
 
+    def test_install_worker_strips_batch_template_prefix(self):
+        content = (DEPLOY_DIR / "install.sh").read_text()
+        assert 'name="${name#mesh-worker-}"' in content
+
 
 class TestEnvironmentFiles:
     """Validate environment file templates."""

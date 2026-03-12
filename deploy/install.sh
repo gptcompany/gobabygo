@@ -36,6 +36,22 @@ install_worker_common_env() {
     fi
 }
 
+install_worker_instance_env() {
+    local src="$1"
+    local name
+
+    name="$(basename "$src" .env)"
+    case "$name" in
+      mesh-worker-*)
+        name="${name#mesh-worker-}"
+        ;;
+    esac
+
+    sudo cp "$src" "/etc/mesh-worker/${name}.env"
+    sudo chown mesh-worker "/etc/mesh-worker/${name}.env"
+    sudo chmod 600 "/etc/mesh-worker/${name}.env"
+}
+
 case "$MODE" in
   router)
     echo "=== Installing Mesh Router (VPS) ==="
@@ -127,10 +143,7 @@ case "$MODE" in
     # and review (`mesh-review-*`) templates.
     for env_file in deploy/mesh-worker-*.env deploy/mesh-session-*.env deploy/mesh-review-*.env; do
       [ -e "$env_file" ] || continue
-      name=$(basename "$env_file" .env)
-      sudo cp "$env_file" "/etc/mesh-worker/${name}.env"
-      sudo chown mesh-worker "/etc/mesh-worker/${name}.env"
-      sudo chmod 600 "/etc/mesh-worker/${name}.env"
+      install_worker_instance_env "$env_file"
     done
     echo "!! Edit /etc/mesh-worker/common.env with real MESH_AUTH_TOKEN and MESH_ROUTER_URL"
 
