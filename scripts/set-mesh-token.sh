@@ -22,6 +22,7 @@ Options:
   --ws-host <ssh_host>           Worker host (default: sam@10.0.0.2)
   --router-url <url>             Router URL for local env (default: http://10.0.0.1:8780)
   --router-env-path <path>       Router env path (default: /etc/mesh-router/mesh-router.env)
+  --worker-common-env-path <path> Shared worker env path (default: /etc/mesh-worker/common.env)
   --local-env-path <path>        Local env file path (default: ~/.mesh/router.env)
   --skip-router                  Do not update/restart router env
   --skip-worker                  Do not update/restart worker envs
@@ -62,6 +63,7 @@ VPS_HOST="root@10.0.0.1"
 WS_HOST="sam@10.0.0.2"
 ROUTER_URL="http://10.0.0.1:8780"
 ROUTER_ENV_PATH="/etc/mesh-router/mesh-router.env"
+WORKER_COMMON_ENV_PATH="/etc/mesh-worker/common.env"
 LOCAL_ENV_PATH="${HOME}/.mesh/router.env"
 SKIP_ROUTER=0
 SKIP_WORKER=0
@@ -93,6 +95,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --router-env-path)
       ROUTER_ENV_PATH="${2:-}"
+      shift 2
+      ;;
+    --worker-common-env-path)
+      WORKER_COMMON_ENV_PATH="${2:-}"
       shift 2
       ;;
     --local-env-path)
@@ -182,22 +188,32 @@ fi
 
 if [[ "$SKIP_WORKER" -eq 0 ]]; then
   echo "[worker] ${WS_HOST}:/etc/mesh-worker/*.env"
-  ssh "$WS_HOST" bash -s -- "$TOKEN" "$DRY_RUN" <<'REMOTE_WORKER'
+  ssh "$WS_HOST" bash -s -- "$TOKEN" "$ROUTER_URL" "$WORKER_COMMON_ENV_PATH" "$DRY_RUN" <<'REMOTE_WORKER'
 set -euo pipefail
 token="$1"
-dry_run="$2"
+router_url="$2"
+common_env_path="$3"
+dry_run="$4"
 
 shopt -s nullglob
 files=(/etc/mesh-worker/*.env)
-if [[ ${#files[@]} -eq 0 ]]; then
+if [[ ${#files[@]} -eq 0 && ! -f "$common_env_path" ]]; then
   echo "No worker env files found under /etc/mesh-worker" >&2
   exit 1
 fi
 
 escaped="$(printf '%s' "$token" | sed 's/[\/&]/\\&/g')"
+escaped_url="$(printf '%s' "$router_url" | sed 's/[\/&]/\\&/g')"
 if [[ "$dry_run" == "1" ]]; then
-  echo "DRY-RUN: would update ${#files[@]} worker env files and restart services"
+  echo "DRY-RUN: would update worker envs/common env and restart services"
   exit 0
+fi
+
+if [[ -f "$common_env_path" ]]; then
+  sudo sed -i "s|^MESH_AUTH_TOKEN=.*|MESH_AUTH_TOKEN=$escaped|" "$common_env_path"
+  if grep -q '^MESH_ROUTER_URL=' "$common_env_path"; then
+    sudo sed -i "s|^MESH_ROUTER_URL=.*|MESH_ROUTER_URL=$escaped_url|" "$common_env_path"
+  fi
 fi
 
 for f in "${files[@]}"; do

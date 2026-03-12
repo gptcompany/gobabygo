@@ -46,6 +46,8 @@ Router DB cleanup:
   - `/etc/mesh-router/mesh-matrix-bridge.docker.env`
   - `/etc/mesh-router/config/`
   - use `./deploy/live-compose.sh ...` for rebuild/restart
+- WS shared worker/runtime config is now meant to live in `/etc/mesh-worker/common.env`
+  with only per-instance deltas left in `/etc/mesh-worker/*.env`
 
 ## Current live state
 

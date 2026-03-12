@@ -10,6 +10,7 @@ PIPELINE_TEMPLATE="${MESH_PIPELINE_TEMPLATE:-speckit}"
 MESH_UI_FORWARD_HOST="${MESH_UI_FORWARD_HOST-sam@192.168.1.112}"
 MESH_UI_FORWARD_REPO="${MESH_UI_FORWARD_REPO-/Users/sam/gobabygo}"
 MESH_ENV_SOURCES=(
+  "/etc/mesh-worker/common.env"
   "/etc/mesh-worker/mesh-session-claude-work.env"
   "/etc/mesh-worker/mesh-session-codex-work.env"
   "/etc/mesh-worker/mesh-worker-claude-work.env"

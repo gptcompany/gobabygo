@@ -11,6 +11,7 @@ Group=mesh
 SupplementaryGroups=sam
 WorkingDirectory=/opt/mesh-worker
 EnvironmentFile=/etc/mesh-worker/%i.env
+EnvironmentFile=-/etc/mesh-worker/common.env
 ExecStart=/opt/mesh-worker/venv/bin/python -m src.router.session_worker
 Restart=always
 RestartSec=10

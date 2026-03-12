@@ -337,6 +337,13 @@ Docker live config note:
   - `MESH_MATRIX_BRIDGE_CONFIG_DIR=/etc/mesh-router/config`
 - this keeps Compose secrets/overrides, topology, and bridge room config outside git
 
+WS worker runtime config note:
+
+- shared WS worker values now belong in `/etc/mesh-worker/common.env`
+- keep only per-instance values in `/etc/mesh-worker/<instance>.env`
+- service units load `common.env` after the instance env, so shared live values override stale per-instance copies
+- `mesh`, `mesh ui`, and `mesh attach` now treat `/etc/mesh-worker/common.env` as the primary WS fallback before scanning per-worker env files
+
 Resolution is router-backed and repo-room-aware; in a mapped repo room the bridge only resolves review tasks and open sessions for that repo.
 
 Mac iTerm2 setup (one-time):

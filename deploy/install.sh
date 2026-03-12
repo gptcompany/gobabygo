@@ -22,6 +22,20 @@ normalize_task_root() {
   sudo find "$task_root" -type f -exec chmod ug+rw {} +
 }
 
+install_worker_common_env() {
+    local src="$1"
+    local dst="/etc/mesh-worker/common.env"
+
+    sudo cp "$src" "$dst"
+    if getent group sam >/dev/null 2>&1; then
+      sudo chown root:sam "$dst"
+      sudo chmod 640 "$dst"
+    else
+      sudo chown root:root "$dst"
+      sudo chmod 600 "$dst"
+    fi
+}
+
 case "$MODE" in
   router)
     echo "=== Installing Mesh Router (VPS) ==="
@@ -104,15 +118,18 @@ case "$MODE" in
     fi
 
     # 5. Copy env file templates (owned by service user)
+    install_worker_common_env deploy/mesh-worker.common.env
+
     # Includes batch (`mesh-worker-*`) and interactive session (`mesh-session-*`) templates.
     for env_file in deploy/mesh-*.env; do
       [ -e "$env_file" ] || continue
+      [[ "$(basename "$env_file")" == "mesh-worker.common.env" ]] && continue
       name=$(basename "$env_file" .env)
       sudo cp "$env_file" "/etc/mesh-worker/${name}.env"
       sudo chown mesh-worker "/etc/mesh-worker/${name}.env"
       sudo chmod 600 "/etc/mesh-worker/${name}.env"
     done
-    echo "!! Edit /etc/mesh-worker/*.env with real MESH_AUTH_TOKEN and MESH_ROUTER_URL"
+    echo "!! Edit /etc/mesh-worker/common.env with real MESH_AUTH_TOKEN and MESH_ROUTER_URL"
 
     # 6. Install systemd template unit
     sudo cp deploy/mesh-worker@.service /etc/systemd/system/

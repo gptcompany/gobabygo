@@ -40,6 +40,20 @@ normalize_task_root() {
     find "$task_root" -type f -exec chmod ug+rw {} +
 }
 
+install_common_worker_env() {
+    local src="$1"
+    local dst="/etc/mesh-worker/common.env"
+
+    sed "s/__REPLACE_WITH_TOKEN__/${TOKEN}/" "$src" > "$dst"
+    if getent group sam >/dev/null 2>&1; then
+        chown root:sam "$dst"
+        chmod 640 "$dst"
+    else
+        chown root:root "$dst"
+        chmod 600 "$dst"
+    fi
+}
+
 echo "=== Deploying Mesh Workers (local) ==="
 
 # 1. Create service user
@@ -125,6 +139,9 @@ echo "  venv + deps: OK"
 
 # 5. Copy env files with real token
 echo "[5/7] Configuring env files..."
+install_common_worker_env "${PROJECT_ROOT}/deploy/mesh-worker.common.env"
+echo "  common.env: OK"
+
 for worker in "${WORKERS[@]}"; do
     SRC_ENV="${PROJECT_ROOT}/deploy/mesh-worker-${worker}.env"
     DST_ENV="/etc/mesh-worker/${worker}.env"

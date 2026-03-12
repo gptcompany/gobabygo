@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOTENV_FILE="${HOME}/.mesh/.env.mesh"
 FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
+WORKER_COMMON_ENV="/etc/mesh-worker/common.env"
 
 cd "${REPO_ROOT}"
 
@@ -22,6 +23,14 @@ if [[ -f "${FALLBACK_EXPORTS}" ]]; then
   exec zsh -l
 fi
 
+if [[ -r "${WORKER_COMMON_ENV}" ]]; then
+  # shellcheck source=/dev/null
+  set -a
+  source "${WORKER_COMMON_ENV}"
+  set +a
+  exec zsh -l
+fi
+
 cat >&2 <<'EOF'
 [mesh-shell] Missing env bootstrap.
 Create one of:
@@ -29,6 +38,7 @@ Create one of:
        MESH_ROUTER_URL=http://10.0.0.1:8780
        MESH_AUTH_TOKEN=...
   2) ~/.mesh/router.env  (shell exports)
+  3) /etc/mesh-worker/common.env  (WS shared runtime config)
 Then relaunch iTerm profile.
 EOF
 exec zsh -l

@@ -305,7 +305,17 @@ Override/disable:
 1. shell env (`MESH_ROUTER_URL`, `MESH_AUTH_TOKEN`)
 2. `~/.mesh/.env.mesh`
 3. `~/.mesh/router.env`
-4. `/etc/mesh-worker/*.env` (WS fallback)
+4. `/etc/mesh-worker/common.env` (WS shared fallback)
+5. `/etc/mesh-worker/*.env` (legacy WS fallback)
+
+Recommended WS runtime split:
+
+- shared values in `/etc/mesh-worker/common.env`
+- instance-specific values in `/etc/mesh-worker/<instance>.env`
+- service units load `common.env` after the instance env, so shared live overrides win for:
+  - `MESH_ROUTER_URL`
+  - `MESH_AUTH_TOKEN`
+  - `MESH_ALLOWED_WORK_DIRS`
 
 Examples:
 

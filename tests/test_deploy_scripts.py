@@ -80,18 +80,29 @@ class TestSystemdUnits:
         content = (DEPLOY_DIR / unit_name).read_text()
         assert "UMask=0002" in content
 
+    @pytest.mark.parametrize("unit_name", [
+        "mesh-worker@.service",
+        "mesh-review-worker@.service",
+        "mesh-session-worker@.service",
+    ])
+    def test_worker_units_load_shared_common_env(self, unit_name):
+        content = (DEPLOY_DIR / unit_name).read_text()
+        assert "EnvironmentFile=-/etc/mesh-worker/common.env" in content
+
     def test_deploy_workers_normalizes_shared_task_root(self):
         content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
         assert 'local task_root="/tmp/mesh-tasks"' in content
         assert "mesh-worker:sam" in content
         assert 'chmod 2775 "$task_root"' in content
         assert 'find "$task_root" -type d -exec chmod 2775 {} +' in content
+        assert 'install_common_worker_env "${PROJECT_ROOT}/deploy/mesh-worker.common.env"' in content
 
     def test_install_worker_normalizes_shared_task_root(self):
         content = (DEPLOY_DIR / "install.sh").read_text()
         assert 'local task_root="/tmp/mesh-tasks"' in content
         assert "mesh-worker:sam" in content
         assert 'chmod 2775 "$task_root"' in content
+        assert 'install_worker_common_env deploy/mesh-worker.common.env' in content
 
 
 class TestEnvironmentFiles:
@@ -126,6 +137,16 @@ class TestEnvironmentFiles:
         assert "__REPLACE_WITH_TOKEN__" in content
         assert "MESH_WORKER_ID" in content
         assert "MESH_ROUTER_URL" in content
+
+    def test_worker_common_env_exists(self):
+        path = DEPLOY_DIR / "mesh-worker.common.env"
+        assert path.exists()
+
+    def test_worker_common_env_has_shared_placeholders(self):
+        content = (DEPLOY_DIR / "mesh-worker.common.env").read_text()
+        assert "MESH_ROUTER_URL" in content
+        assert "MESH_AUTH_TOKEN=__REPLACE_WITH_TOKEN__" in content
+        assert "MESH_ALLOWED_WORK_DIRS=" in content
 
     @pytest.mark.parametrize("session_env", [
         "mesh-session-claude-work.env",
@@ -189,6 +210,17 @@ class TestDockerComposeConfig:
     def test_live_compose_script_is_executable(self):
         script_path = DEPLOY_DIR / "live-compose.sh"
         assert script_path.stat().st_mode & 0o111
+
+
+class TestOperatorEnvFallbacks:
+    def test_mesh_wrapper_prefers_worker_common_env(self):
+        content = (REPO_ROOT / "scripts" / "mesh").read_text()
+        assert '"/etc/mesh-worker/common.env"' in content
+
+    def test_iterm_shell_supports_worker_common_env(self):
+        content = (REPO_ROOT / "scripts" / "iterm-mesh-shell.sh").read_text()
+        assert 'WORKER_COMMON_ENV="/etc/mesh-worker/common.env"' in content
+        assert "set -a" in content
 
 
 class TestBootOrderDoc:
