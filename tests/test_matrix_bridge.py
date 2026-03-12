@@ -203,6 +203,22 @@ class TestRenderNotification:
         plain, _html = render_notification("approval_needed", trace_id="ntf_abc123")
         assert "ntf_abc123" in plain
 
+    def test_html_escapes_untrusted_fields(self):
+        session = make_session(attach_target="ssh://tok123@host:22?<bad>")
+        task = make_task(title="<script>alert(1)</script>")
+        plain, html = render_notification(
+            "approval_needed",
+            repo="<repo>",
+            trace_id="ntf_<bad>",
+            session=session,
+            task=task,
+            excerpt="<b>danger</b>",
+        )
+        assert "<repo>" in plain
+        assert "<code>&lt;repo&gt;</code>" in html
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+        assert "&lt;b&gt;danger&lt;/b&gt;" in html
+
 
 class TestTraceId:
     def test_deterministic_for_same_payload(self):
@@ -747,7 +763,7 @@ class TestMatrixInboundCommands:
         }
         bridge.matrix.send_message.return_value = True
         bridge.router.get_tasks.return_value = [
-            {"task_id": "task-001", "repo": "/media/sam/1TB/snake-game"},
+            {"task_id": "task-001", "repo": "/media/sam/1TB/snake-game", "status": "running"},
         ]
         bridge.router.get_sessions.return_value = [
             make_session(session_id="sess-001", task_id="task-001"),
@@ -760,6 +776,44 @@ class TestMatrixInboundCommands:
         assert sent == 0
         bridge.router.send_session_message.assert_called_once_with("sess-001", "continue")
         bridge.matrix.send_message.assert_called_once_with("!snake:matrix.example", "Sent message to sess-001")
+
+    def test_send_command_ignores_stale_open_session(self):
+        bridge = self._make_bridge()
+        bridge.matrix.sync.return_value = {
+            "next_batch": "s1",
+            "rooms": {
+                "join": {
+                    "!snake:matrix.example": {
+                        "timeline": {
+                            "events": [
+                                {
+                                    "type": "m.room.message",
+                                    "event_id": "$evt-stale",
+                                    "sender": "@sam:matrix.example",
+                                    "content": {"body": "!mesh send sess-001 continue"},
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        bridge.matrix.send_message.return_value = True
+        bridge.router.get_tasks.return_value = [
+            {"task_id": "task-001", "repo": "/media/sam/1TB/snake-game", "status": "failed"},
+        ]
+        bridge.router.get_sessions.return_value = [
+            make_session(session_id="sess-001", task_id="task-001"),
+        ]
+        bridge.repo_rooms = {"snake-game": "!snake:matrix.example"}
+
+        bridge.run_once()
+
+        bridge.router.send_session_message.assert_not_called()
+        bridge.matrix.send_message.assert_called_once_with(
+            "!snake:matrix.example",
+            "Error: no open session matches 'sess-001'",
+        )
 
     def test_handles_enter_command(self):
         bridge = self._make_bridge()
@@ -784,7 +838,7 @@ class TestMatrixInboundCommands:
         }
         bridge.matrix.send_message.return_value = True
         bridge.router.get_tasks.return_value = [
-            {"task_id": "task-001", "repo": "/media/sam/1TB/snake-game"},
+            {"task_id": "task-001", "repo": "/media/sam/1TB/snake-game", "status": "running"},
         ]
         bridge.router.get_sessions.return_value = [
             make_session(session_id="sess-001", task_id="task-001"),

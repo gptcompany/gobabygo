@@ -18,6 +18,7 @@ import re
 import signal
 import time
 import hashlib
+from html import escape as html_escape
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -25,6 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger("mesh-matrix-bridge")
+ACTIVE_SESSION_TASK_STATUSES = frozenset({"assigned", "running", "review", "blocked"})
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -367,37 +369,39 @@ def render_notification(
 
     if repo:
         lines.append(f"Repo: `{repo}`")
-        html_lines.append(f"Repo: <code>{repo}</code>")
+        html_lines.append(f"Repo: <code>{html_escape(repo)}</code>")
 
     if trace_id:
         lines.append(f"Trace: `{trace_id}`")
-        html_lines.append(f"Trace: <code>{trace_id}</code>")
+        html_lines.append(f"Trace: <code>{html_escape(trace_id)}</code>")
 
     if session:
         sid = session.get("session_id", "?")[:12]
         lines.append(f"Session: `{sid}`")
-        html_lines.append(f"Session: <code>{sid}</code>")
+        html_lines.append(f"Session: <code>{html_escape(sid)}</code>")
         attach = render_attach_command(session)
         lines.append(f"Attach: `{attach}`")
-        html_lines.append(f"Attach: <code>{attach}</code>")
+        html_lines.append(f"Attach: <code>{html_escape(attach)}</code>")
 
     if task:
         tid = task.get("task_id", "?")[:12]
         title = task.get("title", "")
         lines.append(f"Task: `{tid}` {title}")
-        html_lines.append(f"Task: <code>{tid}</code> {title}")
+        html_lines.append(f"Task: <code>{html_escape(tid)}</code> {html_escape(title)}")
 
     if thread:
         thid = thread.get("thread_id", "?")[:12]
         name = thread.get("name", "")
         status = thread.get("status", "?")
         lines.append(f"Thread: `{thid}` {name} [{status}]")
-        html_lines.append(f"Thread: <code>{thid}</code> {name} [{status}]")
+        html_lines.append(
+            f"Thread: <code>{html_escape(thid)}</code> {html_escape(name)} [{html_escape(status)}]"
+        )
 
     if excerpt:
         short = excerpt[:200]
         lines.append(f"Excerpt: {short}")
-        html_lines.append(f"Excerpt: {short}")
+        html_lines.append(f"Excerpt: {html_escape(short)}")
 
     if trigger == "input_requested":
         lines.append("_Quick text reply for simple input only; full control requires terminal attach._")
@@ -450,8 +454,6 @@ def build_trace_id(
 class TriggerDetector:
     """Detect notification triggers from router state changes."""
 
-    ACTIVE_SESSION_TASK_STATUSES = frozenset({"assigned", "running", "review", "blocked"})
-
     def __init__(
         self,
         config: BridgeConfig,
@@ -485,7 +487,7 @@ class TriggerDetector:
             task_id = session.get("task_id")
             if not task_id:
                 continue
-            if task_status_map.get(task_id) not in self.ACTIVE_SESSION_TASK_STATUSES:
+            if task_status_map.get(task_id) not in ACTIVE_SESSION_TASK_STATUSES:
                 continue
             active_sessions.append(session)
 
@@ -740,14 +742,20 @@ class MatrixBridge:
 
     def _resolve_open_session(self, prefix: str, room_id: str) -> tuple[dict[str, Any] | None, str | None]:
         repo_scope = self._room_repo_scope(room_id)
-        task_repo_map = {
-            task.get("task_id"): task.get("repo")
+        task_map = {
+            task.get("task_id"): task
             for task in self.router.get_tasks()
             if task.get("task_id")
         }
         sessions = []
         for session in self.router.get_sessions(state="open"):
-            repo_value = task_repo_map.get(session.get("task_id"))
+            task_id = session.get("task_id")
+            task = task_map.get(task_id)
+            if not task_id or task is None:
+                continue
+            if task.get("status") not in ACTIVE_SESSION_TASK_STATUSES:
+                continue
+            repo_value = task.get("repo")
             if repo_value is None:
                 meta = session.get("metadata") or {}
                 repo_value = meta.get("working_dir")
