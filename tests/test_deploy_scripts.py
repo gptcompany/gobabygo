@@ -185,6 +185,10 @@ class TestDockerComposeConfig:
         assert "/etc/mesh-router/compose.env" in content
         assert "docker compose --env-file" in content
 
+    def test_live_compose_script_is_executable(self):
+        script_path = DEPLOY_DIR / "live-compose.sh"
+        assert script_path.stat().st_mode & 0o111
+
 
 class TestBootOrderDoc:
     """Validate boot order documentation."""
