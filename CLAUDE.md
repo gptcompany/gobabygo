@@ -329,11 +329,13 @@ Matrix bridge now supports simple inbound room commands via router API:
 
 Docker live config note:
 
-- `deploy/compose.yml` now supports external live config for the Matrix bridge via `deploy/.env`
+- `deploy/compose.yml` now supports external live config for the Matrix bridge via external Compose env
+- `deploy/live-compose.sh` now prefers `/etc/mesh-router/compose.env`
 - recommended muletto paths:
+  - `MESH_COMPOSE_ENV_FILE=/etc/mesh-router/compose.env`
   - `MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=/etc/mesh-router/mesh-matrix-bridge.docker.env`
   - `MESH_MATRIX_BRIDGE_CONFIG_DIR=/etc/mesh-router/config`
-- this avoids rebuild drift from a dirty checkout and keeps topology/runtime room mapping outside git
+- this keeps Compose secrets/overrides, topology, and bridge room config outside git
 
 Resolution is router-backed and repo-room-aware; in a mapped repo room the bridge only resolves review tasks and open sessions for that repo.
 

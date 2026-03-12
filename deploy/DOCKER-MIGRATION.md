@@ -39,7 +39,7 @@ CF Tunnel --> 127.0.0.1:8780 --> [Docker: mesh-router]
 
 ```bash
 # Build e start
-cd deploy && MESH_AUTH_TOKEN=xxx MESH_MATRIX_ACCESS_TOKEN=yyy docker compose up -d --build
+MESH_AUTH_TOKEN=xxx MESH_MATRIX_ACCESS_TOKEN=yyy docker compose -f deploy/compose.yml up -d --build
 
 # Verifica
 ./deploy/smoke-docker.sh
@@ -54,23 +54,34 @@ docker compose -f deploy/compose.yml restart
 
 ## Live config without git drift
 
-Per muletto, tieni la config runtime del bridge fuori dal checkout git:
+Per muletto, tieni tutta la config runtime Docker fuori dal checkout git:
 
 ```bash
 sudo install -d -m 0755 /etc/mesh-router/config
-sudo cp deploy/compose.env.example deploy/.env
+sudo cp deploy/compose.env.example /etc/mesh-router/compose.env
 sudoedit /etc/mesh-router/mesh-matrix-bridge.docker.env
 sudo cp deploy/topology.v1.4.production.yml /etc/mesh-router/config/
 ```
 
-`deploy/.env` deve puntare a:
+`/etc/mesh-router/compose.env` deve contenere almeno:
 
 ```bash
+MESH_AUTH_TOKEN=...
+MESH_MATRIX_ACCESS_TOKEN=...
 MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=/etc/mesh-router/mesh-matrix-bridge.docker.env
 MESH_MATRIX_BRIDGE_CONFIG_DIR=/etc/mesh-router/config
 ```
 
+Poi usa sempre:
+
+```bash
+./deploy/live-compose.sh up -d --build
+./deploy/live-compose.sh restart
+./deploy/live-compose.sh ps
+```
+
 In questo modo:
+- token e override Compose non restano nel checkout
 - room IDs / homeserver / topology path non dipendono dal worktree
 - i rebuild da checkout pulito non perdono la config live
 - il bridge continua a leggere il topology file da `/app/config/...`

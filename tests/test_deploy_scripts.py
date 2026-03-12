@@ -18,6 +18,7 @@ class TestShellScriptSyntax:
     @pytest.mark.parametrize("script", [
         "deploy-workers.sh",
         "install.sh",
+        "live-compose.sh",
         "verify-network.sh",
         "ufw-setup.sh",
     ])
@@ -160,8 +161,11 @@ class TestEnvironmentFiles:
 
     def test_compose_env_example_documents_external_bridge_config(self):
         content = (DEPLOY_DIR / "compose.env.example").read_text()
+        assert "MESH_AUTH_TOKEN=__REPLACE_WITH_TOKEN__" in content
+        assert "MESH_MATRIX_ACCESS_TOKEN=__REPLACE_WITH_MATRIX_TOKEN__" in content
         assert "MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=" in content
         assert "MESH_MATRIX_BRIDGE_CONFIG_DIR=" in content
+        assert "MESH_ROUTER_BIND_HOST=" in content
 
 
 class TestDockerComposeConfig:
@@ -175,6 +179,11 @@ class TestDockerComposeConfig:
 
     def test_bridge_config_dir_is_tracked(self):
         assert (DEPLOY_DIR / "config" / ".gitkeep").exists()
+
+    def test_live_compose_prefers_external_env_file(self):
+        content = (DEPLOY_DIR / "live-compose.sh").read_text()
+        assert "/etc/mesh-router/compose.env" in content
+        assert "docker compose --env-file" in content
 
 
 class TestBootOrderDoc:
