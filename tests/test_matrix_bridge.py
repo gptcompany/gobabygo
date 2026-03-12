@@ -258,6 +258,16 @@ class TestParseMatrixCommand:
 
         assert parse_matrix_command(event, "!mesh") is None
 
+    def test_requires_explicit_configured_prefix(self):
+        event = {
+            "type": "m.room.message",
+            "event_id": "$evt2",
+            "sender": "@sam:matrix.example",
+            "content": {"body": "mesh send sess-123 continue"},
+        }
+
+        assert parse_matrix_command(event, "!mesh") is None
+
 
 # ===========================================================================
 # Unit: trigger detection (input_requested)

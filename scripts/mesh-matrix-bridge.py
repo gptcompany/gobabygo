@@ -606,10 +606,9 @@ def parse_matrix_command(event: dict[str, Any], command_prefix: str) -> MatrixCo
         return None
 
     prefixes: list[str] = []
-    for candidate in (command_prefix, command_prefix.lstrip("!/"), "mesh"):
-        candidate = candidate.strip()
-        if candidate and candidate.lower() not in {item.lower() for item in prefixes}:
-            prefixes.append(candidate)
+    candidate = command_prefix.strip()
+    if candidate:
+        prefixes.append(candidate)
 
     rest: str | None = None
     for prefix in prefixes:
