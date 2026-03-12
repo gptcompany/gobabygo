@@ -31,6 +31,7 @@ CF Tunnel --> 127.0.0.1:8780 --> [Docker: mesh-router]
 | `deploy/router.Dockerfile` | Multi-stage build, uv + Python 3.12 |
 | `deploy/compose.yml` | Router + Matrix bridge + volume + healthcheck + restart |
 | `deploy/mesh-matrix-bridge.docker.env` | Matrix bridge runtime config |
+| `deploy/compose.env.example` | Optional compose-side overrides for external live config |
 | `deploy/smoke-docker.sh` | Verifica container + health + workers |
 | `uv.lock` | Lockfile per build deterministica |
 
@@ -50,6 +51,29 @@ docker logs mesh-matrix-bridge -f
 # Restart
 docker compose -f deploy/compose.yml restart
 ```
+
+## Live config without git drift
+
+Per muletto, tieni la config runtime del bridge fuori dal checkout git:
+
+```bash
+sudo install -d -m 0755 /etc/mesh-router/config
+sudo cp deploy/compose.env.example deploy/.env
+sudoedit /etc/mesh-router/mesh-matrix-bridge.docker.env
+sudo cp deploy/topology.v1.4.production.yml /etc/mesh-router/config/
+```
+
+`deploy/.env` deve puntare a:
+
+```bash
+MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=/etc/mesh-router/mesh-matrix-bridge.docker.env
+MESH_MATRIX_BRIDGE_CONFIG_DIR=/etc/mesh-router/config
+```
+
+In questo modo:
+- room IDs / homeserver / topology path non dipendono dal worktree
+- i rebuild da checkout pulito non perdono la config live
+- il bridge continua a leggere il topology file da `/app/config/...`
 
 ## Cosa NON cambia
 

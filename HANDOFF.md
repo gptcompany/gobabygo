@@ -41,6 +41,10 @@ Router DB cleanup:
 - repeatable conservative cleanup is now available via:
   - `python -m src.meshctl cleanup stale-state`
   - `python -m src.meshctl cleanup stale-state --apply`
+- Docker bridge live config is now meant to live outside git via:
+  - `deploy/.env`
+  - `/etc/mesh-router/mesh-matrix-bridge.docker.env`
+  - `/etc/mesh-router/config/`
 
 ## Current live state
 

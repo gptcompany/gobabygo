@@ -327,6 +327,14 @@ Matrix bridge now supports simple inbound room commands via router API:
 - `!mesh enter <session-id-prefix>`
 - `!mesh interrupt <session-id-prefix>`
 
+Docker live config note:
+
+- `deploy/compose.yml` now supports external live config for the Matrix bridge via `deploy/.env`
+- recommended muletto paths:
+  - `MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=/etc/mesh-router/mesh-matrix-bridge.docker.env`
+  - `MESH_MATRIX_BRIDGE_CONFIG_DIR=/etc/mesh-router/config`
+- this avoids rebuild drift from a dirty checkout and keeps topology/runtime room mapping outside git
+
 Resolution is router-backed and repo-room-aware; in a mapped repo room the bridge only resolves review tasks and open sessions for that repo.
 
 Mac iTerm2 setup (one-time):

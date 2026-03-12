@@ -39,7 +39,9 @@ services:
       router:
         condition: service_healthy
     env_file:
-      - ./mesh-matrix-bridge.docker.env
+      - ${MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE:-./mesh-matrix-bridge.docker.env}
+    volumes:
+      - ${MESH_MATRIX_BRIDGE_CONFIG_DIR:-./config}:/app/config:ro
     environment:
       MESH_ROUTER_URL: "http://router:8780"
       MESH_AUTH_TOKEN: ${MESH_AUTH_TOKEN:?Set MESH_AUTH_TOKEN}

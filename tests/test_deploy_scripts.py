@@ -158,6 +158,24 @@ class TestEnvironmentFiles:
                         f"Possible real token in {env_file.name}: {line}"
                     )
 
+    def test_compose_env_example_documents_external_bridge_config(self):
+        content = (DEPLOY_DIR / "compose.env.example").read_text()
+        assert "MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=" in content
+        assert "MESH_MATRIX_BRIDGE_CONFIG_DIR=" in content
+
+
+class TestDockerComposeConfig:
+    def test_compose_uses_overrideable_bridge_env_file(self):
+        content = (DEPLOY_DIR / "compose.yml").read_text()
+        assert "${MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE:-./mesh-matrix-bridge.docker.env}" in content
+
+    def test_compose_mounts_bridge_config_dir(self):
+        content = (DEPLOY_DIR / "compose.yml").read_text()
+        assert "${MESH_MATRIX_BRIDGE_CONFIG_DIR:-./config}:/app/config:ro" in content
+
+    def test_bridge_config_dir_is_tracked(self):
+        assert (DEPLOY_DIR / "config" / ".gitkeep").exists()
+
 
 class TestBootOrderDoc:
     """Validate boot order documentation."""
