@@ -313,6 +313,73 @@ class TestTriggerDetectorInputRequested:
         input_notifs = [n for n in notifications if n["trigger"] == "input_requested"]
         assert len(input_notifs) == 0
 
+    def test_suppresses_repeated_prompts_until_operator_input(self):
+        session = make_session()
+        self.router.get_sessions.return_value = [session]
+        self.router.get_tasks.return_value = []
+        self.router.get_threads.return_value = []
+
+        self.router.get_session_messages.return_value = [
+            make_message(1, "approve this?"),
+            make_message(2, "continue?"),
+        ]
+        notifications = self.detector.poll()
+
+        input_notifs = [n for n in notifications if n["trigger"] == "input_requested"]
+        assert len(input_notifs) == 1
+        assert "sess-001" in self.state.awaiting_input_sessions
+
+        self.router.get_session_messages.return_value = [
+            make_message(3, "still waiting for approval"),
+        ]
+        notifications = self.detector.poll()
+        input_notifs = [n for n in notifications if n["trigger"] == "input_requested"]
+        assert len(input_notifs) == 0
+
+    def test_retriggers_after_operator_input(self):
+        session = make_session()
+        self.router.get_sessions.return_value = [session]
+        self.router.get_tasks.return_value = []
+        self.router.get_threads.return_value = []
+
+        self.router.get_session_messages.return_value = [
+            make_message(1, "approve this?"),
+        ]
+        notifications = self.detector.poll()
+        input_notifs = [n for n in notifications if n["trigger"] == "input_requested"]
+        assert len(input_notifs) == 1
+
+        self.router.get_session_messages.return_value = [
+            make_message(2, "y", direction="in", role="operator"),
+            make_message(3, "press enter to continue"),
+        ]
+        notifications = self.detector.poll()
+        input_notifs = [n for n in notifications if n["trigger"] == "input_requested"]
+        assert len(input_notifs) == 1
+        assert input_notifs[0]["trace_id"] == build_trace_id(
+            "input_requested",
+            session_id="sess-001",
+            message_seq=3,
+        )
+
+    def test_clears_pending_input_when_session_closes(self):
+        session = make_session()
+        self.router.get_sessions.return_value = [session]
+        self.router.get_tasks.return_value = []
+        self.router.get_threads.return_value = []
+        self.router.get_session_messages.return_value = [
+            make_message(1, "approve this?"),
+        ]
+
+        self.detector.poll()
+        assert "sess-001" in self.state.awaiting_input_sessions
+
+        self.router.get_sessions.return_value = []
+        self.router.get_session_messages.return_value = []
+        self.detector.poll()
+
+        assert "sess-001" not in self.state.awaiting_input_sessions
+
     def test_no_match_for_normal_output(self):
         session = make_session()
         self.router.get_sessions.return_value = [session]

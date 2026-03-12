@@ -93,6 +93,8 @@ class BridgeState:
     thread_statuses: dict[str, str] = field(default_factory=dict)
     # set of open session_ids from last poll
     open_sessions: set[str] = field(default_factory=set)
+    # session_ids currently waiting on human input; cleared on inbound operator input or close
+    awaiting_input_sessions: set[str] = field(default_factory=set)
     # matrix sync token for inbound room commands
     matrix_since: str | None = None
 
@@ -484,12 +486,18 @@ class TriggerDetector:
             max_seq = max(m.get("seq", 0) for m in messages)
             self._state.session_seqs[sid] = max_seq
 
-            # Check outbound messages for input patterns
-            for msg in messages:
+            # Process in order so operator replies clear pending input state
+            # before later outbound prompts in the same batch.
+            for msg in sorted(messages, key=lambda item: item.get("seq", 0)):
                 direction = msg.get("direction", "")
+                if direction == "in":
+                    self._state.awaiting_input_sessions.discard(sid)
+                    continue
                 if direction != "out":
                     continue
                 content = msg.get("content", "")
+                if sid in self._state.awaiting_input_sessions:
+                    continue
                 for pattern in self._config.input_patterns:
                     if pattern.search(content):
                         notifications.append({
@@ -503,12 +511,14 @@ class TriggerDetector:
                             "session": session,
                             "excerpt": content,
                         })
+                        self._state.awaiting_input_sessions.add(sid)
                         break  # one notification per message
 
         # Clean up closed sessions
         closed = self._state.open_sessions - current_open
         for sid in closed:
             self._state.session_seqs.pop(sid, None)
+            self._state.awaiting_input_sessions.discard(sid)
         self._state.open_sessions = current_open
 
         # --- Tasks in review: detect approval_needed ---
