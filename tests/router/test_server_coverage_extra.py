@@ -106,6 +106,41 @@ class TestServerCoverageExtra:
         resp = requests.post(f"{server_url}/tasks/admin-fail", json={"task_id": "none"})
         assert resp.status_code == 404
 
+    def test_handle_cleanup_stale_state_dry_run(self, server_url):
+        requests.post(f"{server_url}/register", json={
+            "worker_id": "w1",
+            "machine": "m1",
+            "cli_type": "claude",
+            "account_profile": "default",
+        })
+        task_resp = requests.post(f"{server_url}/tasks", json={"title": "t1"})
+        task_id = task_resp.json()["task_id"]
+        requests.post(f"{server_url}/sessions/open", json={
+            "session_id": "s1",
+            "worker_id": "w1",
+            "cli_type": "claude",
+            "task_id": task_id,
+        })
+        requests.post(
+            f"{server_url}/tasks/admin-fail",
+            json={"task_id": task_id, "reason": "cleanup_test"},
+        )
+
+        resp = requests.post(f"{server_url}/admin/cleanup-stale-state", json={"apply": False})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "dry_run"
+        assert body["updated_sessions"] == 0
+        assert body["sessions"][0]["session_id"] == "s1"
+
+    def test_handle_cleanup_stale_state_invalid_limit(self, server_url):
+        resp = requests.post(
+            f"{server_url}/admin/cleanup-stale-state",
+            json={"apply": False, "session_limit": 0},
+        )
+        assert resp.status_code == 400
+
     def test_handle_task_review_approve_invalid_id(self, server_url):
         resp = requests.post(f"{server_url}/tasks/review/approve", json={"task_id": "t1", "verifier_id": " "})
         assert resp.status_code == 400

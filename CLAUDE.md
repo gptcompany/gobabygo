@@ -277,6 +277,8 @@ Admin cleanup for stuck tasks:
 ```bash
 python -m src.meshctl task cancel <task-id> --reason "stuck queued"
 python -m src.meshctl task fail <task-id> --reason "stuck review"
+python -m src.meshctl cleanup stale-state          # dry-run stale sessions/threads
+python -m src.meshctl cleanup stale-state --apply  # backup DB, then reconcile
 ```
 
 Use these for non-running tasks. They are intentionally conservative:

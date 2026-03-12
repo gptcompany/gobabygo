@@ -273,6 +273,25 @@ class RouterDB:
         usage = shutil.disk_usage(db_dir)
         return usage.free
 
+    def create_backup(self, backup_path: str | None = None) -> str:
+        """Create a consistent SQLite backup and return the backup path."""
+        source = Path(self._db_path)
+        if backup_path is None:
+            ts = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+            backup_path = str(source.with_name(f"{source.name}.pre_cleanup_{ts}.bak"))
+
+        destination = Path(backup_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        with self._lock:
+            backup_conn = sqlite3.connect(str(destination))
+            try:
+                self._conn.backup(backup_conn)
+            finally:
+                backup_conn.close()
+
+        return str(destination)
+
     def init_schema(self) -> None:
         """Create all tables and indexes if they don't exist."""
         self._conn.executescript(_SCHEMA_SQL)

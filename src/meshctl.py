@@ -618,6 +618,72 @@ def cmd_task_fail(args: argparse.Namespace) -> None:
     sys.exit(1)
 
 
+def cmd_cleanup_stale_state(args: argparse.Namespace) -> None:
+    """Dry-run or apply conservative stale session/thread cleanup on the router."""
+    base = _base_url()
+    headers = _headers()
+    headers["Content-Type"] = "application/json"
+    payload = {
+        "apply": bool(args.apply),
+        "backup": bool(args.apply) and not bool(args.no_backup),
+        "session_limit": int(args.session_limit),
+        "thread_limit": int(args.thread_limit),
+    }
+
+    try:
+        resp = requests.post(
+            f"{base}/admin/cleanup-stale-state",
+            json=payload,
+            headers=headers,
+            timeout=_router_timeout(),
+        )
+    except requests.ConnectionError as e:
+        print(f"Error: Cannot connect to mesh router at {base} -- {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if resp.status_code == 200:
+        data = resp.json()
+        if args.json_output:
+            print(json.dumps(data, indent=2))
+            return
+
+        print(f"Cleanup stale-state: {data.get('status', 'unknown')}")
+        backup_path = str(data.get("backup_path") or "").strip()
+        if backup_path:
+            print(f"Backup: {backup_path}")
+
+        sessions = data.get("sessions") or []
+        threads = data.get("threads") or []
+        print(
+            "Sessions: "
+            f"{len(sessions)} candidate(s), {int(data.get('updated_sessions', 0))} updated"
+        )
+        for item in sessions:
+            print(
+                f"- session {str(item.get('session_id', ''))[:12]} -> "
+                f"{item.get('to_state', '?')} ({item.get('reason', 'unknown')})"
+            )
+        print(
+            "Threads: "
+            f"{len(threads)} candidate(s), {int(data.get('updated_threads', 0))} updated"
+        )
+        for item in threads:
+            print(
+                f"- thread {str(item.get('thread_id', ''))[:12]} -> "
+                f"{item.get('to_status', '?')} ({item.get('reason', 'unknown')})"
+            )
+        return
+    if resp.status_code == 400:
+        detail = resp.json().get("detail", resp.text)
+        print(f"Error: invalid cleanup request -- {detail}", file=sys.stderr)
+        sys.exit(1)
+    if resp.status_code == 401:
+        print("Error: Authentication failed. Set MESH_AUTH_TOKEN.", file=sys.stderr)
+        sys.exit(1)
+    print(f"Error: {resp.status_code} -- {resp.text}", file=sys.stderr)
+    sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline commands
 # ---------------------------------------------------------------------------
@@ -1334,6 +1400,42 @@ task_fail_parser.add_argument(
     help="Audit reason written to the transition event",
 )
 
+cleanup_parser = sub.add_parser("cleanup", help="Administrative cleanup actions")
+cleanup_sub = cleanup_parser.add_subparsers(dest="cleanup_command")
+
+cleanup_stale_state_parser = cleanup_sub.add_parser(
+    "stale-state",
+    help="Close stale open sessions and reconcile stale thread statuses",
+)
+cleanup_stale_state_parser.add_argument(
+    "--apply",
+    action="store_true",
+    help="Apply changes. Default is dry-run.",
+)
+cleanup_stale_state_parser.add_argument(
+    "--no-backup",
+    action="store_true",
+    help="Skip DB backup when applying changes.",
+)
+cleanup_stale_state_parser.add_argument(
+    "--session-limit",
+    type=int,
+    default=1000,
+    help="Max open sessions to scan (default: 1000).",
+)
+cleanup_stale_state_parser.add_argument(
+    "--thread-limit",
+    type=int,
+    default=1000,
+    help="Max non-terminal threads per status bucket to scan (default: 1000).",
+)
+cleanup_stale_state_parser.add_argument(
+    "--json",
+    action="store_true",
+    dest="json_output",
+    help="Machine-readable output",
+)
+
 pipeline_parser = sub.add_parser("pipeline", help="Pipeline template orchestration")
 pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_command")
 
@@ -1436,6 +1538,12 @@ def main() -> None:
             cmd_task_fail(parsed_args)
         else:
             task_parser.print_help()
+            sys.exit(1)
+    elif parsed_args.command == "cleanup":
+        if parsed_args.cleanup_command == "stale-state":
+            cmd_cleanup_stale_state(parsed_args)
+        else:
+            cleanup_parser.print_help()
             sys.exit(1)
     elif parsed_args.command == "pipeline":
         if parsed_args.pipeline_command == "create":

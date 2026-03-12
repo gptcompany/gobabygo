@@ -16,12 +16,13 @@ from src.meshctl import (
     _format_age,
     _format_duration,
     _router_timeout,
+    cmd_cleanup_stale_state,
     cmd_drain,
     cmd_status,
     cmd_submit,
-    cmd_worker_prune,
-    cmd_task_cancel,
     cmd_task_fail,
+    cmd_task_cancel,
+    cmd_worker_prune,
 )
 
 
@@ -68,6 +69,25 @@ def _worker_prune_args(
         worker_command="prune",
         older_than=older_than,
         statuses=statuses or ["offline"],
+        json_output=json_output,
+    )
+
+
+def _cleanup_stale_state_args(
+    *,
+    apply: bool = False,
+    no_backup: bool = False,
+    session_limit: int = 1000,
+    thread_limit: int = 1000,
+    json_output: bool = False,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="cleanup",
+        cleanup_command="stale-state",
+        apply=apply,
+        no_backup=no_backup,
+        session_limit=session_limit,
+        thread_limit=thread_limit,
         json_output=json_output,
     )
 
@@ -770,3 +790,96 @@ class TestTaskAdminCommands:
         assert exc.value.code == 1
         err = capsys.readouterr().err
         assert "task not found" in err
+
+
+class TestCleanupCommands:
+    @patch("src.meshctl.requests.post")
+    def test_cleanup_stale_state_dry_run(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            200,
+            {
+                "status": "dry_run",
+                "backup_path": None,
+                "sessions": [
+                    {
+                        "session_id": "sess-1234567890",
+                        "to_state": "errored",
+                        "reason": "task_failed",
+                    }
+                ],
+                "threads": [],
+                "updated_sessions": 0,
+                "updated_threads": 0,
+            },
+        )
+
+        cmd_cleanup_stale_state(_cleanup_stale_state_args())
+        out = capsys.readouterr().out
+        assert "Cleanup stale-state: dry_run" in out
+        assert "sess-1234567" in out
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.args[0].endswith("/admin/cleanup-stale-state")
+        assert call_kwargs.kwargs["json"] == {
+            "apply": False,
+            "backup": False,
+            "session_limit": 1000,
+            "thread_limit": 1000,
+        }
+
+    @patch("src.meshctl.requests.post")
+    def test_cleanup_stale_state_apply_json(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            200,
+            {
+                "status": "applied",
+                "backup_path": "/tmp/router.db.pre_cleanup.bak",
+                "sessions": [],
+                "threads": [],
+                "updated_sessions": 1,
+                "updated_threads": 2,
+            },
+        )
+
+        cmd_cleanup_stale_state(
+            _cleanup_stale_state_args(apply=True, json_output=True, no_backup=True)
+        )
+        out = capsys.readouterr().out
+        assert json.loads(out)["status"] == "applied"
+        call_kwargs = mock_post.call_args
+        assert call_kwargs.kwargs["json"] == {
+            "apply": True,
+            "backup": False,
+            "session_limit": 1000,
+            "thread_limit": 1000,
+        }
+
+    @patch("src.meshctl.requests.post")
+    def test_cleanup_stale_state_invalid_request(
+        self,
+        mock_post: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MESH_AUTH_TOKEN", raising=False)
+        mock_post.return_value = _mock_response(
+            400,
+            {"error": "invalid_request", "detail": "session_limit must be between 1 and 10000"},
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            cmd_cleanup_stale_state(_cleanup_stale_state_args(session_limit=0))
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "invalid cleanup request" in err

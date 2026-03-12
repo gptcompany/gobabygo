@@ -152,6 +152,17 @@ db.insert_task(task)
 
 The scheduler dispatches it to the next eligible idle worker.
 
+Conservative stale-state cleanup from the operator host:
+
+```bash
+python -m src.meshctl cleanup stale-state
+python -m src.meshctl cleanup stale-state --apply
+```
+
+Dry-run is the default. `--apply` creates a DB backup on the router before it
+closes open sessions linked to terminal/missing tasks and reconciles thread rows
+whose computed status is already terminal.
+
 Who executes commands in mesh:
 - `BOSS` (human operator): starts orchestration (`meshctl pipeline create`, manual task/thread API calls).
 - `PRESIDENT` (logical coordinator): authors/supervises interactive prompts inside session workflows.

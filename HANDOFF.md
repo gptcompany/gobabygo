@@ -38,6 +38,9 @@ WS `.111`:
 Router DB cleanup:
 
 - stale worker `ws-claude-session-rektaslug-01` was deregistered
+- repeatable conservative cleanup is now available via:
+  - `python -m src.meshctl cleanup stale-state`
+  - `python -m src.meshctl cleanup stale-state --apply`
 
 ## Current live state
 

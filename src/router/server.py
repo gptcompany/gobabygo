@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from pydantic import ValidationError
 
+from src.router.admin import cleanup_stale_runtime_state
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
 from src.router.longpoll import LongPollRegistry
@@ -159,6 +160,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._handle_create_thread()
             elif path == "/notifications":
                 self._handle_create_notification()
+            elif path == "/admin/cleanup-stale-state":
+                self._handle_cleanup_stale_state()
             elif path.startswith("/threads/") and path.endswith("/steps"):
                 thread_id = path[len("/threads/"):-len("/steps")]
                 if thread_id:
@@ -533,6 +536,49 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid_json"})
         except KeyError as e:
             self._send_json(400, {"error": f"missing_field: {e}"})
+
+    def _handle_cleanup_stale_state(self) -> None:
+        """POST /admin/cleanup-stale-state — dry-run or reconcile stale runtime state."""
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+        if not isinstance(data, dict):
+            self._send_json(400, {"error": "invalid_request"})
+            return
+
+        apply_changes = bool(data.get("apply", False))
+        create_backup = bool(data.get("backup", True))
+        if not apply_changes:
+            create_backup = False
+
+        try:
+            session_limit = int(data.get("session_limit", 1000))
+            thread_limit = int(data.get("thread_limit", 1000))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_limit"})
+            return
+
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        try:
+            report = cleanup_stale_runtime_state(
+                db,
+                apply=apply_changes,
+                create_backup=create_backup,
+                session_limit=session_limit,
+                thread_limit=thread_limit,
+            )
+        except ValueError as e:
+            self._send_json(400, {"error": "invalid_request", "detail": str(e)})
+            return
+
+        self._send_json(200, report.to_dict())
 
     def _get_verifier_gate(self) -> VerifierGate:
         """Return verifier gate from router_state, lazily initializing when absent."""
