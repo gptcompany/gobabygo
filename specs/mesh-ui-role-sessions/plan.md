@@ -23,10 +23,14 @@ Out of scope for this phase:
 ## Design Decisions
 
 - Spawn primitive: create a normal session task, not a session row directly.
-- Session grouping: use `ui_group_id` shared across all panes in one cockpit.
-- Addressing model: helpers resolve `ui_group_id + role -> session_id`.
+- API surface: extend `POST /tasks` with UI role session metadata; do not add a new endpoint in v1.
+- Session grouping: use `ui_group_id` shared across all panes in one cockpit, with router-authoritative liveness and local cached lookup.
+- Addressing model: helpers resolve `ui_group_id + role -> session_id` and fail on ambiguity.
+- Role split: `boss` is an operator control shell; `president`, `lead`, `worker-*`, and `verifier` are agent-role sessions.
 - Failure model: hard mesh error state, no silent raw-shell fallback.
 - Default layout: keep the current six-pane operator layout.
+- Spawn policy: agent-role spawns run in parallel with a `60s` per-role timeout.
+- Completion summary payload is structured and router-backed.
 
 ## Workstreams
 
@@ -42,11 +46,10 @@ Deliverables:
 
 Tasks:
 1. define the task payload contract for spawned role sessions
-2. choose the API surface:
-   - extend `POST /tasks`
-   - or add `POST /ui/role-sessions`
-3. implement session discovery loop after spawn
-4. add tests for spawn metadata and attach resolution
+2. extend `POST /tasks` usage with explicit UI role metadata
+3. ensure scheduler/runtime can distinguish UI role tasks from pipeline tasks
+4. implement session discovery loop after spawn
+5. add tests for spawn metadata and attach resolution
 
 ### 2. Mesh UI Attach-or-Spawn
 
@@ -55,10 +58,13 @@ Deliverables:
 - no raw CLI default path remains
 
 Tasks:
-1. keep exact-role attach preference
-2. if no match exists, spawn a role session using the chosen client path
-3. attach the pane to the resulting session
-4. render visible pane labels:
+1. keep exact-role attach preference inside the active `ui_group_id`
+2. keep `boss` as operator shell
+3. if no match exists, spawn an agent-role session using the task client path
+4. start agent-role spawns in parallel
+5. enforce `60s` per-role timeout with visible progress state
+6. attach the pane to the resulting session
+7. render visible pane labels:
    - role
    - repo
    - provider
@@ -71,10 +77,12 @@ Deliverables:
 - stable grouping for all sessions opened by one `mesh ui` cockpit
 
 Tasks:
-1. generate `ui_group_id` when opening a new cockpit
-2. persist the active repo -> `ui_group_id` mapping
-3. reuse the active `ui_group_id` when relaunching the same repo cockpit
-4. expose `ui_group_id` in operator-visible metadata where useful
+1. generate `ui_group_id` as `{repo_name}-ui-{timestamp}` when no live group exists
+2. persist the cached repo -> `ui_group_id` mapping under `~/.mesh/ui_groups/`
+3. on relaunch, reuse the cached group only if the router still reports at least one live session in it
+4. create a new group when the cached one is fully dead
+5. expose `ui_group_id` in operator-visible metadata where useful
+6. add explicit group close/recovery commands
 
 ### 4. Inter-Role Messaging Helpers
 
@@ -101,7 +109,13 @@ Deliverables:
 - structured stop/completion summary for pane-backed sessions
 
 Tasks:
-1. define summary payload shape
+1. define the v1 summary payload:
+   - `type`
+   - `role`
+   - `ui_group_id`
+   - `status`
+   - `summary_text`
+   - `artifacts`
 2. store it in task result and/or session message metadata
 3. allow directed delivery to `boss` or `president`
 4. ensure operator inspection is possible from router-backed state
@@ -111,21 +125,24 @@ Tasks:
 ### Unit / Integration
 
 - session spawn metadata tests
+- scheduler/runtime filtering tests for UI role tasks
 - attach-vs-spawn precedence tests
 - `ui_group_id` persistence tests
 - role-addressed helper resolution tests
 - completion summary persistence/routing tests
 - `mesh ui` pane label tests
+- headless attach-or-spawn logic tests without iTerm2
 
 ### E2E
 
 1. open `mesh ui` in `snake-game`
-2. verify six panes become mesh-backed sessions
+2. verify `boss` remains an operator pane and the other default panes become mesh-backed sessions
 3. verify pane labels show role identity clearly
 4. send a message from one role to another through the bus
 5. verify the target pane receives it
 6. complete one role session and inspect the routed stop summary
 7. verify Matrix/operator controls still work on pane-backed sessions
+8. relaunch `mesh ui` and verify `ui_group_id` reuse only happens for live groups
 
 ## Risks
 
@@ -133,6 +150,7 @@ Tasks:
 - ambiguous peer resolution when multiple live sessions exist for one role
 - UX confusion if `ui_group_id` is hidden too aggressively
 - provider/account mismatch if UI policy and provider runtime policy drift
+- stale group reuse if router-authoritative liveness checks are incomplete
 
 ## Rollout Order
 

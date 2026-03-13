@@ -112,17 +112,45 @@ Spawned role tasks and resulting sessions must carry:
 than overloading pipeline `thread_id` and avoids conflating `mesh ui` with
 pipeline execution.
 
-### D3. `boss`, `president`, and `lead` are real session roles
+Lifecycle rules:
 
-There is no lighter local-wrapper mode for these roles in default `mesh ui`.
+1. `mesh ui` generates `ui_group_id` as `{repo_name}-ui-{timestamp}` when no live group exists.
+2. The operator host stores the last active mapping at `~/.mesh/ui_groups/{repo_name}.json`.
+3. On relaunch, `mesh ui` reuses that `ui_group_id` only if the router still has at least one open session in that group.
+4. If no open sessions remain, `mesh ui` creates a fresh `ui_group_id`.
+5. Group membership and liveness are router-authoritative; local state is only a cache.
 
-All visible roles in `mesh ui` must map to the same runtime contract:
+### D3. Role types are split between operator and agent panes
 
+`mesh ui` must distinguish between operator roles and agent roles.
+
+Operator roles:
+
+- `boss`
+- control shell, not provider-backed
+- bus-aware and able to address peer sessions
+- not created as a session-worker task by default
+
+Agent roles:
+
+- `president`
+- `lead`
+- `worker-*`
+- `verifier`
 - task-backed
 - session-backed
 - bus-addressable
 
-### D4. In-pane role messaging uses mesh helper commands
+### D4. API surface = extend `POST /tasks`
+
+`mesh ui` must reuse the normal task creation path.
+
+There is no dedicated `POST /ui/role-sessions` endpoint in v1.
+
+UI role session tasks are normal session tasks with extra metadata that the
+router, scheduler, and clients understand.
+
+### D5. In-pane role messaging uses mesh helper commands
 
 The first concrete UX for peer communication is shell/helper driven, not slash-command driven.
 
@@ -136,7 +164,13 @@ Examples:
 These helpers resolve the peer by `ui_group_id + role` and then call the
 existing router session bus.
 
-### D5. Default layout remains six panes
+Peer resolution is strict:
+
+- if exactly one live peer matches, use it
+- if zero match, fail clearly
+- if multiple match, fail clearly and require disambiguation
+
+### D6. Default layout remains six panes
 
 Default `mesh ui` keeps the current six-pane layout:
 
@@ -148,6 +182,23 @@ Default `mesh ui` keeps the current six-pane layout:
 - `verifier`
 
 `worker-claude` remains explicit/on-demand.
+
+### D7. `mesh_iterm_ui.py` is a thin client, not a second orchestrator
+
+`mesh_iterm_ui.py` may:
+
+- create UI role tasks via `POST /tasks`
+- poll router state for attachable sessions
+- render pane status and errors
+
+It must not become the source of truth for:
+
+- group membership
+- session reconciliation
+- task/session lifecycle rules
+- message routing semantics
+
+All authoritative state and reconciliation logic belongs in the router/runtime.
 
 ## Functional Requirements
 
@@ -171,6 +222,13 @@ A spawned pane session must have explicit mesh identity:
 - `session_id`
 
 The router must remain the source of truth.
+
+Operator panes must have explicit mesh identity too:
+
+- `repo`
+- `role`
+- `ui_group_id`
+- current peer resolution scope
 
 ### F3. Message-bus integration
 
@@ -210,6 +268,25 @@ Minimum v1 behavior:
 This is the mesh equivalent of an Agent Teams-style stop hook: not a terminal-only
 artifact, but a routed event/message tied to the real session lifecycle
 
+Completion summary payload for v1:
+
+```json
+{
+  "type": "completion_summary",
+  "role": "lead",
+  "ui_group_id": "snake-game-ui-20260313T160000Z",
+  "status": "completed",
+  "summary_text": "Implemented feature and updated tests.",
+  "artifacts": ["spec.md", "plan.md", "tests/test_mesh_ui_script.py"]
+}
+```
+
+Storage rules:
+
+- persist as a `session_message` with structured metadata
+- also permit storing the same payload in task result metadata
+- make it queryable from router-backed inspection flows
+
 ### F4. Spawn semantics
 
 `mesh ui` needs an internal spawn path for role panes.
@@ -218,9 +295,16 @@ That spawn path must:
 
 - choose provider/account from `mapping/operator_ui.yaml` + `mapping/provider_runtime.yaml`
 - create a dedicated session task bound to the repo, role, and `ui_group_id`
+- create all agent-role spawns in parallel
 - wait for the scheduler/session worker to materialize the session
 - bootstrap the correct CCS CLI inside tmux/upterm
 - return enough metadata for immediate attach from the pane
+
+Spawn defaults for v1:
+
+- per-role spawn timeout: `60s`
+- pane must show explicit progress while waiting
+- failed panes must render a retry hint, e.g. `mesh ui respawn <role>`
 
 ### F5. Attach precedence
 
@@ -228,12 +312,28 @@ If a matching live role session already exists, `mesh ui` must attach instead of
 
 Matching rules must prefer:
 
-1. exact repo path
-2. exact role
-3. compatible provider
-4. newest active session
+1. exact `ui_group_id`
+2. exact repo path
+3. exact role
+4. compatible provider
+5. newest active session
 
-### F6. Titles and labels
+If no live session matches the active `ui_group_id`, `mesh ui` may fall back to
+repo-scoped discovery only when it is rehydrating a cockpit and can prove that
+the local cache is stale.
+
+### F6. Operator boss behavior
+
+The `boss` pane is an operator control shell.
+
+It must:
+
+- show role identity and `ui_group_id`
+- be able to address agent-role sessions through helper commands
+- not spawn a provider-backed session by default
+- remain in the target repo with mesh helpers loaded
+
+### F7. Titles and labels
 
 Pane labels must make roles visually distinct.
 
@@ -241,8 +341,10 @@ Minimum required:
 
 - pane title contains role name and repo
 - shell banner shows role + provider + session short id
+- boss banner must explicitly say `operator`
+- agent panes must explicitly say `attached` or `spawned`
 
-### F7. Failure handling
+### F8. Failure handling
 
 If a role pane cannot attach or spawn, the pane must show an explicit mesh error state.
 
@@ -253,8 +355,24 @@ Valid failure states:
 - session spawn timeout
 - attach target missing/stale
 - repo path invalid/not allowed
+- ambiguous peer resolution
 
 A raw detached shell without mesh identity is not an acceptable silent fallback.
+
+Failure recovery requirements:
+
+- individual failed panes must be retryable
+- the operator must be able to respawn a missing role without recreating the whole cockpit
+- group-level cleanup must exist for explicit operator teardown
+
+### F9. UI group cleanup
+
+The runtime must support explicit cleanup for a cockpit group.
+
+Minimum v1:
+
+- `mesh ui close` or equivalent closes all sessions for the active `ui_group_id`
+- if the operator closes iTerm2 without cleanup, stale groups remain queryable and recoverable
 
 ## Acceptance Criteria
 
@@ -282,38 +400,64 @@ Given a pane cannot become a mesh-backed session, when `mesh ui` opens that pane
 
 Given a `lead` pane session completes work for the current `ui_group_id`, when it emits a completion summary, then the summary is available as router-backed state and can be delivered to `president` or `boss` through the same mesh addressing model.
 
-## Implementation Outline
+### AC7. Boss remains an operator pane
 
-### Phase 1
+Given the operator opens `mesh ui X`, when the `boss` pane starts, then it remains a mesh-aware control shell and does not boot a provider CLI by default.
 
-- add role-pane title/identity labeling
-- add a spawn API/client path for task-backed role sessions
-- teach `mesh ui` to choose attach vs spawn
-- keep provider selection policy centralized in existing YAML config
-- add `mesh-send` / `mesh-enter` / `mesh-interrupt` helpers that resolve peers by `ui_group_id`
+### AC8. `ui_group_id` is reused safely
 
-### Phase 2
+Given the operator relaunches `mesh ui` for repo `X`, when at least one live session still exists for the cached group, then `mesh ui` reuses that `ui_group_id`; otherwise it creates a new one.
 
-- surface session ids and peer targets ergonomically in pane banners
-- persist and rediscover the active `ui_group_id` for a repo
-- add optional `mesh sessions --ui-group` / `mesh attach --ui-group`
-- add structured completion-summary publication and inspection
+### AC9. Spawn is parallel and bounded
 
-### Phase 3
+Given no live sessions exist for repo `X`, when the operator runs `mesh ui X`, then all agent-role spawns begin in parallel and each pane either attaches or fails within `60s`.
 
-- optional workflow helpers for directed delegation (`ask president`, `ask verifier`, etc.)
-- optional mobile/operator shortcuts mapped to role sessions
+### AC10. Multi-operator isolation holds
+
+Given two operators open `mesh ui` for the same repo independently, when each cockpit spawns new agent panes, then each cockpit uses a distinct `ui_group_id` and does not attach to the other cockpit's sessions by default.
+
+## Workstream Outline
+
+### Workstream 1. Role session spawn path
+
+- extend `POST /tasks` usage with UI role session metadata
+- implement spawn discovery and attach-ready polling
+- ensure scheduler/runtime can distinguish UI role tasks from pipeline tasks
+
+### Workstream 2. Mesh UI attach-or-spawn
+
+- keep exact-role attach preference
+- spawn missing agent panes in parallel
+- keep boss as operator shell
+- render pane mode and session identity clearly
+
+### Workstream 3. `ui_group_id` tracking
+
+- persist repo -> cached `ui_group_id` locally
+- treat router state as authoritative
+- reuse only live groups
+- support explicit group close/recovery
+
+### Workstream 4. Inter-role messaging helpers
+
+- resolve `ui_group_id + role -> session_id`
+- fail on ambiguity
+- route `send`, `send-key`, and `signal`
+
+### Workstream 5. Completion summary routing
+
+- define structured summary payload
+- persist it in router-backed state
+- allow directed delivery to boss/president
 
 ## Remaining Open Questions
 
-1. Should the spawn path extend `POST /tasks` directly with explicit UI role metadata, or should it use a dedicated higher-level endpoint such as `POST /ui/role-sessions` that internally creates the task?
+1. Should UI role session metadata live entirely in task payload, or do we need selected top-level task fields for scheduler efficiency?
 
-2. Where should the active repo -> `ui_group_id` mapping live?
-   - router metadata only
-   - local state file on the operator host
-   - both, with router authoritative [preferred, still to confirm]
-
-3. Should `mesh-send <role>` address only the newest matching live session in the current `ui_group_id`, or should it fail if more than one candidate exists for the same role?
+2. What is the exact router query surface for group-scoped inspection:
+   - extend `/sessions`
+   - extend `/tasks`
+   - both?
 
 ## Review Checklist
 
