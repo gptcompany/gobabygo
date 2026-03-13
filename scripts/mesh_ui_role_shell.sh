@@ -111,6 +111,9 @@ bootstrap_shell() {
     clear
   fi
   echo "[mesh:${role}] repo=${repo_name}"
+  if [[ -d "$target_dir/.git" || -f "$target_dir/.git" ]]; then
+    git config --global --add safe.directory "$target_dir" >/dev/null 2>&1 || true
+  fi
   mesh_home="$MESH_CONTROL_REPO"
   if [[ ! -x "$mesh_home/scripts/mesh" && -x "$ws_repo_base/gobabygo/scripts/mesh" ]]; then
     mesh_home="$ws_repo_base/gobabygo"
@@ -165,6 +168,9 @@ if [[ -n "${TERM:-}" ]]; then
   clear
 fi
 echo "[mesh:${role}] repo=${repo_name}"
+if [[ -d "$target_dir/.git" || -f "$target_dir/.git" ]]; then
+  git config --global --add safe.directory "$target_dir" >/dev/null 2>&1 || true
+fi
 mesh_home="$mesh_control_repo"
 if [[ ! -x "$mesh_home/scripts/mesh" && -x "$ws_repo_base/gobabygo/scripts/mesh" ]]; then
   mesh_home="$ws_repo_base/gobabygo"
