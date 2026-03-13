@@ -89,6 +89,15 @@ class TestSystemdUnits:
         content = (DEPLOY_DIR / unit_name).read_text()
         assert "EnvironmentFile=-/etc/mesh-worker/common.env" in content
 
+    @pytest.mark.parametrize("unit_name", [
+        "mesh-worker@.service",
+        "mesh-review-worker@.service",
+        "mesh-session-worker@.service",
+    ])
+    def test_worker_units_disable_private_tmp_for_shared_task_roots(self, unit_name):
+        content = (DEPLOY_DIR / unit_name).read_text()
+        assert "PrivateTmp=false" in content
+
     def test_worker_template_loads_batch_defaults_before_instance_env(self):
         content = (DEPLOY_DIR / "mesh-worker@.service").read_text()
         assert "EnvironmentFile=-/etc/mesh-worker/mesh-worker.batch.common.env" in content
@@ -107,6 +116,7 @@ class TestSystemdUnits:
         assert 'find "$task_root" -type d -exec chmod 2775 {} +' in content
         assert '"${PROJECT_ROOT}"/deploy/*.common.env' in content
         assert 'BATCH_WORKERS+=("$(basename "$src_env" .env | sed ' in content
+        assert 'sudo -u mesh-worker env UV_CACHE_DIR=/home/mesh-worker/.cache/uv "$UV_BIN" venv venv --python 3.12' in content
 
     def test_install_worker_normalizes_shared_task_root(self):
         content = (DEPLOY_DIR / "install.sh").read_text()

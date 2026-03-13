@@ -146,9 +146,12 @@ fi
 if [ -n "$UV_BIN" ]; then
     echo "  Using uv: $UV_BIN"
     rm -rf venv
-    # uv manages Python automatically — request 3.12 even if system only has 3.10
-    "$UV_BIN" venv venv --python 3.12
-    "$UV_BIN" pip install -e . --python venv/bin/python
+    mkdir -p /home/mesh-worker/.cache/uv /home/mesh-worker/.local/share/uv
+    chown -R mesh-worker:mesh-worker /home/mesh-worker/.cache /home/mesh-worker/.local
+    # Build the venv as the service user so the managed Python path stays executable
+    # by mesh-worker/sam at runtime.
+    sudo -u mesh-worker env UV_CACHE_DIR=/home/mesh-worker/.cache/uv "$UV_BIN" venv venv --python 3.12
+    sudo -u mesh-worker env UV_CACHE_DIR=/home/mesh-worker/.cache/uv "$UV_BIN" pip install -e . --python venv/bin/python
 else
     echo "ERROR: uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
