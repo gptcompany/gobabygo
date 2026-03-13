@@ -130,6 +130,7 @@ Operator roles:
 - control shell, not provider-backed
 - bus-aware and able to address peer sessions
 - not created as a session-worker task by default
+- receives `MESH_UI_GROUP_ID` as an exported environment variable at pane bootstrap
 
 Agent roles:
 
@@ -149,6 +150,19 @@ There is no dedicated `POST /ui/role-sessions` endpoint in v1.
 
 UI role session tasks are normal session tasks with extra metadata that the
 router, scheduler, and clients understand.
+
+Task field contract for v1:
+
+- top-level `TaskCreateRequest` fields must include:
+  - `repo`
+  - `role`
+- UI role metadata lives in `payload`:
+  - `ui_role_session`
+  - `ui_role`
+  - `ui_group_id`
+
+This keeps attach resolution aligned with the existing task model while avoiding
+new task columns for purely UI-scoped metadata.
 
 ### D5. In-pane role messaging uses mesh helper commands
 
@@ -200,6 +214,13 @@ It must not become the source of truth for:
 
 All authoritative state and reconciliation logic belongs in the router/runtime.
 
+Discovery loop constraint for v1:
+
+- poll only for session materialization
+- no local task recreation
+- no local retry/backoff orchestration
+- no local reconciliation beyond timeout + explicit error
+
 ## Functional Requirements
 
 ### F1. Mesh-backed pane lifecycle
@@ -229,6 +250,7 @@ Operator panes must have explicit mesh identity too:
 - `role`
 - `ui_group_id`
 - current peer resolution scope
+- `MESH_UI_GROUP_ID` exported in the pane environment
 
 ### F3. Message-bus integration
 
@@ -264,6 +286,7 @@ Minimum v1 behavior:
 - the session can emit a final summary message to one or more peer roles
 - the summary can also be stored in task result metadata
 - the operator must be able to inspect the summary from router/session state
+- the session worker emits the summary automatically when it completes or fails the underlying task in v1
 
 This is the mesh equivalent of an Agent Teams-style stop hook: not a terminal-only
 artifact, but a routed event/message tied to the real session lifecycle
@@ -305,6 +328,12 @@ Spawn defaults for v1:
 - per-role spawn timeout: `60s`
 - pane must show explicit progress while waiting
 - failed panes must render a retry hint, e.g. `mesh ui respawn <role>`
+
+Scheduler/runtime rule for v1:
+
+- UI role tasks must be explicitly distinguishable from pipeline session tasks
+- workers that do not opt into UI role tasks must not lease them
+- the minimum acceptable discriminator is `payload.ui_role_session=true`
 
 ### F5. Attach precedence
 
@@ -373,6 +402,7 @@ Minimum v1:
 
 - `mesh ui close` or equivalent closes all sessions for the active `ui_group_id`
 - if the operator closes iTerm2 without cleanup, stale groups remain queryable and recoverable
+- group-scoped discovery in v1 uses `/sessions?state=open` plus Python-side filtering on `metadata.ui_group_id`
 
 ## Acceptance Criteria
 
@@ -416,6 +446,22 @@ Given no live sessions exist for repo `X`, when the operator runs `mesh ui X`, t
 
 Given two operators open `mesh ui` for the same repo independently, when each cockpit spawns new agent panes, then each cockpit uses a distinct `ui_group_id` and does not attach to the other cockpit's sessions by default.
 
+### AC11. Task create path carries required identity
+
+Given `mesh ui` spawns an agent-role pane, when it creates the underlying task, then `repo` and `role` are present as top-level task fields and `ui_role_session`, `ui_role`, and `ui_group_id` are present in task payload metadata.
+
+### AC12. Scheduler does not leak UI tasks to pipeline workers
+
+Given a UI role task exists and a non-UI session worker polls for work, when the scheduler evaluates eligibility, then that worker is not allowed to lease the UI role task.
+
+### AC13. Boss knows the active group
+
+Given the `boss` pane starts for repo `X`, when mesh helpers are loaded, then `MESH_UI_GROUP_ID` is available in the pane environment and peer-resolution commands use it by default.
+
+### AC14. Group close is explicit and testable
+
+Given an active cockpit group exists, when the operator runs `mesh ui close`, then all live sessions in the active `ui_group_id` are closed or marked for explicit teardown and the cached local group mapping is cleared.
+
 ## Workstream Outline
 
 ### Workstream 1. Role session spawn path
@@ -452,12 +498,11 @@ Given two operators open `mesh ui` for the same repo independently, when each co
 
 ## Remaining Open Questions
 
-1. Should UI role session metadata live entirely in task payload, or do we need selected top-level task fields for scheduler efficiency?
+None blocking for v1.
 
-2. What is the exact router query surface for group-scoped inspection:
-   - extend `/sessions`
-   - extend `/tasks`
-   - both?
+Deferred post-v1 consideration:
+
+- if cockpit count/session count grows materially, promote `ui_group_id` from metadata-only filtering to a first-class indexed query surface
 
 ## Review Checklist
 

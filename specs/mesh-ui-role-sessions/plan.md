@@ -27,10 +27,12 @@ Out of scope for this phase:
 - Session grouping: use `ui_group_id` shared across all panes in one cockpit, with router-authoritative liveness and local cached lookup.
 - Addressing model: helpers resolve `ui_group_id + role -> session_id` and fail on ambiguity.
 - Role split: `boss` is an operator control shell; `president`, `lead`, `worker-*`, and `verifier` are agent-role sessions.
+- Task contract: `repo` and `role` are top-level task fields; `ui_role_session`, `ui_role`, and `ui_group_id` live in task payload.
 - Failure model: hard mesh error state, no silent raw-shell fallback.
 - Default layout: keep the current six-pane operator layout.
 - Spawn policy: agent-role spawns run in parallel with a `60s` per-role timeout.
 - Completion summary payload is structured and router-backed.
+- Group-scoped lookup in v1 uses `/sessions?state=open` plus Python-side filtering on `metadata.ui_group_id`.
 
 ## Workstreams
 
@@ -70,6 +72,7 @@ Tasks:
    - provider
    - session short id
    - attach/spawn mode
+8. export `MESH_UI_GROUP_ID` into every pane, including `boss`
 
 ### 3. UI Group Tracking
 
@@ -116,9 +119,10 @@ Tasks:
    - `status`
    - `summary_text`
    - `artifacts`
-2. store it in task result and/or session message metadata
-3. allow directed delivery to `boss` or `president`
-4. ensure operator inspection is possible from router-backed state
+2. have the session worker emit it automatically on task completion/failure in v1
+3. store it in task result and/or session message metadata
+4. allow directed delivery to `boss` or `president`
+5. ensure operator inspection is possible from router-backed state
 
 ## Validation Plan
 
@@ -132,6 +136,8 @@ Tasks:
 - completion summary persistence/routing tests
 - `mesh ui` pane label tests
 - headless attach-or-spawn logic tests without iTerm2
+- boss-pane environment tests for `MESH_UI_GROUP_ID`
+- pure-function tests for attach/spawn decision logic extracted from iTerm2 wiring
 
 ### E2E
 
@@ -143,6 +149,7 @@ Tasks:
 6. complete one role session and inspect the routed stop summary
 7. verify Matrix/operator controls still work on pane-backed sessions
 8. relaunch `mesh ui` and verify `ui_group_id` reuse only happens for live groups
+9. run `mesh ui close` and verify the active cockpit group is torn down cleanly
 
 ## Risks
 
@@ -154,10 +161,10 @@ Tasks:
 
 ## Rollout Order
 
-1. land pane labeling improvements
-2. land spawn metadata and router/client path
-3. land `mesh ui` attach-or-spawn logic
+1. land spawn metadata and router/client path
+2. land `ui_group_id` tracking
+3. land `mesh ui` attach-or-spawn logic and final pane labels
 4. land role-addressed helpers
-5. land completion-summary routing
+5. land completion-summary routing and `mesh ui close`
 6. run Gemini-only E2E on `snake-game`
 7. only then consider wider provider role mapping
