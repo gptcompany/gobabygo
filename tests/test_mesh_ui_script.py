@@ -32,6 +32,13 @@ def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
     assert '"/tmp/mesh-tasks/$repo_name"' in content
 
 
+def test_mesh_ui_role_shell_skips_live_attach_when_remote_init_present():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert 'if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then' in content
+
+
 def test_command_for_role_uses_yaml_remote_init(tmp_path, monkeypatch):
     module = _load_module()
     config = tmp_path / "operator_ui.yaml"
@@ -49,6 +56,24 @@ def test_command_for_role_uses_yaml_remote_init(tmp_path, monkeypatch):
     assert "/media/sam/1TB/rektslug" in command
 
 
+def test_command_for_role_uses_yaml_provider_runtime(tmp_path, monkeypatch):
+    module = _load_module()
+    config = tmp_path / "operator_ui.yaml"
+    config.write_text(
+        "roles:\n  boss:\n    provider: gemini\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MESH_UI_CONFIG", str(config))
+    monkeypatch.delenv("MESH_UI_CMD_BOSS", raising=False)
+    monkeypatch.delenv("MESH_UI_PROVIDER_OVERRIDE", raising=False)
+
+    command = module._command_for_role("boss", "/media/sam/1TB/rektslug", "rektslug")
+
+    assert "mesh_ui_role_shell.sh" in command
+    assert "ccs gemini" in command
+    assert "/media/sam/1TB/rektslug" in command
+
+
 def test_command_for_role_env_override_wins(tmp_path, monkeypatch):
     module = _load_module()
     config = tmp_path / "operator_ui.yaml"
@@ -62,6 +87,58 @@ def test_command_for_role_env_override_wins(tmp_path, monkeypatch):
     command = module._command_for_role("boss", "/media/sam/1TB/rektslug", "rektslug")
 
     assert command == "echo role=boss repo=rektslug"
+
+
+def test_command_for_role_provider_override_wins_for_worker(tmp_path, monkeypatch):
+    module = _load_module()
+    config = tmp_path / "operator_ui.yaml"
+    config.write_text(
+        "roles:\n  worker-codex:\n    provider: codex\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MESH_UI_CONFIG", str(config))
+    monkeypatch.setenv("MESH_UI_PROVIDER_OVERRIDE", "gemini")
+
+    command = module._command_for_role("worker-codex", "/media/sam/1TB/rektslug", "rektslug")
+
+    assert "ccs gemini" in command
+    assert "ccs codex" not in command
+
+
+def test_command_for_role_marks_pre_resolved_live_attach(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CMD_LEAD", raising=False)
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+
+    command = module._command_for_role(
+        "lead",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        live_remote_init="tmux attach -t mesh-demo",
+    )
+
+    assert "tmux attach -t mesh-demo" in command
+    assert "pre_resolved" in command
+
+
+def test_command_for_role_uses_provider_runtime_config_override(tmp_path, monkeypatch):
+    module = _load_module()
+    ui_config = tmp_path / "operator_ui.yaml"
+    provider_config = tmp_path / "provider_runtime.yaml"
+    ui_config.write_text(
+        "roles:\n  boss:\n    provider: gemini\n",
+        encoding="utf-8",
+    )
+    provider_config.write_text(
+        "providers:\n  gemini:\n    command_template: \"custom-gemini --repo {target_account}\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MESH_UI_CONFIG", str(ui_config))
+    monkeypatch.setenv("MESH_PROVIDER_RUNTIME_CONFIG", str(provider_config))
+
+    command = module._command_for_role("boss", "/media/sam/1TB/rektslug", "rektslug")
+
+    assert "custom-gemini --repo gemini" in command
 
 
 def test_select_live_sessions_prefers_exact_role_match():

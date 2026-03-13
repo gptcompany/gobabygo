@@ -6,6 +6,7 @@ REPO_INPUT="${2:?missing repo}"
 REPO_NAME="${3:?missing repo_name}"
 ROLE_SET="${4:-}"
 REMOTE_INIT="${5:-}"
+LIVE_ATTACH_MODE="${6:-auto}"
 if [[ -z "$REMOTE_INIT" && -n "$ROLE_SET" && "$ROLE_SET" != *","* ]]; then
   REMOTE_INIT="$ROLE_SET"
   ROLE_SET="$ROLE"
@@ -122,6 +123,7 @@ bootstrap_shell() {
   local role="$3"
   local repo_name="$4"
   local remote_init="$5"
+  local live_attach_mode="$6"
   local mesh_home mesh_script live_attach_helper live_attach
 
   if [[ -d "$target_dir" ]]; then
@@ -148,13 +150,13 @@ bootstrap_shell() {
     export MESH_HOME="$mesh_home"
   fi
   live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
-  if [[ "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
+  if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
     live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$ROLE_SET" 2>/dev/null || true)"
     if [[ -n "$live_attach" ]]; then
       eval "$live_attach"
     fi
   fi
-  if [[ -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
+  if [[ "$live_attach_mode" != "pre_resolved" && -z "$remote_init" && -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
     printf '[mesh:%s] WARNING: no active mesh session attached. This is a detached control shell on the WS, not the live worker runtime.\n' "$role"
   fi
   if [[ -n "$remote_init" ]]; then
@@ -165,7 +167,7 @@ bootstrap_shell() {
 
 if is_local_ws_host "$WS_HOST"; then
   TARGET_DIR="$(resolve_target_dir "$REPO_INPUT" "$WS_REPO_BASE")"
-  bootstrap_shell "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT"
+  bootstrap_shell "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT" "$LIVE_ATTACH_MODE"
 fi
 
 REMOTE_BOOTSTRAP_SCRIPT='
@@ -177,6 +179,7 @@ repo_name="${REPO_NAME:?missing repo_name}"
 mesh_control_repo="${MESH_CONTROL_REPO:-/media/sam/1TB/gobabygo}"
 remote_init=""
 role_set="${ROLE_SET:-$role}"
+live_attach_mode="${LIVE_ATTACH_MODE:-auto}"
 
 if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
   remote_init="$(printf "%s" "$REMOTE_INIT_B64" | base64 -d)"
@@ -219,13 +222,13 @@ if [[ -x "$mesh_script" ]]; then
   export MESH_HOME="$mesh_home"
 fi
 live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
-if [[ "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
+if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
   live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$role_set" 2>/dev/null || true)"
   if [[ -n "$live_attach" ]]; then
     eval "$live_attach"
   fi
 fi
-if [[ -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
+if [[ "$live_attach_mode" != "pre_resolved" && -z "$remote_init" && -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
   printf "[mesh:%s] WARNING: no active mesh session attached. This is a detached control shell on the WS, not the live worker runtime.\n" "$role"
 fi
 if [[ -n "$remote_init" ]]; then
@@ -235,6 +238,6 @@ exec "${SHELL:-/bin/bash}" -l
 '
 
 mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
-REMOTE_COMMAND="$(printf 'TARGET_DIR=%q WS_REPO_BASE=%q ROLE=%q REPO_NAME=%q ROLE_SET=%q REMOTE_INIT_B64=%q bash -lc %q' \
-  "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$ROLE_SET" "$REMOTE_INIT_B64" "$REMOTE_BOOTSTRAP_SCRIPT")"
+REMOTE_COMMAND="$(printf 'TARGET_DIR=%q WS_REPO_BASE=%q ROLE=%q REPO_NAME=%q ROLE_SET=%q REMOTE_INIT_B64=%q LIVE_ATTACH_MODE=%q bash -lc %q' \
+  "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$ROLE_SET" "$REMOTE_INIT_B64" "$LIVE_ATTACH_MODE" "$REMOTE_BOOTSTRAP_SCRIPT")"
 exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "$REMOTE_COMMAND"

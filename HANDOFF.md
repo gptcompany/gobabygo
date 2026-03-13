@@ -108,6 +108,7 @@ Two operator-facing follow-ups were closed after the stack recovery:
 1. `mesh ui` no longer opens identical blank shells for every pane
    - pane bootstrap is now centralized in `mapping/operator_ui.yaml`
    - role launcher is `scripts/mesh_ui_role_shell.sh`
+   - default role bootstrap now opens a real provider CLI when no live session exists
 2. `mesh status` no longer drowns the operator in stale historical workers
    - default view shows active/recent workers only
    - `mesh status --all` shows the full audit-heavy table

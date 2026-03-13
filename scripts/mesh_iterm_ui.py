@@ -62,6 +62,13 @@ def _default_ui_config_path() -> str:
     return str(_repo_root() / "mapping" / "operator_ui.yaml")
 
 
+def _default_provider_runtime_config_path() -> str:
+    override = os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG")
+    if override is not None:
+        return override
+    return str(_repo_root() / "mapping" / "provider_runtime.yaml")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Open iTerm2 mesh operator layout.")
     parser.add_argument(
@@ -195,7 +202,9 @@ def _router_get_json(router_url: str, auth_token: str, path: str) -> Any:
 
 
 def _load_provider_session_users(config_path: str | None = None) -> dict[str, str]:
-    path_value = config_path or str(_repo_root() / "mapping" / "provider_runtime.yaml")
+    path_value = config_path if config_path is not None else _default_provider_runtime_config_path()
+    if path_value == "":
+        return {}
     path = Path(path_value)
     if not path.is_file():
         return {}
@@ -216,6 +225,34 @@ def _load_provider_session_users(config_path: str | None = None) -> dict[str, st
         if user:
             users[str(cli_type).strip()] = user
     return users
+
+
+def _load_provider_runtime(config_path: str | None = None) -> dict[str, dict[str, str]]:
+    path_value = config_path if config_path is not None else _default_provider_runtime_config_path()
+    if path_value == "":
+        return {}
+    path = Path(path_value)
+    if not path.is_file():
+        return {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+    providers = raw.get("providers")
+    if not isinstance(providers, dict):
+        return {}
+
+    result: dict[str, dict[str, str]] = {}
+    for provider, entry in providers.items():
+        if not isinstance(entry, dict):
+            continue
+        result[str(provider).strip()] = {
+            str(key).strip(): str(value).strip()
+            for key, value in entry.items()
+            if str(key).strip() and str(value).strip()
+        }
+    return result
 
 
 def _load_ui_role_rules(config_path: str | None = None) -> dict[str, dict[str, str]]:
@@ -252,15 +289,45 @@ def _load_ui_role_rules(config_path: str | None = None) -> dict[str, dict[str, s
 
 def _default_remote_init_for_role(role: str) -> str:
     defaults = {
-        "boss": "mesh status || true; printf '\\n[mesh:boss] Next: mesh thread | mesh start | mesh run <phase>\\n'",
-        "president": "mesh thread || true; printf '\\n[mesh:president] Next: inspect the latest thread and coordinate delegation.\\n'",
-        "lead": "git status --short || true; printf '\\n[mesh:lead] Next: inspect repo state, branch, and implementation boundaries.\\n'",
-        "worker-claude": "printf '[mesh:worker-claude] Detached control shell ready in %s\\n' \"$PWD\"",
-        "worker-codex": "printf '[mesh:worker-codex] Detached control shell ready in %s\\n' \"$PWD\"",
-        "worker-gemini": "printf '[mesh:worker-gemini] Detached control shell ready in %s\\n' \"$PWD\"",
-        "verifier": "printf '[mesh:verifier] Detached control shell ready in %s\\n' \"$PWD\"",
+        "boss": "ccs gemini",
+        "president": "ccs gemini",
+        "lead": "ccs gemini",
+        "worker-claude": "ccs work-claude",
+        "worker-codex": "ccs codex",
+        "worker-gemini": "ccs gemini",
+        "verifier": "ccs gemini",
     }
     return defaults.get(role, "")
+
+
+def _provider_remote_init_for_role(role: str, rule: dict[str, str]) -> str:
+    provider = os.environ.get("MESH_UI_PROVIDER_OVERRIDE", "").strip() or rule.get("provider", "").strip()
+    if not provider and role.startswith("worker-"):
+        provider = role.split("-", 1)[1].strip()
+    if not provider:
+        return ""
+
+    runtime = _load_provider_runtime()
+    provider_cfg = runtime.get(provider, {})
+    template = provider_cfg.get("command_template", "").strip()
+    if not template:
+        return ""
+
+    target_account = rule.get("target_account", "").strip()
+    if not target_account:
+        if provider == "claude":
+            target_account = "work-claude"
+        else:
+            target_account = provider
+
+    command = template.format(
+        target_account=target_account,
+        account_profile=target_account,
+        worker_account_profile=target_account,
+    ).strip()
+    if not command:
+        return ""
+    return command
 
 
 def _default_command_for_role(role: str, repo: str, repo_name: str) -> str:
@@ -448,8 +515,14 @@ def _command_for_role(
     if template:
         return template.format(repo=repo, repo_name=repo_name, role=role)
 
-    remote_init = live_remote_init or rule.get("remote_init", "").strip() or _default_remote_init_for_role(role)
+    remote_init = (
+        live_remote_init
+        or rule.get("remote_init", "").strip()
+        or _provider_remote_init_for_role(role, rule)
+        or _default_remote_init_for_role(role)
+    )
     helper = _repo_root() / "scripts" / "mesh_ui_role_shell.sh"
+    live_attach_mode = "pre_resolved" if live_remote_init else "auto"
     return " ".join(
         [
             shlex.quote(str(helper)),
@@ -458,6 +531,7 @@ def _command_for_role(
             shlex.quote(repo_name),
             shlex.quote(",".join(all_roles or [role])),
             shlex.quote(remote_init),
+            shlex.quote(live_attach_mode),
         ]
     )
 

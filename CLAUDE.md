@@ -309,16 +309,16 @@ Current `mesh ui` behavior:
 
 - pane boot commands are centralized in `mapping/operator_ui.yaml`
 - default launcher is `scripts/mesh_ui_role_shell.sh`
-- each role can have its own non-destructive bootstrap command
-- if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of staying a static shell
+- each role can have its own provider-backed bootstrap command
+- if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of starting a fresh CLI
 - default operator layout is now repo-centric `2 tabs x 3 panes` (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened on demand via explicit `--roles`
 - for single-session inspection, prefer `mesh sessions` / `mesh attach`; they are router-backed, default to the current repo, and use `--all` only when you intentionally want cross-repo selection
 - `mesh` with no args is the shortest repo-local operator entrypoint after `wss` + `yazicd`; `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` now resolve the git repo root even when launched from nested subdirectories
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
 - live attach resolution also runs on the WS during pane bootstrap, so it still works when the Mac operator host cannot reach the router directly
 - `mesh thread` with no explicit thread name now resolves the latest thread by current repo task metadata, not by assuming the thread name starts with the repo basename
-- if attach is not possible, `worker-*` and `verifier` panes explicitly warn that they are detached control shells on the WS, not the live worker runtime
-- this closes the gap where every pane previously opened as the same blank shell
+- if attach is not possible, the pane falls back to the role's configured CLI bootstrap
+- this closes the gap where every pane previously opened as the same blank shell or detached control shell
 
 Matrix bridge now supports simple inbound room commands via router API:
 
