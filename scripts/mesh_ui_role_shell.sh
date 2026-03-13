@@ -117,6 +117,17 @@ if [[ -n "$REMOTE_INIT" ]]; then
   REMOTE_INIT_B64="$(printf '%s' "$REMOTE_INIT" | base64 | tr -d '\n')"
 fi
 
+set_session_label() {
+  local role="$1"
+  local repo_name="$2"
+  local label="mesh:${role} | ${repo_name}"
+  local badge
+
+  printf '\033]0;%s\007' "$label"
+  badge="$(printf '%s' "$label" | base64 | tr -d '\n')"
+  printf '\033]1337;SetBadgeFormat=%s\a' "$badge"
+}
+
 bootstrap_shell() {
   local target_dir="$1"
   local ws_repo_base="$2"
@@ -136,6 +147,7 @@ bootstrap_shell() {
   if [[ -n "${TERM:-}" ]]; then
     clear
   fi
+  set_session_label "$role" "$repo_name"
   echo "[mesh:${role}] repo=${repo_name}"
   if [[ -d "$target_dir/.git" || -f "$target_dir/.git" ]]; then
     git config --global --add safe.directory "$target_dir" >/dev/null 2>&1 || true
@@ -208,6 +220,7 @@ fi
 if [[ -n "${TERM:-}" ]]; then
   clear
 fi
+set_session_label "$role" "$repo_name"
 echo "[mesh:${role}] repo=${repo_name}"
 if [[ -d "$target_dir/.git" || -f "$target_dir/.git" ]]; then
   git config --global --add safe.directory "$target_dir" >/dev/null 2>&1 || true

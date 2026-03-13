@@ -24,6 +24,14 @@ def test_mesh_ui_role_shell_marks_repo_safe_for_git():
     assert 'git config --global --add safe.directory "$target_dir"' in content
 
 
+def test_mesh_ui_role_shell_sets_role_label_and_badge():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "printf '\\033]0;%s\\007' \"$label\"" in content
+    assert "SetBadgeFormat" in content
+
+
 def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
     content = script_path.read_text(encoding="utf-8")
