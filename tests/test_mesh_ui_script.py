@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from pathlib import Path
 import sys
@@ -187,3 +188,56 @@ def test_default_ui_roles_fit_two_tabs_with_three_panes():
         ["boss", "president", "lead"],
         ["worker-codex", "worker-gemini", "verifier"],
     ]
+
+
+class _FakeSession:
+    def __init__(self, marker: str | None = None):
+        self.marker = marker
+
+    async def async_get_variable(self, name: str):
+        assert name == "user.mesh_ui_tab"
+        if self.marker is None:
+            raise RuntimeError("missing marker")
+        return self.marker
+
+    async def async_set_variable(self, name: str, value: str):
+        assert name == "user.mesh_ui_tab"
+        self.marker = value
+
+
+class _FakeTab:
+    def __init__(self, sessions):
+        self.sessions = list(sessions)
+        self.current_session = self.sessions[0] if self.sessions else None
+        self.closed = False
+
+    async def async_close(self, force=True):
+        self.closed = True
+
+
+def test_is_mesh_ui_tab_checks_all_sessions():
+    module = _load_module()
+    tab = _FakeTab([_FakeSession(None), _FakeSession("1")])
+
+    assert asyncio.run(module._is_mesh_ui_tab(tab)) is True
+
+
+def test_mark_mesh_ui_sessions_marks_all_sessions():
+    module = _load_module()
+    sessions = [_FakeSession(None), _FakeSession(None), _FakeSession(None)]
+
+    asyncio.run(module._mark_mesh_ui_sessions(sessions))
+
+    assert [s.marker for s in sessions] == ["1", "1", "1"]
+
+
+def test_cleanup_existing_mesh_tabs_closes_marked_tab_even_if_current_session_unmarked():
+    module = _load_module()
+    marked_tab = _FakeTab([_FakeSession(None), _FakeSession("1")])
+    plain_tab = _FakeTab([_FakeSession(None)])
+    window = type("Window", (), {"tabs": [marked_tab, plain_tab]})()
+
+    asyncio.run(module._cleanup_existing_mesh_tabs(window))
+
+    assert marked_tab.closed is True
+    assert plain_tab.closed is False

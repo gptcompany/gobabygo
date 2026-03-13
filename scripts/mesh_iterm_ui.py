@@ -472,19 +472,31 @@ async def _create_panes_for_roles(tab, roles: list[str]):
     return sessions
 
 
+def _tab_sessions(tab) -> list[Any]:
+    sessions = getattr(tab, "sessions", None)
+    if isinstance(sessions, list) and sessions:
+        return sessions
+    current = getattr(tab, "current_session", None)
+    return [current] if current is not None else []
+
+
 async def _is_mesh_ui_tab(tab) -> bool:
-    try:
-        marker = await tab.current_session.async_get_variable("user.mesh_ui_tab")
-        return str(marker) == "1"
-    except Exception:
-        return False
+    for session in _tab_sessions(tab):
+        try:
+            marker = await session.async_get_variable("user.mesh_ui_tab")
+            if str(marker) == "1":
+                return True
+        except Exception:
+            continue
+    return False
 
 
-async def _mark_mesh_ui_tab(tab) -> None:
-    try:
-        await tab.current_session.async_set_variable("user.mesh_ui_tab", "1")
-    except Exception:
-        pass
+async def _mark_mesh_ui_sessions(sessions: list[Any]) -> None:
+    for session in sessions:
+        try:
+            await session.async_set_variable("user.mesh_ui_tab", "1")
+        except Exception:
+            continue
 
 
 async def _close_tab(tab) -> None:
@@ -526,8 +538,8 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
     live_remote_inits = _discover_live_remote_inits(cfg) if cfg.attach_live else {}
     for tab_index, roles in enumerate(groups):
         tab = await window.async_create_tab()
-        await _mark_mesh_ui_tab(tab)
         sessions = await _create_panes_for_roles(tab, roles)
+        await _mark_mesh_ui_sessions(sessions)
         for sess, role in zip(sessions, roles):
             cmd = _command_for_role(
                 role,
