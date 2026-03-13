@@ -23,6 +23,14 @@ def test_mesh_ui_role_shell_marks_repo_safe_for_git():
     assert 'git config --global --add safe.directory "$target_dir"' in content
 
 
+def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert '"/media/sam/1TB/$repo_name"' in content
+    assert '"/tmp/mesh-tasks/$repo_name"' in content
+
+
 def test_command_for_role_uses_yaml_remote_init(tmp_path, monkeypatch):
     module = _load_module()
     config = tmp_path / "operator_ui.yaml"

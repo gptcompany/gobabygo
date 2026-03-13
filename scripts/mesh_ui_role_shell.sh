@@ -49,6 +49,30 @@ mesh_ssh_ui_opts() {
     -o "IPQoS=none"
 }
 
+resolve_target_dir() {
+  local repo_input="$1"
+  local ws_repo_base="$2"
+  local candidate
+
+  if [[ "$repo_input" == /* || "$repo_input" == .* || "$repo_input" == *"/"* ]]; then
+    printf '%s\n' "$repo_input"
+    return 0
+  fi
+
+  for candidate in \
+    "${ws_repo_base}/${repo_input}" \
+    "/media/sam/1TB/${repo_input}" \
+    "/tmp/mesh-tasks/${repo_input}" \
+    "/home/sam/${repo_input}"; do
+    if [[ -d "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "${ws_repo_base}/${repo_input}"
+}
+
 is_local_ws_host() {
   local host="$1"
   local target target_ip
@@ -140,6 +164,7 @@ bootstrap_shell() {
 }
 
 if is_local_ws_host "$WS_HOST"; then
+  TARGET_DIR="$(resolve_target_dir "$REPO_INPUT" "$WS_REPO_BASE")"
   bootstrap_shell "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT"
 fi
 
@@ -155,6 +180,19 @@ role_set="${ROLE_SET:-$role}"
 
 if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
   remote_init="$(printf "%s" "$REMOTE_INIT_B64" | base64 -d)"
+fi
+
+if [[ ! -d "$target_dir" ]]; then
+  for candidate in \
+    "$ws_repo_base/$repo_name" \
+    "/media/sam/1TB/$repo_name" \
+    "/tmp/mesh-tasks/$repo_name" \
+    "/home/sam/$repo_name"; do
+    if [[ -d "$candidate" ]]; then
+      target_dir="$candidate"
+      break
+    fi
+  done
 fi
 
 if [[ -d "$target_dir" ]]; then
