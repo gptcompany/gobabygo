@@ -52,6 +52,11 @@ install_worker_instance_env() {
     sudo chmod 600 "/etc/mesh-worker/${name}.env"
 }
 
+prepare_worker_uv_env() {
+    sudo mkdir -p /home/mesh-worker/.cache/uv /home/mesh-worker/.local/share/uv/python
+    sudo chown -R mesh-worker:mesh-worker /home/mesh-worker/.cache /home/mesh-worker/.local
+}
+
 enable_worker_instances() {
     local env_path
     local name
@@ -152,8 +157,17 @@ case "$MODE" in
     # 4. Create venv with uv
     cd /opt/mesh-worker
     if command -v uv &>/dev/null; then
-      sudo -u mesh-worker uv venv venv
-      sudo -u mesh-worker uv pip install -e . --python venv/bin/python
+      prepare_worker_uv_env
+      UV_BIN="$(command -v uv)"
+      sudo env \
+        UV_CACHE_DIR=/home/mesh-worker/.cache/uv \
+        UV_PYTHON_INSTALL_DIR=/home/mesh-worker/.local/share/uv/python \
+        "$UV_BIN" venv venv --python 3.12
+      sudo env \
+        UV_CACHE_DIR=/home/mesh-worker/.cache/uv \
+        UV_PYTHON_INSTALL_DIR=/home/mesh-worker/.local/share/uv/python \
+        "$UV_BIN" pip install -e . --python venv/bin/python
+      sudo chown -R mesh-worker:mesh-worker /home/mesh-worker/.cache /home/mesh-worker/.local
     else
       echo "ERROR: uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
       exit 1

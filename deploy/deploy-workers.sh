@@ -73,6 +73,11 @@ install_common_worker_env() {
     fi
 }
 
+prepare_worker_uv_env() {
+    mkdir -p /home/mesh-worker/.cache/uv /home/mesh-worker/.local/share/uv/python
+    chown -R mesh-worker:mesh-worker /home/mesh-worker/.cache /home/mesh-worker/.local
+}
+
 echo "=== Deploying Mesh Workers (local) ==="
 
 # 1. Create service user
@@ -146,12 +151,15 @@ fi
 if [ -n "$UV_BIN" ]; then
     echo "  Using uv: $UV_BIN"
     rm -rf venv
-    mkdir -p /home/mesh-worker/.cache/uv /home/mesh-worker/.local/share/uv
+    prepare_worker_uv_env
+    # Keep uv-managed Python under /home/mesh-worker so systemd service users can execute it.
+    env UV_CACHE_DIR=/home/mesh-worker/.cache/uv \
+        UV_PYTHON_INSTALL_DIR=/home/mesh-worker/.local/share/uv/python \
+        "$UV_BIN" venv venv --python 3.12
+    env UV_CACHE_DIR=/home/mesh-worker/.cache/uv \
+        UV_PYTHON_INSTALL_DIR=/home/mesh-worker/.local/share/uv/python \
+        "$UV_BIN" pip install -e . --python venv/bin/python
     chown -R mesh-worker:mesh-worker /home/mesh-worker/.cache /home/mesh-worker/.local
-    # Build the venv as the service user so the managed Python path stays executable
-    # by mesh-worker/sam at runtime.
-    sudo -u mesh-worker env UV_CACHE_DIR=/home/mesh-worker/.cache/uv "$UV_BIN" venv venv --python 3.12
-    sudo -u mesh-worker env UV_CACHE_DIR=/home/mesh-worker/.cache/uv "$UV_BIN" pip install -e . --python venv/bin/python
 else
     echo "ERROR: uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
