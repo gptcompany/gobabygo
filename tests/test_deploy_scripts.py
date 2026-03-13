@@ -117,7 +117,7 @@ class TestSystemdUnits:
         assert '"${PROJECT_ROOT}"/deploy/*.common.env' in content
         assert 'BATCH_WORKERS+=("$(basename "$src_env" .env | sed ' in content
         assert 'prepare_worker_uv_env' in content
-        assert 'UV_PYTHON_INSTALL_DIR=/home/mesh-worker/.local/share/uv/python' in content
+        assert 'UV_PYTHON_INSTALL_DIR=/opt/mesh-worker/.uv/python' in content
 
     def test_install_worker_normalizes_shared_task_root(self):
         content = (DEPLOY_DIR / "install.sh").read_text()
@@ -142,7 +142,7 @@ class TestSystemdUnits:
         assert 'for env_path in /etc/mesh-worker/*.env; do' in content
         assert 'mesh-session-worker@${name}.service' in content
         assert 'mesh-review-worker@${name}.service' in content
-        assert 'UV_PYTHON_INSTALL_DIR=/home/mesh-worker/.local/share/uv/python' in content
+        assert 'UV_PYTHON_INSTALL_DIR=/opt/mesh-worker/.uv/python' in content
 
 
 class TestEnvironmentFiles:
