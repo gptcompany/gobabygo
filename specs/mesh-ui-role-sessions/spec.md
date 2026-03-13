@@ -1,0 +1,324 @@
+# Spec: Mesh UI Role Sessions
+
+## Summary
+
+`mesh ui` must stop opening standalone CCS CLIs that are unaware of each other.
+Each pane must represent a real mesh role session backed by the router session bus,
+so role-to-role communication, operator intervention, and session identity all work
+through the existing `mesh` runtime instead of ad-hoc terminal state.
+
+## Problem
+
+Current `mesh ui` behavior is only a visual launcher:
+
+- panes can open a provider CLI (`ccs gemini`, `ccs codex`, `ccs <profile>`)
+- panes can attach to an already-running mesh session if one exists
+- panes do **not** create mesh-backed role sessions when none exist
+- panes therefore do not share `thread_id`, `session_id`, or role-aware messaging state
+
+As a result:
+
+- a pane labeled `boss` or `president` is just a raw CLI process
+- asking one pane to contact another role fails because there is no mesh peer identity
+- iTerm2/tmux provide display and transport, but not message routing
+- the existing router session bus is bypassed for fresh panes
+
+## Goal
+
+Make `mesh ui` the canonical operator cockpit for mesh-backed role sessions.
+
+When an operator opens `mesh ui <repo>`:
+
+1. each pane resolves to a target role (`boss`, `president`, `lead`, `worker-*`, `verifier`)
+2. if a compatible live mesh session already exists for that role and repo, the pane attaches to it
+3. otherwise the pane spawns a new mesh-backed session for that role
+4. all inter-role messaging flows through the router session bus
+5. the CLI inside the pane remains CCS/Claude-Code-native, but is now wrapped by a real mesh session lifecycle
+
+## Non-Goals
+
+- replacing CCS as the CLI frontend
+- using iTerm2 itself as a message bus
+- inventing a second messaging path outside router `/sessions/*`
+- full autonomous multi-agent delegation in this first step
+- retrofitting historical stale standalone CLI panes into mesh sessions
+
+## Current Constraints
+
+- router session bus already exists:
+  - `POST /sessions/send`
+  - `POST /sessions/send-key`
+  - `POST /sessions/signal`
+  - `GET /sessions/messages`
+- session workers already poll and deliver inbound messages into tmux-backed CLIs
+- `mesh ui` currently knows how to attach to live sessions, but not how to spawn role sessions on demand
+- provider launch policy already exists in `mapping/provider_runtime.yaml`
+- UI role policy already exists in `mapping/operator_ui.yaml`
+
+## Target UX
+
+### Operator Flow
+
+1. operator connects to WS (`wss`)
+2. operator enters target repo (`yazicd`)
+3. operator runs `mesh ui`
+4. iTerm2 opens the standard role layout
+5. each pane title visibly shows the role name
+6. each pane either:
+   - attaches to an existing live mesh session for that role, or
+   - starts a new mesh-backed role session and enters the CLI
+7. a role can send messages to other roles using mesh session commands, because every pane is now backed by a real session
+
+### Pane Identity
+
+Every pane must visibly expose:
+
+- role name
+- repo name
+- whether it is `attached` or `spawned`
+- provider/runtime identity (`gemini`, `codex`, `claude`)
+- session id short form
+
+Minimum visible requirement for v1:
+
+- pane/tab title includes role name
+- startup banner prints role, provider, repo, and session id short form
+
+## Resolved Design Decisions
+
+### D1. Spawn primitive = task-backed session
+
+`mesh ui` must not create router `session` rows directly.
+
+The canonical spawn primitive is:
+
+1. create a dedicated session task for the role
+2. let the scheduler/session worker create the session normally
+3. attach the pane to the resulting session
+
+This keeps session lifecycle aligned with the existing router model instead of
+creating a second path for session state.
+
+### D2. Role sessions are grouped by `ui_group_id`
+
+Spawned role tasks and resulting sessions must carry:
+
+- `ui_role_session=true`
+- `ui_role=<role>`
+- `ui_group_id=<stable id>`
+- `repo=<repo path>`
+
+`ui_group_id` is the grouping primitive for one operator cockpit. It is lighter
+than overloading pipeline `thread_id` and avoids conflating `mesh ui` with
+pipeline execution.
+
+### D3. `boss`, `president`, and `lead` are real session roles
+
+There is no lighter local-wrapper mode for these roles in default `mesh ui`.
+
+All visible roles in `mesh ui` must map to the same runtime contract:
+
+- task-backed
+- session-backed
+- bus-addressable
+
+### D4. In-pane role messaging uses mesh helper commands
+
+The first concrete UX for peer communication is shell/helper driven, not slash-command driven.
+
+Examples:
+
+- `mesh-send president "review this plan"`
+- `mesh-send verifier "run checks on latest diff"`
+- `mesh-enter president`
+- `mesh-interrupt worker-gemini`
+
+These helpers resolve the peer by `ui_group_id + role` and then call the
+existing router session bus.
+
+### D5. Default layout remains six panes
+
+Default `mesh ui` keeps the current six-pane layout:
+
+- `boss`
+- `president`
+- `lead`
+- `worker-codex`
+- `worker-gemini`
+- `verifier`
+
+`worker-claude` remains explicit/on-demand.
+
+## Functional Requirements
+
+### F1. Mesh-backed pane lifecycle
+
+For each configured role, `mesh ui` must resolve one of two modes:
+
+- `attach`: use an existing open session for the same repo and compatible role/provider
+- `spawn`: create a new mesh session for that role and repo, then attach to it
+
+Standalone `ccs ...` boot without a mesh session is not valid default behavior anymore.
+
+### F2. Role session identity
+
+A spawned pane session must have explicit mesh identity:
+
+- `repo`
+- `role`
+- `target_cli`
+- `ui_group_id`
+- `session_id`
+
+The router must remain the source of truth.
+
+### F3. Message-bus integration
+
+Role-to-role communication must use the existing mesh session bus.
+
+At minimum, the implementation must support:
+
+- sending plain text from one role session to another
+- operator `send`, `send-key`, `signal` to any pane-backed session
+- receiving those messages inside the target CLI through the existing session worker delivery loop
+
+### F3a. Inter-role messaging contract
+
+Each pane-backed role session must be able to address peer roles within the same
+`ui_group_id`.
+
+Minimum v1 contract:
+
+- resolve `target_role + ui_group_id -> session_id`
+- send plain-text messages to the resolved peer session through `/sessions/send`
+- support operator-assisted control actions through `/sessions/send-key` and `/sessions/signal`
+- persist all inter-role messages in router session history
+
+The bus remains session-addressed internally; role-addressing is a helper layer on top.
+
+### F3b. Stop/completion summary contract
+
+When a pane-backed role session reaches a terminal state, the runtime must support
+publishing a structured completion summary.
+
+Minimum v1 behavior:
+
+- the session can emit a final summary message to one or more peer roles
+- the summary can also be stored in task result metadata
+- the operator must be able to inspect the summary from router/session state
+
+This is the mesh equivalent of an Agent Teams-style stop hook: not a terminal-only
+artifact, but a routed event/message tied to the real session lifecycle
+
+### F4. Spawn semantics
+
+`mesh ui` needs an internal spawn path for role panes.
+
+That spawn path must:
+
+- choose provider/account from `mapping/operator_ui.yaml` + `mapping/provider_runtime.yaml`
+- create a dedicated session task bound to the repo, role, and `ui_group_id`
+- wait for the scheduler/session worker to materialize the session
+- bootstrap the correct CCS CLI inside tmux/upterm
+- return enough metadata for immediate attach from the pane
+
+### F5. Attach precedence
+
+If a matching live role session already exists, `mesh ui` must attach instead of spawning a duplicate.
+
+Matching rules must prefer:
+
+1. exact repo path
+2. exact role
+3. compatible provider
+4. newest active session
+
+### F6. Titles and labels
+
+Pane labels must make roles visually distinct.
+
+Minimum required:
+
+- pane title contains role name and repo
+- shell banner shows role + provider + session short id
+
+### F7. Failure handling
+
+If a role pane cannot attach or spawn, the pane must show an explicit mesh error state.
+
+Valid failure states:
+
+- router unavailable
+- worker unavailable for target provider
+- session spawn timeout
+- attach target missing/stale
+- repo path invalid/not allowed
+
+A raw detached shell without mesh identity is not an acceptable silent fallback.
+
+## Acceptance Criteria
+
+### AC1. Spawned panes are real mesh sessions
+
+Given no open sessions for repo `X`, when the operator runs `mesh ui X`, then each opened role pane becomes a real mesh session with a visible `session_id` and provider identity.
+
+### AC2. Existing sessions are reused
+
+Given an open `lead` session already exists for repo `X`, when the operator runs `mesh ui X`, then the `lead` pane attaches to that exact session instead of creating another one.
+
+### AC3. Inter-role messaging works
+
+Given `boss` and `president` panes are open for the same repo, when the operator sends a session-bus message from `boss` to `president`, then the message is persisted by the router and delivered to the `president` CLI.
+
+### AC4. Operator controls still work
+
+Given a pane-backed session is waiting for operator input, when the operator uses `mesh send`, `mesh enter`, `mesh interrupt`, or Matrix room commands, then the target pane session receives the action through the router bus.
+
+### AC5. No silent raw-shell fallback
+
+Given a pane cannot become a mesh-backed session, when `mesh ui` opens that pane, then the pane shows a hard failure banner instead of an unlabeled detached shell.
+
+### AC6. Stop summary is routable
+
+Given a `lead` pane session completes work for the current `ui_group_id`, when it emits a completion summary, then the summary is available as router-backed state and can be delivered to `president` or `boss` through the same mesh addressing model.
+
+## Implementation Outline
+
+### Phase 1
+
+- add role-pane title/identity labeling
+- add a spawn API/client path for task-backed role sessions
+- teach `mesh ui` to choose attach vs spawn
+- keep provider selection policy centralized in existing YAML config
+- add `mesh-send` / `mesh-enter` / `mesh-interrupt` helpers that resolve peers by `ui_group_id`
+
+### Phase 2
+
+- surface session ids and peer targets ergonomically in pane banners
+- persist and rediscover the active `ui_group_id` for a repo
+- add optional `mesh sessions --ui-group` / `mesh attach --ui-group`
+- add structured completion-summary publication and inspection
+
+### Phase 3
+
+- optional workflow helpers for directed delegation (`ask president`, `ask verifier`, etc.)
+- optional mobile/operator shortcuts mapped to role sessions
+
+## Remaining Open Questions
+
+1. Should the spawn path extend `POST /tasks` directly with explicit UI role metadata, or should it use a dedicated higher-level endpoint such as `POST /ui/role-sessions` that internally creates the task?
+
+2. Where should the active repo -> `ui_group_id` mapping live?
+   - router metadata only
+   - local state file on the operator host
+   - both, with router authoritative [preferred, still to confirm]
+
+3. Should `mesh-send <role>` address only the newest matching live session in the current `ui_group_id`, or should it fail if more than one candidate exists for the same role?
+
+## Review Checklist
+
+- Does this spec correctly forbid raw standalone CLI panes as the default `mesh ui` behavior?
+- Is router session bus reuse explicit enough?
+- Are attach-vs-spawn semantics unambiguous?
+- Are failure states strict enough to avoid misleading UX?
+- Is the role identity model concrete enough to implement without inventing a second orchestration layer?
