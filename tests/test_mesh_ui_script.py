@@ -160,6 +160,75 @@ def test_command_for_role_uses_provider_runtime_config_override(tmp_path, monkey
     assert "custom-gemini --repo gemini" in command
 
 
+def test_ui_group_cache_round_trip(tmp_path):
+    module = _load_module()
+
+    path = module._write_ui_group_cache(
+        "snake-game",
+        "snake-game-ui-20260314T120000Z",
+        cache_dir=tmp_path,
+    )
+
+    assert path == tmp_path / "snake-game.json"
+    assert module._read_ui_group_cache("snake-game", cache_dir=tmp_path) == {
+        "repo_name": "snake-game",
+        "ui_group_id": "snake-game-ui-20260314T120000Z",
+    }
+
+    module._clear_ui_group_cache("snake-game", cache_dir=tmp_path)
+    assert module._read_ui_group_cache("snake-game", cache_dir=tmp_path) is None
+
+
+def test_resolve_active_ui_group_id_reuses_live_cached_group(tmp_path, monkeypatch):
+    module = _load_module()
+    module._write_ui_group_cache(
+        "snake-game",
+        "snake-game-ui-20260314T120000Z",
+        cache_dir=tmp_path,
+    )
+
+    monkeypatch.setattr(module, "_router_has_live_ui_group", lambda *args, **kwargs: True)
+
+    ui_group_id = module._resolve_active_ui_group_id(
+        "snake-game",
+        router_url="http://router",
+        auth_token="token",
+        cache_dir=tmp_path,
+        timestamp="20260315T130000Z",
+    )
+
+    assert ui_group_id == "snake-game-ui-20260314T120000Z"
+    assert module._read_ui_group_cache("snake-game", cache_dir=tmp_path) == {
+        "repo_name": "snake-game",
+        "ui_group_id": "snake-game-ui-20260314T120000Z",
+    }
+
+
+def test_resolve_active_ui_group_id_replaces_stale_cached_group(tmp_path, monkeypatch):
+    module = _load_module()
+    module._write_ui_group_cache(
+        "snake-game",
+        "snake-game-ui-20260314T120000Z",
+        cache_dir=tmp_path,
+    )
+
+    monkeypatch.setattr(module, "_router_has_live_ui_group", lambda *args, **kwargs: False)
+
+    ui_group_id = module._resolve_active_ui_group_id(
+        "snake-game",
+        router_url="http://router",
+        auth_token="token",
+        cache_dir=tmp_path,
+        timestamp="20260315T130000Z",
+    )
+
+    assert ui_group_id == "snake-game-ui-20260315T130000Z"
+    assert module._read_ui_group_cache("snake-game", cache_dir=tmp_path) == {
+        "repo_name": "snake-game",
+        "ui_group_id": "snake-game-ui-20260315T130000Z",
+    }
+
+
 def test_select_live_sessions_prefers_exact_role_match():
     module = _load_module()
     session = {

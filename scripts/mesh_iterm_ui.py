@@ -20,9 +20,11 @@ import argparse
 import json
 import os
 import platform
+import re
 import shlex
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -52,6 +54,7 @@ class UiConfig:
     replace_tabs: bool
     preset: str
     attach_live: bool
+    ui_group_id: str = ""
 
 
 def _repo_root() -> Path:
@@ -67,6 +70,72 @@ def _default_provider_runtime_config_path() -> str:
     if override is not None:
         return override
     return str(_repo_root() / "mapping" / "provider_runtime.yaml")
+
+
+def _ui_group_cache_dir() -> Path:
+    override = os.environ.get("MESH_UI_GROUP_CACHE_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".mesh" / "ui_groups"
+
+
+def _ui_group_cache_path(repo_name: str, *, cache_dir: Path | None = None) -> Path:
+    directory = cache_dir or _ui_group_cache_dir()
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", repo_name).strip("-") or "repo"
+    return directory / f"{safe_name}.json"
+
+
+def _read_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> dict[str, str] | None:
+    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    cached_repo = str(payload.get("repo_name", "")).strip()
+    ui_group_id = str(payload.get("ui_group_id", "")).strip()
+    if cached_repo != repo_name or not ui_group_id:
+        return None
+    return {"repo_name": cached_repo, "ui_group_id": ui_group_id}
+
+
+def _write_ui_group_cache(
+    repo_name: str,
+    ui_group_id: str,
+    *,
+    cache_dir: Path | None = None,
+) -> Path:
+    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "repo_name": repo_name,
+                "ui_group_id": ui_group_id,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _clear_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> None:
+    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def _generate_ui_group_id(repo_name: str, *, timestamp: str | None = None) -> str:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", repo_name).strip("-") or "repo"
+    stamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{safe_name}-ui-{stamp}"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -199,6 +268,43 @@ def _router_get_json(router_url: str, auth_token: str, path: str) -> Any:
     req.add_header("Authorization", f"Bearer {auth_token}")
     with urlopen(req, timeout=5) as resp:
         return json.load(resp)
+
+
+def _router_has_live_ui_group(router_url: str, auth_token: str, ui_group_id: str) -> bool:
+    if not router_url or not auth_token or not ui_group_id:
+        return False
+    try:
+        payload = _router_get_json(router_url, auth_token, "/sessions?state=open&limit=200")
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return False
+    sessions = payload.get("sessions") if isinstance(payload, dict) else None
+    if not isinstance(sessions, list):
+        return False
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+        if str(metadata.get("ui_group_id", "")).strip() == ui_group_id:
+            return True
+    return False
+
+
+def _resolve_active_ui_group_id(
+    repo_name: str,
+    *,
+    router_url: str = "",
+    auth_token: str = "",
+    cache_dir: Path | None = None,
+    timestamp: str | None = None,
+) -> str:
+    cached = _read_ui_group_cache(repo_name, cache_dir=cache_dir)
+    cached_group = str((cached or {}).get("ui_group_id", "")).strip()
+    if cached_group and _router_has_live_ui_group(router_url, auth_token, cached_group):
+        return cached_group
+
+    ui_group_id = _generate_ui_group_id(repo_name, timestamp=timestamp)
+    _write_ui_group_cache(repo_name, ui_group_id, cache_dir=cache_dir)
+    return ui_group_id
 
 
 def _load_provider_session_users(config_path: str | None = None) -> dict[str, str]:
@@ -633,6 +739,7 @@ def main() -> int:
         return 2
 
     repo, repo_name = _resolve_repo(args.repo)
+    router_url, auth_token = _load_router_env()
     roles = [r.strip() for r in args.roles.split(",") if r.strip()]
     if not roles:
         print("Error: role list is empty.", file=sys.stderr)
@@ -647,6 +754,11 @@ def main() -> int:
         replace_tabs=not bool(args.keep_existing),
         preset=args.preset,
         attach_live=not bool(args.no_attach_live),
+        ui_group_id=_resolve_active_ui_group_id(
+            repo_name,
+            router_url=router_url,
+            auth_token=auth_token,
+        ),
     )
 
     try:
