@@ -1789,6 +1789,26 @@ class TestPostTasksEndpoint:
         assert task.payload["prompt"] == "Hello world"
         assert task.payload["working_dir"] == "/tmp"
 
+    def test_post_tasks_persists_repo_and_role(self, server_url, db):
+        """POST /tasks with repo/role stores top-level task identity."""
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={
+                "title": "UI role task",
+                "repo": "/media/sam/1TB/snake-game",
+                "role": "lead",
+                "payload": {"ui_role_session": True, "ui_group_id": "snake-ui-1"},
+            },
+        )
+        assert resp.status_code == 201
+
+        task = db.get_task(resp.json()["task_id"])
+        assert task is not None
+        assert task.repo == "/media/sam/1TB/snake-game"
+        assert task.role == "lead"
+        assert task.payload["ui_role_session"] is True
+        assert task.payload["ui_group_id"] == "snake-ui-1"
+
 
 class TestSessionBusEndpoints:
     def test_open_send_read_close_roundtrip(self, server_url, db):

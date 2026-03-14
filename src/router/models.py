@@ -143,6 +143,8 @@ class TaskCreateRequest(BaseModel):
 
     title: str
     phase: TaskPhase = TaskPhase.implement
+    repo: str = ""
+    role: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
     target_cli: CLIType = CLIType.claude
     target_account: str = "work"

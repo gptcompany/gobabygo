@@ -28,6 +28,7 @@ Likely files:
 - `tests/router/test_server.py`
 - `tests/router/test_server_coverage.py`
 - `tests/test_meshctl_threads.py`
+- `tests/router/test_thread_integration.py`
 
 Depends on:
 - none

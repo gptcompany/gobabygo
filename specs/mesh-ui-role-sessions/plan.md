@@ -96,9 +96,9 @@ Deliverables:
 - shell/operator helpers for role-addressed routing
 
 Initial commands:
-- `mesh-send <role> <text>`
-- `mesh-enter <role>`
-- `mesh-interrupt <role>`
+- `mesh send <role> <text>`
+- `mesh enter <role>`
+- `mesh interrupt <role>`
 
 Tasks:
 1. resolve peer session from current repo + `ui_group_id` + role

@@ -154,6 +154,7 @@ class TestAddStep:
                 "title": "Build frontend",
                 "step_index": 0,
                 "repo": "frontend",
+                "role": "lead",
             },
         )
         assert resp.status_code == 201
@@ -166,6 +167,8 @@ class TestAddStep:
         assert task is not None
         assert task.thread_id == thread_id
         assert task.step_index == 0
+        assert task.repo == "frontend"
+        assert task.role == "lead"
 
     def test_add_step_thread_not_found(self, server_url):
         resp = requests.post(
