@@ -77,9 +77,7 @@ class Scheduler:
         eligible = [
             w
             for w in idle_workers
-            if w.cli_type == task.target_cli
-            and self._worker_matches_account(w, task.target_account)
-            and task_mode in (w.execution_modes or ["batch"])
+            if self._worker_matches_task(w, task, task_mode=task_mode)
         ]
         eligible = self._apply_topology_filter(task, eligible)
         if eligible:
@@ -87,13 +85,19 @@ class Scheduler:
 
         # Session-first policy with explicit fallback:
         # when enabled, session tasks may run on batch workers if no session worker is available.
-        if task_mode == "session" and self._session_fallback_to_batch:
+        if (
+            task_mode == "session"
+            and self._session_fallback_to_batch
+            and not self._task_requires_ui_role_capability(task)
+        ):
             fallback = [
                 w
                 for w in idle_workers
-                if w.cli_type == task.target_cli
-                and self._worker_matches_account(w, task.target_account)
-                and "batch" in (w.execution_modes or ["batch"])
+                if self._worker_matches_task(
+                    w,
+                    task,
+                    task_mode="batch",
+                )
             ]
             fallback = self._apply_topology_filter(task, fallback)
             if fallback:
@@ -107,6 +111,27 @@ class Scheduler:
             return self._sort_by_idle(fallback)
 
         return []
+
+    def _worker_matches_task(self, worker: Worker, task: Task, *, task_mode: str) -> bool:
+        if worker.cli_type != task.target_cli:
+            return False
+        if not self._worker_matches_account(worker, task.target_account):
+            return False
+        if task_mode not in (worker.execution_modes or ["batch"]):
+            return False
+        if self._task_requires_ui_role_capability(task) and "ui_role" not in set(worker.capabilities or []):
+            return False
+        return True
+
+    @staticmethod
+    def _task_requires_ui_role_capability(task: Task) -> bool:
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        flag = payload.get("ui_role_session")
+        if isinstance(flag, bool):
+            return flag
+        if isinstance(flag, str):
+            return flag.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(flag)
 
     @staticmethod
     def _worker_matches_account(worker: Worker, target_account: str) -> bool:

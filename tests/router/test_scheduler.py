@@ -152,6 +152,36 @@ class TestFindEligibleWorker:
         workers = sched.find_all_eligible_workers(task)
         assert [w.worker_id for w in workers] == ["w1"]
 
+    def test_ui_role_session_task_excludes_worker_without_ui_role_capability(self, sched, db):
+        _add_worker(db, "w1", "work", CLIType.claude, execution_modes=["session"])
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.session,
+            payload={"ui_role_session": True},
+        )
+        assert sched.find_all_eligible_workers(task) == []
+
+    def test_ui_role_session_task_matches_worker_with_ui_role_capability(self, sched, db):
+        _add_worker(
+            db,
+            "w1",
+            "work",
+            CLIType.claude,
+            execution_modes=["session"],
+            capabilities=["ui_role"],
+        )
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.session,
+            payload={"ui_role_session": True},
+        )
+        workers = sched.find_all_eligible_workers(task)
+        assert [w.worker_id for w in workers] == ["w1"]
+
     def test_batch_task_excludes_session_only_worker(self, sched, db):
         _add_worker(db, "w1", "work", CLIType.claude, execution_modes=["session"])
         task = Task(
@@ -173,6 +203,25 @@ class TestFindEligibleWorker:
         )
         workers = sched.find_all_eligible_workers(task)
         assert [w.worker_id for w in workers] == ["w1"]
+
+    def test_ui_role_session_task_does_not_fallback_to_batch_worker(self, db):
+        sched = Scheduler(db=db, lease_duration_s=300, session_fallback_to_batch=True)
+        _add_worker(
+            db,
+            "w1",
+            "work",
+            CLIType.claude,
+            execution_modes=["batch"],
+            capabilities=["ui_role"],
+        )
+        task = Task(
+            task_id="t1",
+            target_cli=CLIType.claude,
+            target_account="work",
+            execution_mode=ExecutionMode.session,
+            payload={"ui_role_session": True},
+        )
+        assert sched.find_all_eligible_workers(task) == []
 
     def test_session_fallback_prefers_session_when_available(self, db):
         sched = Scheduler(db=db, lease_duration_s=300, session_fallback_to_batch=True)

@@ -155,6 +155,12 @@ def test_session_worker_registration_capabilities_with_allowed_accounts() -> Non
     assert caps.count("account:work-claude") == 1
 
 
+def test_session_worker_defaults_opt_into_ui_role_tasks() -> None:
+    cfg = SessionWorkerConfig()
+    assert "ui_role" in cfg.capabilities
+    assert "ui_role" in cfg.registration_capabilities()
+
+
 def test_compute_output_emit_delta() -> None:
     prev = "line1\nline2"
     cur = "line1\nline2\nline3"

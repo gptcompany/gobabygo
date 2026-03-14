@@ -312,7 +312,9 @@ class SessionWorkerConfig:
     heartbeat_timeout: float = 5.0
     control_plane_timeout: float = 30.0
     longpoll_timeout: float = 25.0
-    capabilities: list[str] = field(default_factory=lambda: ["code", "tests", "refactor", "interactive"])
+    capabilities: list[str] = field(
+        default_factory=lambda: ["code", "tests", "refactor", "interactive", "ui_role"]
+    )
     allowed_accounts: list[str] = field(default_factory=list)  # MESH_ALLOWED_ACCOUNTS=foo,bar,*
     allowed_work_dirs: list[str] = field(default_factory=list)  # MESH_ALLOWED_WORK_DIRS=/repo/root,/tmp/mesh-tasks
     execution_modes: list[str] = field(default_factory=lambda: ["session"])
@@ -349,7 +351,7 @@ class SessionWorkerConfig:
         capabilities = (
             [c.strip() for c in raw_caps.split(",") if c.strip()]
             if raw_caps
-            else ["code", "tests", "refactor", "interactive"]
+            else ["code", "tests", "refactor", "interactive", "ui_role"]
         )
         raw_allowed = os.environ.get("MESH_ALLOWED_ACCOUNTS", "").strip()
         allowed_accounts = [a.strip() for a in raw_allowed.split(",") if a.strip()]
