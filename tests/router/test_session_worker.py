@@ -128,9 +128,10 @@ def test_session_worker_config_from_env() -> None:
     assert cfg.auth_token == "tok-123"
     assert cfg.execution_modes == ["session"]
     assert cfg.cli_command == "claude"
-    assert cfg.capabilities == ["interactive", "code"]
+    assert cfg.capabilities == ["interactive", "code", "ui_role"]
     assert cfg.allowed_accounts == ["work-claude", "review-codex", "*"]
-    assert cfg.allowed_work_dirs == ["/tmp/mesh-tasks", "/media/sam/1TB"]
+    assert cfg.allowed_work_dirs[0].endswith("/tmp/mesh-tasks")
+    assert cfg.allowed_work_dirs[1] == "/media/sam/1TB"
     assert cfg.heartbeat_timeout == 4.5
     assert cfg.control_plane_timeout == 22.0
     assert cfg.session_poll_interval_s == 0.5
@@ -158,6 +159,13 @@ def test_session_worker_registration_capabilities_with_allowed_accounts() -> Non
 def test_session_worker_defaults_opt_into_ui_role_tasks() -> None:
     cfg = SessionWorkerConfig()
     assert "ui_role" in cfg.capabilities
+    assert "ui_role" in cfg.registration_capabilities()
+
+
+def test_session_worker_from_env_preserves_ui_role_with_explicit_capabilities() -> None:
+    with patch.dict(os.environ, {"MESH_CAPABILITIES": "interactive,code"}):
+        cfg = SessionWorkerConfig.from_env()
+    assert cfg.capabilities == ["interactive", "code", "ui_role"]
     assert "ui_role" in cfg.registration_capabilities()
 
 

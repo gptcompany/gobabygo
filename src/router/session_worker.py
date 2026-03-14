@@ -353,6 +353,8 @@ class SessionWorkerConfig:
             if raw_caps
             else ["code", "tests", "refactor", "interactive", "ui_role"]
         )
+        if "ui_role" not in capabilities:
+            capabilities.append("ui_role")
         raw_allowed = os.environ.get("MESH_ALLOWED_ACCOUNTS", "").strip()
         allowed_accounts = [a.strip() for a in raw_allowed.split(",") if a.strip()]
         allowed_work_dirs = parse_allowed_work_dirs(
