@@ -261,6 +261,75 @@ def test_select_live_sessions_prefers_exact_role_match():
     assert "worker-codex" not in selected
 
 
+def test_build_role_launch_plans_attaches_matching_session_and_spawns_missing_roles(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead", "worker-codex"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-20260315T130000Z",
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_provider_session_users",
+        lambda config_path=None: {"codex": "mesh-worker"},
+    )
+    session = {
+        "session_id": "sess-lead",
+        "cli_type": "codex",
+        "metadata": {
+            "tmux_session": "mesh-codex-codex-abcd",
+            "working_dir": "/media/sam/1TB/demo",
+        },
+        "updated_at": "2026-03-10T19:20:00Z",
+        "created_at": "2026-03-10T19:10:00Z",
+    }
+    task = {
+        "task_id": "task-lead",
+        "repo": "/media/sam/1TB/demo",
+        "role": "lead",
+        "target_cli": "codex",
+        "status": "running",
+        "title": "Speckit Specify snake game codex",
+        "updated_at": "2026-03-10T19:21:00Z",
+    }
+
+    plans = module._build_role_launch_plans(cfg, [(session, task)])
+
+    assert plans["lead"].mode == "attach"
+    assert plans["lead"].session_id == "sess-lead"
+    assert "sudo -u mesh-worker tmux attach -t mesh-codex-codex-abcd" in plans["lead"].remote_init
+    assert plans["worker-codex"].mode == "spawn"
+    assert plans["worker-codex"].remote_init == ""
+
+
+def test_build_role_launch_plan_without_attach_handle_falls_back_to_spawn():
+    module = _load_module()
+    session = {
+        "session_id": "sess-lead",
+        "cli_type": "codex",
+        "metadata": {
+            "working_dir": "/media/sam/1TB/demo",
+        },
+    }
+    task = {
+        "task_id": "task-lead",
+        "repo": "/media/sam/1TB/demo",
+        "role": "lead",
+        "target_cli": "codex",
+    }
+
+    plan = module._build_role_launch_plan("lead", (session, task))
+
+    assert plan.mode == "spawn"
+    assert plan.session_id == ""
+
+
 def test_build_tmux_attach_remote_init_uses_provider_runtime_user(monkeypatch):
     module = _load_module()
     monkeypatch.setattr(
@@ -281,24 +350,8 @@ def test_build_tmux_attach_remote_init_uses_provider_runtime_user(monkeypatch):
     assert "Speckit Specify snake game codex" in remote_init
 
 
-def test_discover_live_remote_inits_returns_attach_for_matching_role(monkeypatch):
+def test_fetch_live_session_pairs_returns_router_backed_pairs(monkeypatch):
     module = _load_module()
-    cfg = module.UiConfig(
-        repo="/media/sam/1TB/demo",
-        repo_name="demo",
-        roles=["boss", "lead", "worker-codex"],
-        max_panes_per_tab=5,
-        single_tab=False,
-        replace_tabs=True,
-        preset="team-4x3",
-        attach_live=True,
-    )
-    monkeypatch.setattr(module, "_load_router_env", lambda: ("http://router", "token"))
-    monkeypatch.setattr(
-        module,
-        "_load_provider_session_users",
-        lambda config_path=None: {"codex": "mesh-worker"},
-    )
 
     def fake_router_get_json(router_url: str, auth_token: str, path: str):
         if path == "/sessions?state=open&limit=200":
@@ -331,11 +384,12 @@ def test_discover_live_remote_inits_returns_attach_for_matching_role(monkeypatch
 
     monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
 
-    remote_inits = module._discover_live_remote_inits(cfg)
+    session_pairs = module._fetch_live_session_pairs("http://router", "token")
 
-    assert "lead" in remote_inits
-    assert "worker-codex" not in remote_inits
-    assert "sudo -u mesh-worker tmux attach -t mesh-codex-codex-abcd" in remote_inits["lead"]
+    assert len(session_pairs) == 1
+    session, task = session_pairs[0]
+    assert session["session_id"] == "sess-lead"
+    assert task["task_id"] == "task-lead"
 
 
 def test_default_ui_roles_fit_two_tabs_with_three_panes():

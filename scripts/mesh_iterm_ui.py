@@ -57,6 +57,16 @@ class UiConfig:
     ui_group_id: str = ""
 
 
+@dataclass(frozen=True)
+class RoleLaunchPlan:
+    role: str
+    mode: str
+    remote_init: str = ""
+    session_id: str = ""
+    task_id: str = ""
+    cli_type: str = ""
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -561,18 +571,17 @@ def _select_live_sessions_for_roles(
     return selected
 
 
-def _discover_live_remote_inits(cfg: UiConfig) -> dict[str, str]:
-    router_url, auth_token = _load_router_env()
+def _fetch_live_session_pairs(router_url: str, auth_token: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     if not router_url or not auth_token:
-        return {}
+        return []
     try:
         sessions_payload = _router_get_json(router_url, auth_token, "/sessions?state=open&limit=200")
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return {}
+        return []
 
     sessions = sessions_payload.get("sessions") if isinstance(sessions_payload, dict) else None
     if not isinstance(sessions, list):
-        return {}
+        return []
 
     session_pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     task_cache: dict[str, dict[str, Any]] = {}
@@ -593,12 +602,39 @@ def _discover_live_remote_inits(cfg: UiConfig) -> dict[str, str]:
             task = task_payload
             task_cache[task_id] = task
         session_pairs.append((session, task))
+    return session_pairs
 
+
+def _build_role_launch_plan(
+    role: str,
+    pair: tuple[dict[str, Any], dict[str, Any]] | None,
+) -> RoleLaunchPlan:
+    if pair is None:
+        return RoleLaunchPlan(role=role, mode="spawn")
+
+    session, task = pair
+    remote_init = _build_tmux_attach_remote_init(role, session, task)
+    if not remote_init:
+        return RoleLaunchPlan(role=role, mode="spawn")
+
+    return RoleLaunchPlan(
+        role=role,
+        mode="attach",
+        remote_init=remote_init,
+        session_id=str(session.get("session_id", "")).strip(),
+        task_id=str(task.get("task_id", "")).strip(),
+        cli_type=str(session.get("cli_type", "") or task.get("target_cli", "")).strip(),
+    )
+
+
+def _build_role_launch_plans(
+    cfg: UiConfig,
+    session_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> dict[str, RoleLaunchPlan]:
     selected = _select_live_sessions_for_roles(cfg.roles, cfg.repo, cfg.repo_name, session_pairs)
     return {
-        role: _build_tmux_attach_remote_init(role, session, task)
-        for role, (session, task) in selected.items()
-        if _build_tmux_attach_remote_init(role, session, task)
+        role: _build_role_launch_plan(role, selected.get(role))
+        for role in cfg.roles
     }
 
 
@@ -715,18 +751,21 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
         groups = _team_4x3_groups(cfg.roles)
     else:
         groups = _split_groups(cfg.roles, cfg.max_panes_per_tab)
-    live_remote_inits = _discover_live_remote_inits(cfg) if cfg.attach_live else {}
-    for tab_index, roles in enumerate(groups):
+    router_url, auth_token = _load_router_env()
+    session_pairs = _fetch_live_session_pairs(router_url, auth_token) if cfg.attach_live else []
+    launch_plans = _build_role_launch_plans(cfg, session_pairs)
+    for roles in groups:
         tab = await window.async_create_tab()
         sessions = await _create_panes_for_roles(tab, roles)
         await _mark_mesh_ui_sessions(sessions)
         for sess, role in zip(sessions, roles):
+            plan = launch_plans.get(role) or RoleLaunchPlan(role=role, mode="spawn")
             cmd = _command_for_role(
                 role,
                 cfg.repo,
                 cfg.repo_name,
                 all_roles=cfg.roles,
-                live_remote_init=live_remote_inits.get(role, ""),
+                live_remote_init=plan.remote_init if plan.mode == "attach" else "",
             )
             banner = f"clear; echo '[mesh:{role}] repo={cfg.repo_name}'; "
             await sess.async_send_text(f"{banner}{cmd}\n")
