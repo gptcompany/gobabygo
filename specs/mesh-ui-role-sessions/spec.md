@@ -164,16 +164,21 @@ Task field contract for v1:
 This keeps attach resolution aligned with the existing task model while avoiding
 new task columns for purely UI-scoped metadata.
 
+Parity rule:
+
+- direct `POST /tasks` creation and thread-step-derived task creation must persist
+  `repo` and `role` with identical semantics
+
 ### D5. In-pane role messaging uses mesh helper commands
 
 The first concrete UX for peer communication is shell/helper driven, not slash-command driven.
 
 Examples:
 
-- `mesh-send president "review this plan"`
-- `mesh-send verifier "run checks on latest diff"`
-- `mesh-enter president`
-- `mesh-interrupt worker-gemini`
+- `mesh send president "review this plan"`
+- `mesh send verifier "run checks on latest diff"`
+- `mesh enter president`
+- `mesh interrupt worker-gemini`
 
 These helpers resolve the peer by `ui_group_id + role` and then call the
 existing router session bus.
@@ -220,6 +225,11 @@ Discovery loop constraint for v1:
 - no local task recreation
 - no local retry/backoff orchestration
 - no local reconciliation beyond timeout + explicit error
+
+Worker opt-in rule for v1:
+
+- UI role tasks are leased only by workers advertising capability `ui_role`
+- `payload.ui_role_session=true` is the task-side discriminator
 
 ## Functional Requirements
 
@@ -334,6 +344,7 @@ Scheduler/runtime rule for v1:
 - UI role tasks must be explicitly distinguishable from pipeline session tasks
 - workers that do not opt into UI role tasks must not lease them
 - the minimum acceptable discriminator is `payload.ui_role_session=true`
+- the minimum acceptable worker-side opt-in is capability `ui_role`
 
 ### F5. Attach precedence
 
@@ -403,6 +414,7 @@ Minimum v1:
 - `mesh ui close` or equivalent closes all sessions for the active `ui_group_id`
 - if the operator closes iTerm2 without cleanup, stale groups remain queryable and recoverable
 - group-scoped discovery in v1 uses `/sessions?state=open` plus Python-side filtering on `metadata.ui_group_id`
+- session discovery in v1 reads repo identity from `Session.metadata.repo` written at session-open time
 
 ## Acceptance Criteria
 

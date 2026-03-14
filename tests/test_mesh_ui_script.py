@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 from pathlib import Path
 import sys
+import yaml
 
 
 def _load_module():
@@ -30,6 +31,16 @@ def test_mesh_ui_role_shell_sets_role_label_and_badge():
 
     assert "printf '\\033]0;%s\\007' \"$label\"" in content
     assert "SetBadgeFormat" in content
+
+
+def test_operator_ui_boss_is_not_provider_backed():
+    config_path = Path(__file__).resolve().parents[1] / "mapping" / "operator_ui.yaml"
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    boss = data["roles"]["boss"]
+
+    assert "provider" not in boss
+    assert "remote_init" in boss
 
 
 def test_mesh_ui_role_shell_has_remote_repo_fallbacks():

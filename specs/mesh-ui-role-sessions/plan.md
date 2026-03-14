@@ -28,11 +28,13 @@ Out of scope for this phase:
 - Addressing model: helpers resolve `ui_group_id + role -> session_id` and fail on ambiguity.
 - Role split: `boss` is an operator control shell; `president`, `lead`, `worker-*`, and `verifier` are agent-role sessions.
 - Task contract: `repo` and `role` are top-level task fields; `ui_role_session`, `ui_role`, and `ui_group_id` live in task payload.
+- Worker opt-in: UI role tasks are leaseable only by workers advertising capability `ui_role`.
 - Failure model: hard mesh error state, no silent raw-shell fallback.
 - Default layout: keep the current six-pane operator layout.
 - Spawn policy: agent-role spawns run in parallel with a `60s` per-role timeout.
 - Completion summary payload is structured and router-backed.
 - Group-scoped lookup in v1 uses `/sessions?state=open` plus Python-side filtering on `metadata.ui_group_id`.
+- Repo identity for session discovery comes from `Session.metadata.repo` in v1.
 
 ## Workstreams
 
@@ -49,9 +51,10 @@ Deliverables:
 Tasks:
 1. define the task payload contract for spawned role sessions
 2. extend `POST /tasks` usage with explicit UI role metadata
-3. ensure scheduler/runtime can distinguish UI role tasks from pipeline tasks
-4. implement session discovery loop after spawn
-5. add tests for spawn metadata and attach resolution
+3. keep direct task creation semantics aligned with thread-step-derived task creation
+4. ensure scheduler/runtime can distinguish UI role tasks from pipeline tasks
+5. implement session discovery loop after spawn
+6. add tests for spawn metadata and attach resolution
 
 ### 2. Mesh UI Attach-or-Spawn
 
@@ -104,7 +107,8 @@ Tasks:
    - `/sessions/send-key`
    - `/sessions/signal`
 3. fail clearly on ambiguity or missing peer
-4. add tests for peer resolution and operator errors
+4. keep peer resolution router-backed on each invocation
+5. add tests for peer resolution and operator errors
 
 ### 5. Completion Summary Routing
 

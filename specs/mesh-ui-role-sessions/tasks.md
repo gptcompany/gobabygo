@@ -20,12 +20,14 @@ Scope:
 - Extend `TaskCreateRequest` to accept top-level `repo` and `role`
 - Keep `ui_role_session`, `ui_role`, and `ui_group_id` in `payload`
 - Ensure `POST /tasks` persists the new top-level fields correctly
+- Keep task creation semantics aligned with thread-step-derived tasks
 
 Likely files:
 - `src/router/models.py`
 - `src/router/server.py`
 - `tests/router/test_server.py`
 - `tests/router/test_server_coverage.py`
+- `tests/test_meshctl_threads.py`
 
 Depends on:
 - none
@@ -33,6 +35,8 @@ Depends on:
 Done when:
 - `POST /tasks` accepts `repo` and `role`
 - created tasks preserve those values in DB/API responses
+- `_handle_create_task` persists `repo` and `role` correctly
+- direct task creation and thread-step-derived task creation persist `repo` and `role` with the same semantics
 - tests cover both plain tasks and UI role tasks
 
 ### T002. Add scheduler discrimination for UI role tasks
@@ -40,7 +44,7 @@ Done when:
 Scope:
 - Prevent non-UI session workers from leasing UI role tasks
 - Use `payload.ui_role_session=true` as the minimum discriminator in v1
-- Decide and implement the worker-side opt-in mechanism
+- Use worker capability `ui_role` as the worker-side opt-in mechanism
 
 Likely files:
 - `src/router/scheduler.py`
@@ -54,6 +58,7 @@ Depends on:
 
 Done when:
 - a UI role task is not leased to a worker that does not opt into UI role tasks
+- a UI role task is leaseable only by a worker advertising capability `ui_role`
 - normal pipeline session tasks still dispatch correctly
 - scheduler tests cover both eligible and ineligible workers
 
@@ -100,6 +105,7 @@ Done when:
 Scope:
 - Query `/sessions?state=open`
 - Filter by `metadata.ui_group_id` in Python for v1
+- Read repo identity from `Session.metadata.repo` written at session-open time
 - Keep exact-role and provider-aware attach precedence
 
 Likely files:
@@ -116,8 +122,10 @@ Depends on:
 
 Done when:
 - attach resolution prefers the active `ui_group_id`
+- attach resolution reads repo from `Session.metadata.repo` without requiring a task join in v1
 - cross-cockpit accidental attach does not happen by default
-- existing role matching tests are updated for group-aware behavior
+- existing role matching tests are updated for group-aware behavior, including exact role/provider/newest precedence within the group
+- peer/session resolution remains router-backed, not cache-backed
 
 ### T006. Implement task-backed spawn path for agent panes
 
@@ -143,6 +151,7 @@ Done when:
 - missing agent panes create tasks and attach to the resulting sessions
 - all agent spawns run in parallel
 - timeout path shows explicit failure state and retry hint
+- spawn wait stays as poll-with-timeout only; no local retry/backoff orchestration is added
 
 ### T007. Keep `boss` as operator pane with group-aware helpers
 
@@ -150,6 +159,7 @@ Scope:
 - Do not spawn a provider-backed session for `boss`
 - Export `MESH_UI_GROUP_ID` into every pane, including `boss`
 - Ensure `boss` stays in repo context with mesh helper commands available
+- Remove or ignore `boss.provider` in `mapping/operator_ui.yaml`
 
 Likely files:
 - `scripts/mesh_ui_role_shell.sh`
@@ -188,9 +198,9 @@ Done when:
 ### T009. Add role-addressed operator helpers
 
 Scope:
-- Add `mesh-send <role> <text>`
-- Add `mesh-enter <role>`
-- Add `mesh-interrupt <role>`
+- Add `mesh send <role> <text>`
+- Add `mesh enter <role>`
+- Add `mesh interrupt <role>`
 - Resolve peer by `ui_group_id + role`
 - Fail on ambiguity or missing peer
 
@@ -210,6 +220,7 @@ Done when:
 - operator can route text and key/signal controls to a peer role without knowing `session_id`
 - ambiguity produces an explicit error instead of guessing
 - helpers default to the current repo and active `ui_group_id`
+- helper resolution is router-backed on each invocation, not satisfied from stale local cache
 
 ### T010. Emit structured completion summaries from session worker
 
@@ -217,6 +228,7 @@ Scope:
 - On task completion/failure, have the session worker emit a structured completion summary
 - Store it in session message metadata and/or task result metadata
 - Keep payload aligned with the spec
+- Emit summaries only for UI role tasks (`payload.ui_role_session=true`)
 
 Likely files:
 - `src/router/session_worker.py`
@@ -229,6 +241,7 @@ Depends on:
 
 Done when:
 - completed/failed UI role sessions emit the structured summary payload
+- non-UI tasks keep the current completion behavior without UI summaries
 - summary is queryable from router-backed state
 - non-UI tasks are not regressed
 
@@ -291,7 +304,6 @@ Likely files:
 Depends on:
 - `T004`
 - `T005`
-- `T006`
 
 Done when:
 - core attach/spawn logic is covered by headless tests
@@ -320,6 +332,7 @@ Done when:
 - peer messaging works
 - completion summary is routed and inspectable
 - `mesh ui close` tears down the active group cleanly
+- two independent `mesh ui` launches for the same repo produce distinct `ui_group_id`s and do not cross-attach by default
 
 ## Recommended Execution Order
 
