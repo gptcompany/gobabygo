@@ -66,6 +66,7 @@ class TestSystemdUnits:
         assert "%i" in content  # Template variable
         assert "EnvironmentFile=" in content
         assert "NoNewPrivileges=true" in content
+        assert "ReadWritePaths=/home/mesh-worker/.mesh /tmp/mesh-tasks" in content
 
     def test_worker_template_uses_instance_variable(self):
         content = (DEPLOY_DIR / "mesh-worker@.service").read_text()
@@ -114,6 +115,8 @@ class TestSystemdUnits:
         assert "mesh-worker:sam" in content
         assert 'chmod 2775 "$task_root"' in content
         assert 'find "$task_root" -type d -exec chmod 2775 {} +' in content
+        assert '/etc/tmpfiles.d/mesh-worker.conf' in content
+        assert 'systemd-tmpfiles --create /etc/tmpfiles.d/mesh-worker.conf' in content
         assert '"${PROJECT_ROOT}"/deploy/*.common.env' in content
         assert 'BATCH_WORKERS+=("$(basename "$src_env" .env | sed ' in content
         assert 'prepare_worker_uv_env' in content
@@ -124,6 +127,8 @@ class TestSystemdUnits:
         assert 'local task_root="/tmp/mesh-tasks"' in content
         assert "mesh-worker:sam" in content
         assert 'chmod 2775 "$task_root"' in content
+        assert '/etc/tmpfiles.d/mesh-worker.conf' in content
+        assert 'systemd-tmpfiles --create /etc/tmpfiles.d/mesh-worker.conf' in content
         assert 'for common_env in deploy/*.common.env; do' in content
         assert "mesh-review-worker@.service" in content
 

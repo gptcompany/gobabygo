@@ -637,9 +637,21 @@ apply_session_service_override() {
 }
 
 bootstrap_mesh_worker_runtime() {
+  local task_group="mesh-worker"
+
+  if getent group sam >/dev/null 2>&1; then
+    task_group="sam"
+  fi
+
   sudo mkdir -p /home/mesh-worker/.ccs/instances
   sudo mkdir -p /home/mesh-worker/.claude
   sudo mkdir -p /tmp/mesh-tasks
+  sudo mkdir -p /etc/tmpfiles.d
+  cat <<TMPFILES | sudo tee /etc/tmpfiles.d/mesh-worker.conf >/dev/null
+d /tmp/mesh-tasks 2775 mesh-worker ${task_group} -
+TMPFILES
+  sudo chmod 644 /etc/tmpfiles.d/mesh-worker.conf
+  sudo systemd-tmpfiles --create /etc/tmpfiles.d/mesh-worker.conf
   sudo chown -R mesh-worker:mesh /home/mesh-worker/.ccs /home/mesh-worker/.claude
   if getent group sam >/dev/null 2>&1; then
     sudo chown -R mesh-worker:sam /tmp/mesh-tasks

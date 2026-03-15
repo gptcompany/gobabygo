@@ -59,6 +59,20 @@ normalize_task_root() {
     find "$task_root" -type f -exec chmod ug+rw {} +
 }
 
+install_worker_tmpfiles_config() {
+    local task_group="mesh-worker"
+
+    if getent group sam >/dev/null 2>&1; then
+        task_group="sam"
+    fi
+
+    cat > /etc/tmpfiles.d/mesh-worker.conf <<EOF
+d /tmp/mesh-tasks 2775 mesh-worker ${task_group} -
+EOF
+    chmod 644 /etc/tmpfiles.d/mesh-worker.conf
+    systemd-tmpfiles --create /etc/tmpfiles.d/mesh-worker.conf
+}
+
 install_common_worker_env() {
     local src="$1"
     local dst="/etc/mesh-worker/$(basename "$src")"
@@ -97,6 +111,7 @@ fi
 echo "[2/7] Creating directories..."
 mkdir -p /etc/mesh-worker /opt/mesh-worker /home/mesh-worker/.mesh/agents /tmp/mesh-tasks
 chown -R mesh-worker:mesh-worker /opt/mesh-worker /home/mesh-worker/.mesh
+install_worker_tmpfiles_config
 normalize_task_root
 echo "  dirs: OK"
 
