@@ -473,10 +473,86 @@ def test_create_ui_role_task_posts_expected_payload(monkeypatch):
     assert payload["role"] == "lead"
     assert payload["target_cli"] == "gemini"
     assert payload["execution_mode"] == "session"
+    assert payload["idempotency_key"] == "mesh-ui::demo-ui-1::lead"
     assert payload["payload"]["ui_role_session"] is True
     assert payload["payload"]["ui_group_id"] == "demo-ui-1"
     assert payload["payload"]["working_dir"] == "/media/sam/1TB/demo"
     assert "prompt" not in payload["payload"]
+
+
+def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    monkeypatch.setattr(
+        module,
+        "_find_existing_ui_role_task",
+        lambda router_url, auth_token, cfg_value, role: {
+            "task_id": "task-lead-existing",
+            "target_cli": "gemini",
+        },
+    )
+    called = {"post": False}
+    monkeypatch.setattr(
+        module,
+        "_router_post_json",
+        lambda *args, **kwargs: called.__setitem__("post", True),
+    )
+
+    task_info = module._create_ui_role_task("http://router", "token", cfg, "lead")
+
+    assert task_info == {
+        "role": "lead",
+        "task_id": "task-lead-existing",
+        "target_cli": "gemini",
+    }
+    assert called["post"] is False
+
+
+def test_create_ui_role_task_recovers_existing_task_on_duplicate_idempotency(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    monkeypatch.setattr(module, "_load_ui_role_rules", lambda config_path=None: {"lead": {"provider": "gemini"}})
+    calls = {"find": 0}
+
+    def fake_find(router_url, auth_token, cfg_value, role):
+        calls["find"] += 1
+        if calls["find"] == 1:
+            return None
+        return {"task_id": "task-lead-existing", "target_cli": "gemini"}
+
+    def fake_post(router_url, auth_token, path, payload):
+        raise module.HTTPError(path, 409, "duplicate", None, None)
+
+    monkeypatch.setattr(module, "_find_existing_ui_role_task", fake_find)
+    monkeypatch.setattr(module, "_router_post_json", fake_post)
+
+    task_info = module._create_ui_role_task("http://router", "token", cfg, "lead")
+
+    assert task_info == {
+        "role": "lead",
+        "task_id": "task-lead-existing",
+        "target_cli": "gemini",
+    }
 
 
 def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
@@ -591,6 +667,8 @@ def test_spawn_missing_agent_role_plans_marks_timeout(monkeypatch):
         lambda router_url, auth_token, cfg_value, role: {"role": role, "task_id": "task-lead-1", "target_cli": "gemini"},
     )
     monkeypatch.setattr(module, "_fetch_live_session_pairs", lambda router_url, auth_token: [])
+    canceled = []
+    monkeypatch.setattr(module, "_cancel_ui_role_task", lambda router_url, auth_token, task_id: canceled.append(task_id))
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
 
     plans = module._spawn_missing_agent_role_plans(
@@ -604,6 +682,7 @@ def test_spawn_missing_agent_role_plans_marks_timeout(monkeypatch):
 
     assert plans["lead"].mode == "error"
     assert "retry hint: mesh ui respawn lead" in plans["lead"].remote_init
+    assert canceled == ["task-lead-1"]
 
 
 def test_spawn_missing_agent_role_plans_marks_router_unavailable():

@@ -729,7 +729,83 @@ def _spawn_error_remote_init(role: str, message: str) -> str:
     )
 
 
+def _ui_role_task_idempotency_key(cfg: UiConfig, role: str) -> str:
+    return f"mesh-ui::{cfg.ui_group_id}::{role}"
+
+
+def _task_payload(task: dict[str, Any]) -> dict[str, Any]:
+    return task.get("payload") if isinstance(task.get("payload"), dict) else {}
+
+
+def _task_matches_ui_role(cfg: UiConfig, role: str, task: dict[str, Any]) -> bool:
+    payload = _task_payload(task)
+    if not payload.get("ui_role_session"):
+        return False
+    if str(task.get("repo") or "").strip() != cfg.repo:
+        return False
+    if str(task.get("role") or payload.get("ui_role") or "").strip() != role:
+        return False
+    if str(payload.get("ui_group_id") or "").strip() != cfg.ui_group_id:
+        return False
+    return True
+
+
+def _find_existing_ui_role_task(
+    router_url: str,
+    auth_token: str,
+    cfg: UiConfig,
+    role: str,
+) -> dict[str, Any] | None:
+    for status in ("queued", "assigned", "blocked", "review", "running"):
+        try:
+            payload = _router_get_json(router_url, auth_token, f"/tasks?status={quote(status)}&limit=200")
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+            continue
+        tasks = payload.get("tasks") if isinstance(payload, dict) else None
+        if not isinstance(tasks, list):
+            continue
+        matches = [
+            task
+            for task in tasks
+            if isinstance(task, dict) and _task_matches_ui_role(cfg, role, task)
+        ]
+        if not matches:
+            continue
+        matches.sort(
+            key=lambda task: (
+                str(task.get("updated_at", "")),
+                str(task.get("created_at", "")),
+                str(task.get("task_id", "")),
+            ),
+            reverse=True,
+        )
+        return matches[0]
+    return None
+
+
+def _cancel_ui_role_task(router_url: str, auth_token: str, task_id: str) -> None:
+    if not task_id:
+        return
+    try:
+        _router_post_json(
+            router_url,
+            auth_token,
+            "/tasks/cancel",
+            {"task_id": task_id, "reason": "mesh_ui_spawn_timeout"},
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return
+
+
 def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: str) -> dict[str, Any]:
+    existing = _find_existing_ui_role_task(router_url, auth_token, cfg, role)
+    if existing is not None:
+        return {
+            "role": role,
+            "task_id": str(existing.get("task_id", "")).strip(),
+            "target_cli": str(existing.get("target_cli", "")).strip(),
+        }
+
     target_cli, target_account = _resolve_role_task_target(role)
     payload = {
         "title": f"mesh ui {role} {cfg.repo_name}",
@@ -744,8 +820,21 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
             "ui_group_id": cfg.ui_group_id,
             "working_dir": cfg.repo,
         },
+        "idempotency_key": _ui_role_task_idempotency_key(cfg, role),
     }
-    created = _router_post_json(router_url, auth_token, "/tasks", payload)
+    try:
+        created = _router_post_json(router_url, auth_token, "/tasks", payload)
+    except HTTPError as exc:
+        if exc.code != 409:
+            raise
+        existing = _find_existing_ui_role_task(router_url, auth_token, cfg, role)
+        if existing is None:
+            raise RuntimeError(f"duplicate ui role task for {role} but existing task was not found") from exc
+        return {
+            "role": role,
+            "task_id": str(existing.get("task_id", "")).strip(),
+            "target_cli": str(existing.get("target_cli", "")).strip() or target_cli,
+        }
     if not isinstance(created, dict):
         raise RuntimeError(f"invalid task creation response for role {role}")
     task_id = str(created.get("task_id", "")).strip()
@@ -826,6 +915,7 @@ def _spawn_missing_agent_role_plans(
             time.sleep(poll_interval_s)
 
     for role in pending:
+        _cancel_ui_role_task(router_url, auth_token, str(pending[role].get("task_id", "")).strip())
         existing_plans[role] = RoleLaunchPlan(
             role=role,
             mode="error",
