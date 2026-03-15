@@ -541,6 +541,7 @@ class MeshSessionWorker:
         task_id = task["task_id"]
         payload = task.get("payload", {})
         prompt = str(payload.get("prompt", ""))
+        ui_role_session = _coerce_bool(payload.get("ui_role_session"), default=False)
         execution_mode = str(task.get("execution_mode", "batch")).strip() or "batch"
         target_account = str(task.get("target_account") or self.config.account_profile).strip() or self.config.account_profile
         requested_work_dir = payload.get("working_dir", self.config.work_dir)
@@ -570,7 +571,7 @@ class MeshSessionWorker:
             if execution_mode != "session":
                 self._report_failure(task_id, f"unsupported execution_mode={execution_mode} for session worker")
                 return
-            if not prompt:
+            if not prompt and not ui_role_session:
                 self._report_failure(task_id, "missing payload.prompt")
                 return
             if success_markers and not success_file_path and not allow_text_success_markers:
@@ -617,22 +618,23 @@ class MeshSessionWorker:
                 content=f"tmux session created: {tmux_session_name}",
                 metadata={"tmux_session": tmux_session_name, "working_dir": work_dir},
             )
-            self._send_session_message(
-                session_id,
-                direction="in",
-                role="president",
-                content=prompt,
-                metadata={"source": "task.payload.prompt", "task_id": task_id},
-            )
             if not self._wait_for_cli_ready(tmux_session_name):
                 logger.warning(
                     "CLI prompt readiness timeout for session %s; sending prompt anyway",
                     tmux_session_name,
                 )
-            pre_prompt_capture = self._tmux_capture_pane(tmux_session_name)
-            self._tmux_send_text(tmux_session_name, prompt)
-            self._ensure_prompt_submitted(tmux_session_name)
-            self._ensure_prompt_delivered(tmux_session_name, prompt, pre_prompt_capture)
+            if prompt:
+                self._send_session_message(
+                    session_id,
+                    direction="in",
+                    role="president",
+                    content=prompt,
+                    metadata={"source": "task.payload.prompt", "task_id": task_id},
+                )
+                pre_prompt_capture = self._tmux_capture_pane(tmux_session_name)
+                self._tmux_send_text(tmux_session_name, prompt)
+                self._ensure_prompt_submitted(tmux_session_name)
+                self._ensure_prompt_delivered(tmux_session_name, prompt, pre_prompt_capture)
 
             start = time.monotonic()
             after_seq = 0
@@ -658,7 +660,7 @@ class MeshSessionWorker:
             last_emitted_capture = ""
             auto_exit_sent = False
             auto_exit_baseline_capture = ""
-            prompt_delivery_confirmed = False
+            prompt_delivery_confirmed = not bool(prompt)
             prompt_delivery_attempts = 0
             if auto_exit_on_success and not success_markers and not success_file_path:
                 logger.warning(
@@ -696,7 +698,7 @@ class MeshSessionWorker:
                     break
                 if new_after_seq > after_seq:
                     auto_exit_baseline_capture = ""
-                    prompt_delivery_confirmed = False
+                    prompt_delivery_confirmed = not bool(prompt)
                     prompt_delivery_attempts = 0
                 after_seq = max(after_seq, new_after_seq)
                 captured = self._tmux_capture_pane(tmux_session_name)

@@ -23,6 +23,7 @@ import platform
 import re
 import shlex
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,7 @@ class RoleLaunchPlan:
     session_id: str = ""
     task_id: str = ""
     cli_type: str = ""
+    error: str = ""
 
 
 def _repo_root() -> Path:
@@ -280,6 +282,18 @@ def _router_get_json(router_url: str, auth_token: str, path: str) -> Any:
         return json.load(resp)
 
 
+def _router_post_json(router_url: str, auth_token: str, path: str, payload: dict[str, Any]) -> Any:
+    req = Request(
+        router_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {auth_token}")
+    req.add_header("Content-Type", "application/json")
+    with urlopen(req, timeout=10) as resp:
+        return json.load(resp)
+
+
 def _router_has_live_ui_group(router_url: str, auth_token: str, ui_group_id: str) -> bool:
     if not router_url or not auth_token or not ui_group_id:
         return False
@@ -414,6 +428,33 @@ def _default_remote_init_for_role(role: str) -> str:
         "verifier": "ccs gemini",
     }
     return defaults.get(role, "")
+
+
+def _is_agent_role(role: str) -> bool:
+    return role != "boss"
+
+
+def _resolved_provider_for_role(role: str, rule: dict[str, str]) -> str:
+    provider = os.environ.get("MESH_UI_PROVIDER_OVERRIDE", "").strip() or rule.get("provider", "").strip()
+    if not provider and role.startswith("worker-"):
+        provider = role.split("-", 1)[1].strip()
+    return provider
+
+
+def _default_target_account_for_provider(provider: str) -> str:
+    if provider == "claude":
+        return "work-claude"
+    return provider
+
+
+def _resolve_role_task_target(role: str) -> tuple[str, str]:
+    rules = _load_ui_role_rules()
+    rule = rules.get(role, {})
+    provider = _resolved_provider_for_role(role, rule)
+    if not provider:
+        provider = "gemini"
+    target_account = rule.get("target_account", "").strip() or _default_target_account_for_provider(provider)
+    return provider, target_account
 
 
 def _provider_remote_init_for_role(role: str, rule: dict[str, str]) -> str:
@@ -676,6 +717,119 @@ def _build_role_launch_plans(
     }
 
 
+def _spawn_error_remote_init(role: str, message: str) -> str:
+    return (
+        f"printf '%s\\n' {shlex.quote(f'[mesh:{role}] ERROR: {message}')}; "
+        f"printf '%s\\n' {shlex.quote(f'[mesh:{role}] retry hint: mesh ui respawn {role}')}"
+    )
+
+
+def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: str) -> dict[str, Any]:
+    target_cli, target_account = _resolve_role_task_target(role)
+    payload = {
+        "title": f"mesh ui {role} {cfg.repo_name}",
+        "repo": cfg.repo,
+        "role": role,
+        "target_cli": target_cli,
+        "target_account": target_account,
+        "execution_mode": "session",
+        "payload": {
+            "ui_role_session": True,
+            "ui_role": role,
+            "ui_group_id": cfg.ui_group_id,
+            "working_dir": cfg.repo,
+        },
+    }
+    created = _router_post_json(router_url, auth_token, "/tasks", payload)
+    if not isinstance(created, dict):
+        raise RuntimeError(f"invalid task creation response for role {role}")
+    task_id = str(created.get("task_id", "")).strip()
+    if not task_id:
+        raise RuntimeError(f"missing task_id for role {role}")
+    return {
+        "role": role,
+        "task_id": task_id,
+        "target_cli": target_cli,
+    }
+
+
+def _spawn_missing_agent_role_plans(
+    cfg: UiConfig,
+    existing_plans: dict[str, RoleLaunchPlan],
+    *,
+    router_url: str,
+    auth_token: str,
+    timeout_s: float = 60.0,
+    poll_interval_s: float = 1.0,
+) -> dict[str, RoleLaunchPlan]:
+    pending: dict[str, dict[str, Any]] = {}
+    if not router_url or not auth_token:
+        for role in cfg.roles:
+            if not _is_agent_role(role):
+                continue
+            current = existing_plans.get(role) or RoleLaunchPlan(role=role, mode="spawn")
+            if current.mode == "attach":
+                continue
+            existing_plans[role] = RoleLaunchPlan(
+                role=role,
+                mode="error",
+                remote_init=_spawn_error_remote_init(role, "router unavailable"),
+                error="router unavailable",
+            )
+        return existing_plans
+
+    for role in cfg.roles:
+        if not _is_agent_role(role):
+            continue
+        current = existing_plans.get(role) or RoleLaunchPlan(role=role, mode="spawn")
+        if current.mode == "attach":
+            continue
+        try:
+            pending[role] = _create_ui_role_task(router_url, auth_token, cfg, role)
+        except Exception as exc:
+            existing_plans[role] = RoleLaunchPlan(
+                role=role,
+                mode="error",
+                remote_init=_spawn_error_remote_init(role, f"spawn failed: {exc}"),
+                error=str(exc),
+            )
+
+    if not pending:
+        return existing_plans
+
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while pending and time.monotonic() < deadline:
+        session_pairs = _fetch_live_session_pairs(router_url, auth_token)
+        latest_plans = _build_role_launch_plans(cfg, session_pairs)
+        resolved: list[str] = []
+        for role, task_info in pending.items():
+            plan = latest_plans.get(role)
+            if plan is None or plan.mode != "attach" or plan.task_id != task_info["task_id"]:
+                continue
+            existing_plans[role] = RoleLaunchPlan(
+                role=role,
+                mode="spawn",
+                remote_init=plan.remote_init,
+                session_id=plan.session_id,
+                task_id=plan.task_id,
+                cli_type=plan.cli_type,
+            )
+            resolved.append(role)
+        for role in resolved:
+            pending.pop(role, None)
+        if pending:
+            time.sleep(poll_interval_s)
+
+    for role in pending:
+        existing_plans[role] = RoleLaunchPlan(
+            role=role,
+            mode="error",
+            remote_init=_spawn_error_remote_init(role, "session spawn timeout after 60s"),
+            error="session spawn timeout after 60s",
+        )
+    return existing_plans
+
+
 def _command_for_role(
     role: str,
     repo: str,
@@ -792,6 +946,13 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
     router_url, auth_token = _load_router_env()
     session_pairs = _fetch_live_session_pairs(router_url, auth_token) if cfg.attach_live else []
     launch_plans = _build_role_launch_plans(cfg, session_pairs)
+    if cfg.attach_live:
+        launch_plans = _spawn_missing_agent_role_plans(
+            cfg,
+            launch_plans,
+            router_url=router_url,
+            auth_token=auth_token,
+        )
     for roles in groups:
         tab = await window.async_create_tab()
         sessions = await _create_panes_for_roles(tab, roles)
@@ -803,7 +964,7 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
                 cfg.repo,
                 cfg.repo_name,
                 all_roles=cfg.roles,
-                live_remote_init=plan.remote_init if plan.mode == "attach" else "",
+                live_remote_init=plan.remote_init if plan.mode in {"attach", "spawn", "error"} else "",
             )
             banner = f"clear; echo '[mesh:{role}] repo={cfg.repo_name}'; "
             await sess.async_send_text(f"{banner}{cmd}\n")

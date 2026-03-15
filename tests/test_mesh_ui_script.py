@@ -387,6 +387,201 @@ def test_build_role_launch_plan_without_attach_handle_falls_back_to_spawn():
     assert plan.session_id == ""
 
 
+def test_create_ui_role_task_posts_expected_payload(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    monkeypatch.setattr(module, "_load_ui_role_rules", lambda config_path=None: {"lead": {"provider": "gemini"}})
+    calls = []
+
+    def fake_post(router_url: str, auth_token: str, path: str, payload: dict):
+        calls.append((router_url, auth_token, path, payload))
+        return {"task_id": "task-lead-1"}
+
+    monkeypatch.setattr(module, "_router_post_json", fake_post)
+
+    task_info = module._create_ui_role_task("http://router", "token", cfg, "lead")
+
+    assert task_info == {"role": "lead", "task_id": "task-lead-1", "target_cli": "gemini"}
+    assert len(calls) == 1
+    _, _, path, payload = calls[0]
+    assert path == "/tasks"
+    assert payload["repo"] == "/media/sam/1TB/demo"
+    assert payload["role"] == "lead"
+    assert payload["target_cli"] == "gemini"
+    assert payload["execution_mode"] == "session"
+    assert payload["payload"]["ui_role_session"] is True
+    assert payload["payload"]["ui_group_id"] == "demo-ui-1"
+    assert payload["payload"]["working_dir"] == "/media/sam/1TB/demo"
+    assert "prompt" not in payload["payload"]
+
+
+def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "lead", "worker-codex"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    existing = {
+        "boss": module.RoleLaunchPlan(role="boss", mode="spawn"),
+        "lead": module.RoleLaunchPlan(role="lead", mode="spawn"),
+        "worker-codex": module.RoleLaunchPlan(role="worker-codex", mode="spawn"),
+    }
+    created_roles = []
+    task_ids = {"lead": "task-lead-1", "worker-codex": "task-worker-1"}
+
+    def fake_create(router_url: str, auth_token: str, cfg_value, role: str):
+        created_roles.append(role)
+        return {"role": role, "task_id": task_ids[role], "target_cli": "gemini" if role == "lead" else "codex"}
+
+    fetch_calls = {"count": 0}
+
+    def fake_fetch(router_url: str, auth_token: str):
+        fetch_calls["count"] += 1
+        return [
+            (
+                {
+                    "session_id": "sess-lead",
+                    "cli_type": "gemini",
+                    "metadata": {
+                        "repo": "/media/sam/1TB/demo",
+                        "ui_group_id": "demo-ui-1",
+                        "tmux_session": "mesh-gemini-lead",
+                    },
+                },
+                {
+                    "task_id": "task-lead-1",
+                    "repo": "/media/sam/1TB/demo",
+                    "role": "lead",
+                    "target_cli": "gemini",
+                    "status": "running",
+                },
+            ),
+            (
+                {
+                    "session_id": "sess-worker",
+                    "cli_type": "codex",
+                    "metadata": {
+                        "repo": "/media/sam/1TB/demo",
+                        "ui_group_id": "demo-ui-1",
+                        "tmux_session": "mesh-codex-worker",
+                    },
+                },
+                {
+                    "task_id": "task-worker-1",
+                    "repo": "/media/sam/1TB/demo",
+                    "role": "worker-codex",
+                    "target_cli": "codex",
+                    "status": "running",
+                },
+            ),
+        ]
+
+    monkeypatch.setattr(module, "_create_ui_role_task", fake_create)
+    monkeypatch.setattr(module, "_fetch_live_session_pairs", fake_fetch)
+    monkeypatch.setattr(module, "_load_provider_session_users", lambda config_path=None: {"codex": "mesh-worker"})
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+
+    plans = module._spawn_missing_agent_role_plans(
+        cfg,
+        existing,
+        router_url="http://router",
+        auth_token="token",
+        timeout_s=5.0,
+        poll_interval_s=0.01,
+    )
+
+    assert created_roles == ["lead", "worker-codex"]
+    assert plans["lead"].mode == "spawn"
+    assert plans["lead"].session_id == "sess-lead"
+    assert plans["worker-codex"].mode == "spawn"
+    assert plans["worker-codex"].session_id == "sess-worker"
+    assert "sudo -u mesh-worker tmux attach -t mesh-codex-worker" in plans["worker-codex"].remote_init
+    assert fetch_calls["count"] >= 1
+
+
+def test_spawn_missing_agent_role_plans_marks_timeout(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    existing = {"lead": module.RoleLaunchPlan(role="lead", mode="spawn")}
+
+    monkeypatch.setattr(
+        module,
+        "_create_ui_role_task",
+        lambda router_url, auth_token, cfg_value, role: {"role": role, "task_id": "task-lead-1", "target_cli": "gemini"},
+    )
+    monkeypatch.setattr(module, "_fetch_live_session_pairs", lambda router_url, auth_token: [])
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+
+    plans = module._spawn_missing_agent_role_plans(
+        cfg,
+        existing,
+        router_url="http://router",
+        auth_token="token",
+        timeout_s=0.0,
+        poll_interval_s=0.01,
+    )
+
+    assert plans["lead"].mode == "error"
+    assert "retry hint: mesh ui respawn lead" in plans["lead"].remote_init
+
+
+def test_spawn_missing_agent_role_plans_marks_router_unavailable():
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    existing = {
+        "boss": module.RoleLaunchPlan(role="boss", mode="spawn"),
+        "lead": module.RoleLaunchPlan(role="lead", mode="spawn"),
+    }
+
+    plans = module._spawn_missing_agent_role_plans(
+        cfg,
+        existing,
+        router_url="",
+        auth_token="",
+    )
+
+    assert plans["boss"].mode == "spawn"
+    assert plans["lead"].mode == "error"
+    assert "router unavailable" in plans["lead"].error
+
+
 def test_build_tmux_attach_remote_init_uses_provider_runtime_user(monkeypatch):
     module = _load_module()
     monkeypatch.setattr(

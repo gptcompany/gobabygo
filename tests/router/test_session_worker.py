@@ -977,6 +977,53 @@ class TestAttachCleanupInExecuteTask:
         # _stop_upterm should not be called (proc is None)
         mock_stop.assert_not_called()
 
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-ui-role")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.time.sleep")
+    def test_ui_role_session_can_start_without_initial_prompt(
+        self,
+        mock_sleep: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_wait_ready: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+        worker._running = True
+
+        task = {
+            "task_id": "t-ui-role",
+            "execution_mode": "session",
+            "repo": "/tmp/mesh-ui-role",
+            "role": "lead",
+            "target_account": "gemini",
+            "payload": {
+                "ui_role_session": True,
+                "ui_role": "lead",
+                "ui_group_id": "demo-ui-1",
+                "working_dir": "/tmp/mesh-ui-role",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_send_text.assert_not_called()
+        mock_report_complete.assert_called_once()
+
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_create_attach_handle")
     @patch.object(MeshSessionWorker, "_tmux_new_session")
