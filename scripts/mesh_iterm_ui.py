@@ -756,6 +756,14 @@ def _find_existing_ui_role_task(
     cfg: UiConfig,
     role: str,
 ) -> dict[str, Any] | None:
+    status_priority = {
+        "running": 5,
+        "assigned": 4,
+        "review": 3,
+        "blocked": 2,
+        "queued": 1,
+    }
+    matches: list[dict[str, Any]] = []
     for status in ("queued", "assigned", "blocked", "review", "running"):
         try:
             payload = _router_get_json(router_url, auth_token, f"/tasks?status={quote(status)}&limit=200")
@@ -764,23 +772,24 @@ def _find_existing_ui_role_task(
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
         if not isinstance(tasks, list):
             continue
-        matches = [
+        status_matches = [
             task
             for task in tasks
             if isinstance(task, dict) and _task_matches_ui_role(cfg, role, task)
         ]
-        if not matches:
-            continue
-        matches.sort(
-            key=lambda task: (
-                str(task.get("updated_at", "")),
-                str(task.get("created_at", "")),
-                str(task.get("task_id", "")),
-            ),
-            reverse=True,
-        )
-        return matches[0]
-    return None
+        matches.extend(status_matches)
+    if not matches:
+        return None
+    matches.sort(
+        key=lambda task: (
+            status_priority.get(str(task.get("status", "")).strip(), 0),
+            str(task.get("updated_at", "")),
+            str(task.get("created_at", "")),
+            str(task.get("task_id", "")),
+        ),
+        reverse=True,
+    )
+    return matches[0]
 
 
 def _cancel_ui_role_task(router_url: str, auth_token: str, task_id: str) -> None:
@@ -804,6 +813,7 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
             "role": role,
             "task_id": str(existing.get("task_id", "")).strip(),
             "target_cli": str(existing.get("target_cli", "")).strip(),
+            "created": False,
         }
 
     target_cli, target_account = _resolve_role_task_target(role)
@@ -834,6 +844,7 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
             "role": role,
             "task_id": str(existing.get("task_id", "")).strip(),
             "target_cli": str(existing.get("target_cli", "")).strip() or target_cli,
+            "created": False,
         }
     if not isinstance(created, dict):
         raise RuntimeError(f"invalid task creation response for role {role}")
@@ -844,6 +855,7 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
         "role": role,
         "task_id": task_id,
         "target_cli": target_cli,
+        "created": True,
     }
 
 
@@ -915,7 +927,8 @@ def _spawn_missing_agent_role_plans(
             time.sleep(poll_interval_s)
 
     for role in pending:
-        _cancel_ui_role_task(router_url, auth_token, str(pending[role].get("task_id", "")).strip())
+        if bool(pending[role].get("created")):
+            _cancel_ui_role_task(router_url, auth_token, str(pending[role].get("task_id", "")).strip())
         existing_plans[role] = RoleLaunchPlan(
             role=role,
             mode="error",
