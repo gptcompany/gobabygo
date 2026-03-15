@@ -528,8 +528,13 @@ def _session_metadata(session: dict[str, Any]) -> dict[str, Any]:
     return session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
 
 
-def _session_group_id(session: dict[str, Any]) -> str:
-    return str(_session_metadata(session).get("ui_group_id", "") or "").strip()
+def _session_group_id(
+    session: dict[str, Any],
+    task: dict[str, Any],
+) -> str:
+    meta = _session_metadata(session)
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    return str(meta.get("ui_group_id") or payload.get("ui_group_id") or "").strip()
 
 
 def _session_repo(
@@ -563,10 +568,10 @@ def _session_matches_repo(
     return False
 
 
-def _session_matches_ui_group(ui_group_id: str, session: dict[str, Any]) -> bool:
+def _session_matches_ui_group(ui_group_id: str, session: dict[str, Any], task: dict[str, Any]) -> bool:
     if not ui_group_id:
         return True
-    return _session_group_id(session) == ui_group_id
+    return _session_group_id(session, task) == ui_group_id
 
 
 def _role_session_score(role: str, session: dict[str, Any], task: dict[str, Any]) -> int:
@@ -617,7 +622,7 @@ def _select_live_sessions_for_roles(
     available = [
         (session, task)
         for session, task in session_pairs
-        if _session_matches_ui_group(ui_group_id, session) and _session_matches_repo(repo, repo_name, session, task)
+        if _session_matches_ui_group(ui_group_id, session, task) and _session_matches_repo(repo, repo_name, session, task)
     ]
     selected: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     used_session_ids: set[str] = set()

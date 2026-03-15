@@ -365,6 +365,60 @@ def test_select_live_sessions_filters_to_active_ui_group():
     assert selected["lead"][0]["session_id"] == "sess-matching"
 
 
+def test_select_live_sessions_falls_back_to_task_payload_ui_group_for_mixed_worker_versions():
+    module = _load_module()
+    matching = (
+        {
+            "session_id": "sess-matching",
+            "cli_type": "gemini",
+            "metadata": {
+                "repo": "/media/sam/1TB/demo",
+            },
+            "updated_at": "2026-03-10T19:20:00Z",
+            "created_at": "2026-03-10T19:10:00Z",
+        },
+        {
+            "task_id": "task-matching",
+            "repo": "/media/sam/1TB/demo",
+            "role": "lead",
+            "target_cli": "gemini",
+            "status": "running",
+            "payload": {"ui_group_id": "demo-ui-1"},
+            "updated_at": "2026-03-10T19:21:00Z",
+        },
+    )
+    other_group = (
+        {
+            "session_id": "sess-other",
+            "cli_type": "gemini",
+            "metadata": {
+                "repo": "/media/sam/1TB/demo",
+            },
+            "updated_at": "2026-03-10T19:22:00Z",
+            "created_at": "2026-03-10T19:11:00Z",
+        },
+        {
+            "task_id": "task-other",
+            "repo": "/media/sam/1TB/demo",
+            "role": "lead",
+            "target_cli": "gemini",
+            "status": "running",
+            "payload": {"ui_group_id": "demo-ui-2"},
+            "updated_at": "2026-03-10T19:23:00Z",
+        },
+    )
+
+    selected = module._select_live_sessions_for_roles(
+        ["lead"],
+        "/media/sam/1TB/demo",
+        "demo",
+        "demo-ui-1",
+        [matching, other_group],
+    )
+
+    assert selected["lead"][0]["session_id"] == "sess-matching"
+
+
 def test_build_role_launch_plan_without_attach_handle_falls_back_to_spawn():
     module = _load_module()
     session = {
