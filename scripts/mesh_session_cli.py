@@ -190,7 +190,8 @@ def build_session_choices(
                 thread_cache[thread_id] = fetched_thread if isinstance(fetched_thread, dict) else None
             thread = thread_cache.get(thread_id)
 
-        repo = str((task or {}).get("repo") or metadata.get("working_dir") or "").strip()
+        repo = str(metadata.get("repo") or (task or {}).get("repo") or metadata.get("working_dir") or "").strip()
+        role = str(metadata.get("ui_role") or (task or {}).get("role") or metadata.get("role") or "").strip()
         choices.append(
             SessionChoice(
                 session_id=session_id,
@@ -205,7 +206,7 @@ def build_session_choices(
                 thread_status=str((thread or {}).get("status") or "").strip(),
                 repo=repo,
                 repo_name=_basename(repo),
-                role=str((task or {}).get("role") or "").strip(),
+                role=role,
                 title=str((task or {}).get("title") or "").strip(),
                 updated_at=str(session.get("updated_at", "")).strip(),
                 tmux_session=str(metadata.get("tmux_session") or "").strip(),

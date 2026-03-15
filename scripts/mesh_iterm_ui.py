@@ -483,15 +483,37 @@ def _build_tmux_attach_remote_init(role: str, session: dict[str, Any], task: dic
     )
 
 
+def _session_metadata(session: dict[str, Any]) -> dict[str, Any]:
+    return session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+
+
+def _session_group_id(session: dict[str, Any]) -> str:
+    return str(_session_metadata(session).get("ui_group_id", "") or "").strip()
+
+
+def _session_repo(
+    session: dict[str, Any],
+    task: dict[str, Any],
+) -> str:
+    meta = _session_metadata(session)
+    return str(meta.get("repo") or task.get("repo") or meta.get("working_dir") or "").strip()
+
+
+def _session_role(
+    session: dict[str, Any],
+    task: dict[str, Any],
+) -> str:
+    meta = _session_metadata(session)
+    return str(meta.get("ui_role") or task.get("role") or meta.get("role") or "").strip()
+
+
 def _session_matches_repo(
     repo: str,
     repo_name: str,
     session: dict[str, Any],
     task: dict[str, Any],
 ) -> bool:
-    task_repo = str(task.get("repo", "") or "").strip()
-    working_dir = str((session.get("metadata") or {}).get("working_dir", "") or "").strip()
-    candidates = [value for value in (task_repo, working_dir) if value]
+    candidates = [value for value in (_session_repo(session, task),) if value]
     if repo in candidates:
         return True
     for value in candidates:
@@ -500,9 +522,15 @@ def _session_matches_repo(
     return False
 
 
+def _session_matches_ui_group(ui_group_id: str, session: dict[str, Any]) -> bool:
+    if not ui_group_id:
+        return True
+    return _session_group_id(session) == ui_group_id
+
+
 def _role_session_score(role: str, session: dict[str, Any], task: dict[str, Any]) -> int:
     cli_type = str(session.get("cli_type", "") or task.get("target_cli", "")).strip()
-    task_role = str(task.get("role", "") or "").strip()
+    task_role = _session_role(session, task)
     task_status = str(task.get("status", "") or "").strip()
 
     if role == "boss":
@@ -521,6 +549,8 @@ def _role_session_score(role: str, session: dict[str, Any], task: dict[str, Any]
         provider = role.split("-", 1)[1]
         if cli_type != provider:
             return -1
+        if task_role == role:
+            return 325
         if task_role == "worker":
             return 300
         if not task_role:
@@ -540,12 +570,13 @@ def _select_live_sessions_for_roles(
     roles: list[str],
     repo: str,
     repo_name: str,
+    ui_group_id: str,
     session_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
 ) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     available = [
         (session, task)
         for session, task in session_pairs
-        if _session_matches_repo(repo, repo_name, session, task)
+        if _session_matches_ui_group(ui_group_id, session) and _session_matches_repo(repo, repo_name, session, task)
     ]
     selected: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     used_session_ids: set[str] = set()
@@ -589,18 +620,19 @@ def _fetch_live_session_pairs(router_url: str, auth_token: str) -> list[tuple[di
         if not isinstance(session, dict):
             continue
         task_id = str(session.get("task_id", "")).strip()
-        if not task_id:
-            continue
-        task = task_cache.get(task_id)
-        if task is None:
-            try:
-                task_payload = _router_get_json(router_url, auth_token, f"/tasks/{quote(task_id)}")
-            except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(task_payload, dict):
-                continue
-            task = task_payload
-            task_cache[task_id] = task
+        task: dict[str, Any] = {}
+        if task_id:
+            task = task_cache.get(task_id) or {}
+            if not task:
+                try:
+                    task_payload = _router_get_json(router_url, auth_token, f"/tasks/{quote(task_id)}")
+                except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+                    task_payload = None
+                if isinstance(task_payload, dict):
+                    task = task_payload
+                    task_cache[task_id] = task
+        if task_id and not task:
+            task = {"task_id": task_id}
         session_pairs.append((session, task))
     return session_pairs
 
@@ -631,7 +663,13 @@ def _build_role_launch_plans(
     cfg: UiConfig,
     session_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
 ) -> dict[str, RoleLaunchPlan]:
-    selected = _select_live_sessions_for_roles(cfg.roles, cfg.repo, cfg.repo_name, session_pairs)
+    selected = _select_live_sessions_for_roles(
+        cfg.roles,
+        cfg.repo,
+        cfg.repo_name,
+        cfg.ui_group_id,
+        session_pairs,
+    )
     return {
         role: _build_role_launch_plan(role, selected.get(role))
         for role in cfg.roles

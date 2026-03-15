@@ -236,7 +236,8 @@ def test_select_live_sessions_prefers_exact_role_match():
         "cli_type": "codex",
         "metadata": {
             "tmux_session": "mesh-codex-codex-1234",
-            "working_dir": "/media/sam/1TB/demo",
+            "repo": "/media/sam/1TB/demo",
+            "ui_group_id": "demo-ui-1",
         },
         "updated_at": "2026-03-10T19:20:00Z",
         "created_at": "2026-03-10T19:10:00Z",
@@ -254,6 +255,7 @@ def test_select_live_sessions_prefers_exact_role_match():
         ["lead", "worker-codex"],
         "/media/sam/1TB/demo",
         "demo",
+        "demo-ui-1",
         [(session, task)],
     )
 
@@ -284,7 +286,8 @@ def test_build_role_launch_plans_attaches_matching_session_and_spawns_missing_ro
         "cli_type": "codex",
         "metadata": {
             "tmux_session": "mesh-codex-codex-abcd",
-            "working_dir": "/media/sam/1TB/demo",
+            "repo": "/media/sam/1TB/demo",
+            "ui_group_id": "demo-ui-20260315T130000Z",
         },
         "updated_at": "2026-03-10T19:20:00Z",
         "created_at": "2026-03-10T19:10:00Z",
@@ -308,13 +311,67 @@ def test_build_role_launch_plans_attaches_matching_session_and_spawns_missing_ro
     assert plans["worker-codex"].remote_init == ""
 
 
+def test_select_live_sessions_filters_to_active_ui_group():
+    module = _load_module()
+    matching = (
+        {
+            "session_id": "sess-matching",
+            "cli_type": "gemini",
+            "metadata": {
+                "repo": "/media/sam/1TB/demo",
+                "ui_group_id": "demo-ui-1",
+            },
+            "updated_at": "2026-03-10T19:20:00Z",
+            "created_at": "2026-03-10T19:10:00Z",
+        },
+        {
+            "task_id": "task-matching",
+            "repo": "/media/sam/1TB/demo",
+            "role": "lead",
+            "target_cli": "gemini",
+            "status": "running",
+            "updated_at": "2026-03-10T19:21:00Z",
+        },
+    )
+    other_group = (
+        {
+            "session_id": "sess-other",
+            "cli_type": "gemini",
+            "metadata": {
+                "repo": "/media/sam/1TB/demo",
+                "ui_group_id": "demo-ui-2",
+            },
+            "updated_at": "2026-03-10T19:22:00Z",
+            "created_at": "2026-03-10T19:11:00Z",
+        },
+        {
+            "task_id": "task-other",
+            "repo": "/media/sam/1TB/demo",
+            "role": "lead",
+            "target_cli": "gemini",
+            "status": "running",
+            "updated_at": "2026-03-10T19:23:00Z",
+        },
+    )
+
+    selected = module._select_live_sessions_for_roles(
+        ["lead"],
+        "/media/sam/1TB/demo",
+        "demo",
+        "demo-ui-1",
+        [matching, other_group],
+    )
+
+    assert selected["lead"][0]["session_id"] == "sess-matching"
+
+
 def test_build_role_launch_plan_without_attach_handle_falls_back_to_spawn():
     module = _load_module()
     session = {
         "session_id": "sess-lead",
         "cli_type": "codex",
         "metadata": {
-            "working_dir": "/media/sam/1TB/demo",
+            "repo": "/media/sam/1TB/demo",
         },
     }
     task = {
@@ -363,7 +420,8 @@ def test_fetch_live_session_pairs_returns_router_backed_pairs(monkeypatch):
                         "cli_type": "codex",
                         "metadata": {
                             "tmux_session": "mesh-codex-codex-abcd",
-                            "working_dir": "/media/sam/1TB/demo",
+                            "repo": "/media/sam/1TB/demo",
+                            "ui_group_id": "demo-ui-1",
                         },
                         "updated_at": "2026-03-10T19:20:00Z",
                         "created_at": "2026-03-10T19:10:00Z",
@@ -390,6 +448,37 @@ def test_fetch_live_session_pairs_returns_router_backed_pairs(monkeypatch):
     session, task = session_pairs[0]
     assert session["session_id"] == "sess-lead"
     assert task["task_id"] == "task-lead"
+
+
+def test_fetch_live_session_pairs_keeps_session_when_task_lookup_fails(monkeypatch):
+    module = _load_module()
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/sessions?state=open&limit=200":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "sess-lead",
+                        "task_id": "task-lead",
+                        "cli_type": "codex",
+                        "metadata": {
+                            "repo": "/media/sam/1TB/demo",
+                            "role": "lead",
+                            "ui_group_id": "demo-ui-1",
+                        },
+                    }
+                ]
+            }
+        raise module.HTTPError(path, 404, "not found", None, None)
+
+    monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
+
+    session_pairs = module._fetch_live_session_pairs("http://router", "token")
+
+    assert len(session_pairs) == 1
+    session, task = session_pairs[0]
+    assert session["metadata"]["repo"] == "/media/sam/1TB/demo"
+    assert task == {"task_id": "task-lead"}
 
 
 def test_default_ui_roles_fit_two_tabs_with_three_panes():

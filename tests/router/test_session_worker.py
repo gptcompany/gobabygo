@@ -780,7 +780,13 @@ class TestOpenSessionMetadata:
         worker._http = MagicMock()
         worker._http.post.return_value = mock_resp
 
-        task = {"task_id": "t-abc", "title": "test task"}
+        task = {
+            "task_id": "t-abc",
+            "title": "test task",
+            "repo": "/media/sam/1TB/snake-game",
+            "role": "lead",
+            "payload": {"ui_group_id": "snake-game-ui-1", "ui_role": "lead"},
+        }
         attach_meta = {"attach_kind": "upterm", "attach_target": "ssh://tok@host:22"}
 
         sid = worker._open_session(task, "mesh-sess", "/tmp/work", "review-codex", attach_meta)
@@ -791,6 +797,10 @@ class TestOpenSessionMetadata:
         meta = body["metadata"]
         assert meta["tmux_session"] == "mesh-sess"
         assert meta["working_dir"] == "/tmp/work"
+        assert meta["repo"] == "/media/sam/1TB/snake-game"
+        assert meta["role"] == "lead"
+        assert meta["ui_group_id"] == "snake-game-ui-1"
+        assert meta["ui_role"] == "lead"
         assert meta["task_title"] == "test task"
         assert meta["attach_kind"] == "upterm"
         assert meta["attach_target"] == "ssh://tok@host:22"
@@ -816,6 +826,8 @@ class TestOpenSessionMetadata:
         # Core fields still present
         assert meta["tmux_session"] == "mesh-sess"
         assert meta["working_dir"] == "/tmp/work"
+        assert meta["repo"] == "/tmp/work"
+        assert meta["role"] == ""
         assert body["account_profile"] == "work-claude"
 
 

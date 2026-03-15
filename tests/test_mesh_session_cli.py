@@ -76,6 +76,41 @@ def test_build_session_choices_enriches_router_data(monkeypatch):
     assert choice.tmux_session == "mesh-gemini-sam-1234"
 
 
+def test_build_session_choices_prefers_repo_and_role_from_session_metadata(monkeypatch):
+    module = _load_module()
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/sessions?state=open&limit=200":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "sess-1",
+                        "worker_id": "ws-gemini-1",
+                        "cli_type": "gemini",
+                        "account_profile": "default",
+                        "task_id": "task-1",
+                        "state": "open",
+                        "metadata": {
+                            "repo": "/media/sam/1TB/snake-game",
+                            "role": "lead",
+                            "tmux_session": "mesh-gemini-sam-1234",
+                        },
+                        "updated_at": "2026-03-11T14:00:00Z",
+                    }
+                ]
+            }
+        raise module.HTTPError(path, 404, "not found", None, None)
+
+    monkeypatch.setattr(module, "router_get_json", fake_router_get_json)
+
+    choices = module.build_session_choices("http://router", "token", provider_users={})
+
+    assert len(choices) == 1
+    choice = choices[0]
+    assert choice.repo == "/media/sam/1TB/snake-game"
+    assert choice.role == "lead"
+
+
 def test_filter_session_choices_matches_repo_role_and_session():
     module = _load_module()
     choices = [

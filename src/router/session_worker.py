@@ -1296,11 +1296,20 @@ class MeshSessionWorker:
         target_account: str,
         attach_meta: dict | None = None,
     ) -> str:
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
         metadata: dict = {
             "tmux_session": tmux_session,
             "working_dir": work_dir,
+            "repo": str(task.get("repo") or work_dir).strip(),
+            "role": str(payload.get("ui_role") or task.get("role") or "").strip(),
             "task_title": task.get("title", ""),
         }
+        ui_group_id = str(payload.get("ui_group_id") or "").strip()
+        if ui_group_id:
+            metadata["ui_group_id"] = ui_group_id
+        ui_role = str(payload.get("ui_role") or "").strip()
+        if ui_role:
+            metadata["ui_role"] = ui_role
         if attach_meta:
             metadata.update(attach_meta)
         body = {
