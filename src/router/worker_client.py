@@ -115,7 +115,8 @@ class MeshWorker:
     def start(self) -> None:
         """Register with router, start heartbeat, begin polling."""
         self._running = True
-        self._register()
+        if not self._register_until_available():
+            return
         self._start_heartbeat()
         self._poll_loop()
 
@@ -146,6 +147,24 @@ class MeshWorker:
         else:
             resp.raise_for_status()
             logger.info("Registered as %s", self.config.worker_id)
+
+    def _register_until_available(self) -> bool:
+        """Keep retrying registration while the worker is meant to stay up."""
+        backoff = 1.0
+        while self._running:
+            try:
+                self._register()
+                return True
+            except requests.RequestException as exc:
+                logger.warning(
+                    "Initial registration failed for %s: %s; retrying in %.1fs",
+                    self.config.worker_id,
+                    exc,
+                    backoff,
+                )
+                time.sleep(backoff + random.uniform(0.1, 0.5))
+                backoff = min(backoff * 2.0, 30.0)
+        return False
 
     def _start_heartbeat(self) -> None:
         """Start background heartbeat thread."""

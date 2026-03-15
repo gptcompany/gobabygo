@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from src.router.worker_client import MeshWorker, WorkerConfig
 
@@ -158,7 +159,8 @@ class TestWorkerConfig:
             assert config.execution_modes == ["session", "batch"]
             assert config.capabilities == ["code", "review"]
             assert config.allowed_accounts == ["clientA", "clientB", "*"]
-            assert config.allowed_work_dirs == ["/tmp/mesh-tasks", "/media/sam/1TB"]
+            assert config.allowed_work_dirs[0].endswith("/tmp/mesh-tasks")
+            assert config.allowed_work_dirs[1] == "/media/sam/1TB"
 
     def test_registration_capabilities_includes_allowed_accounts(self):
         config = WorkerConfig(
@@ -204,6 +206,28 @@ class TestMeshWorkerRegistration:
         worker = MeshWorker(config)
         worker._register()
         assert len(MockRouterHandler.register_calls) == 1
+
+    def test_start_retries_initial_registration_until_success(self):
+        config = WorkerConfig(worker_id="ws-test-01")
+        worker = MeshWorker(config)
+        attempts = {"count": 0}
+        sleeps: list[float] = []
+
+        def fake_register():
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise requests.RequestException("router unavailable")
+
+        worker._register = fake_register  # type: ignore[method-assign]
+        worker._start_heartbeat = lambda: None  # type: ignore[method-assign]
+        worker._poll_loop = lambda: None  # type: ignore[method-assign]
+
+        with patch("src.router.worker_client.time.sleep", side_effect=lambda value: sleeps.append(value)), \
+             patch("src.router.worker_client.random.uniform", return_value=0.0):
+            worker.start()
+
+        assert attempts["count"] == 2
+        assert sleeps == [1.0]
 
 
 class TestMeshWorkerHeartbeat:

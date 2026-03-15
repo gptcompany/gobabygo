@@ -169,6 +169,28 @@ def test_session_worker_from_env_preserves_ui_role_with_explicit_capabilities() 
     assert "ui_role" in cfg.registration_capabilities()
 
 
+def test_session_worker_start_retries_initial_registration_until_success() -> None:
+    worker = MeshSessionWorker(SessionWorkerConfig(worker_id="ws-session-test"))
+    attempts = {"count": 0}
+    sleeps: list[float] = []
+
+    def fake_register() -> None:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise requests.RequestException("router unavailable")
+
+    worker._register = fake_register  # type: ignore[method-assign]
+    worker._start_heartbeat = lambda: None  # type: ignore[method-assign]
+    worker._poll_loop = lambda: None  # type: ignore[method-assign]
+
+    with patch("src.router.session_worker.time.sleep", side_effect=lambda value: sleeps.append(value)), \
+         patch("src.router.session_worker.random.uniform", return_value=0.0):
+        worker.start()
+
+    assert attempts["count"] == 2
+    assert sleeps == [1.0]
+
+
 def test_compute_output_emit_delta() -> None:
     prev = "line1\nline2"
     cur = "line1\nline2\nline3"

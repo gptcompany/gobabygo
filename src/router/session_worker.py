@@ -440,7 +440,8 @@ class MeshSessionWorker:
 
     def start(self) -> None:
         self._running = True
-        self._register()
+        if not self._register_until_available():
+            return
         self._start_heartbeat()
         self._poll_loop()
 
@@ -472,6 +473,24 @@ class MeshSessionWorker:
             return
         resp.raise_for_status()
         logger.info("Registered session worker %s", self.config.worker_id)
+
+    def _register_until_available(self) -> bool:
+        """Keep retrying registration while the worker should remain running."""
+        backoff = 1.0
+        while self._running:
+            try:
+                self._register()
+                return True
+            except requests.RequestException as exc:
+                logger.warning(
+                    "Initial session worker registration failed for %s: %s; retrying in %.1fs",
+                    self.config.worker_id,
+                    exc,
+                    backoff,
+                )
+                time.sleep(backoff + random.uniform(0.1, 0.5))
+                backoff = min(backoff * 2.0, 30.0)
+        return False
 
     def _deregister(self) -> None:
         """Best-effort router retirement during worker shutdown."""
