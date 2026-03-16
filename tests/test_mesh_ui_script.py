@@ -113,9 +113,30 @@ def test_command_for_role_env_override_wins(tmp_path, monkeypatch):
     monkeypatch.setenv("MESH_UI_CONFIG", str(config))
     monkeypatch.setenv("MESH_UI_CMD_BOSS", "echo role={role} repo={repo_name}")
 
-    command = module._command_for_role("boss", "/media/sam/1TB/rektslug", "rektslug")
+    command = module._command_for_role(
+        "boss",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        ui_group_id="rektslug-ui-1",
+    )
 
-    assert command == "echo role=boss repo=rektslug"
+    assert "env MESH_UI_GROUP_ID=rektslug-ui-1 bash -lc" in command
+    assert "echo role=boss repo=rektslug" in command
+
+
+def test_command_for_role_env_override_accepts_ui_group_placeholder(monkeypatch):
+    module = _load_module()
+    monkeypatch.setenv("MESH_UI_CMD_BOSS", "echo group={ui_group_id}")
+
+    command = module._command_for_role(
+        "boss",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        ui_group_id="rektslug-ui-1",
+    )
+
+    assert "env MESH_UI_GROUP_ID=rektslug-ui-1 bash -lc" in command
+    assert "echo group=rektslug-ui-1" in command
 
 
 def test_command_for_role_provider_override_wins_for_worker(tmp_path, monkeypatch):
@@ -163,6 +184,27 @@ def test_command_for_role_passes_ui_group_id(monkeypatch):
     )
 
     assert "rektslug-ui-1" in command
+
+
+def test_command_for_role_yaml_command_template_accepts_ui_group_id(tmp_path, monkeypatch):
+    module = _load_module()
+    config = tmp_path / "operator_ui.yaml"
+    config.write_text(
+        "roles:\n  boss:\n    command_template: \"echo group={ui_group_id} repo={repo_name}\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MESH_UI_CONFIG", str(config))
+    monkeypatch.delenv("MESH_UI_CMD_BOSS", raising=False)
+
+    command = module._command_for_role(
+        "boss",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        ui_group_id="rektslug-ui-1",
+    )
+
+    assert "env MESH_UI_GROUP_ID=rektslug-ui-1 bash -lc" in command
+    assert "echo group=rektslug-ui-1 repo=rektslug" in command
 
 
 def test_command_for_role_uses_provider_runtime_config_override(tmp_path, monkeypatch):

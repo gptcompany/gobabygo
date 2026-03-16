@@ -947,16 +947,43 @@ def _command_for_role(
     all_roles: list[str] | None = None,
     live_remote_init: str = "",
 ) -> str:
+    def _wrap_custom_command(command: str) -> str:
+        if not command:
+            return command
+        return " ".join(
+            [
+                "env",
+                f"MESH_UI_GROUP_ID={shlex.quote(ui_group_id)}",
+                "bash",
+                "-lc",
+                shlex.quote(command),
+            ]
+        )
+
     env_key = _role_env_key(role)
     template = os.environ.get(env_key, "").strip()
     if template:
-        return template.format(repo=repo, repo_name=repo_name, role=role)
+        return _wrap_custom_command(
+            template.format(
+                repo=repo,
+                repo_name=repo_name,
+                role=role,
+                ui_group_id=ui_group_id,
+            )
+        )
 
     rules = _load_ui_role_rules()
     rule = rules.get(role, {})
     template = rule.get("command_template", "").strip()
     if template:
-        return template.format(repo=repo, repo_name=repo_name, role=role)
+        return _wrap_custom_command(
+            template.format(
+                repo=repo,
+                repo_name=repo_name,
+                role=role,
+                ui_group_id=ui_group_id,
+            )
+        )
 
     remote_init = (
         live_remote_init
