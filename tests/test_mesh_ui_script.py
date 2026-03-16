@@ -31,6 +31,16 @@ def test_mesh_ui_role_shell_sets_role_label_and_badge():
 
     assert "printf '\\033]0;%s\\007' \"$label\"" in content
     assert "SetBadgeFormat" in content
+    assert 'label="mesh:${role} (operator) | ${repo_name}"' in content
+
+
+def test_mesh_ui_role_shell_exports_ui_group_id():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert 'UI_GROUP_ID="${7:-}"' in content
+    assert 'export MESH_UI_GROUP_ID="$ui_group_id"' in content
+    assert 'UI_GROUP_ID=%q bash -lc %q' in content
 
 
 def test_operator_ui_boss_is_not_provider_backed():
@@ -138,6 +148,21 @@ def test_command_for_role_marks_pre_resolved_live_attach(monkeypatch):
 
     assert "tmux attach -t mesh-demo" in command
     assert "pre_resolved" in command
+
+
+def test_command_for_role_passes_ui_group_id(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CMD_BOSS", raising=False)
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+
+    command = module._command_for_role(
+        "boss",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        ui_group_id="rektslug-ui-1",
+    )
+
+    assert "rektslug-ui-1" in command
 
 
 def test_command_for_role_uses_provider_runtime_config_override(tmp_path, monkeypatch):

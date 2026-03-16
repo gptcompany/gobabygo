@@ -943,6 +943,7 @@ def _command_for_role(
     repo: str,
     repo_name: str,
     *,
+    ui_group_id: str = "",
     all_roles: list[str] | None = None,
     live_remote_init: str = "",
 ) -> str:
@@ -974,6 +975,7 @@ def _command_for_role(
             shlex.quote(",".join(all_roles or [role])),
             shlex.quote(remote_init),
             shlex.quote(live_attach_mode),
+            shlex.quote(ui_group_id),
         ]
     )
 
@@ -1071,6 +1073,7 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
                 role,
                 cfg.repo,
                 cfg.repo_name,
+                ui_group_id=cfg.ui_group_id,
                 all_roles=cfg.roles,
                 live_remote_init=plan.remote_init if plan.mode in {"attach", "spawn", "error"} else "",
             )
