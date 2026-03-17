@@ -169,6 +169,39 @@ def test_session_worker_from_env_preserves_ui_role_with_explicit_capabilities() 
     assert "ui_role" in cfg.registration_capabilities()
 
 
+def test_build_completion_summary_only_for_ui_role_tasks() -> None:
+    worker = _make_worker()
+
+    non_ui = worker._build_completion_summary(
+        {"task_id": "task-1", "role": "lead", "payload": {}},
+        status="completed",
+    )
+    ui = worker._build_completion_summary(
+        {
+            "task_id": "task-2",
+            "role": "lead",
+            "payload": {
+                "ui_role_session": True,
+                "ui_role": "lead",
+                "ui_group_id": "snake-ui-1",
+                "completion_summary_artifacts": ["plan.md"],
+            },
+        },
+        status="completed",
+        final_snapshot="done",
+    )
+
+    assert non_ui is None
+    assert ui == {
+        "type": "completion_summary",
+        "role": "lead",
+        "ui_group_id": "snake-ui-1",
+        "status": "completed",
+        "summary_text": "lead completed. Final snapshot captured.",
+        "artifacts": ["plan.md"],
+    }
+
+
 def test_session_worker_start_retries_initial_registration_until_success() -> None:
     worker = MeshSessionWorker(SessionWorkerConfig(worker_id="ws-session-test"))
     attempts = {"count": 0}
@@ -1005,6 +1038,7 @@ class TestAttachCleanupInExecuteTask:
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
     @patch.object(MeshSessionWorker, "_tmux_new_session")
     @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_send_session_message")
     @patch.object(MeshSessionWorker, "_tmux_send_text")
     @patch.object(MeshSessionWorker, "_open_session", return_value="sid-ui-role")
     @patch.object(MeshSessionWorker, "_close_session")
@@ -1017,6 +1051,7 @@ class TestAttachCleanupInExecuteTask:
         mock_close: Mock,
         mock_open: Mock,
         mock_send_text: Mock,
+        mock_send_session_message: Mock,
         mock_wait_ready: Mock,
         mock_tmux_new: Mock,
         mock_attach: Mock,
@@ -1045,6 +1080,16 @@ class TestAttachCleanupInExecuteTask:
 
         mock_send_text.assert_not_called()
         mock_report_complete.assert_called_once()
+        result = mock_report_complete.call_args.args[1]
+        assert result["completion_summary"]["status"] == "completed"
+        assert result["completion_summary"]["role"] == "lead"
+        summary_calls = [
+            call
+            for call in mock_send_session_message.call_args_list
+            if call.kwargs.get("role") == "summary"
+        ]
+        assert len(summary_calls) == 1
+        assert summary_calls[0].kwargs["metadata"]["type"] == "completion_summary"
 
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_create_attach_handle")
@@ -1651,6 +1696,7 @@ class TestAttachCleanupInExecuteTask:
     @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
     @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_send_session_message")
     @patch.object(MeshSessionWorker, "_tmux_send_text")
     @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
     @patch.object(MeshSessionWorker, "_tmux_kill_session")
@@ -1669,6 +1715,7 @@ class TestAttachCleanupInExecuteTask:
         mock_kill: Mock,
         mock_ensure_prompt_submitted: Mock,
         mock_send_text: Mock,
+        mock_send_session_message: Mock,
         mock_tmux_new: Mock,
         mock_attach: Mock,
         mock_deliver: Mock,
@@ -1683,7 +1730,7 @@ class TestAttachCleanupInExecuteTask:
             "target_account": "claude-samuele",
             "payload": {
                 "prompt": "/continue",
-                "working_dir": "/media/sam/1TB/rektslug",
+                "working_dir": "/tmp/rektslug",
             },
         }
 
@@ -1695,6 +1742,78 @@ class TestAttachCleanupInExecuteTask:
         assert mock_report_failure.call_args.kwargs["error_kind"] == "account_exhausted"
         mock_close.assert_called_once_with("sid-rate-menu", state="errored")
         mock_kill.assert_called_once_with(worker._tmux_session_name("t-limit-menu", "claude-samuele"))
+        summary_roles = [call.kwargs.get("role") for call in mock_send_session_message.call_args_list]
+        assert "summary" not in summary_roles
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, True])
+    @patch.object(
+        MeshSessionWorker,
+        "_tmux_capture_pane",
+        return_value=(
+            "You've hit your limit\n"
+            "❯ /rate-limit-options\n"
+            "What do you want to do?\n"
+            "1. Stop and wait for limit to reset\n"
+        ),
+    )
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_send_session_message")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
+    @patch.object(MeshSessionWorker, "_tmux_kill_session")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-ui-rate-menu")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch("src.router.session_worker.time.sleep")
+    def test_ui_role_live_failure_emits_completion_summary(
+        self,
+        mock_sleep: Mock,
+        mock_report_failure: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_kill: Mock,
+        mock_ensure_prompt_submitted: Mock,
+        mock_send_text: Mock,
+        mock_send_session_message: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+
+        task = {
+            "task_id": "t-ui-limit-menu",
+            "execution_mode": "session",
+            "role": "lead",
+            "target_account": "claude-samuele",
+            "payload": {
+                "prompt": "/continue",
+                "working_dir": "/tmp/rektslug-ui",
+                "ui_role_session": True,
+                "ui_role": "lead",
+                "ui_group_id": "snake-ui-1",
+            },
+        }
+
+        worker._running = True
+        worker._execute_task(task)
+
+        mock_report_complete.assert_not_called()
+        mock_report_failure.assert_called_once()
+        summary_calls = [
+            call
+            for call in mock_send_session_message.call_args_list
+            if call.kwargs.get("role") == "summary"
+        ]
+        assert len(summary_calls) == 1
+        assert summary_calls[0].kwargs["metadata"]["status"] == "failed"
+        assert summary_calls[0].kwargs["metadata"]["ui_group_id"] == "snake-ui-1"
 
 
 # ---------------------------------------------------------------------------

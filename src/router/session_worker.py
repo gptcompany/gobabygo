@@ -299,6 +299,13 @@ def _discover_project_mcp_servers(work_dir: str) -> list[str]:
     return [str(name).strip() for name in servers.keys() if str(name).strip()]
 
 
+def _default_completion_summary_text(role: str, status: str) -> str:
+    role_name = role or "role"
+    if status == "completed":
+        return f"{role_name} completed."
+    return f"{role_name} failed."
+
+
 @dataclass
 class SessionWorkerConfig:
     """Configuration for a tmux-backed interactive session worker."""
@@ -690,6 +697,11 @@ class MeshSessionWorker:
             while self._running:
                 # Safety cap for abandoned sessions
                 if (time.monotonic() - start) > self.config.task_timeout:
+                    self._emit_completion_summary(
+                        session_id,
+                        task,
+                        status="failed",
+                    )
                     self._send_session_message(
                         session_id,
                         direction="system",
@@ -750,6 +762,12 @@ class MeshSessionWorker:
                         self.config.cli_type, captured
                     )
                     if live_failure_kind:
+                        self._emit_completion_summary(
+                            session_id,
+                            task,
+                            status="failed",
+                            final_snapshot=captured[-4000:],
+                        )
                         self._send_session_message(
                             session_id,
                             direction="system",
@@ -833,8 +851,15 @@ class MeshSessionWorker:
                 time.sleep(self.config.session_poll_interval_s)
 
             final_snapshot = last_capture
+            completion_summary: dict[str, Any] | None = None
             if session_id:
                 failure_kind = classify_cli_failure(self.config.cli_type, final_snapshot)
+                completion_summary = self._emit_completion_summary(
+                    session_id,
+                    task,
+                    status="failed" if failure_kind else "completed",
+                    final_snapshot=final_snapshot[-4000:] if final_snapshot else "",
+                )
                 if final_snapshot and final_snapshot.strip() != (last_emitted_capture or "").strip():
                     self._send_session_message(
                         session_id,
@@ -862,17 +887,26 @@ class MeshSessionWorker:
                     error_kind=failure_kind,
                 )
             elif self.config.auto_complete_on_exit:
-                self._report_complete(task_id, {
+                result = {
                     "interactive_session": True,
                     "session_id": session_id,
                     "tmux_session": tmux_session_name,
                     "final_snapshot": final_snapshot[-4000:] if final_snapshot else "",
-                })
+                }
+                if completion_summary:
+                    result["completion_summary"] = completion_summary
+                self._report_complete(task_id, result)
 
         except Exception as e:
             logger.exception("Interactive task %s failed", task_id)
             if session_id:
                 try:
+                    self._emit_completion_summary(
+                        session_id,
+                        task,
+                        status="failed",
+                        final_snapshot=str(e),
+                    )
                     self._send_session_message(
                         session_id,
                         direction="system",
@@ -1308,6 +1342,55 @@ class MeshSessionWorker:
             )
         except requests.RequestException as e:
             logger.error("Failed to report failure for task %s: %s", task_id, e)
+
+    def _build_completion_summary(
+        self,
+        task: dict,
+        *,
+        status: str,
+        final_snapshot: str = "",
+    ) -> dict[str, Any] | None:
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        if not _coerce_bool(payload.get("ui_role_session"), default=False):
+            return None
+
+        role = str(payload.get("ui_role") or task.get("role") or "").strip() or "role"
+        summary_text = str(payload.get("completion_summary_text") or "").strip()
+        if not summary_text:
+            summary_text = _default_completion_summary_text(role, status)
+            if final_snapshot.strip():
+                summary_text = f"{summary_text} Final snapshot captured."
+        return {
+            "type": "completion_summary",
+            "role": role,
+            "ui_group_id": str(payload.get("ui_group_id") or "").strip(),
+            "status": status,
+            "summary_text": summary_text,
+            "artifacts": _coerce_string_list(
+                payload.get("completion_summary_artifacts", payload.get("artifacts"))
+            ),
+        }
+
+    def _emit_completion_summary(
+        self,
+        session_id: str | None,
+        task: dict,
+        *,
+        status: str,
+        final_snapshot: str = "",
+    ) -> dict[str, Any] | None:
+        summary = self._build_completion_summary(task, status=status, final_snapshot=final_snapshot)
+        if not summary:
+            return None
+        if session_id:
+            self._send_session_message(
+                session_id,
+                direction="system",
+                role="summary",
+                content=str(summary.get("summary_text") or ""),
+                metadata=summary,
+            )
+        return summary
 
     def _open_session(
         self,
