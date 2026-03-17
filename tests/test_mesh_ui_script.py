@@ -32,6 +32,14 @@ def test_mesh_ui_role_shell_sets_role_label_and_badge():
     assert "printf '\\033]0;%s\\007' \"$label\"" in content
     assert "SetBadgeFormat" in content
     assert 'label="mesh:${role} (operator) | ${repo_name}"' in content
+    assert 'label="mesh:${role} (${LAUNCH_MODE}:${PROVIDER}:${session_short}) | ${repo_name}"' in content
+
+
+def test_mesh_ui_role_shell_banner_shows_runtime_identity():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "provider=%s session=%s repo=%s ui_group=%s" in content
 
 
 def test_mesh_ui_role_shell_exports_ui_group_id():
@@ -39,8 +47,14 @@ def test_mesh_ui_role_shell_exports_ui_group_id():
     content = script_path.read_text(encoding="utf-8")
 
     assert 'UI_GROUP_ID="${7:-}"' in content
+    assert 'LAUNCH_MODE="${8:-}"' in content
+    assert 'PROVIDER="${9:-}"' in content
+    assert 'SESSION_ID="${10:-}"' in content
     assert 'export MESH_UI_GROUP_ID="$ui_group_id"' in content
-    assert 'UI_GROUP_ID=%q bash -lc %q' in content
+    assert 'export MESH_UI_LAUNCH_MODE="$launch_mode"' in content
+    assert 'export MESH_UI_PROVIDER="$provider"' in content
+    assert 'export MESH_UI_SESSION_ID="$session_id"' in content
+    assert 'UI_GROUP_ID=%q LAUNCH_MODE=%q PROVIDER=%q SESSION_ID=%q bash -lc %q' in content
 
 
 def test_operator_ui_boss_is_not_provider_backed():
@@ -120,7 +134,8 @@ def test_command_for_role_env_override_wins(tmp_path, monkeypatch):
         ui_group_id="rektslug-ui-1",
     )
 
-    assert "env MESH_UI_GROUP_ID=rektslug-ui-1 bash -lc" in command
+    assert "env MESH_UI_GROUP_ID=rektslug-ui-1" in command
+    assert "bash -lc" in command
     assert "echo role=boss repo=rektslug" in command
 
 
@@ -135,7 +150,8 @@ def test_command_for_role_env_override_accepts_ui_group_placeholder(monkeypatch)
         ui_group_id="rektslug-ui-1",
     )
 
-    assert "env MESH_UI_GROUP_ID=rektslug-ui-1 bash -lc" in command
+    assert "env MESH_UI_GROUP_ID=rektslug-ui-1" in command
+    assert "bash -lc" in command
     assert "echo group=rektslug-ui-1" in command
 
 
@@ -186,6 +202,26 @@ def test_command_for_role_passes_ui_group_id(monkeypatch):
     assert "rektslug-ui-1" in command
 
 
+def test_command_for_role_passes_runtime_identity_to_helper(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CMD_LEAD", raising=False)
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+
+    command = module._command_for_role(
+        "lead",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        ui_group_id="rektslug-ui-1",
+        launch_mode="spawn",
+        provider="gemini",
+        session_id="12345678-abcd-ef01-2345-6789abcdef01",
+    )
+
+    assert "spawn" in command
+    assert "gemini" in command
+    assert "12345678-abcd-ef01-2345-6789abcdef01" in command
+
+
 def test_command_for_role_yaml_command_template_accepts_ui_group_id(tmp_path, monkeypatch):
     module = _load_module()
     config = tmp_path / "operator_ui.yaml"
@@ -203,8 +239,29 @@ def test_command_for_role_yaml_command_template_accepts_ui_group_id(tmp_path, mo
         ui_group_id="rektslug-ui-1",
     )
 
-    assert "env MESH_UI_GROUP_ID=rektslug-ui-1 bash -lc" in command
+    assert "env MESH_UI_GROUP_ID=rektslug-ui-1" in command
+    assert "bash -lc" in command
     assert "echo group=rektslug-ui-1 repo=rektslug" in command
+
+
+def test_command_for_role_custom_override_receives_runtime_identity_env(monkeypatch):
+    module = _load_module()
+    monkeypatch.setenv("MESH_UI_CMD_BOSS", "env | grep '^MESH_UI_'")
+
+    command = module._command_for_role(
+        "boss",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        ui_group_id="rektslug-ui-1",
+        launch_mode="attach",
+        provider="gemini",
+        session_id="sess-1234",
+    )
+
+    assert "MESH_UI_GROUP_ID=rektslug-ui-1" in command
+    assert "MESH_UI_LAUNCH_MODE=attach" in command
+    assert "MESH_UI_PROVIDER=gemini" in command
+    assert "MESH_UI_SESSION_ID=sess-1234" in command
 
 
 def test_command_for_role_uses_provider_runtime_config_override(tmp_path, monkeypatch):

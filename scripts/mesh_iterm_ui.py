@@ -944,6 +944,9 @@ def _command_for_role(
     repo_name: str,
     *,
     ui_group_id: str = "",
+    launch_mode: str = "",
+    provider: str = "",
+    session_id: str = "",
     all_roles: list[str] | None = None,
     live_remote_init: str = "",
 ) -> str:
@@ -954,6 +957,11 @@ def _command_for_role(
             [
                 "env",
                 f"MESH_UI_GROUP_ID={shlex.quote(ui_group_id)}",
+                f"MESH_UI_LAUNCH_MODE={shlex.quote(launch_mode)}",
+                f"MESH_UI_PROVIDER={shlex.quote(provider)}",
+                f"MESH_UI_SESSION_ID={shlex.quote(session_id)}",
+                f"MESH_UI_ROLE={shlex.quote(role)}",
+                f"MESH_UI_REPO_NAME={shlex.quote(repo_name)}",
                 "bash",
                 "-lc",
                 shlex.quote(command),
@@ -1003,6 +1011,9 @@ def _command_for_role(
             shlex.quote(remote_init),
             shlex.quote(live_attach_mode),
             shlex.quote(ui_group_id),
+            shlex.quote(launch_mode),
+            shlex.quote(provider),
+            shlex.quote(session_id),
         ]
     )
 
@@ -1101,6 +1112,9 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
                 cfg.repo,
                 cfg.repo_name,
                 ui_group_id=cfg.ui_group_id,
+                launch_mode=plan.mode,
+                provider=plan.cli_type,
+                session_id=plan.session_id,
                 all_roles=cfg.roles,
                 live_remote_init=plan.remote_init if plan.mode in {"attach", "spawn", "error"} else "",
             )
