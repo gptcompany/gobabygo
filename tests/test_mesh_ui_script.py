@@ -222,6 +222,29 @@ def test_command_for_role_passes_runtime_identity_to_helper(monkeypatch):
     assert "12345678-abcd-ef01-2345-6789abcdef01" in command
 
 
+def test_command_for_role_falls_back_to_role_provider_for_spawn_labels(tmp_path, monkeypatch):
+    module = _load_module()
+    config = tmp_path / "operator_ui.yaml"
+    config.write_text(
+        "roles:\n  worker-codex:\n    provider: codex\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MESH_UI_CONFIG", str(config))
+    monkeypatch.delenv("MESH_UI_CMD_WORKER_CODEX", raising=False)
+
+    command = module._command_for_role(
+        "worker-codex",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        ui_group_id="rektslug-ui-1",
+        launch_mode="spawn",
+        provider="",
+        session_id="",
+    )
+
+    assert "codex" in command
+
+
 def test_command_for_role_yaml_command_template_accepts_ui_group_id(tmp_path, monkeypatch):
     module = _load_module()
     config = tmp_path / "operator_ui.yaml"

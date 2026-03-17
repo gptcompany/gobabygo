@@ -950,6 +950,8 @@ def _command_for_role(
     all_roles: list[str] | None = None,
     live_remote_init: str = "",
 ) -> str:
+    effective_provider = provider
+
     def _wrap_custom_command(command: str) -> str:
         if not command:
             return command
@@ -958,7 +960,7 @@ def _command_for_role(
                 "env",
                 f"MESH_UI_GROUP_ID={shlex.quote(ui_group_id)}",
                 f"MESH_UI_LAUNCH_MODE={shlex.quote(launch_mode)}",
-                f"MESH_UI_PROVIDER={shlex.quote(provider)}",
+                f"MESH_UI_PROVIDER={shlex.quote(effective_provider)}",
                 f"MESH_UI_SESSION_ID={shlex.quote(session_id)}",
                 f"MESH_UI_ROLE={shlex.quote(role)}",
                 f"MESH_UI_REPO_NAME={shlex.quote(repo_name)}",
@@ -982,6 +984,8 @@ def _command_for_role(
 
     rules = _load_ui_role_rules()
     rule = rules.get(role, {})
+    if not effective_provider and role != "boss":
+        effective_provider = _resolved_provider_for_role(role, rule) or "gemini"
     template = rule.get("command_template", "").strip()
     if template:
         return _wrap_custom_command(
@@ -1012,7 +1016,7 @@ def _command_for_role(
             shlex.quote(live_attach_mode),
             shlex.quote(ui_group_id),
             shlex.quote(launch_mode),
-            shlex.quote(provider),
+            shlex.quote(effective_provider),
             shlex.quote(session_id),
         ]
     )
