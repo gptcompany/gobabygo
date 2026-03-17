@@ -111,6 +111,46 @@ def test_build_session_choices_prefers_repo_and_role_from_session_metadata(monke
     assert choice.role == "lead"
 
 
+def test_build_session_choices_reads_ui_group_id_from_task_payload(monkeypatch):
+    module = _load_module()
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/sessions?state=open&limit=200":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "sess-1",
+                        "worker_id": "ws-gemini-1",
+                        "cli_type": "gemini",
+                        "account_profile": "default",
+                        "task_id": "task-1",
+                        "state": "open",
+                        "metadata": {
+                            "repo": "/media/sam/1TB/snake-game",
+                            "tmux_session": "mesh-gemini-sam-1234",
+                        },
+                        "updated_at": "2026-03-11T14:00:00Z",
+                    }
+                ]
+            }
+        if path == "/tasks/task-1":
+            return {
+                "task_id": "task-1",
+                "repo": "/media/sam/1TB/snake-game",
+                "role": "lead",
+                "status": "running",
+                "payload": {"ui_group_id": "snake-ui-1"},
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "router_get_json", fake_router_get_json)
+
+    choices = module.build_session_choices("http://router", "token", provider_users={})
+
+    assert len(choices) == 1
+    assert choices[0].ui_group_id == "snake-ui-1"
+
+
 def test_filter_session_choices_matches_repo_role_and_session():
     module = _load_module()
     choices = [
@@ -378,3 +418,202 @@ def test_emit_payload_can_write_to_file(tmp_path):
     module._emit_payload({"ok": True}, str(output_path))
 
     assert json.loads(output_path.read_text(encoding="utf-8")) == {"ok": True}
+
+
+def test_resolve_role_choice_matches_repo_and_ui_group():
+    module = _load_module()
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+
+    selected = module.resolve_role_choice(
+        [choice],
+        role="lead",
+        repo_path="/Users/sam/snake-game",
+        repo_name="snake-game",
+        ui_group_id="snake-ui-1",
+    )
+
+    assert selected.session_id == "sess-1"
+
+
+def test_resolve_role_choice_errors_on_ambiguity():
+    module = _load_module()
+    choices = [
+        module.SessionChoice(
+            session_id="sess-1",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="running",
+            thread_id="thread-1",
+            thread_name="snake-demo",
+            thread_status="active",
+            repo="/media/sam/1TB/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Review movement",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-sam-1111",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+            attach_owner="sam",
+            ui_group_id="snake-ui-1",
+        ),
+        module.SessionChoice(
+            session_id="sess-2",
+            worker_id="worker-2",
+            cli_type="codex",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="running",
+            thread_id="thread-2",
+            thread_name="snake-review",
+            thread_status="active",
+            repo="/media/sam/1TB/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Review movement",
+            updated_at="2026-03-11T14:01:00Z",
+            tmux_session="mesh-codex-sam-2222",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-codex-sam-2222",
+            attach_owner="sam",
+            ui_group_id="snake-ui-1",
+        ),
+    ]
+
+    try:
+        module.resolve_role_choice(
+            choices,
+            role="lead",
+            repo_path="/Users/sam/snake-game",
+            repo_name="snake-game",
+            ui_group_id="snake-ui-1",
+        )
+    except ValueError as exc:
+        assert "ambiguous live sessions" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_main_send_posts_router_message(monkeypatch, capsys):
+    module = _load_module()
+    selected = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+    posted: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [selected])
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(module, "resolve_active_ui_group_id", lambda repo_name: "snake-ui-1")
+    monkeypatch.setattr(
+        module,
+        "router_post_json",
+        lambda router_url, auth_token, path, payload: posted.append((path, payload)) or {"status": "accepted"},
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "send", "lead", "hello", "world"])
+
+    assert module.main() == 0
+    assert posted == [
+        (
+            "/sessions/send",
+            {
+                "session_id": "sess-1",
+                "direction": "in",
+                "role": "operator",
+                "content": "hello world",
+                "metadata": {"ui_group_id": "snake-ui-1", "target_role": "lead"},
+            },
+        )
+    ]
+    assert "[mesh send] role=lead session=sess-1" in capsys.readouterr().out
+
+
+def test_main_enter_and_interrupt_dispatch_controls(monkeypatch):
+    module = _load_module()
+    selected = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+    posted: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [selected])
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(module, "resolve_active_ui_group_id", lambda repo_name: "snake-ui-1")
+    monkeypatch.setattr(
+        module,
+        "router_post_json",
+        lambda router_url, auth_token, path, payload: posted.append((path, payload)) or {"status": "accepted"},
+    )
+
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "enter", "lead"])
+    assert module.main() == 0
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "interrupt", "lead"])
+    assert module.main() == 0
+
+    assert posted == [
+        ("/sessions/send-key", {"session_id": "sess-1", "key": "Enter", "repeat": 1}),
+        ("/sessions/signal", {"session_id": "sess-1", "signal": "interrupt"}),
+    ]

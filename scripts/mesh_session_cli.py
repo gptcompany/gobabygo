@@ -76,6 +76,18 @@ def router_get_json(router_url: str, auth_token: str, path: str) -> Any:
         return json.load(resp)
 
 
+def router_post_json(router_url: str, auth_token: str, path: str, payload: dict[str, Any]) -> Any:
+    req = Request(
+        router_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {auth_token}")
+    req.add_header("Content-Type", "application/json")
+    with urlopen(req, timeout=10) as resp:
+        return json.load(resp)
+
+
 def _load_provider_session_users(config_path: str | None = None) -> dict[str, str]:
     if yaml is None:
         return {}
@@ -138,6 +150,7 @@ class SessionChoice:
     attach_kind: str
     attach_target: str
     attach_owner: str
+    ui_group_id: str = ""
 
 
 _ACTIVE_TASK_STATUSES = {"queued", "assigned", "blocked", "running", "review"}
@@ -190,8 +203,12 @@ def build_session_choices(
                 thread_cache[thread_id] = fetched_thread if isinstance(fetched_thread, dict) else None
             thread = thread_cache.get(thread_id)
 
+        task_payload = (task or {}).get("payload")
+        if not isinstance(task_payload, dict):
+            task_payload = {}
         repo = str(metadata.get("repo") or (task or {}).get("repo") or metadata.get("working_dir") or "").strip()
         role = str(metadata.get("ui_role") or (task or {}).get("role") or metadata.get("role") or "").strip()
+        ui_group_id = str(metadata.get("ui_group_id") or task_payload.get("ui_group_id") or "").strip()
         choices.append(
             SessionChoice(
                 session_id=session_id,
@@ -213,6 +230,7 @@ def build_session_choices(
                 attach_kind=str(metadata.get("attach_kind") or "").strip(),
                 attach_target=str(metadata.get("attach_target") or "").strip(),
                 attach_owner=str(provider_users.get(str(session.get("cli_type", "")).strip(), "")).strip(),
+                ui_group_id=ui_group_id,
             )
         )
 
@@ -440,6 +458,75 @@ def detect_repo_context(cwd: str | None = None) -> tuple[str, str]:
     return repo_path, os.path.basename(repo_path.rstrip("/"))
 
 
+def _ui_group_cache_dir() -> Path:
+    override = os.environ.get("MESH_UI_GROUP_CACHE_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".mesh" / "ui_groups"
+
+
+def _ui_group_cache_path(repo_name: str, *, cache_dir: Path | None = None) -> Path:
+    safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in repo_name).strip("-") or "repo"
+    return (cache_dir or _ui_group_cache_dir()) / f"{safe_name}.json"
+
+
+def _read_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> str:
+    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+    if not path.is_file():
+        return ""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    if str(payload.get("repo_name") or "").strip() != repo_name:
+        return ""
+    return str(payload.get("ui_group_id") or "").strip()
+
+
+def resolve_active_ui_group_id(repo_name: str) -> str:
+    return os.environ.get("MESH_UI_GROUP_ID", "").strip() or _read_ui_group_cache(repo_name)
+
+
+def _repo_matches_context(choice: SessionChoice, repo_path: str, repo_name: str) -> bool:
+    if not choice.repo:
+        return False
+    choice_repo = os.path.abspath(choice.repo)
+    return choice_repo == os.path.abspath(repo_path) or choice.repo_name == repo_name
+
+
+def resolve_role_choice(
+    choices: list[SessionChoice],
+    *,
+    role: str,
+    repo_path: str,
+    repo_name: str,
+    ui_group_id: str,
+) -> SessionChoice:
+    target_role = role.strip()
+    if not target_role:
+        raise ValueError("missing role")
+    if not ui_group_id:
+        raise ValueError(f"no active ui_group_id for repo '{repo_name}'")
+
+    matched = [
+        choice
+        for choice in filter_active_session_choices(choices)
+        if choice.role == target_role
+        and choice.ui_group_id == ui_group_id
+        and _repo_matches_context(choice, repo_path, repo_name)
+    ]
+    if not matched:
+        raise ValueError(f"no live session for role '{target_role}' in ui_group '{ui_group_id}'")
+    if len(matched) > 1:
+        session_ids = ", ".join(choice.session_id[:12] for choice in matched)
+        raise ValueError(
+            f"ambiguous live sessions for role '{target_role}' in ui_group '{ui_group_id}': {session_ids}"
+        )
+    return matched[0]
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="List or resolve live mesh sessions.")
     subparsers = parser.add_subparsers(dest="cmd", required=True)
@@ -481,6 +568,31 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="Optional file path for the resolved JSON payload.",
     )
+
+    send_parser = subparsers.add_parser("send", help="Send text to a live role session.")
+    send_parser.add_argument("role", help="Target role inside the active mesh ui group.")
+    send_parser.add_argument("message", nargs=argparse.REMAINDER, help="Message content to send.")
+    send_parser.add_argument(
+        "--ui-group-id",
+        default="",
+        help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache.",
+    )
+
+    enter_parser = subparsers.add_parser("enter", help="Send Enter to a live role session.")
+    enter_parser.add_argument("role", help="Target role inside the active mesh ui group.")
+    enter_parser.add_argument(
+        "--ui-group-id",
+        default="",
+        help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache.",
+    )
+
+    interrupt_parser = subparsers.add_parser("interrupt", help="Send interrupt to a live role session.")
+    interrupt_parser.add_argument("role", help="Target role inside the active mesh ui group.")
+    interrupt_parser.add_argument(
+        "--ui-group-id",
+        default="",
+        help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache.",
+    )
     return parser.parse_args()
 
 
@@ -504,7 +616,7 @@ def main() -> int:
         return _print_error("mesh router env not configured (need MESH_ROUTER_URL and MESH_AUTH_TOKEN)")
 
     try:
-        choices = build_session_choices(router_url, auth_token, state=args.state)
+        choices = build_session_choices(router_url, auth_token, state=getattr(args, "state", "open"))
     except HTTPError as exc:
         return _print_error(f"/sessions returned HTTP {exc.code}")
     except URLError as exc:
@@ -512,10 +624,10 @@ def main() -> int:
     except (TimeoutError, OSError, json.JSONDecodeError) as exc:
         return _print_error(f"failed to query mesh router: {exc}")
 
-    if args.state == "open":
+    if getattr(args, "state", "open") == "open":
         choices = filter_active_session_choices(choices)
 
-    _, repo_name = detect_repo_context()
+    repo_path, repo_name = detect_repo_context()
     default_query = "" if getattr(args, "all", False) else repo_name
     query = getattr(args, "query", "").strip() or default_query
     filtered = filter_session_choices(choices, query)
@@ -525,6 +637,60 @@ def main() -> int:
             print(f"No sessions matched for {scope}.")
             return 0
         print(render_choices_table(filtered))
+        return 0
+
+    if args.cmd in {"send", "enter", "interrupt"}:
+        ui_group_id = getattr(args, "ui_group_id", "").strip() or resolve_active_ui_group_id(repo_name)
+        try:
+            selected = resolve_role_choice(
+                choices,
+                role=args.role,
+                repo_path=repo_path,
+                repo_name=repo_name,
+                ui_group_id=ui_group_id,
+            )
+        except ValueError as exc:
+            return _print_error(str(exc))
+
+        if args.cmd == "send":
+            message = " ".join(args.message).strip()
+            if not message:
+                return _print_error("missing message content")
+            path = "/sessions/send"
+            payload = {
+                "session_id": selected.session_id,
+                "direction": "in",
+                "role": "operator",
+                "content": message,
+                "metadata": {"ui_group_id": ui_group_id, "target_role": args.role},
+            }
+        elif args.cmd == "enter":
+            path = "/sessions/send-key"
+            payload = {
+                "session_id": selected.session_id,
+                "key": "Enter",
+                "repeat": 1,
+            }
+        else:
+            path = "/sessions/signal"
+            payload = {
+                "session_id": selected.session_id,
+                "signal": "interrupt",
+            }
+
+        try:
+            router_post_json(router_url, auth_token, path, payload)
+        except HTTPError as exc:
+            return _print_error(f"{path} returned HTTP {exc.code}")
+        except URLError as exc:
+            return _print_error(f"cannot connect to mesh router at {router_url}: {exc}")
+        except (TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return _print_error(f"failed to call mesh router {path}: {exc}")
+
+        print(
+            f"[mesh {args.cmd}] role={selected.role} session={selected.session_id[:12]} "
+            f"repo={selected.repo_name or selected.repo} ui_group={ui_group_id}"
+        )
         return 0
 
     try:

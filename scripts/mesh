@@ -210,6 +210,9 @@ Usage:
   ./scripts/mesh thread [thread-name]
   ./scripts/mesh sessions [repo|session|role]
   ./scripts/mesh attach [repo|session|role]
+  ./scripts/mesh send <role> <text>
+  ./scripts/mesh enter <role>
+  ./scripts/mesh interrupt <role>
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui [repo-name|repo-path] [--single-tab] [--max-panes-per-tab N]
@@ -229,6 +232,9 @@ Examples:
   ./scripts/mesh attach
   ./scripts/mesh attach snake-game
   ./scripts/mesh attach --all
+  ./scripts/mesh send president "status?"
+  ./scripts/mesh enter lead
+  ./scripts/mesh interrupt worker-gemini
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui rektslug
@@ -513,6 +519,15 @@ PY
         exit 1
         ;;
     esac
+    ;;
+  send|enter|interrupt)
+    py_bin="$(detect_python)" || exit $?
+    session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
+    if [[ ! -f "$session_script" ]]; then
+      echo "Error: missing session CLI script at $session_script" >&2
+      exit 1
+    fi
+    exec "$py_bin" "$session_script" "$cmd" "${@:2}"
     ;;
   bootstrap)
     ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
