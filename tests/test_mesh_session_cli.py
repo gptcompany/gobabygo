@@ -456,6 +456,106 @@ def test_resolve_role_choice_matches_repo_and_ui_group():
     assert selected.session_id == "sess-1"
 
 
+def test_resolve_active_ui_group_id_prefers_live_router_group(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+
+    assert (
+        module.resolve_active_ui_group_id(
+            "snake-game",
+            repo_path="/Users/sam/snake-game",
+            choices=[choice],
+        )
+        == "snake-ui-1"
+    )
+
+
+def test_resolve_active_ui_group_id_rejects_multiple_live_groups(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    choices = [
+        module.SessionChoice(
+            session_id="sess-1",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="running",
+            thread_id="thread-1",
+            thread_name="snake-demo",
+            thread_status="active",
+            repo="/media/sam/1TB/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Review movement",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-sam-1111",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+            attach_owner="sam",
+            ui_group_id="snake-ui-1",
+        ),
+        module.SessionChoice(
+            session_id="sess-2",
+            worker_id="worker-2",
+            cli_type="codex",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="running",
+            thread_id="thread-2",
+            thread_name="snake-review",
+            thread_status="active",
+            repo="/media/sam/1TB/snake-game",
+            repo_name="snake-game",
+            role="worker-codex",
+            title="Review movement",
+            updated_at="2026-03-11T14:01:00Z",
+            tmux_session="mesh-codex-sam-2222",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-codex-sam-2222",
+            attach_owner="sam",
+            ui_group_id="snake-ui-2",
+        ),
+    ]
+
+    try:
+        module.resolve_active_ui_group_id(
+            "snake-game",
+            repo_path="/Users/sam/snake-game",
+            choices=choices,
+        )
+    except ValueError as exc:
+        assert "multiple live ui_group_id" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_resolve_role_choice_errors_on_ambiguity():
     module = _load_module()
     choices = [
@@ -548,7 +648,11 @@ def test_main_send_posts_router_message(monkeypatch, capsys):
     monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
     monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [selected])
     monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
-    monkeypatch.setattr(module, "resolve_active_ui_group_id", lambda repo_name: "snake-ui-1")
+    monkeypatch.setattr(
+        module,
+        "resolve_active_ui_group_id",
+        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+    )
     monkeypatch.setattr(
         module,
         "router_post_json",
@@ -601,7 +705,11 @@ def test_main_enter_and_interrupt_dispatch_controls(monkeypatch):
     monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
     monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [selected])
     monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
-    monkeypatch.setattr(module, "resolve_active_ui_group_id", lambda repo_name: "snake-ui-1")
+    monkeypatch.setattr(
+        module,
+        "resolve_active_ui_group_id",
+        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+    )
     monkeypatch.setattr(
         module,
         "router_post_json",
@@ -617,3 +725,19 @@ def test_main_enter_and_interrupt_dispatch_controls(monkeypatch):
         ("/sessions/send-key", {"session_id": "sess-1", "key": "Enter", "repeat": 1}),
         ("/sessions/signal", {"session_id": "sess-1", "signal": "interrupt"}),
     ]
+
+
+def test_parse_send_accepts_ui_group_id_after_role(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["mesh_session_cli.py", "send", "lead", "--ui-group-id", "snake-ui-9", "hello", "world"],
+    )
+
+    args = module._parse_args()
+
+    assert args.cmd == "send"
+    assert args.role == "lead"
+    assert args.ui_group_id == "snake-ui-9"
+    assert args.message == ["hello", "world"]

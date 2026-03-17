@@ -485,8 +485,32 @@ def _read_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> st
     return str(payload.get("ui_group_id") or "").strip()
 
 
-def resolve_active_ui_group_id(repo_name: str) -> str:
-    return os.environ.get("MESH_UI_GROUP_ID", "").strip() or _read_ui_group_cache(repo_name)
+def resolve_active_ui_group_id(
+    repo_name: str,
+    *,
+    repo_path: str,
+    choices: list[SessionChoice],
+) -> str:
+    env_value = os.environ.get("MESH_UI_GROUP_ID", "").strip()
+    if env_value:
+        return env_value
+
+    candidates = sorted(
+        {
+            choice.ui_group_id
+            for choice in filter_active_session_choices(choices)
+            if choice.ui_group_id and _repo_matches_context(choice, repo_path, repo_name)
+        }
+    )
+    cached = _read_ui_group_cache(repo_name)
+    if cached and cached in candidates:
+        return cached
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        groups = ", ".join(candidates)
+        raise ValueError(f"multiple live ui_group_id values for repo '{repo_name}': {groups}")
+    return cached
 
 
 def _repo_matches_context(choice: SessionChoice, repo_path: str, repo_name: str) -> bool:
@@ -571,12 +595,12 @@ def _parse_args() -> argparse.Namespace:
 
     send_parser = subparsers.add_parser("send", help="Send text to a live role session.")
     send_parser.add_argument("role", help="Target role inside the active mesh ui group.")
-    send_parser.add_argument("message", nargs=argparse.REMAINDER, help="Message content to send.")
     send_parser.add_argument(
         "--ui-group-id",
         default="",
         help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache.",
     )
+    send_parser.add_argument("message", nargs="+", help="Message content to send.")
 
     enter_parser = subparsers.add_parser("enter", help="Send Enter to a live role session.")
     enter_parser.add_argument("role", help="Target role inside the active mesh ui group.")
@@ -640,8 +664,12 @@ def main() -> int:
         return 0
 
     if args.cmd in {"send", "enter", "interrupt"}:
-        ui_group_id = getattr(args, "ui_group_id", "").strip() or resolve_active_ui_group_id(repo_name)
         try:
+            ui_group_id = getattr(args, "ui_group_id", "").strip() or resolve_active_ui_group_id(
+                repo_name,
+                repo_path=repo_path,
+                choices=choices,
+            )
             selected = resolve_role_choice(
                 choices,
                 role=args.role,
