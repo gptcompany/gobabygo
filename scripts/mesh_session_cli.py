@@ -9,6 +9,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -586,9 +587,45 @@ def _matching_ui_group_choices(
 ) -> list[SessionChoice]:
     return [
         choice
-        for choice in filter_active_session_choices(choices)
-        if choice.ui_group_id == ui_group_id and _repo_matches_context(choice, repo_path, repo_name)
+        for choice in choices
+        if choice.state == "open"
+        and choice.ui_group_id == ui_group_id
+        and _repo_matches_context(choice, repo_path, repo_name)
     ]
+
+
+def _wait_for_ui_group_closure(
+    router_url: str,
+    auth_token: str,
+    *,
+    repo_path: str,
+    repo_name: str,
+    ui_group_id: str,
+    timeout_s: float = 10.0,
+    poll_s: float = 0.5,
+) -> tuple[bool, list[str], str]:
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while True:
+        try:
+            open_choices = build_session_choices(router_url, auth_token, state="open")
+        except HTTPError as exc:
+            return False, [], f"/sessions returned HTTP {exc.code}"
+        except URLError as exc:
+            return False, [], f"cannot connect to mesh router at {router_url}: {exc}"
+        except (TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return False, [], f"failed to query mesh router: {exc}"
+
+        remaining = _matching_ui_group_choices(
+            open_choices,
+            repo_path=repo_path,
+            repo_name=repo_name,
+            ui_group_id=ui_group_id,
+        )
+        if not remaining:
+            return True, [], ""
+        if time.monotonic() >= deadline:
+            return False, [choice.session_id for choice in remaining], ""
+        time.sleep(max(0.05, poll_s))
 
 
 def _list_completion_summaries(
@@ -769,6 +806,12 @@ def _parse_args() -> argparse.Namespace:
 
     close_parser = subparsers.add_parser("close", help="Tear down live sessions for the active mesh ui group.")
     close_parser.add_argument(
+        "repo",
+        nargs="?",
+        default="",
+        help="Optional repo path/name. Default: current repo.",
+    )
+    close_parser.add_argument(
         "--ui-group-id",
         default="",
         help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache/router.",
@@ -810,10 +853,11 @@ def main() -> int:
     except (TimeoutError, OSError, json.JSONDecodeError) as exc:
         return _print_error(f"failed to query mesh router: {exc}")
 
-    if requested_state == "open":
+    if requested_state == "open" and args.cmd != "close":
         choices = filter_active_session_choices(choices)
 
-    repo_path, repo_name = detect_repo_context()
+    repo_hint = getattr(args, "repo", "").strip() or None
+    repo_path, repo_name = detect_repo_context(repo_hint)
     default_query = "" if getattr(args, "all", False) else repo_name
     query = getattr(args, "query", "").strip() or default_query
     filtered = filter_session_choices(choices, query)
@@ -921,6 +965,22 @@ def main() -> int:
                 failures.append(f"{choice.session_id[:12]}: {exc}")
             except (TimeoutError, OSError, json.JSONDecodeError) as exc:
                 failures.append(f"{choice.session_id[:12]}: {exc}")
+
+        if not failures and clear_cache:
+            closed, remaining_session_ids, observe_error = _wait_for_ui_group_closure(
+                router_url,
+                auth_token,
+                repo_path=repo_path,
+                repo_name=repo_name,
+                ui_group_id=ui_group_id,
+            )
+            if not closed:
+                if observe_error:
+                    failures.append(observe_error)
+                elif remaining_session_ids:
+                    failures.append(
+                        "still open after terminate: " + ", ".join(session_id[:12] for session_id in remaining_session_ids)
+                    )
 
         if not failures and clear_cache:
             _clear_ui_group_cache(repo_name)

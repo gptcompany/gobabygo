@@ -752,13 +752,38 @@ EOF
   ui)
     ui_args=("${@:2}")
     if [[ ${#ui_args[@]} -gt 0 && "${ui_args[0]}" == "close" ]]; then
+      close_args=("${ui_args[@]:1}")
+      normalized_close_args=()
+      skip_next=0
+      repo_normalized=0
+      for arg in "${close_args[@]}"; do
+        if [[ "$skip_next" == "1" ]]; then
+          normalized_close_args+=("$arg")
+          skip_next=0
+          continue
+        fi
+        case "$arg" in
+          --ui-group-id|--output)
+            normalized_close_args+=("$arg")
+            skip_next=1
+            continue
+            ;;
+        esac
+        if [[ "$repo_normalized" == "0" && "$arg" != -* ]]; then
+          resolve_repo_path_and_name "$arg"
+          normalized_close_args+=("$RESOLVED_REPO_PATH")
+          repo_normalized=1
+          continue
+        fi
+        normalized_close_args+=("$arg")
+      done
       py_bin="$(detect_python)" || exit $?
       session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
       if [[ ! -f "$session_script" ]]; then
         echo "Error: missing session CLI script at $session_script" >&2
         exit 1
       fi
-      exec "$py_bin" "$session_script" close "${ui_args[@]:1}"
+      exec "$py_bin" "$session_script" close "${normalized_close_args[@]}"
     fi
     if [[ ${#ui_args[@]} -eq 0 ]]; then
       resolve_current_repo_context

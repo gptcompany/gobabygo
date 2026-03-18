@@ -1088,7 +1088,7 @@ def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, cap
             account_profile="default",
             state="open",
             task_id="task-2",
-            task_status="running",
+            task_status="failed",
             thread_id="thread-2",
             thread_name="snake-review",
             thread_status="active",
@@ -1119,6 +1119,11 @@ def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, cap
         module,
         "router_post_json",
         lambda router_url, auth_token, path, payload: posted.append((path, payload)) or {"status": "accepted"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_ui_group_closure",
+        lambda *args, **kwargs: (True, [], ""),
     )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
@@ -1183,3 +1188,84 @@ def test_main_close_keeps_cache_when_failures_occur(monkeypatch, tmp_path, capsy
     assert module.main() == 1
     assert cache_file.exists()
     assert "Failures:" in capsys.readouterr().err
+
+
+def test_main_close_keeps_cache_until_closure_observed(monkeypatch, tmp_path, capsys):
+    module = _load_module()
+    cache_dir = tmp_path / "ui-cache"
+    cache_dir.mkdir()
+    cache_file = cache_dir / "snake-game.json"
+    cache_file.write_text(
+        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1"}) + "\n",
+        encoding="utf-8",
+    )
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+
+    monkeypatch.setenv("MESH_UI_GROUP_CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [choice])
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "resolve_active_ui_group_id",
+        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+    )
+    monkeypatch.setattr(module, "router_post_json", lambda *args, **kwargs: {"status": "accepted"})
+    monkeypatch.setattr(
+        module,
+        "_wait_for_ui_group_closure",
+        lambda *args, **kwargs: (False, ["sess-1"], ""),
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
+
+    assert module.main() == 1
+    assert cache_file.exists()
+    assert "Failures:" in capsys.readouterr().err
+
+
+def test_main_close_targets_explicit_repo_argument(monkeypatch, tmp_path):
+    module = _load_module()
+    seen: list[str | None] = []
+    monkeypatch.setenv("MESH_UI_GROUP_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        module,
+        "detect_repo_context",
+        lambda cwd=None: seen.append(cwd) or ("/media/sam/1TB/rektslug", "rektslug"),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_active_ui_group_id",
+        lambda repo_name, *, repo_path, choices: "rektslug-ui-1",
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_ui_group_closure",
+        lambda *args, **kwargs: (True, [], ""),
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close", "/media/sam/1TB/rektslug"])
+
+    assert module.main() == 0
+    assert seen == ["/media/sam/1TB/rektslug"]
