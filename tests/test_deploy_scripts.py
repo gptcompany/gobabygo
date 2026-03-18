@@ -382,3 +382,41 @@ class TestMeshScript:
         assert result.returncode == 0, result.stderr
         log_lines = log_path.read_text(encoding="utf-8").splitlines()
         assert log_lines == ["uv:run -- python -m src.meshctl status"]
+
+    def test_mesh_ui_close_preserves_ws_repo_path_argument(self, tmp_path):
+        fakebin = tmp_path / "bin"
+        fakebin.mkdir()
+        log_path = tmp_path / "invocations.log"
+
+        python_path = fakebin / "python3"
+        python_path.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo \"$*\" >> {log_path}\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        python_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fakebin}:{env['PATH']}"
+        env["HOME"] = str(tmp_path)
+        env["MESH_ROUTER_URL"] = "http://127.0.0.1:8780"
+        env["MESH_AUTH_TOKEN"] = "test-token"
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(REPO_ROOT / "scripts" / "mesh"),
+                "ui",
+                "close",
+                "/media/sam/1TB/rektslug",
+            ],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr
+        invocation = log_path.read_text(encoding="utf-8").strip()
+        assert invocation.endswith("close /media/sam/1TB/rektslug")

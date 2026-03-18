@@ -499,15 +499,18 @@ def resolve_active_ui_group_id(
     *,
     repo_path: str,
     choices: list[SessionChoice],
+    include_non_active: bool = False,
 ) -> str:
     env_value = os.environ.get("MESH_UI_GROUP_ID", "").strip()
     if env_value:
         return env_value
 
+    candidate_choices = choices if include_non_active else filter_active_session_choices(choices)
     candidates = sorted(
         {
             choice.ui_group_id
-            for choice in filter_active_session_choices(choices)
+            for choice in candidate_choices
+            if choice.state == "open"
             if choice.ui_group_id and _repo_matches_context(choice, repo_path, repo_name)
         }
     )
@@ -933,6 +936,7 @@ def main() -> int:
                 repo_name,
                 repo_path=repo_path,
                 choices=choices,
+                include_non_active=True,
             )
         except ValueError as exc:
             return _print_error(str(exc))

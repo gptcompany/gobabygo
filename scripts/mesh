@@ -282,6 +282,19 @@ resolve_repo_path_and_name() {
   RESOLVED_REPO_NAME="$repo_name"
 }
 
+resolve_repo_hint_for_close() {
+  local repo_input="$1"
+
+  # Preserve explicit WS-style paths that do not exist on the operator host.
+  if [[ "$repo_input" == *"/"* && ! -e "$repo_input" ]]; then
+    RESOLVED_REPO_PATH="$repo_input"
+    RESOLVED_REPO_NAME="$(basename "${repo_input%/}")"
+    return 0
+  fi
+
+  resolve_repo_path_and_name "$repo_input"
+}
+
 resolve_current_repo_context() {
   local repo_root=""
   if repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$repo_root" ]]; then
@@ -770,7 +783,7 @@ EOF
             ;;
         esac
         if [[ "$repo_normalized" == "0" && "$arg" != -* ]]; then
-          resolve_repo_path_and_name "$arg"
+          resolve_repo_hint_for_close "$arg"
           normalized_close_args+=("$RESOLVED_REPO_PATH")
           repo_normalized=1
           continue

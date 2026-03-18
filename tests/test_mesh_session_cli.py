@@ -556,6 +556,44 @@ def test_resolve_active_ui_group_id_rejects_multiple_live_groups(monkeypatch):
         raise AssertionError("expected ValueError")
 
 
+def test_resolve_active_ui_group_id_can_include_non_active_open_sessions(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="failed",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="failed",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+
+    assert (
+        module.resolve_active_ui_group_id(
+            "snake-game",
+            repo_path="/Users/sam/snake-game",
+            choices=[choice],
+            include_non_active=True,
+        )
+        == "snake-ui-1"
+    )
+
+
 def test_resolve_role_choice_errors_on_ambiguity():
     module = _load_module()
     choices = [
@@ -651,7 +689,7 @@ def test_main_send_posts_router_message(monkeypatch, capsys):
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(
         module,
@@ -708,7 +746,7 @@ def test_main_enter_and_interrupt_dispatch_controls(monkeypatch):
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(
         module,
@@ -797,7 +835,7 @@ def test_main_summary_prints_latest_completion_summary(monkeypatch, capsys):
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "summary", "lead"])
 
@@ -889,7 +927,7 @@ def test_main_summary_filters_by_target_role(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(
         sys,
@@ -1041,7 +1079,7 @@ def test_main_summary_reports_router_fetch_errors(monkeypatch, capsys):
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "summary", "lead"])
 
@@ -1113,7 +1151,7 @@ def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, cap
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(
         module,
@@ -1180,7 +1218,7 @@ def test_main_close_keeps_cache_when_failures_occur(monkeypatch, tmp_path, capsy
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(module, "router_post_json", fake_router_post_json)
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
@@ -1229,7 +1267,7 @@ def test_main_close_keeps_cache_until_closure_observed(monkeypatch, tmp_path, ca
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(module, "router_post_json", lambda *args, **kwargs: {"status": "accepted"})
     monkeypatch.setattr(
@@ -1258,7 +1296,7 @@ def test_main_close_targets_explicit_repo_argument(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "resolve_active_ui_group_id",
-        lambda repo_name, *, repo_path, choices: "rektslug-ui-1",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "rektslug-ui-1",
     )
     monkeypatch.setattr(
         module,
@@ -1269,3 +1307,48 @@ def test_main_close_targets_explicit_repo_argument(monkeypatch, tmp_path):
 
     assert module.main() == 0
     assert seen == ["/media/sam/1TB/rektslug"]
+
+
+def test_main_close_resolves_group_from_non_active_open_sessions(monkeypatch, tmp_path):
+    module = _load_module()
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="completed",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="completed",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+    signals: list[dict[str, str]] = []
+    monkeypatch.setenv("MESH_UI_GROUP_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [choice])
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "router_post_json",
+        lambda router_url, auth_token, path, payload: signals.append(payload) or {"status": "accepted"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_ui_group_closure",
+        lambda *args, **kwargs: (True, [], ""),
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
+
+    assert module.main() == 0
+    assert signals == [{"session_id": "sess-1", "signal": "terminate"}]
