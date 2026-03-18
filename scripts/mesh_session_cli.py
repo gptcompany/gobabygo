@@ -485,6 +485,14 @@ def _read_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> st
     return str(payload.get("ui_group_id") or "").strip()
 
 
+def _clear_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> None:
+    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+
+
 def resolve_active_ui_group_id(
     repo_name: str,
     *,
@@ -566,6 +574,20 @@ def _matching_role_choices(
         if choice.role == target_role
         and choice.ui_group_id == ui_group_id
         and _repo_matches_context(choice, repo_path, repo_name)
+    ]
+
+
+def _matching_ui_group_choices(
+    choices: list[SessionChoice],
+    *,
+    repo_path: str,
+    repo_name: str,
+    ui_group_id: str,
+) -> list[SessionChoice]:
+    return [
+        choice
+        for choice in filter_active_session_choices(choices)
+        if choice.ui_group_id == ui_group_id and _repo_matches_context(choice, repo_path, repo_name)
     ]
 
 
@@ -744,6 +766,18 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="Optional file path for the resolved summary JSON payload.",
     )
+
+    close_parser = subparsers.add_parser("close", help="Tear down live sessions for the active mesh ui group.")
+    close_parser.add_argument(
+        "--ui-group-id",
+        default="",
+        help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache/router.",
+    )
+    close_parser.add_argument(
+        "--output",
+        default="",
+        help="Optional file path for the close result JSON payload.",
+    )
     return parser.parse_args()
 
 
@@ -848,6 +882,68 @@ def main() -> int:
             f"repo={selected.repo_name or selected.repo} ui_group={ui_group_id}"
         )
         return 0
+
+    if args.cmd == "close":
+        try:
+            ui_group_id = getattr(args, "ui_group_id", "").strip() or resolve_active_ui_group_id(
+                repo_name,
+                repo_path=repo_path,
+                choices=choices,
+            )
+        except ValueError as exc:
+            return _print_error(str(exc))
+
+        cached_group = _read_ui_group_cache(repo_name)
+        clear_cache = bool(cached_group and cached_group == ui_group_id)
+        matched = _matching_ui_group_choices(
+            choices,
+            repo_path=repo_path,
+            repo_name=repo_name,
+            ui_group_id=ui_group_id,
+        )
+        failures: list[str] = []
+        closed_session_ids: list[str] = []
+        for choice in matched:
+            try:
+                router_post_json(
+                    router_url,
+                    auth_token,
+                    "/sessions/signal",
+                    {"session_id": choice.session_id, "signal": "terminate"},
+                )
+                closed_session_ids.append(choice.session_id)
+            except HTTPError as exc:
+                if exc.code in {404, 409}:
+                    closed_session_ids.append(choice.session_id)
+                    continue
+                failures.append(f"{choice.session_id[:12]}: HTTP {exc.code}")
+            except URLError as exc:
+                failures.append(f"{choice.session_id[:12]}: {exc}")
+            except (TimeoutError, OSError, json.JSONDecodeError) as exc:
+                failures.append(f"{choice.session_id[:12]}: {exc}")
+
+        if not failures and clear_cache:
+            _clear_ui_group_cache(repo_name)
+
+        result = {
+            "repo_name": repo_name,
+            "ui_group_id": ui_group_id,
+            "closed_sessions": closed_session_ids,
+            "cleared_cache": bool(not failures and clear_cache),
+            "failures": failures,
+        }
+        if getattr(args, "output", ""):
+            _emit_payload(result, args.output)
+        else:
+            print(
+                f"[mesh ui close] repo={repo_name} ui_group={ui_group_id} "
+                f"signaled={len(closed_session_ids)} cleared_cache={str(result['cleared_cache']).lower()}"
+            )
+            if failures:
+                print("Failures:", file=sys.stderr)
+                for item in failures:
+                    print(f"  - {item}", file=sys.stderr)
+        return 1 if failures else 0
 
     if args.cmd == "summary":
         try:

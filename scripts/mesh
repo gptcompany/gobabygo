@@ -214,6 +214,7 @@ Usage:
   ./scripts/mesh enter <role>
   ./scripts/mesh interrupt <role>
   ./scripts/mesh summary <role>
+  ./scripts/mesh ui close
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui [repo-name|repo-path] [--single-tab] [--max-panes-per-tab N]
@@ -237,6 +238,7 @@ Examples:
   ./scripts/mesh enter lead
   ./scripts/mesh interrupt worker-gemini
   ./scripts/mesh summary lead
+  ./scripts/mesh ui close
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui rektslug
@@ -749,6 +751,15 @@ EOF
     ;;
   ui)
     ui_args=("${@:2}")
+    if [[ ${#ui_args[@]} -gt 0 && "${ui_args[0]}" == "close" ]]; then
+      py_bin="$(detect_python)" || exit $?
+      session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
+      if [[ ! -f "$session_script" ]]; then
+        echo "Error: missing session CLI script at $session_script" >&2
+        exit 1
+      fi
+      exec "$py_bin" "$session_script" close "${ui_args[@]:1}"
+    fi
     if [[ ${#ui_args[@]} -eq 0 ]]; then
       resolve_current_repo_context
       ui_args=("$CURRENT_REPO_PATH")
