@@ -245,6 +245,38 @@ def test_emit_completion_summary_routes_to_president_peer() -> None:
     assert summary_calls[1].kwargs["metadata"]["target_role"] == "president"
 
 
+def test_emit_completion_summary_peer_routing_is_best_effort() -> None:
+    worker = _make_worker()
+    worker._http = MagicMock()
+    list_resp = MagicMock(status_code=200)
+    list_resp.json.return_value = {
+        "sessions": [
+            {"session_id": "sid-lead", "metadata": {"ui_group_id": "snake-ui-1", "ui_role": "lead"}},
+            {"session_id": "sid-president", "metadata": {"ui_group_id": "snake-ui-1", "ui_role": "president"}},
+        ]
+    }
+    worker._http.get.return_value = list_resp
+
+    with patch.object(worker, "_send_session_message") as mock_send:
+        mock_send.side_effect = [None, requests.HTTPError("session_closed")]
+        summary = worker._emit_completion_summary(
+            "sid-lead",
+            {
+                "task_id": "task-2",
+                "role": "lead",
+                "payload": {
+                    "ui_role_session": True,
+                    "ui_role": "lead",
+                    "ui_group_id": "snake-ui-1",
+                },
+            },
+            status="completed",
+        )
+
+    assert summary is not None
+    assert mock_send.call_count == 2
+
+
 def test_session_worker_start_retries_initial_registration_until_success() -> None:
     worker = MeshSessionWorker(SessionWorkerConfig(worker_id="ws-session-test"))
     attempts = {"count": 0}

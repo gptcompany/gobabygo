@@ -1456,13 +1456,21 @@ class MeshSessionWorker:
                     "target_role": target_role,
                 }
             )
-            self._send_session_message(
-                peer_session_id,
-                direction="in",
-                role="summary",
-                content=summary_text,
-                metadata=routed_metadata,
-            )
+            try:
+                self._send_session_message(
+                    peer_session_id,
+                    direction="in",
+                    role="summary",
+                    content=summary_text,
+                    metadata=routed_metadata,
+                )
+            except requests.RequestException as e:
+                logger.warning(
+                    "Skipping completion summary route to %s for ui_group %s: %s",
+                    target_role,
+                    ui_group_id,
+                    e,
+                )
 
     def _emit_completion_summary(
         self,

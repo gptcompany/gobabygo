@@ -574,29 +574,36 @@ def _list_completion_summaries(
     auth_token: str,
     session_id: str,
 ) -> list[dict[str, Any]]:
-    payload = router_get_json(
-        router_url,
-        auth_token,
-        f"/sessions/messages?session_id={quote(session_id)}&after_seq=0&limit=200",
-    )
-    messages = payload.get("messages") if isinstance(payload, dict) else None
-    if not isinstance(messages, list):
-        return []
     summaries: list[dict[str, Any]] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
-        if str(metadata.get("type") or "").strip() != "completion_summary":
-            continue
-        summaries.append(
-            {
-                "seq": int(message.get("seq") or 0),
-                "content": str(message.get("content") or ""),
-                "metadata": metadata,
-            }
+    after_seq = 0
+    while True:
+        payload = router_get_json(
+            router_url,
+            auth_token,
+            f"/sessions/messages?session_id={quote(session_id)}&after_seq={after_seq}&limit=200",
         )
-    return summaries
+        messages = payload.get("messages") if isinstance(payload, dict) else None
+        if not isinstance(messages, list) or not messages:
+            return summaries
+        max_seq = after_seq
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            seq = int(message.get("seq") or 0)
+            max_seq = max(max_seq, seq)
+            metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+            if str(metadata.get("type") or "").strip() != "completion_summary":
+                continue
+            summaries.append(
+                {
+                    "seq": seq,
+                    "content": str(message.get("content") or ""),
+                    "metadata": metadata,
+                }
+            )
+        if len(messages) < 200 or max_seq <= after_seq:
+            return summaries
+        after_seq = max_seq
 
 
 def resolve_role_summary(
@@ -627,6 +634,11 @@ def resolve_role_summary(
         summaries = _list_completion_summaries(router_url, auth_token, choice.session_id)
         for summary in reversed(summaries):
             metadata = summary.get("metadata") if isinstance(summary.get("metadata"), dict) else {}
+            if str(metadata.get("source_role") or "").strip():
+                continue
+            summary_role = str(metadata.get("role") or "").strip()
+            if summary_role != choice.role:
+                continue
             target_roles = metadata.get("target_roles")
             normalized_targets = [str(item).strip() for item in target_roles] if isinstance(target_roles, list) else []
             routed_target = str(metadata.get("target_role") or "").strip()
@@ -856,6 +868,12 @@ def main() -> int:
             )
         except ValueError as exc:
             return _print_error(str(exc))
+        except HTTPError as exc:
+            return _print_error(f"/sessions/messages returned HTTP {exc.code}")
+        except URLError as exc:
+            return _print_error(f"cannot connect to mesh router at {router_url}: {exc}")
+        except (TimeoutError, OSError, json.JSONDecodeError) as exc:
+            return _print_error(f"failed to query completion summaries: {exc}")
         if getattr(args, "output", ""):
             _emit_payload(payload, args.output)
         else:
