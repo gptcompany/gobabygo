@@ -551,6 +551,103 @@ def resolve_role_choice(
     return matched[0]
 
 
+def _matching_role_choices(
+    choices: list[SessionChoice],
+    *,
+    role: str,
+    repo_path: str,
+    repo_name: str,
+    ui_group_id: str,
+) -> list[SessionChoice]:
+    target_role = role.strip()
+    return [
+        choice
+        for choice in choices
+        if choice.role == target_role
+        and choice.ui_group_id == ui_group_id
+        and _repo_matches_context(choice, repo_path, repo_name)
+    ]
+
+
+def _list_completion_summaries(
+    router_url: str,
+    auth_token: str,
+    session_id: str,
+) -> list[dict[str, Any]]:
+    payload = router_get_json(
+        router_url,
+        auth_token,
+        f"/sessions/messages?session_id={quote(session_id)}&after_seq=0&limit=200",
+    )
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    if not isinstance(messages, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        if str(metadata.get("type") or "").strip() != "completion_summary":
+            continue
+        summaries.append(
+            {
+                "seq": int(message.get("seq") or 0),
+                "content": str(message.get("content") or ""),
+                "metadata": metadata,
+            }
+        )
+    return summaries
+
+
+def resolve_role_summary(
+    router_url: str,
+    auth_token: str,
+    choices: list[SessionChoice],
+    *,
+    role: str,
+    repo_path: str,
+    repo_name: str,
+    ui_group_id: str,
+    target_role: str = "",
+) -> dict[str, Any]:
+    if not ui_group_id:
+        raise ValueError(f"no active ui_group_id for repo '{repo_name}'")
+    candidates = _matching_role_choices(
+        choices,
+        role=role,
+        repo_path=repo_path,
+        repo_name=repo_name,
+        ui_group_id=ui_group_id,
+    )
+    if not candidates:
+        raise ValueError(f"no sessions found for role '{role}' in ui_group '{ui_group_id}'")
+
+    requested_target = target_role.strip()
+    for choice in candidates:
+        summaries = _list_completion_summaries(router_url, auth_token, choice.session_id)
+        for summary in reversed(summaries):
+            metadata = summary.get("metadata") if isinstance(summary.get("metadata"), dict) else {}
+            target_roles = metadata.get("target_roles")
+            normalized_targets = [str(item).strip() for item in target_roles] if isinstance(target_roles, list) else []
+            routed_target = str(metadata.get("target_role") or "").strip()
+            if requested_target and requested_target not in normalized_targets and routed_target != requested_target:
+                continue
+            return {
+                "session_id": choice.session_id,
+                "repo": choice.repo,
+                "repo_name": choice.repo_name,
+                "role": choice.role,
+                "ui_group_id": ui_group_id,
+                "summary": metadata,
+                "content": summary.get("content") or "",
+            }
+    if requested_target:
+        raise ValueError(
+            f"no completion summary for role '{role}' targeting '{requested_target}' in ui_group '{ui_group_id}'"
+        )
+    raise ValueError(f"no completion summary for role '{role}' in ui_group '{ui_group_id}'")
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="List or resolve live mesh sessions.")
     subparsers = parser.add_subparsers(dest="cmd", required=True)
@@ -617,6 +714,24 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache.",
     )
+
+    summary_parser = subparsers.add_parser("summary", help="Inspect the latest completion summary for a role.")
+    summary_parser.add_argument("role", help="Source role inside the active mesh ui group.")
+    summary_parser.add_argument(
+        "--ui-group-id",
+        default="",
+        help="Explicit ui_group_id override. Default: MESH_UI_GROUP_ID or repo cache/router.",
+    )
+    summary_parser.add_argument(
+        "--target",
+        default="",
+        help="Optional target role filter (for example: president or boss).",
+    )
+    summary_parser.add_argument(
+        "--output",
+        default="",
+        help="Optional file path for the resolved summary JSON payload.",
+    )
     return parser.parse_args()
 
 
@@ -639,8 +754,9 @@ def main() -> int:
     if not router_url or not auth_token:
         return _print_error("mesh router env not configured (need MESH_ROUTER_URL and MESH_AUTH_TOKEN)")
 
+    requested_state = "all" if args.cmd == "summary" else getattr(args, "state", "open")
     try:
-        choices = build_session_choices(router_url, auth_token, state=getattr(args, "state", "open"))
+        choices = build_session_choices(router_url, auth_token, state=requested_state)
     except HTTPError as exc:
         return _print_error(f"/sessions returned HTTP {exc.code}")
     except URLError as exc:
@@ -648,7 +764,7 @@ def main() -> int:
     except (TimeoutError, OSError, json.JSONDecodeError) as exc:
         return _print_error(f"failed to query mesh router: {exc}")
 
-    if getattr(args, "state", "open") == "open":
+    if requested_state == "open":
         choices = filter_active_session_choices(choices)
 
     repo_path, repo_name = detect_repo_context()
@@ -719,6 +835,38 @@ def main() -> int:
             f"[mesh {args.cmd}] role={selected.role} session={selected.session_id[:12]} "
             f"repo={selected.repo_name or selected.repo} ui_group={ui_group_id}"
         )
+        return 0
+
+    if args.cmd == "summary":
+        try:
+            ui_group_id = getattr(args, "ui_group_id", "").strip() or resolve_active_ui_group_id(
+                repo_name,
+                repo_path=repo_path,
+                choices=choices,
+            )
+            payload = resolve_role_summary(
+                router_url,
+                auth_token,
+                choices,
+                role=args.role,
+                repo_path=repo_path,
+                repo_name=repo_name,
+                ui_group_id=ui_group_id,
+                target_role=getattr(args, "target", ""),
+            )
+        except ValueError as exc:
+            return _print_error(str(exc))
+        if getattr(args, "output", ""):
+            _emit_payload(payload, args.output)
+        else:
+            summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+            targets = summary.get("target_roles") if isinstance(summary.get("target_roles"), list) else []
+            print(
+                f"[mesh summary] role={payload.get('role')} session={str(payload.get('session_id') or '')[:12]} "
+                f"ui_group={payload.get('ui_group_id')} status={summary.get('status', '')} "
+                f"targets={','.join(str(item) for item in targets)}"
+            )
+            print(payload.get("content") or summary.get("summary_text") or "")
         return 0
 
     try:

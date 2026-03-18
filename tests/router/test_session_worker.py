@@ -199,7 +199,50 @@ def test_build_completion_summary_only_for_ui_role_tasks() -> None:
         "status": "completed",
         "summary_text": "lead completed. Final snapshot captured.",
         "artifacts": ["plan.md"],
+        "target_roles": ["president", "boss"],
     }
+
+
+def test_emit_completion_summary_routes_to_president_peer() -> None:
+    worker = _make_worker()
+    worker._http = MagicMock()
+    list_resp = MagicMock(status_code=200)
+    list_resp.json.return_value = {
+        "sessions": [
+            {
+                "session_id": "sid-lead",
+                "metadata": {"ui_group_id": "snake-ui-1", "ui_role": "lead"},
+            },
+            {
+                "session_id": "sid-president",
+                "metadata": {"ui_group_id": "snake-ui-1", "ui_role": "president"},
+            },
+        ]
+    }
+    worker._http.get.return_value = list_resp
+
+    with patch.object(worker, "_send_session_message") as mock_send:
+        summary = worker._emit_completion_summary(
+            "sid-lead",
+            {
+                "task_id": "task-2",
+                "role": "lead",
+                "payload": {
+                    "ui_role_session": True,
+                    "ui_role": "lead",
+                    "ui_group_id": "snake-ui-1",
+                },
+            },
+            status="completed",
+        )
+
+    assert summary is not None
+    summary_calls = [call for call in mock_send.call_args_list if call.kwargs.get("role") == "summary"]
+    assert len(summary_calls) == 2
+    assert summary_calls[0].args[0] == "sid-lead"
+    assert summary_calls[1].args[0] == "sid-president"
+    assert summary_calls[1].kwargs["direction"] == "in"
+    assert summary_calls[1].kwargs["metadata"]["target_role"] == "president"
 
 
 def test_session_worker_start_retries_initial_registration_until_success() -> None:

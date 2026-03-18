@@ -306,6 +306,12 @@ def _default_completion_summary_text(role: str, status: str) -> str:
     return f"{role_name} failed."
 
 
+def _default_completion_summary_targets(role: str) -> list[str]:
+    if role == "lead":
+        return ["president", "boss"]
+    return []
+
+
 @dataclass
 class SessionWorkerConfig:
     """Configuration for a tmux-backed interactive session worker."""
@@ -1355,6 +1361,9 @@ class MeshSessionWorker:
             return None
 
         role = str(payload.get("ui_role") or task.get("role") or "").strip() or "role"
+        target_roles = _coerce_string_list(payload.get("completion_summary_targets"))
+        if not target_roles:
+            target_roles = _default_completion_summary_targets(role)
         summary_text = str(payload.get("completion_summary_text") or "").strip()
         if not summary_text:
             summary_text = _default_completion_summary_text(role, status)
@@ -1369,7 +1378,91 @@ class MeshSessionWorker:
             "artifacts": _coerce_string_list(
                 payload.get("completion_summary_artifacts", payload.get("artifacts"))
             ),
+            "target_roles": target_roles,
         }
+
+    def _list_open_ui_group_sessions(self, ui_group_id: str) -> list[dict[str, Any]]:
+        if not ui_group_id:
+            return []
+        try:
+            resp = self._http.get(
+                f"{self.config.router_url}/sessions",
+                params={"state": "open", "limit": 200},
+                timeout=self.config.control_plane_timeout,
+            )
+        except requests.RequestException as e:
+            logger.warning("Failed to list sessions for completion summary routing: %s", e)
+            return []
+        if getattr(resp, "status_code", None) != 200:
+            return []
+        try:
+            payload = resp.json()
+        except ValueError:
+            return []
+        sessions = payload.get("sessions") if isinstance(payload, dict) else None
+        if not isinstance(sessions, list):
+            return []
+        matched: list[dict[str, Any]] = []
+        for session in sessions:
+            if not isinstance(session, dict):
+                continue
+            metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+            if str(metadata.get("ui_group_id") or "").strip() != ui_group_id:
+                continue
+            matched.append(session)
+        return matched
+
+    def _route_completion_summary(
+        self,
+        source_session_id: str | None,
+        summary: dict[str, Any],
+    ) -> None:
+        ui_group_id = str(summary.get("ui_group_id") or "").strip()
+        target_roles = [role for role in _coerce_string_list(summary.get("target_roles")) if role]
+        if not source_session_id or not ui_group_id or not target_roles:
+            return
+
+        sessions = self._list_open_ui_group_sessions(ui_group_id)
+        source_role = str(summary.get("role") or "").strip()
+        summary_text = str(summary.get("summary_text") or "")
+        for target_role in target_roles:
+            if target_role == "boss":
+                continue
+            candidates = []
+            for session in sessions:
+                if str(session.get("session_id") or "").strip() == source_session_id:
+                    continue
+                metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+                peer_role = str(metadata.get("ui_role") or metadata.get("role") or "").strip()
+                if peer_role == target_role:
+                    candidates.append(session)
+            if len(candidates) != 1:
+                if len(candidates) > 1:
+                    logger.warning(
+                        "Skipping completion summary route for %s in ui_group %s; ambiguous peers=%d",
+                        target_role,
+                        ui_group_id,
+                        len(candidates),
+                    )
+                continue
+            peer_session_id = str(candidates[0].get("session_id") or "").strip()
+            if not peer_session_id:
+                continue
+            routed_metadata = dict(summary)
+            routed_metadata.update(
+                {
+                    "source_session_id": source_session_id,
+                    "source_role": source_role,
+                    "target_role": target_role,
+                }
+            )
+            self._send_session_message(
+                peer_session_id,
+                direction="in",
+                role="summary",
+                content=summary_text,
+                metadata=routed_metadata,
+            )
 
     def _emit_completion_summary(
         self,
@@ -1390,6 +1483,7 @@ class MeshSessionWorker:
                 content=str(summary.get("summary_text") or ""),
                 metadata=summary,
             )
+            self._route_completion_summary(session_id, summary)
         return summary
 
     def _open_session(

@@ -741,3 +741,145 @@ def test_parse_send_accepts_ui_group_id_after_role(monkeypatch):
     assert args.role == "lead"
     assert args.ui_group_id == "snake-ui-9"
     assert args.message == ["hello", "world"]
+
+
+def test_main_summary_prints_latest_completion_summary(monkeypatch, capsys):
+    module = _load_module()
+    selected = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="closed",
+        task_id="task-1",
+        task_status="completed",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="completed",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/sessions/messages?session_id=sess-1&after_seq=0&limit=200":
+            return {
+                "messages": [
+                    {
+                        "seq": 5,
+                        "content": "lead completed.",
+                        "metadata": {
+                            "type": "completion_summary",
+                            "role": "lead",
+                            "ui_group_id": "snake-ui-1",
+                            "status": "completed",
+                            "summary_text": "lead completed.",
+                            "target_roles": ["president", "boss"],
+                        },
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [selected])
+    monkeypatch.setattr(module, "router_get_json", fake_router_get_json)
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "resolve_active_ui_group_id",
+        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "summary", "lead"])
+
+    assert module.main() == 0
+    output = capsys.readouterr().out
+    assert "[mesh summary] role=lead session=sess-1" in output
+    assert "lead completed." in output
+
+
+def test_main_summary_filters_by_target_role(monkeypatch, tmp_path):
+    module = _load_module()
+    selected = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="closed",
+        task_id="task-1",
+        task_status="completed",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="completed",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+    output_path = tmp_path / "summary.json"
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/sessions/messages?session_id=sess-1&after_seq=0&limit=200":
+            return {
+                "messages": [
+                    {
+                        "seq": 4,
+                        "content": "ignored",
+                        "metadata": {
+                            "type": "completion_summary",
+                            "role": "lead",
+                            "ui_group_id": "snake-ui-1",
+                            "status": "completed",
+                            "summary_text": "ignored",
+                            "target_roles": ["boss"],
+                        },
+                    },
+                    {
+                        "seq": 5,
+                        "content": "president update",
+                        "metadata": {
+                            "type": "completion_summary",
+                            "role": "lead",
+                            "ui_group_id": "snake-ui-1",
+                            "status": "completed",
+                            "summary_text": "president update",
+                            "target_role": "president",
+                            "target_roles": ["president", "boss"],
+                        },
+                    },
+                ]
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [selected])
+    monkeypatch.setattr(module, "router_get_json", fake_router_get_json)
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "resolve_active_ui_group_id",
+        lambda repo_name, *, repo_path, choices: "snake-ui-1",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["mesh_session_cli.py", "summary", "lead", "--target", "president", "--output", str(output_path)],
+    )
+
+    assert module.main() == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["summary"]["target_role"] == "president"
+    assert payload["content"] == "president update"

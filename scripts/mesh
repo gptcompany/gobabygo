@@ -213,6 +213,7 @@ Usage:
   ./scripts/mesh send <role> <text>
   ./scripts/mesh enter <role>
   ./scripts/mesh interrupt <role>
+  ./scripts/mesh summary <role>
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui [repo-name|repo-path] [--single-tab] [--max-panes-per-tab N]
@@ -235,6 +236,7 @@ Examples:
   ./scripts/mesh send president "status?"
   ./scripts/mesh enter lead
   ./scripts/mesh interrupt worker-gemini
+  ./scripts/mesh summary lead
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui rektslug
@@ -520,7 +522,7 @@ PY
         ;;
     esac
     ;;
-  send|enter|interrupt)
+  send|enter|interrupt|summary)
     py_bin="$(detect_python)" || exit $?
     session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
     if [[ ! -f "$session_script" ]]; then
