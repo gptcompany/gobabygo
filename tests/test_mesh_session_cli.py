@@ -720,7 +720,7 @@ def test_resolve_active_ui_group_id_rejects_repo_name_collision_without_cache(mo
         raise AssertionError("expected ValueError")
 
 
-def test_resolve_active_ui_group_id_ignores_stale_repo_collision_for_active_only(monkeypatch):
+def test_resolve_active_ui_group_id_rejects_repo_collision_when_stale_open_context_exists(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
     monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
@@ -771,17 +771,19 @@ def test_resolve_active_ui_group_id_ignores_stale_repo_collision_for_active_only
         ),
     ]
 
-    assert (
+    try:
         module.resolve_active_ui_group_id(
             "snake-game",
             repo_path="/Users/sam/snake-game",
             choices=choices,
         )
-        == "snake-ui-live"
-    )
+    except ValueError as exc:
+        assert "multiple repo matches" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
-def test_resolve_active_ui_group_id_uses_cached_group_for_active_repo_collision(monkeypatch):
+def test_resolve_active_ui_group_id_rejects_cached_group_for_active_repo_collision(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
     monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "snake-ui-b")
@@ -832,14 +834,16 @@ def test_resolve_active_ui_group_id_uses_cached_group_for_active_repo_collision(
         ),
     ]
 
-    assert (
+    try:
         module.resolve_active_ui_group_id(
             "snake-game",
             repo_path="/Users/sam/snake-game",
             choices=choices,
         )
-        == "snake-ui-b"
-    )
+    except ValueError as exc:
+        assert "multiple repo matches" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
 
 
 def test_resolve_role_choice_errors_on_ambiguity():
@@ -960,6 +964,71 @@ def test_main_send_posts_router_message(monkeypatch, capsys):
         )
     ]
     assert "[mesh send] role=lead session=sess-1" in capsys.readouterr().out
+
+
+def test_main_send_rejects_repo_name_collision_with_stale_open_context(monkeypatch, capsys):
+    module = _load_module()
+    choices = [
+        module.SessionChoice(
+            session_id="sess-stale",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="failed",
+            thread_id="thread-1",
+            thread_name="snake-a",
+            thread_status="failed",
+            repo="/media/sam/1TB/checkouts/a/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Old run",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-old",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-old",
+            attach_owner="sam",
+            ui_group_id="snake-ui-old",
+        ),
+        module.SessionChoice(
+            session_id="sess-live",
+            worker_id="worker-2",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="running",
+            thread_id="thread-2",
+            thread_name="snake-b",
+            thread_status="active",
+            repo="/media/sam/1TB/checkouts/b/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Foreign run",
+            updated_at="2026-03-11T14:05:00Z",
+            tmux_session="mesh-gemini-live",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-live",
+            attach_owner="sam",
+            ui_group_id="snake-ui-live",
+        ),
+    ]
+    posted: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: choices)
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "router_post_json",
+        lambda router_url, auth_token, path, payload: posted.append((path, payload)) or {"status": "accepted"},
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "send", "lead", "hello"])
+
+    assert module.main() == 1
+    assert posted == []
+    assert "multiple repo matches" in capsys.readouterr().err
 
 
 def test_main_enter_and_interrupt_dispatch_controls(monkeypatch):
@@ -1335,6 +1404,64 @@ def test_main_summary_reports_router_fetch_errors(monkeypatch, capsys):
     assert "cannot connect to mesh router" in capsys.readouterr().err
 
 
+def test_main_summary_rejects_repo_name_collision_with_stale_open_context(monkeypatch, capsys):
+    module = _load_module()
+    choices = [
+        module.SessionChoice(
+            session_id="sess-stale",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="failed",
+            thread_id="thread-1",
+            thread_name="snake-a",
+            thread_status="failed",
+            repo="/media/sam/1TB/checkouts/a/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Old run",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-old",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-old",
+            attach_owner="sam",
+            ui_group_id="snake-ui-old",
+        ),
+        module.SessionChoice(
+            session_id="sess-live",
+            worker_id="worker-2",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="running",
+            thread_id="thread-2",
+            thread_name="snake-b",
+            thread_status="active",
+            repo="/media/sam/1TB/checkouts/b/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Foreign run",
+            updated_at="2026-03-11T14:05:00Z",
+            tmux_session="mesh-gemini-live",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-live",
+            attach_owner="sam",
+            ui_group_id="snake-ui-live",
+        ),
+    ]
+
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: choices)
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "summary", "lead"])
+
+    assert module.main() == 1
+    assert "multiple repo matches" in capsys.readouterr().err
+
+
 def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, capsys):
     module = _load_module()
     cache_dir = tmp_path / "ui-cache"
@@ -1602,7 +1729,7 @@ def test_main_close_resolves_group_from_non_active_open_sessions(monkeypatch, tm
     assert signals == [{"session_id": "sess-1", "signal": "terminate"}]
 
 
-def test_main_close_uses_cached_stale_group_on_repo_name_collision(monkeypatch, tmp_path):
+def test_main_close_rejects_cached_stale_group_on_repo_name_collision(monkeypatch, tmp_path, capsys):
     module = _load_module()
     cache_dir = tmp_path / "ui-cache"
     cache_dir.mkdir()
@@ -1675,6 +1802,7 @@ def test_main_close_uses_cached_stale_group_on_repo_name_collision(monkeypatch, 
     )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
-    assert module.main() == 0
-    assert signals == [{"session_id": "sess-stale", "signal": "terminate"}]
-    assert not cache_file.exists()
+    assert module.main() == 1
+    assert signals == []
+    assert cache_file.exists()
+    assert "multiple repo matches" in capsys.readouterr().err

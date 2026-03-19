@@ -499,7 +499,6 @@ def _matching_repo_context_choices(
     *,
     repo_path: str,
     repo_name: str,
-    preferred_ui_group_id: str = "",
 ) -> list[SessionChoice]:
     target_repo = os.path.abspath(repo_path)
     exact_matches = [
@@ -516,15 +515,6 @@ def _matching_repo_context_choices(
     for choice in named_matches:
         context_key = os.path.abspath(choice.repo) if choice.repo else f"repo-name:{repo_name}"
         contexts.setdefault(context_key, []).append(choice)
-
-    if preferred_ui_group_id:
-        preferred = [
-            grouped
-            for grouped in contexts.values()
-            if any(choice.ui_group_id == preferred_ui_group_id for choice in grouped)
-        ]
-        if len(preferred) == 1:
-            return preferred[0]
 
     if len(contexts) == 1:
         return named_matches
@@ -546,12 +536,10 @@ def resolve_active_ui_group_id(
 
     cached = _read_ui_group_cache(repo_name)
     open_choices = [choice for choice in choices if choice.state == "open" and choice.ui_group_id]
-    candidate_choices = open_choices if include_non_active else filter_active_session_choices(open_choices)
     context_choices = _matching_repo_context_choices(
-        candidate_choices,
+        open_choices,
         repo_path=repo_path,
         repo_name=repo_name,
-        preferred_ui_group_id=cached,
     )
 
     def _candidate_ids(candidate_choices: list[SessionChoice]) -> list[str]:
@@ -903,15 +891,14 @@ def main() -> int:
     except (TimeoutError, OSError, json.JSONDecodeError) as exc:
         return _print_error(f"failed to query mesh router: {exc}")
 
-    if requested_state == "open" and args.cmd != "close":
-        choices = filter_active_session_choices(choices)
+    active_choices = filter_active_session_choices(choices) if requested_state == "open" else choices
 
     repo_hint = getattr(args, "repo", "").strip() or None
     repo_path, repo_name = detect_repo_context(repo_hint)
     default_query = "" if getattr(args, "all", False) else repo_name
     query = getattr(args, "query", "").strip() or default_query
-    filtered = filter_session_choices(choices, query)
     if args.cmd == "list":
+        filtered = filter_session_choices(active_choices, query)
         if not filtered:
             scope = "all repos" if getattr(args, "all", False) else f"repo '{repo_name}'"
             print(f"No sessions matched for {scope}.")
@@ -1095,7 +1082,7 @@ def main() -> int:
         return 0
 
     try:
-        selected = select_choice(choices, query=query, interactive=sys.stdin.isatty())
+        selected = select_choice(active_choices, query=query, interactive=sys.stdin.isatty())
     except ValueError as exc:
         return _print_error(str(exc))
 
