@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -466,28 +467,53 @@ def _ui_group_cache_dir() -> Path:
     return Path.home() / ".mesh" / "ui_groups"
 
 
-def _ui_group_cache_path(repo_name: str, *, cache_dir: Path | None = None) -> Path:
-    safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in repo_name).strip("-") or "repo"
-    return (cache_dir or _ui_group_cache_dir()) / f"{safe_name}.json"
-
-
-def _read_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> str:
-    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
-    if not path.is_file():
+def _cache_repo_path(repo_path: str) -> str:
+    candidate = str(repo_path or "").strip()
+    if not candidate:
         return ""
+    return os.path.abspath(candidate)
+
+
+def _ui_group_cache_path(repo_name: str, *, repo_path: str = "", cache_dir: Path | None = None) -> Path:
+    safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in repo_name).strip("-") or "repo"
+    normalized_repo = _cache_repo_path(repo_path)
+    if not normalized_repo:
+        return (cache_dir or _ui_group_cache_dir()) / f"{safe_name}.json"
+    digest = hashlib.sha256(normalized_repo.encode("utf-8")).hexdigest()[:12]
+    return (cache_dir or _ui_group_cache_dir()) / f"{safe_name}-{digest}.json"
+
+
+def _read_ui_group_cache(
+    repo_name: str,
+    *,
+    repo_path: str = "",
+    cache_dir: Path | None = None,
+) -> dict[str, str] | None:
+    normalized_repo = _cache_repo_path(repo_path)
+    path = _ui_group_cache_path(repo_name, repo_path=normalized_repo, cache_dir=cache_dir)
+    if not path.is_file():
+        return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return ""
+        return None
     if not isinstance(payload, dict):
-        return ""
-    if str(payload.get("repo_name") or "").strip() != repo_name:
-        return ""
-    return str(payload.get("ui_group_id") or "").strip()
+        return None
+    cached_repo = str(payload.get("repo_name") or "").strip()
+    ui_group_id = str(payload.get("ui_group_id") or "").strip()
+    cached_repo_path = _cache_repo_path(str(payload.get("repo_path") or "").strip())
+    if cached_repo != repo_name or not ui_group_id:
+        return None
+    if normalized_repo and cached_repo_path != normalized_repo:
+        return None
+    result = {"repo_name": cached_repo, "ui_group_id": ui_group_id}
+    if cached_repo_path:
+        result["repo_path"] = cached_repo_path
+    return result
 
 
-def _clear_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> None:
-    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+def _clear_ui_group_cache(repo_name: str, *, repo_path: str = "", cache_dir: Path | None = None) -> None:
+    path = _ui_group_cache_path(repo_name, repo_path=repo_path, cache_dir=cache_dir)
     try:
         path.unlink()
     except FileNotFoundError:
@@ -499,6 +525,7 @@ def _matching_repo_context_choices(
     *,
     repo_path: str,
     repo_name: str,
+    preferred_ui_group_id: str = "",
 ) -> list[SessionChoice]:
     target_repo = os.path.abspath(repo_path)
     exact_matches = [
@@ -515,6 +542,15 @@ def _matching_repo_context_choices(
     for choice in named_matches:
         context_key = os.path.abspath(choice.repo) if choice.repo else f"repo-name:{repo_name}"
         contexts.setdefault(context_key, []).append(choice)
+
+    if preferred_ui_group_id:
+        preferred = [
+            grouped
+            for grouped in contexts.values()
+            if any(choice.ui_group_id == preferred_ui_group_id for choice in grouped)
+        ]
+        if len(preferred) == 1:
+            return preferred[0]
 
     if len(contexts) == 1:
         return named_matches
@@ -534,12 +570,14 @@ def resolve_active_ui_group_id(
     if env_value:
         return env_value
 
-    cached = _read_ui_group_cache(repo_name)
+    cached_entry = _read_ui_group_cache(repo_name, repo_path=repo_path)
+    cached = str((cached_entry or {}).get("ui_group_id") or "").strip()
     open_choices = [choice for choice in choices if choice.state == "open" and choice.ui_group_id]
     context_choices = _matching_repo_context_choices(
         open_choices,
         repo_path=repo_path,
         repo_name=repo_name,
+        preferred_ui_group_id=cached,
     )
 
     def _candidate_ids(candidate_choices: list[SessionChoice]) -> list[str]:
@@ -975,7 +1013,8 @@ def main() -> int:
         except ValueError as exc:
             return _print_error(str(exc))
 
-        cached_group = _read_ui_group_cache(repo_name)
+        cached_entry = _read_ui_group_cache(repo_name, repo_path=repo_path)
+        cached_group = str((cached_entry or {}).get("ui_group_id") or "").strip()
         clear_cache = bool(cached_group and cached_group == ui_group_id)
         matched = _matching_ui_group_choices(
             choices,
@@ -1021,7 +1060,7 @@ def main() -> int:
                     )
 
         if not failures and clear_cache:
-            _clear_ui_group_cache(repo_name)
+            _clear_ui_group_cache(repo_name, repo_path=repo_path)
 
         result = {
             "repo_name": repo_name,

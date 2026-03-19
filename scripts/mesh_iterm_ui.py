@@ -17,11 +17,13 @@ Templates support {repo} and {repo_name}.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
 import re
 import shlex
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -91,14 +93,31 @@ def _ui_group_cache_dir() -> Path:
     return Path.home() / ".mesh" / "ui_groups"
 
 
-def _ui_group_cache_path(repo_name: str, *, cache_dir: Path | None = None) -> Path:
+def _cache_repo_path(repo_path: str) -> str:
+    candidate = str(repo_path or "").strip()
+    if not candidate:
+        return ""
+    return os.path.abspath(candidate)
+
+
+def _ui_group_cache_path(repo_name: str, *, repo_path: str = "", cache_dir: Path | None = None) -> Path:
     directory = cache_dir or _ui_group_cache_dir()
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", repo_name).strip("-") or "repo"
-    return directory / f"{safe_name}.json"
+    normalized_repo = _cache_repo_path(repo_path)
+    if not normalized_repo:
+        return directory / f"{safe_name}.json"
+    digest = hashlib.sha256(normalized_repo.encode("utf-8")).hexdigest()[:12]
+    return directory / f"{safe_name}-{digest}.json"
 
 
-def _read_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> dict[str, str] | None:
-    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+def _read_ui_group_cache(
+    repo_name: str,
+    *,
+    repo_path: str = "",
+    cache_dir: Path | None = None,
+) -> dict[str, str] | None:
+    normalized_repo = _cache_repo_path(repo_path)
+    path = _ui_group_cache_path(repo_name, repo_path=normalized_repo, cache_dir=cache_dir)
     if not path.is_file():
         return None
     try:
@@ -109,35 +128,42 @@ def _read_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> di
         return None
     cached_repo = str(payload.get("repo_name", "")).strip()
     ui_group_id = str(payload.get("ui_group_id", "")).strip()
+    cached_repo_path = _cache_repo_path(str(payload.get("repo_path", "")).strip())
     if cached_repo != repo_name or not ui_group_id:
         return None
-    return {"repo_name": cached_repo, "ui_group_id": ui_group_id}
+    if normalized_repo and cached_repo_path != normalized_repo:
+        return None
+    result = {"repo_name": cached_repo, "ui_group_id": ui_group_id}
+    if cached_repo_path:
+        result["repo_path"] = cached_repo_path
+    return result
 
 
 def _write_ui_group_cache(
     repo_name: str,
     ui_group_id: str,
     *,
+    repo_path: str = "",
     cache_dir: Path | None = None,
 ) -> Path:
-    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+    normalized_repo = _cache_repo_path(repo_path)
+    path = _ui_group_cache_path(repo_name, repo_path=normalized_repo, cache_dir=cache_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "repo_name": repo_name,
+        "ui_group_id": ui_group_id,
+    }
+    if normalized_repo:
+        payload["repo_path"] = normalized_repo
     path.write_text(
-        json.dumps(
-            {
-                "repo_name": repo_name,
-                "ui_group_id": ui_group_id,
-            },
-            sort_keys=True,
-        )
-        + "\n",
+        json.dumps(payload, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     return path
 
 
-def _clear_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> None:
-    path = _ui_group_cache_path(repo_name, cache_dir=cache_dir)
+def _clear_ui_group_cache(repo_name: str, *, repo_path: str = "", cache_dir: Path | None = None) -> None:
+    path = _ui_group_cache_path(repo_name, repo_path=repo_path, cache_dir=cache_dir)
     try:
         path.unlink()
     except FileNotFoundError:
@@ -193,14 +219,37 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _repo_root_path(root: str) -> str:
+    target = os.path.abspath(root)
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=target,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        repo_path = proc.stdout.strip()
+        if repo_path:
+            return repo_path
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return target
+
+
 def _resolve_repo(repo_arg: str) -> tuple[str, str]:
     if repo_arg:
         if "/" in repo_arg or repo_arg.startswith("."):
-            repo_path = os.path.abspath(repo_arg)
+            repo_path = _repo_root_path(repo_arg)
+            repo_name = os.path.basename(repo_path.rstrip("/"))
+            return repo_path, repo_name
+        candidate = os.path.abspath(repo_arg)
+        if os.path.isdir(candidate):
+            repo_path = _repo_root_path(candidate)
             repo_name = os.path.basename(repo_path.rstrip("/"))
             return repo_path, repo_name
         return repo_arg, repo_arg
-    cwd = os.path.abspath(os.getcwd())
+    cwd = _repo_root_path(os.getcwd())
     return cwd, os.path.basename(cwd)
 
 
@@ -316,18 +365,19 @@ def _router_has_live_ui_group(router_url: str, auth_token: str, ui_group_id: str
 def _resolve_active_ui_group_id(
     repo_name: str,
     *,
+    repo_path: str = "",
     router_url: str = "",
     auth_token: str = "",
     cache_dir: Path | None = None,
     timestamp: str | None = None,
 ) -> str:
-    cached = _read_ui_group_cache(repo_name, cache_dir=cache_dir)
+    cached = _read_ui_group_cache(repo_name, repo_path=repo_path, cache_dir=cache_dir)
     cached_group = str((cached or {}).get("ui_group_id", "")).strip()
     if cached_group and _router_has_live_ui_group(router_url, auth_token, cached_group):
         return cached_group
 
     ui_group_id = _generate_ui_group_id(repo_name, timestamp=timestamp)
-    _write_ui_group_cache(repo_name, ui_group_id, cache_dir=cache_dir)
+    _write_ui_group_cache(repo_name, ui_group_id, repo_path=repo_path, cache_dir=cache_dir)
     return ui_group_id
 
 
@@ -1150,6 +1200,7 @@ def main() -> int:
         attach_live=not bool(args.no_attach_live),
         ui_group_id=_resolve_active_ui_group_id(
             repo_name,
+            repo_path=repo,
             router_url=router_url,
             auth_token=auth_token,
         ),

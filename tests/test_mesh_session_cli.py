@@ -459,7 +459,7 @@ def test_resolve_role_choice_matches_repo_and_ui_group():
 def test_resolve_active_ui_group_id_prefers_live_router_group(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
-    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, repo_path="", cache_dir=None: None)
     choice = module.SessionChoice(
         session_id="sess-1",
         worker_id="worker-1",
@@ -496,7 +496,7 @@ def test_resolve_active_ui_group_id_prefers_live_router_group(monkeypatch):
 def test_resolve_active_ui_group_id_rejects_multiple_live_groups(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
-    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, repo_path="", cache_dir=None: None)
     choices = [
         module.SessionChoice(
             session_id="sess-1",
@@ -559,7 +559,7 @@ def test_resolve_active_ui_group_id_rejects_multiple_live_groups(monkeypatch):
 def test_resolve_active_ui_group_id_can_include_non_active_open_sessions(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
-    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, repo_path="", cache_dir=None: None)
     choice = module.SessionChoice(
         session_id="sess-1",
         worker_id="worker-1",
@@ -597,7 +597,15 @@ def test_resolve_active_ui_group_id_can_include_non_active_open_sessions(monkeyp
 def test_resolve_active_ui_group_id_prefers_active_group_over_stale_open_cache(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
-    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "snake-ui-old")
+    monkeypatch.setattr(
+        module,
+        "_read_ui_group_cache",
+        lambda repo_name, repo_path="", cache_dir=None: {
+            "repo_name": repo_name,
+            "ui_group_id": "snake-ui-old",
+            "repo_path": repo_path,
+        },
+    )
     choices = [
         module.SessionChoice(
             session_id="sess-stale",
@@ -659,7 +667,7 @@ def test_resolve_active_ui_group_id_prefers_active_group_over_stale_open_cache(m
 def test_resolve_active_ui_group_id_rejects_repo_name_collision_without_cache(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
-    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, repo_path="", cache_dir=None: None)
     choices = [
         module.SessionChoice(
             session_id="sess-stale",
@@ -723,7 +731,7 @@ def test_resolve_active_ui_group_id_rejects_repo_name_collision_without_cache(mo
 def test_resolve_active_ui_group_id_rejects_repo_collision_when_stale_open_context_exists(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
-    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, repo_path="", cache_dir=None: None)
     choices = [
         module.SessionChoice(
             session_id="sess-stale",
@@ -783,10 +791,18 @@ def test_resolve_active_ui_group_id_rejects_repo_collision_when_stale_open_conte
         raise AssertionError("expected ValueError")
 
 
-def test_resolve_active_ui_group_id_rejects_cached_group_for_active_repo_collision(monkeypatch):
+def test_resolve_active_ui_group_id_uses_cached_group_for_active_repo_collision(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
-    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "snake-ui-b")
+    monkeypatch.setattr(
+        module,
+        "_read_ui_group_cache",
+        lambda repo_name, repo_path="", cache_dir=None: {
+            "repo_name": repo_name,
+            "ui_group_id": "snake-ui-b",
+            "repo_path": repo_path,
+        },
+    )
     choices = [
         module.SessionChoice(
             session_id="sess-live-a",
@@ -834,16 +850,14 @@ def test_resolve_active_ui_group_id_rejects_cached_group_for_active_repo_collisi
         ),
     ]
 
-    try:
+    assert (
         module.resolve_active_ui_group_id(
             "snake-game",
             repo_path="/Users/sam/snake-game",
             choices=choices,
         )
-    except ValueError as exc:
-        assert "multiple repo matches" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
+        == "snake-ui-b"
+    )
 
 
 def test_resolve_role_choice_errors_on_ambiguity():
@@ -1466,9 +1480,10 @@ def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, cap
     module = _load_module()
     cache_dir = tmp_path / "ui-cache"
     cache_dir.mkdir()
-    cache_file = cache_dir / "snake-game.json"
+    repo_path = "/Users/sam/snake-game"
+    cache_file = module._ui_group_cache_path("snake-game", repo_path=repo_path, cache_dir=cache_dir)
     cache_file.write_text(
-        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1"}) + "\n",
+        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1", "repo_path": repo_path}) + "\n",
         encoding="utf-8",
     )
     choices = [
@@ -1553,9 +1568,10 @@ def test_main_close_keeps_cache_when_failures_occur(monkeypatch, tmp_path, capsy
     module = _load_module()
     cache_dir = tmp_path / "ui-cache"
     cache_dir.mkdir()
-    cache_file = cache_dir / "snake-game.json"
+    repo_path = "/Users/sam/snake-game"
+    cache_file = module._ui_group_cache_path("snake-game", repo_path=repo_path, cache_dir=cache_dir)
     cache_file.write_text(
-        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1"}) + "\n",
+        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1", "repo_path": repo_path}) + "\n",
         encoding="utf-8",
     )
     choices = [
@@ -1607,9 +1623,10 @@ def test_main_close_keeps_cache_until_closure_observed(monkeypatch, tmp_path, ca
     module = _load_module()
     cache_dir = tmp_path / "ui-cache"
     cache_dir.mkdir()
-    cache_file = cache_dir / "snake-game.json"
+    repo_path = "/Users/sam/snake-game"
+    cache_file = module._ui_group_cache_path("snake-game", repo_path=repo_path, cache_dir=cache_dir)
     cache_file.write_text(
-        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1"}) + "\n",
+        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1", "repo_path": repo_path}) + "\n",
         encoding="utf-8",
     )
     choice = module.SessionChoice(
@@ -1729,13 +1746,14 @@ def test_main_close_resolves_group_from_non_active_open_sessions(monkeypatch, tm
     assert signals == [{"session_id": "sess-1", "signal": "terminate"}]
 
 
-def test_main_close_rejects_cached_stale_group_on_repo_name_collision(monkeypatch, tmp_path, capsys):
+def test_main_close_uses_cached_stale_group_on_repo_name_collision(monkeypatch, tmp_path, capsys):
     module = _load_module()
     cache_dir = tmp_path / "ui-cache"
     cache_dir.mkdir()
-    cache_file = cache_dir / "snake-game.json"
+    repo_path = "/Users/sam/snake-game"
+    cache_file = module._ui_group_cache_path("snake-game", repo_path=repo_path, cache_dir=cache_dir)
     cache_file.write_text(
-        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-old"}) + "\n",
+        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-old", "repo_path": repo_path}) + "\n",
         encoding="utf-8",
     )
     choices = [
@@ -1802,7 +1820,6 @@ def test_main_close_rejects_cached_stale_group_on_repo_name_collision(monkeypatc
     )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
-    assert module.main() == 1
-    assert signals == []
-    assert cache_file.exists()
-    assert "multiple repo matches" in capsys.readouterr().err
+    assert module.main() == 0
+    assert signals == [{"session_id": "sess-stale", "signal": "terminate"}]
+    assert not cache_file.exists()
