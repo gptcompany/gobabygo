@@ -545,11 +545,13 @@ def resolve_active_ui_group_id(
         return env_value
 
     cached = _read_ui_group_cache(repo_name)
+    open_choices = [choice for choice in choices if choice.state == "open" and choice.ui_group_id]
+    candidate_choices = open_choices if include_non_active else filter_active_session_choices(open_choices)
     context_choices = _matching_repo_context_choices(
-        [choice for choice in choices if choice.state == "open" and choice.ui_group_id],
+        candidate_choices,
         repo_path=repo_path,
         repo_name=repo_name,
-        preferred_ui_group_id=cached if include_non_active else "",
+        preferred_ui_group_id=cached,
     )
 
     def _candidate_ids(candidate_choices: list[SessionChoice]) -> list[str]:
