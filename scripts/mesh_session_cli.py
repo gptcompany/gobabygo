@@ -505,21 +505,29 @@ def resolve_active_ui_group_id(
     if env_value:
         return env_value
 
-    candidate_choices = choices if include_non_active else filter_active_session_choices(choices)
-    candidates = sorted(
-        {
-            choice.ui_group_id
-            for choice in candidate_choices
-            if choice.state == "open"
-            if choice.ui_group_id and _repo_matches_context(choice, repo_path, repo_name)
-        }
-    )
     cached = _read_ui_group_cache(repo_name)
-    if cached and cached in candidates:
-        return cached
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
+
+    def _candidate_ids(candidate_choices: list[SessionChoice]) -> list[str]:
+        return sorted(
+            {
+                choice.ui_group_id
+                for choice in candidate_choices
+                if choice.state == "open"
+                and choice.ui_group_id
+                and _repo_matches_context(choice, repo_path, repo_name)
+            }
+        )
+
+    active_candidates = _candidate_ids(filter_active_session_choices(choices))
+    fallback_candidates = _candidate_ids(choices) if include_non_active and not active_candidates else []
+
+    for candidates in (active_candidates, fallback_candidates):
+        if not candidates:
+            continue
+        if cached and cached in candidates:
+            return cached
+        if len(candidates) == 1:
+            return candidates[0]
         groups = ", ".join(candidates)
         raise ValueError(f"multiple live ui_group_id values for repo '{repo_name}': {groups}")
     return cached

@@ -594,6 +594,68 @@ def test_resolve_active_ui_group_id_can_include_non_active_open_sessions(monkeyp
     )
 
 
+def test_resolve_active_ui_group_id_prefers_active_group_over_stale_open_cache(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "snake-ui-old")
+    choices = [
+        module.SessionChoice(
+            session_id="sess-stale",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="failed",
+            thread_id="thread-1",
+            thread_name="snake-old",
+            thread_status="failed",
+            repo="/media/sam/1TB/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Old run",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-old",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-old",
+            attach_owner="sam",
+            ui_group_id="snake-ui-old",
+        ),
+        module.SessionChoice(
+            session_id="sess-live",
+            worker_id="worker-2",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="running",
+            thread_id="thread-2",
+            thread_name="snake-new",
+            thread_status="active",
+            repo="/media/sam/1TB/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Current run",
+            updated_at="2026-03-11T14:05:00Z",
+            tmux_session="mesh-gemini-live",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-live",
+            attach_owner="sam",
+            ui_group_id="snake-ui-live",
+        ),
+    ]
+
+    assert (
+        module.resolve_active_ui_group_id(
+            "snake-game",
+            repo_path="/Users/sam/snake-game",
+            choices=choices,
+            include_non_active=True,
+        )
+        == "snake-ui-live"
+    )
+
+
 def test_resolve_role_choice_errors_on_ambiguity():
     module = _load_module()
     choices = [
