@@ -207,6 +207,21 @@ class TestMeshWorkerRegistration:
         worker._register()
         assert len(MockRouterHandler.register_calls) == 1
 
+    def test_register_raises_for_account_in_use_conflict(self):
+        config = WorkerConfig(worker_id="ws-test-01")
+        worker = MeshWorker(config)
+        conflict = type("Resp", (), {})()
+        conflict.status_code = 409
+
+        def raise_for_status():
+            raise requests.HTTPError("account_in_use", response=conflict)
+
+        conflict.raise_for_status = raise_for_status
+        worker._session.post = lambda *args, **kwargs: conflict  # type: ignore[method-assign]
+
+        with pytest.raises(requests.HTTPError):
+            worker._register()
+
     def test_start_retries_initial_registration_until_success(self):
         config = WorkerConfig(worker_id="ws-test-01")
         worker = MeshWorker(config)

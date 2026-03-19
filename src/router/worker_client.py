@@ -142,10 +142,10 @@ class MeshWorker:
             "concurrency": 1,
         }
         resp = self._session.post(url, json=payload, timeout=5)
-        if resp.status_code == 409:
-            logger.info("Worker %s already registered, continuing", self.config.worker_id)
+        resp.raise_for_status()
+        if resp.status_code == 200:
+            logger.info("Re-registered as %s", self.config.worker_id)
         else:
-            resp.raise_for_status()
             logger.info("Registered as %s", self.config.worker_id)
 
     def _register_until_available(self) -> bool:

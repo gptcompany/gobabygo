@@ -481,11 +481,11 @@ class MeshSessionWorker:
             json=payload,
             timeout=self.config.control_plane_timeout,
         )
-        if resp.status_code == 409:
-            logger.info("Session worker %s already registered, continuing", self.config.worker_id)
-            return
         resp.raise_for_status()
-        logger.info("Registered session worker %s", self.config.worker_id)
+        if resp.status_code == 200:
+            logger.info("Re-registered session worker %s", self.config.worker_id)
+        else:
+            logger.info("Registered session worker %s", self.config.worker_id)
 
     def _register_until_available(self) -> bool:
         """Keep retrying registration while the worker should remain running."""

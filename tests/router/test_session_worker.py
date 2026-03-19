@@ -169,6 +169,17 @@ def test_session_worker_from_env_preserves_ui_role_with_explicit_capabilities() 
     assert "ui_role" in cfg.registration_capabilities()
 
 
+def test_session_worker_register_raises_for_account_in_use_conflict() -> None:
+    worker = _make_worker()
+    worker._http = MagicMock()
+    conflict = MagicMock(status_code=409)
+    conflict.raise_for_status.side_effect = requests.HTTPError("account_in_use", response=conflict)
+    worker._http.post.return_value = conflict
+
+    with pytest.raises(requests.HTTPError):
+        worker._register()
+
+
 def test_build_completion_summary_only_for_ui_role_tasks() -> None:
     worker = _make_worker()
 
