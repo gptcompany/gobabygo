@@ -33,6 +33,8 @@ def test_mesh_ui_role_shell_sets_role_label_and_badge():
     assert "SetBadgeFormat" in content
     assert 'label="mesh:${role} (operator) | ${repo_name}"' in content
     assert 'label="mesh:${role} (${LAUNCH_MODE}:${PROVIDER}:${session_short}) | ${repo_name}"' in content
+    assert content.count("set_session_label() {") >= 2
+    assert content.count("emit_role_banner() {") >= 2
 
 
 def test_mesh_ui_role_shell_banner_shows_runtime_identity():

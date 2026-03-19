@@ -251,6 +251,57 @@ launch_mode="${LAUNCH_MODE:-}"
 provider="${PROVIDER:-}"
 session_id="${SESSION_ID:-}"
 
+set_session_label() {
+  local role="$1"
+  local repo_name="$2"
+  local label="mesh:${role} | ${repo_name}"
+  local badge
+  local session_short=""
+
+  if [[ -n "${session_id:-}" ]]; then
+    session_short="${session_id:0:12}"
+  fi
+
+  if [[ "$role" == "boss" ]]; then
+    label="mesh:${role} (operator) | ${repo_name}"
+  elif [[ -n "${launch_mode:-}" && -n "${provider:-}" && -n "$session_short" ]]; then
+    label="mesh:${role} (${launch_mode}:${provider}:${session_short}) | ${repo_name}"
+  elif [[ -n "${launch_mode:-}" && -n "${provider:-}" ]]; then
+    label="mesh:${role} (${launch_mode}:${provider}) | ${repo_name}"
+  elif [[ -n "${launch_mode:-}" ]]; then
+    label="mesh:${role} (${launch_mode}) | ${repo_name}"
+  fi
+  printf "\033]0;%s\007" "$label"
+  badge="$(printf "%s" "$label" | base64 | tr -d "\n")"
+  printf "\033]1337;SetBadgeFormat=%s\a" "$badge"
+}
+
+emit_role_banner() {
+  local role="$1"
+  local repo_name="$2"
+  local session_short=""
+
+  if [[ -n "${session_id:-}" ]]; then
+    session_short="${session_id:0:12}"
+  fi
+
+  if [[ "$role" == "boss" ]]; then
+    printf "[mesh:%s] operator repo=%s ui_group=%s\n" "$role" "$repo_name" "${MESH_UI_GROUP_ID:-unset}"
+    return 0
+  fi
+  if [[ -n "${launch_mode:-}" && -n "${provider:-}" && -n "$session_short" ]]; then
+    printf "[mesh:%s] %s provider=%s session=%s repo=%s ui_group=%s\n" \
+      "$role" "$launch_mode" "$provider" "$session_short" "$repo_name" "${MESH_UI_GROUP_ID:-unset}"
+    return 0
+  fi
+  if [[ -n "${launch_mode:-}" && -n "${provider:-}" ]]; then
+    printf "[mesh:%s] %s provider=%s repo=%s ui_group=%s\n" \
+      "$role" "$launch_mode" "$provider" "$repo_name" "${MESH_UI_GROUP_ID:-unset}"
+    return 0
+  fi
+  printf "[mesh:%s] repo=%s ui_group=%s\n" "$role" "$repo_name" "${MESH_UI_GROUP_ID:-unset}"
+}
+
 if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
   remote_init="$(printf "%s" "$REMOTE_INIT_B64" | base64 -d)"
 fi
