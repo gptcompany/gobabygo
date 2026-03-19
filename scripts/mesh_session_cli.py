@@ -494,6 +494,45 @@ def _clear_ui_group_cache(repo_name: str, *, cache_dir: Path | None = None) -> N
         return
 
 
+def _matching_repo_context_choices(
+    choices: list[SessionChoice],
+    *,
+    repo_path: str,
+    repo_name: str,
+    preferred_ui_group_id: str = "",
+) -> list[SessionChoice]:
+    target_repo = os.path.abspath(repo_path)
+    exact_matches = [
+        choice for choice in choices if choice.repo and os.path.abspath(choice.repo) == target_repo
+    ]
+    if exact_matches:
+        return exact_matches
+
+    named_matches = [choice for choice in choices if choice.repo_name == repo_name]
+    if not named_matches:
+        return []
+
+    contexts: dict[str, list[SessionChoice]] = {}
+    for choice in named_matches:
+        context_key = os.path.abspath(choice.repo) if choice.repo else f"repo-name:{repo_name}"
+        contexts.setdefault(context_key, []).append(choice)
+
+    if preferred_ui_group_id:
+        preferred = [
+            grouped
+            for grouped in contexts.values()
+            if any(choice.ui_group_id == preferred_ui_group_id for choice in grouped)
+        ]
+        if len(preferred) == 1:
+            return preferred[0]
+
+    if len(contexts) == 1:
+        return named_matches
+
+    details = ", ".join(sorted(grouped[0].repo or grouped[0].repo_name or "<unknown>" for grouped in contexts.values()))
+    raise ValueError(f"multiple repo matches for repo '{repo_name}': {details}")
+
+
 def resolve_active_ui_group_id(
     repo_name: str,
     *,
@@ -506,20 +545,18 @@ def resolve_active_ui_group_id(
         return env_value
 
     cached = _read_ui_group_cache(repo_name)
+    context_choices = _matching_repo_context_choices(
+        [choice for choice in choices if choice.state == "open" and choice.ui_group_id],
+        repo_path=repo_path,
+        repo_name=repo_name,
+        preferred_ui_group_id=cached if include_non_active else "",
+    )
 
     def _candidate_ids(candidate_choices: list[SessionChoice]) -> list[str]:
-        return sorted(
-            {
-                choice.ui_group_id
-                for choice in candidate_choices
-                if choice.state == "open"
-                and choice.ui_group_id
-                and _repo_matches_context(choice, repo_path, repo_name)
-            }
-        )
+        return sorted({choice.ui_group_id for choice in candidate_choices if choice.ui_group_id})
 
-    active_candidates = _candidate_ids(filter_active_session_choices(choices))
-    fallback_candidates = _candidate_ids(choices) if include_non_active and not active_candidates else []
+    active_candidates = _candidate_ids(filter_active_session_choices(context_choices))
+    fallback_candidates = _candidate_ids(context_choices) if include_non_active and not active_candidates else []
 
     for candidates in (active_candidates, fallback_candidates):
         if not candidates:

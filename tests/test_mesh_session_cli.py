@@ -656,6 +656,70 @@ def test_resolve_active_ui_group_id_prefers_active_group_over_stale_open_cache(m
     )
 
 
+def test_resolve_active_ui_group_id_rejects_repo_name_collision_without_cache(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_GROUP_ID", raising=False)
+    monkeypatch.setattr(module, "_read_ui_group_cache", lambda repo_name, cache_dir=None: "")
+    choices = [
+        module.SessionChoice(
+            session_id="sess-stale",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="failed",
+            thread_id="thread-1",
+            thread_name="snake-a",
+            thread_status="failed",
+            repo="/media/sam/1TB/checkouts/a/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Old run",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-old",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-old",
+            attach_owner="sam",
+            ui_group_id="snake-ui-old",
+        ),
+        module.SessionChoice(
+            session_id="sess-live",
+            worker_id="worker-2",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="running",
+            thread_id="thread-2",
+            thread_name="snake-b",
+            thread_status="active",
+            repo="/media/sam/1TB/checkouts/b/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Foreign run",
+            updated_at="2026-03-11T14:05:00Z",
+            tmux_session="mesh-gemini-live",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-live",
+            attach_owner="sam",
+            ui_group_id="snake-ui-live",
+        ),
+    ]
+
+    try:
+        module.resolve_active_ui_group_id(
+            "snake-game",
+            repo_path="/Users/sam/snake-game",
+            choices=choices,
+            include_non_active=True,
+        )
+    except ValueError as exc:
+        assert "multiple repo matches" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_resolve_role_choice_errors_on_ambiguity():
     module = _load_module()
     choices = [
@@ -1414,3 +1478,81 @@ def test_main_close_resolves_group_from_non_active_open_sessions(monkeypatch, tm
 
     assert module.main() == 0
     assert signals == [{"session_id": "sess-1", "signal": "terminate"}]
+
+
+def test_main_close_uses_cached_stale_group_on_repo_name_collision(monkeypatch, tmp_path):
+    module = _load_module()
+    cache_dir = tmp_path / "ui-cache"
+    cache_dir.mkdir()
+    cache_file = cache_dir / "snake-game.json"
+    cache_file.write_text(
+        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-old"}) + "\n",
+        encoding="utf-8",
+    )
+    choices = [
+        module.SessionChoice(
+            session_id="sess-stale",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="failed",
+            thread_id="thread-1",
+            thread_name="snake-a",
+            thread_status="failed",
+            repo="/media/sam/1TB/checkouts/a/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Old run",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-old",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-old",
+            attach_owner="sam",
+            ui_group_id="snake-ui-old",
+        ),
+        module.SessionChoice(
+            session_id="sess-live",
+            worker_id="worker-2",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="running",
+            thread_id="thread-2",
+            thread_name="snake-b",
+            thread_status="active",
+            repo="/media/sam/1TB/checkouts/b/snake-game",
+            repo_name="snake-game",
+            role="lead",
+            title="Foreign run",
+            updated_at="2026-03-11T14:05:00Z",
+            tmux_session="mesh-gemini-live",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-live",
+            attach_owner="sam",
+            ui_group_id="snake-ui-live",
+        ),
+    ]
+    signals: list[dict[str, str]] = []
+
+    monkeypatch.setenv("MESH_UI_GROUP_CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: choices)
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "router_post_json",
+        lambda router_url, auth_token, path, payload: signals.append(payload) or {"status": "accepted"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_wait_for_ui_group_closure",
+        lambda *args, **kwargs: (True, [], ""),
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
+
+    assert module.main() == 0
+    assert signals == [{"session_id": "sess-stale", "signal": "terminate"}]
+    assert not cache_file.exists()
