@@ -555,85 +555,44 @@ Live note from `2026-03-10`:
 - text-marker auto-exit is stricter: it is opt-in without `success_file_path` and only matches standalone marker lines, not arbitrary substrings in the pane buffer
 - tmux session naming uses a longer task fragment to reduce collision risk under parallel load
 
-## 2026-03-19 mesh ui role sessions: T014 status
+## 2026-03-20 mesh ui role sessions: T014 status
 
 - `T001` through `T013` are implemented on `origin/master`
-- `T014` remains open
-- latest code fix during this phase:
-  - `01d67be` `Fail worker registration on account conflicts`
+- `T014` is still open
+- current external-review package:
+  - `specs/mesh-ui-role-sessions/t014-findings-20260320.md`
 
-Verified facts:
+What changed since the 2026-03-19 note:
 
-- the operator Mac and iTerm2 API are working
-  - a minimal Python+iTerm2 smoke created a tab and injected text successfully
-- the live router schema issue was already corrected
-  - stale live code on `.100` had been dropping `repo` / `role` on `POST /tasks`
-  - the router was rebuilt from a clean checkout and aligned with the current task-backed session path
-- the remote pane bootstrap helper bug was corrected
-  - `f2e7715` `Fix remote mesh ui pane bootstrap helpers`
-- worker registration conflict handling was corrected
-  - `01d67be` now lets `account_in_use` surface instead of treating all `409` responses as re-registration
+- the Gemini runtime-user mismatch is no longer the primary blocker
+  - `87213e5` applied runtime-user overrides to all session workers
+  - `ccs gemini` is valid on WS `.111` under `sam`, which is now the runtime for the Gemini session workers
+- router accept backlog was raised:
+  - `3a9f077` `Increase router HTTP accept backlog`
+- provider-override attach scoring was fixed:
+  - `815e256` `Fix mesh UI worker attach under provider override`
 
-Operational Gemini capacity work on `.111`:
+What is now proven:
 
-- temporary extra Gemini session workers were added:
-  - `mesh-session-gemini-ui-02`
-  - `mesh-session-gemini-ui-03`
-  - `mesh-session-gemini-ui-04`
-  - `mesh-session-gemini-ui-05`
-- each was assigned a unique `MESH_ACCOUNT_PROFILE`:
-  - `work-gemini-sess-ui-02`
-  - `work-gemini-sess-ui-03`
-  - `work-gemini-sess-ui-04`
-  - `work-gemini-sess-ui-05`
-- router `/workers` then showed five Gemini session-capable workers available
+- the Mac can drive iTerm2
+- concurrent Gemini sessions under `sam` stay alive in `tmux` for about two minutes
+- backend role sessions now materialize concurrently for `mesh ui`
+  - latest verified group: `snake-game-ui-20260320T110208Z`
+  - backend showed live/open sessions for:
+    - `president`
+    - `lead`
+    - `worker-codex`
+    - `worker-gemini`
 
-Latest `mesh ui` live run:
+What still blocks T014 acceptance:
 
-- repo:
-  - `/media/sam/1TB/snake-game`
-- `ui_group_id`:
-  - `snake-game-ui-20260319T235152Z`
-- outcomes:
-  - `president`: `completed`
-  - `lead`: `completed`
-  - `worker-codex`: `completed`
-  - `worker-gemini`: `completed`
-  - `verifier`: `running`
+1. likely bootstrap race in `src/router/session_worker.py`
+   - early operator input can be persisted in the router and still not reach the live session
+2. router/control-plane stability is improved but still not fully proven under repeated multi-role reruns
+3. `mesh_session_cli.py list --all --json` is not reliable enough for this live diagnostic path
+4. automated iTerm2 pane introspection is not reliable enough to count as final acceptance evidence
 
-Why that is still a failure for T014:
+Current instruction:
 
-- the first four sessions exited almost immediately
-- their task results had empty `final_snapshot`
-- panes therefore did not remain attached for real operator use
-- the remaining `verifier` record is stale/inconsistent:
-  - router still shows it `open/running`
-  - but `sudo -u mesh-worker tmux ls` shows no tmux server
-  - worker journal shows router timeout errors while trying to manage that session
-
-Root blocker:
-
-- direct smoke on `.111` as the actual worker user:
-  - `sudo -u mesh-worker env PATH=/home/sam/.npm-global/bin:/usr/local/bin:/usr/bin:/bin ccs gemini`
-- result:
-  - `Authentication required for Google Gemini`
-  - `Failed to start OAuth flow`
-- current runtime state:
-  - `/home/mesh-worker/.ccs/instances` contains only `claude-*`
-  - there is no usable Gemini instance for `mesh-worker`
-
-Conclusion:
-
-- the current blocker is Gemini auth/runtime for the real WS session-worker user
-- it is no longer:
-  - Mac/iTerm2 control
-  - router task shape
-  - pane bootstrap helpers
-  - worker count
-
-Next steps:
-
-1. authenticate `ccs gemini` for `mesh-worker`, or move Gemini session workers back onto a user with a valid Gemini runtime
-2. rerun the direct worker-user smoke first
-3. only then rerun the full `mesh ui` E2E
-4. separately harden stale-open-session cleanup when router timeouts leave open session records behind
+- use `specs/mesh-ui-role-sessions/t014-findings-20260320.md` as the review brief before attempting more implementation
+- do not assume the remaining blocker is Gemini auth for `mesh-worker`; that note is obsolete
