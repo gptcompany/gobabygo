@@ -87,6 +87,72 @@ install_common_worker_env() {
     fi
 }
 
+provider_identity_json() {
+    local cli_type="$1"
+    python3 - "$PROJECT_ROOT" "$cli_type" <<'PY'
+import json
+import sys
+
+repo_root = sys.argv[1]
+cli_type = sys.argv[2]
+sys.path.insert(0, repo_root)
+
+from src.router.provider_runtime import resolve_session_service_identity
+
+print(json.dumps(resolve_session_service_identity(cli_type)))
+PY
+}
+
+session_identity_field() {
+    local cli_type="$1" field="$2"
+    local payload
+    payload="$(provider_identity_json "$cli_type")"
+    MESH_PROVIDER_IDENTITY_JSON="$payload" python3 - "$field" <<'PY'
+import json
+import os
+import sys
+
+field = sys.argv[1]
+data = json.loads(os.environ["MESH_PROVIDER_IDENTITY_JSON"])
+value = data.get(field, [])
+if isinstance(value, list):
+    print(" ".join(str(item) for item in value if str(item).strip()))
+else:
+    print(str(value or "").strip())
+PY
+}
+
+session_cli_type_from_env_file() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    awk -F= '/^MESH_CLI_TYPE=/{print $2; exit}' "$file" | tr -d '"' | xargs
+}
+
+apply_session_service_override() {
+    local unit_instance="$1" cli_type="$2"
+    local user group supplementary_groups override_dir override_path
+
+    user="$(session_identity_field "$cli_type" user)"
+    group="$(session_identity_field "$cli_type" group)"
+    supplementary_groups="$(session_identity_field "$cli_type" supplementary_groups)"
+    [ -n "$user" ] || return 0
+
+    override_dir="/etc/systemd/system/mesh-session-worker@${unit_instance}.service.d"
+    override_path="${override_dir}/runtime-user.conf"
+
+    mkdir -p "$override_dir"
+    {
+        echo "[Service]"
+        echo "User=${user}"
+        echo "Group=${group:-$user}"
+        echo "SupplementaryGroups="
+        if [ -n "$supplementary_groups" ]; then
+            echo "SupplementaryGroups=${supplementary_groups}"
+        fi
+        echo "Environment=HOME=/home/${user}"
+    } > "$override_path"
+}
+
 prepare_worker_uv_env() {
     mkdir -p /opt/mesh-worker/.uv/cache /opt/mesh-worker/.uv/python
     chown -R mesh-worker:mesh-worker /opt/mesh-worker/.uv
@@ -214,6 +280,10 @@ for SRC_ENV in "${PROJECT_ROOT}"/deploy/mesh-session-*.env; do
     sed "s/__REPLACE_WITH_TOKEN__/${TOKEN}/" "$SRC_ENV" > "$DST_ENV"
     chown mesh-worker:mesh-worker "$DST_ENV"
     chmod 600 "$DST_ENV"
+    cli_type="$(session_cli_type_from_env_file "$DST_ENV")"
+    if [ -n "$cli_type" ]; then
+        apply_session_service_override "$name" "$cli_type"
+    fi
     echo "  ${name}.env: OK (session template)"
 done
 

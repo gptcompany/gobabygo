@@ -603,6 +603,12 @@ configure_session_worker_env() {
   echo "[OK] configured $file"
 }
 
+session_cli_type_from_env_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  awk -F= '/^MESH_CLI_TYPE=/{print $2; exit}' "$file" | tr -d '"' | xargs
+}
+
 provider_identity_json() {
   local cli_type="$1"
   if [[ -z "$repo_root" ]]; then
@@ -668,6 +674,20 @@ apply_session_service_override() {
   echo "[OK] applied ${cli_type} session user override: user=${user} group=${group:-$user} supplementary_groups=${supplementary_groups:-<none>}"
 }
 
+apply_session_service_override_for_env() {
+  local file="$1"
+  local cli_type unit_instance
+
+  [[ -f "$file" ]] || return 0
+  cli_type="$(session_cli_type_from_env_file "$file")"
+  if [[ -z "$cli_type" ]]; then
+    echo "[WARN] could not determine MESH_CLI_TYPE for $file"
+    return 0
+  fi
+  unit_instance="$(basename "$file" .env)"
+  apply_session_service_override "$unit_instance" "$cli_type"
+}
+
 bootstrap_mesh_worker_runtime() {
   local task_group="mesh-worker"
 
@@ -708,19 +728,18 @@ TMPFILES
 }
 
 bootstrap_mesh_worker_runtime
-configure_session_worker_env "${env_dir}/mesh-session-claude-work.env"
-configure_session_worker_env "${env_dir}/mesh-session-codex-work.env"
-configure_session_worker_env "${env_dir}/mesh-session-gemini-work.env"
-apply_session_service_override "mesh-session-claude-work" "claude"
-apply_session_service_override "mesh-session-codex-work" "codex"
-apply_session_service_override "mesh-session-gemini-work" "gemini"
+for env_file in "${env_dir}"/mesh-session-*.env; do
+  [[ -f "$env_file" ]] || continue
+  configure_session_worker_env "$env_file"
+  apply_session_service_override_for_env "$env_file"
+done
 
 sudo systemctl daemon-reload
-sudo systemctl restart mesh-session-worker@mesh-session-claude-work
-sudo systemctl restart mesh-session-worker@mesh-session-codex-work
-if [[ -f "${env_dir}/mesh-session-gemini-work.env" ]]; then
-  sudo systemctl restart mesh-session-worker@mesh-session-gemini-work
-fi
+for env_file in "${env_dir}"/mesh-session-*.env; do
+  [[ -f "$env_file" ]] || continue
+  name="$(basename "$env_file" .env)"
+  sudo systemctl restart "mesh-session-worker@${name}"
+done
 
 if [[ "$stop_batch" == "1" ]]; then
   sudo systemctl stop mesh-worker@claude-work || true
@@ -729,11 +748,13 @@ if [[ "$stop_batch" == "1" ]]; then
   echo "[OK] batch workers stopped"
 fi
 
-sudo systemctl is-active --quiet mesh-session-worker@mesh-session-claude-work && echo "[OK] session claude active"
-sudo systemctl is-active --quiet mesh-session-worker@mesh-session-codex-work && echo "[OK] session codex active"
-if [[ -f "${env_dir}/mesh-session-gemini-work.env" ]]; then
-  sudo systemctl is-active --quiet mesh-session-worker@mesh-session-gemini-work && echo "[OK] session gemini active"
-fi
+for env_file in "${env_dir}"/mesh-session-*.env; do
+  [[ -f "$env_file" ]] || continue
+  name="$(basename "$env_file" .env)"
+  if sudo systemctl is-active --quiet "mesh-session-worker@${name}"; then
+    echo "[OK] session ${name} active"
+  fi
+done
 
 echo
 echo "Bootstrap complete."

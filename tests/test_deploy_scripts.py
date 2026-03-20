@@ -138,6 +138,12 @@ class TestSystemdUnits:
         assert 'mesh-session-worker@${worker}.service' in content
         assert 'mesh-review-worker@${worker}.service' in content
 
+    def test_deploy_worker_applies_runtime_user_override_to_all_session_envs(self):
+        content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
+        assert 'session_cli_type_from_env_file' in content
+        assert 'runtime-user.conf' in content
+        assert 'apply_session_service_override "$name" "$cli_type"' in content
+
     def test_install_worker_strips_batch_template_prefix(self):
         content = (DEPLOY_DIR / "install.sh").read_text()
         assert 'name="${name#mesh-worker-}"' in content
@@ -148,6 +154,12 @@ class TestSystemdUnits:
         assert 'mesh-session-worker@${name}.service' in content
         assert 'mesh-review-worker@${name}.service' in content
         assert 'UV_PYTHON_INSTALL_DIR=/opt/mesh-worker/.uv/python' in content
+
+    def test_install_worker_applies_runtime_user_override_to_session_instances(self):
+        content = (DEPLOY_DIR / "install.sh").read_text()
+        assert 'session_cli_type_from_env_file' in content
+        assert 'runtime-user.conf' in content
+        assert 'apply_session_service_override "$name" "$cli_type"' in content
 
 
 class TestEnvironmentFiles:
@@ -339,6 +351,12 @@ class TestBootOrderDoc:
 
 class TestMeshScript:
     """Regression tests for the operator shell wrapper."""
+
+    def test_mesh_bootstrap_applies_runtime_user_override_to_all_session_envs(self):
+        content = (REPO_ROOT / "scripts" / "mesh").read_text()
+        assert 'apply_session_service_override_for_env()' in content
+        assert 'for env_file in "${env_dir}"/mesh-session-*.env; do' in content
+        assert 'apply_session_service_override_for_env "$env_file"' in content
 
     def test_mesh_status_does_not_fall_through_from_uv_to_python(self, tmp_path):
         fakebin = tmp_path / "bin"
