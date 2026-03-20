@@ -367,7 +367,8 @@ def get_json(path: str):
     req = Request(f"{base}{path}")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    with urlopen(req, timeout=10) as resp:
+    timeout = float(os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "60"))
+    with urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 try:

@@ -71,10 +71,18 @@ def load_router_env() -> tuple[str, str]:
     return "", ""
 
 
+def _control_plane_timeout() -> float:
+    raw = os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "60").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 60.0
+
+
 def router_get_json(router_url: str, auth_token: str, path: str) -> Any:
     req = Request(router_url.rstrip("/") + path)
     req.add_header("Authorization", f"Bearer {auth_token}")
-    with urlopen(req, timeout=10) as resp:
+    with urlopen(req, timeout=_control_plane_timeout()) as resp:
         return json.load(resp)
 
 
@@ -86,7 +94,7 @@ def router_post_json(router_url: str, auth_token: str, path: str, payload: dict[
     )
     req.add_header("Authorization", f"Bearer {auth_token}")
     req.add_header("Content-Type", "application/json")
-    with urlopen(req, timeout=10) as resp:
+    with urlopen(req, timeout=_control_plane_timeout()) as resp:
         return json.load(resp)
 
 
