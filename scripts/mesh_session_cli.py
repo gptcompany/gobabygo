@@ -371,9 +371,9 @@ def _choice_attach_label(choice: SessionChoice) -> str:
 def _is_active_choice(choice: SessionChoice) -> bool:
     if choice.state != "open":
         return False
-    # If it is open, we want to see it even if the task is finished
-    # or the repo is missing, to help triage stale sessions.
-    return True
+    if not choice.repo:
+        return False
+    return choice.task_status in _ACTIVE_TASK_STATUSES
 
 
 def _choice_table_header() -> str:
@@ -930,13 +930,14 @@ def main() -> int:
         return _print_error(f"failed to query mesh router: {exc}")
 
     active_choices = filter_active_session_choices(choices) if requested_state == "open" else choices
+    list_choices = choices if args.cmd == "list" and requested_state == "open" else active_choices
 
     repo_hint = getattr(args, "repo", "").strip() or None
     repo_path, repo_name = detect_repo_context(repo_hint)
     default_query = "" if getattr(args, "all", False) else repo_name
     query = getattr(args, "query", "").strip() or default_query
     if args.cmd == "list":
-        filtered = filter_session_choices(active_choices, query)
+        filtered = filter_session_choices(list_choices, query)
         if not filtered:
             scope = "all repos" if getattr(args, "all", False) else f"repo '{repo_name}'"
             print(f"No sessions matched for {scope}.")

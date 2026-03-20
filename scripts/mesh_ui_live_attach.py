@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -33,6 +34,15 @@ def main() -> int:
     args = _parse_args()
     module = _load_mesh_iterm_ui()
     roles = [role.strip() for role in args.roles_csv.split(",") if role.strip()] or [args.role]
+    ui_group_id = os.environ.get("MESH_UI_GROUP_ID", "").strip()
+    if not ui_group_id:
+        router_url, auth_token = module._load_router_env()
+        ui_group_id = module._resolve_active_ui_group_id(
+            args.repo_name,
+            repo_path=args.repo,
+            router_url=router_url,
+            auth_token=auth_token,
+        )
     cfg = module.UiConfig(
         repo=args.repo,
         repo_name=args.repo_name,
@@ -42,6 +52,7 @@ def main() -> int:
         replace_tabs=False,
         preset="auto",
         attach_live=True,
+        ui_group_id=ui_group_id,
     )
     print(module._discover_live_remote_inits(cfg).get(args.role, ""))
     return 0

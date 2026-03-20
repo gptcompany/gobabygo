@@ -253,6 +253,64 @@ def test_filter_active_session_choices_hides_stale_and_unscoped_entries():
     assert [choice.session_id for choice in filtered] == ["sess-active"]
 
 
+def test_main_list_shows_all_open_sessions_for_triage(monkeypatch, capsys):
+    module = _load_module()
+    choices = [
+        module.SessionChoice(
+            session_id="sess-active",
+            worker_id="worker-1",
+            cli_type="gemini",
+            account_profile="default",
+            state="open",
+            task_id="task-1",
+            task_status="running",
+            thread_id="thread-1",
+            thread_name="snake-demo",
+            thread_status="active",
+            repo="/media/sam/1TB/snake-game",
+            repo_name="snake-game",
+            role="worker",
+            title="Implement movement",
+            updated_at="2026-03-11T14:00:00Z",
+            tmux_session="mesh-gemini-sam-1234",
+            attach_kind="ssh_tmux",
+            attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1234",
+            attach_owner="sam",
+        ),
+        module.SessionChoice(
+            session_id="sess-stale",
+            worker_id="worker-2",
+            cli_type="codex",
+            account_profile="default",
+            state="open",
+            task_id="task-2",
+            task_status="failed",
+            thread_id="",
+            thread_name="",
+            thread_status="",
+            repo="/media/sam/1TB/rektslug",
+            repo_name="rektslug",
+            role="",
+            title="old smoke",
+            updated_at="2026-03-11T14:01:00Z",
+            tmux_session="mesh-codex-old-1234",
+            attach_kind="",
+            attach_target="",
+            attach_owner="",
+        ),
+    ]
+
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: choices)
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "list", "--all"])
+
+    assert module.main() == 0
+    out = capsys.readouterr().out
+    assert "sess-active" in out
+    assert "sess-stale" in out
+
+
 def test_build_attach_spec_prefers_upterm():
     module = _load_module()
     choice = module.SessionChoice(

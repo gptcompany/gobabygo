@@ -52,8 +52,34 @@ warn_check "Queue depth < 100" bash -c "curl -sf ${ROUTER_URL}/health | python3 
 # 3. systemd services
 echo ""
 echo "--- Services ---"
+router_systemd_active=0
+router_docker_active=0
+
 if systemctl list-unit-files mesh-router.service &>/dev/null 2>&1; then
-    check "mesh-router.service active" systemctl is-active --quiet mesh-router.service
+    if systemctl is-active --quiet mesh-router.service; then
+        router_systemd_active=1
+        echo "  [OK]   mesh-router.service active"
+        ((PASS++)) || true
+    else
+        echo "  [WARN] mesh-router.service inactive"
+        ((WARN++)) || true
+    fi
+fi
+
+if command -v docker &>/dev/null; then
+    if docker inspect -f '{{.State.Running}}' mesh-router &>/dev/null; then
+        router_docker_active=1
+        echo "  [OK]   docker mesh-router active"
+        ((PASS++)) || true
+    fi
+fi
+
+if [ "$router_systemd_active" -eq 1 ] && [ "$router_docker_active" -eq 1 ]; then
+    echo "  [FAIL] both router supervisors are active"
+    ((FAIL++)) || true
+elif [ "$router_systemd_active" -eq 0 ] && [ "$router_docker_active" -eq 0 ]; then
+    echo "  [WARN] no local router supervisor detected"
+    ((WARN++)) || true
 fi
 
 for svc in mesh-worker@claude-work mesh-worker@codex-work mesh-worker@gemini-work; do

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # install.sh — Mesh network provisioning
-# Usage: ./install.sh router   (on VPS)
+# Usage: ./install.sh router [docker|systemd]  (on VPS)
 #        ./install.sh worker   (on Workstation)
 set -euo pipefail
 
 MODE="${1:?Usage: $0 router|worker}"
+ROUTER_SUPERVISOR="${2:-${MESH_ROUTER_SUPERVISOR:-docker}}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 normalize_task_root() {
@@ -166,49 +167,77 @@ enable_worker_instances() {
 
 case "$MODE" in
   router)
-    echo "=== Installing Mesh Router (VPS) ==="
+    case "$ROUTER_SUPERVISOR" in
+      docker)
+        echo "=== Installing Mesh Router (VPS, docker supervisor) ==="
 
-    # 1. Create service user
-    if ! id mesh &>/dev/null; then
-      sudo useradd --system --no-create-home --shell /usr/sbin/nologin mesh
-      echo "Created user: mesh"
-    fi
+        sudo mkdir -p /var/lib/mesh-router
+        sudo mkdir -p /etc/mesh-router/config
+        sudo mkdir -p /opt/mesh-router
 
-    # 2. Create directories
-    sudo mkdir -p /var/lib/mesh-router
-    sudo mkdir -p /etc/mesh-router
-    sudo mkdir -p /opt/mesh-router
-    sudo chown mesh:mesh /var/lib/mesh-router
-    sudo chown mesh:mesh /opt/mesh-router
+        for item in src pyproject.toml uv.lock schemas scripts deploy; do
+          [ -e "$PROJECT_ROOT/$item" ] && sudo cp -r "$PROJECT_ROOT/$item" /opt/mesh-router/
+        done
 
-    # 3. Install project (minimal: only production files)
-    for item in src pyproject.toml schemas deploy; do
-      [ -e "$PROJECT_ROOT/$item" ] && sudo cp -r "$PROJECT_ROOT/$item" /opt/mesh-router/
-    done
-    sudo chown -R mesh:mesh /opt/mesh-router
+        sudo cp deploy/compose.env.example /etc/mesh-router/compose.env
+        sudo cp deploy/mesh-matrix-bridge.docker.env /etc/mesh-router/mesh-matrix-bridge.docker.env
+        sudo chmod 640 /etc/mesh-router/compose.env /etc/mesh-router/mesh-matrix-bridge.docker.env
 
-    # 4. Create venv with uv
-    cd /opt/mesh-router
-    if command -v uv &>/dev/null; then
-      sudo -u mesh uv venv venv
-      sudo -u mesh uv pip install -e . --python venv/bin/python
-    else
-      echo "ERROR: uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
-      exit 1
-    fi
+        echo "=== Docker router installed. Next steps ==="
+        echo "1. Edit /etc/mesh-router/compose.env"
+        echo "2. Edit /etc/mesh-router/mesh-matrix-bridge.docker.env"
+        echo "3. Start with: cd /opt/mesh-router && ./deploy/live-compose.sh up -d --build"
+        ;;
+      systemd)
+        echo "=== Installing Mesh Router (VPS, systemd supervisor) ==="
 
-    # 5. Copy env file template (owned by service user)
-    sudo cp deploy/mesh-router.env /etc/mesh-router/mesh-router.env
-    sudo chown mesh:mesh /etc/mesh-router/mesh-router.env
-    sudo chmod 600 /etc/mesh-router/mesh-router.env
-    echo "!! Edit /etc/mesh-router/mesh-router.env with real MESH_AUTH_TOKEN"
+        # 1. Create service user
+        if ! id mesh &>/dev/null; then
+          sudo useradd --system --no-create-home --shell /usr/sbin/nologin mesh
+          echo "Created user: mesh"
+        fi
 
-    # 6. Install systemd unit
-    sudo cp deploy/mesh-router.service /etc/systemd/system/
-    sudo systemctl daemon-reload
-    sudo systemctl enable mesh-router.service
+        # 2. Create directories
+        sudo mkdir -p /var/lib/mesh-router
+        sudo mkdir -p /etc/mesh-router
+        sudo mkdir -p /opt/mesh-router
+        sudo chown mesh:mesh /var/lib/mesh-router
+        sudo chown mesh:mesh /opt/mesh-router
 
-    echo "=== Router installed. Start with: sudo systemctl start mesh-router ==="
+        # 3. Install project (minimal: only production files)
+        for item in src pyproject.toml schemas deploy; do
+          [ -e "$PROJECT_ROOT/$item" ] && sudo cp -r "$PROJECT_ROOT/$item" /opt/mesh-router/
+        done
+        sudo chown -R mesh:mesh /opt/mesh-router
+
+        # 4. Create venv with uv
+        cd /opt/mesh-router
+        if command -v uv &>/dev/null; then
+          sudo -u mesh uv venv venv
+          sudo -u mesh uv pip install -e . --python venv/bin/python
+        else
+          echo "ERROR: uv not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
+          exit 1
+        fi
+
+        # 5. Copy env file template (owned by service user)
+        sudo cp deploy/mesh-router.env /etc/mesh-router/mesh-router.env
+        sudo chown mesh:mesh /etc/mesh-router/mesh-router.env
+        sudo chmod 600 /etc/mesh-router/mesh-router.env
+        echo "!! Edit /etc/mesh-router/mesh-router.env with real MESH_AUTH_TOKEN"
+
+        # 6. Install systemd unit
+        sudo cp deploy/mesh-router.service /etc/systemd/system/
+        sudo systemctl daemon-reload
+        sudo systemctl enable mesh-router.service
+
+        echo "=== Router installed. Start with: sudo systemctl start mesh-router ==="
+        ;;
+      *)
+        echo "ERROR: unsupported router supervisor '$ROUTER_SUPERVISOR' (expected docker|systemd)"
+        exit 1
+        ;;
+    esac
     ;;
 
   worker)

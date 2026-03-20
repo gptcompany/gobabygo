@@ -919,8 +919,35 @@ if command -v tmux >/dev/null 2>&1; then
   fi
 fi
 
-if [[ "$restart_router" == "1" ]]; then
+docker_router_running=0
+if command -v docker >/dev/null 2>&1; then
+  if docker inspect -f '{{.State.Running}}' mesh-router 2>/dev/null | grep -qx 'true'; then
+    docker_router_running=1
+  fi
+fi
+
+systemd_router_installed=0
+systemd_router_active=0
+if command -v systemctl >/dev/null 2>&1; then
   if systemctl list-unit-files 2>/dev/null | grep -q '^mesh-router\.service'; then
+    systemd_router_installed=1
+    if sudo systemctl is-active --quiet mesh-router; then
+      systemd_router_active=1
+    fi
+  fi
+fi
+
+if [[ "$docker_router_running" == "1" && "$systemd_router_active" == "1" ]]; then
+  echo "[deploy] ERROR: both Docker mesh-router and mesh-router.service are active"
+  echo "[deploy] choose one router supervisor before deploying"
+  exit 1
+fi
+
+if [[ "$restart_router" == "1" ]]; then
+  if [[ "$docker_router_running" == "1" ]]; then
+    echo "[deploy] router is managed by Docker (container mesh-router running); skipping systemd restart"
+    echo "[deploy] use ./deploy/live-compose.sh restart on the router host"
+  elif [[ "$systemd_router_installed" == "1" ]]; then
     sudo systemctl restart mesh-router
     sudo systemctl is-active --quiet mesh-router && echo "[deploy] mesh-router active"
   else

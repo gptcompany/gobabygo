@@ -1,6 +1,25 @@
 # Mesh Network Boot Order
 
+## Router Supervisor
+
+Choose exactly one router supervisor on the VPS:
+
+- `systemd`: `mesh-router.service`
+- `docker compose`: container `mesh-router` via `deploy/live-compose.sh`
+
+Do not run both on the same host at the same time.
+
+Workers remain host-level `systemd` services in both modes:
+
+- `mesh-worker@*.service`
+- `mesh-session-worker@*.service`
+- `mesh-review-worker@*.service`
+
+Reason: Claude/Codex/Gemini/CCS auth, home-directory state, tmux sessions, and local CLI approvals must stay on the host.
+
 ## VPS Startup Sequence
+
+This section assumes the `systemd` router path.
 
 1. **Network** — systemd-networkd / NetworkManager
 2. **WireGuard** — `wg-quick@wg0.service` (After=network-online.target)
@@ -61,6 +80,11 @@ sudo systemctl start mesh-router
 sudo systemctl stop mesh-router
 sudo systemctl status mesh-router
 journalctl -u mesh-router -f
+
+# Router (VPS, Docker mode instead of systemd)
+./deploy/live-compose.sh up -d --build
+./deploy/live-compose.sh restart
+./deploy/live-compose.sh ps
 
 # Workers (Workstation)
 sudo systemctl start mesh-worker@claude-work

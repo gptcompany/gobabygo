@@ -132,6 +132,14 @@ class TestSystemdUnits:
         assert 'for common_env in deploy/*.common.env; do' in content
         assert "mesh-review-worker@.service" in content
 
+    def test_install_router_supports_explicit_supervisor_modes(self):
+        content = (DEPLOY_DIR / "install.sh").read_text()
+        assert 'ROUTER_SUPERVISOR="${2:-${MESH_ROUTER_SUPERVISOR:-docker}}"' in content
+        assert 'Installing Mesh Router (VPS, docker supervisor)' in content
+        assert 'Installing Mesh Router (VPS, systemd supervisor)' in content
+        assert "/etc/mesh-router/compose.env" in content
+        assert "unsupported router supervisor" in content
+
     def test_deploy_worker_installs_review_worker_template(self):
         content = (DEPLOY_DIR / "deploy-workers.sh").read_text()
         assert "mesh-review-worker@.service" in content
@@ -172,6 +180,7 @@ class TestEnvironmentFiles:
     def test_router_env_has_placeholder_token(self):
         content = (DEPLOY_DIR / "mesh-router.env").read_text()
         assert "__REPLACE_WITH_TOKEN__" in content
+        assert "MESH_ROUTER_SUPERVISOR=systemd" in content
         assert "MESH_ROUTER_PORT" in content
         assert "MESH_DB_PATH" in content
 
@@ -272,6 +281,7 @@ class TestEnvironmentFiles:
 
     def test_compose_env_example_documents_external_bridge_config(self):
         content = (DEPLOY_DIR / "compose.env.example").read_text()
+        assert "MESH_ROUTER_SUPERVISOR=docker" in content
         assert "MESH_AUTH_TOKEN=__REPLACE_WITH_TOKEN__" in content
         assert "MESH_MATRIX_ACCESS_TOKEN=__REPLACE_WITH_MATRIX_TOKEN__" in content
         assert "MESH_MATRIX_BRIDGE_DOCKER_ENV_FILE=" in content
@@ -302,15 +312,41 @@ class TestDockerComposeConfig:
         assert "compose env file is not readable" in content
         assert "COMPOSE_DISABLE_ENV_FILE=1" in content
 
+    def test_live_compose_refuses_active_systemd_router_without_override(self):
+        content = (DEPLOY_DIR / "live-compose.sh").read_text()
+        assert "MESH_ALLOW_HYBRID_ROUTER" in content
+        assert "mesh-router.service is active on this host" in content
+        assert "choose one router supervisor: Docker Compose or systemd, not both" in content
+
     def test_live_compose_script_is_executable(self):
         script_path = DEPLOY_DIR / "live-compose.sh"
         assert script_path.stat().st_mode & 0o111
+
+    def test_deploy_router_script_supports_supervisor_selection(self):
+        content = (DEPLOY_DIR / "deploy-router.sh").read_text()
+        assert "--supervisor docker|systemd" in content
+        assert 'ROUTER_SUPERVISOR="${MESH_ROUTER_SUPERVISOR:-docker}"' in content
+        assert "./deploy/live-compose.sh up -d --build router" in content
+        assert "systemctl stop mesh-router 2>/dev/null || true" in content
 
 
 class TestOperatorEnvFallbacks:
     def test_mesh_wrapper_prefers_worker_common_env(self):
         content = (REPO_ROOT / "scripts" / "mesh").read_text()
         assert '"/etc/mesh-worker/common.env"' in content
+
+    def test_mesh_wrapper_deploy_detects_docker_router_conflict(self):
+        content = (REPO_ROOT / "scripts" / "mesh").read_text()
+        assert "docker inspect -f '{{.State.Running}}' mesh-router" in content
+        assert "both Docker mesh-router and mesh-router.service are active" in content
+        assert "router is managed by Docker (container mesh-router running); skipping systemd restart" in content
+
+    def test_verify_network_detects_dual_router_supervisors(self):
+        content = (DEPLOY_DIR / "verify-network.sh").read_text()
+        assert "router_systemd_active=0" in content
+        assert "router_docker_active=0" in content
+        assert "both router supervisors are active" in content
+        assert "no local router supervisor detected" in content
 
     def test_iterm_shell_supports_worker_common_env(self):
         content = (REPO_ROOT / "scripts" / "iterm-mesh-shell.sh").read_text()
@@ -334,10 +370,17 @@ class TestBootOrderDoc:
 
     def test_boot_order_has_sections(self):
         content = (DEPLOY_DIR / "BOOT-ORDER.md").read_text()
+        assert "Router Supervisor" in content
+        assert "Choose exactly one router supervisor" in content
         assert "VPS Startup Sequence" in content
         assert "Workstation Startup Sequence" in content
         assert "Verification" in content
         assert "Failure Recovery" in content
+
+    def test_docker_migration_documents_single_router_supervisor(self):
+        content = (DEPLOY_DIR / "DOCKER-MIGRATION.md").read_text()
+        assert "router `systemd` e router Docker sono alternative" in content
+        assert "non eseguire `mesh-router.service` e il container `mesh-router` insieme" in content
 
     def test_session_first_e2e_runbook_exists(self):
         path = DEPLOY_DIR / "SESSION-FIRST-E2E-RUNBOOK.md"

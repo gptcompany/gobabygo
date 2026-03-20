@@ -4,12 +4,24 @@ import asyncio
 import importlib.util
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import yaml
 
 
 def _load_module():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_iterm_ui.py"
     spec = importlib.util.spec_from_file_location("mesh_iterm_ui", script_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_live_attach_module():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_live_attach.py"
+    spec = importlib.util.spec_from_file_location("mesh_ui_live_attach", script_path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -82,6 +94,35 @@ def test_mesh_ui_role_shell_skips_live_attach_when_remote_init_present():
     content = script_path.read_text(encoding="utf-8")
 
     assert 'if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then' in content
+
+
+def test_mesh_ui_live_attach_uses_exported_ui_group_id(monkeypatch, capsys):
+    module = _load_live_attach_module()
+    captured = SimpleNamespace(cfg=None)
+
+    class FakeUiModule:
+        class UiConfig:
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+                captured.cfg = SimpleNamespace(**kwargs)
+
+        @staticmethod
+        def _discover_live_remote_inits(cfg):
+            return {"lead": f"attach:{cfg.ui_group_id}"}
+
+    monkeypatch.setattr(module, "_load_mesh_iterm_ui", lambda: FakeUiModule)
+    monkeypatch.setenv("MESH_UI_GROUP_ID", "demo-ui-9")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["mesh_ui_live_attach.py", "lead", "/media/sam/1TB/demo", "demo", "boss,lead"],
+    )
+
+    assert module.main() == 0
+    assert capsys.readouterr().out.strip() == "attach:demo-ui-9"
+    assert captured.cfg is not None
+    assert captured.cfg.ui_group_id == "demo-ui-9"
 
 
 def test_command_for_role_uses_yaml_remote_init(tmp_path, monkeypatch):

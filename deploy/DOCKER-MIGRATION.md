@@ -5,6 +5,12 @@
 Router + Matrix bridge in Docker per stabilita, restart automatico, build riproducibile.
 Worker restano systemd — i CLI (claude/codex/gemini) richiedono host diretto.
 
+Regola operativa:
+
+- router `systemd` e router Docker sono alternative, non complementari
+- non eseguire `mesh-router.service` e il container `mesh-router` insieme
+- i worker restano sempre host/systemd
+
 ## Architettura
 
 ```
@@ -38,6 +44,9 @@ CF Tunnel --> 127.0.0.1:8780 --> [Docker: mesh-router]
 ## Operazioni
 
 ```bash
+# Stop systemd router first if it was previously the live path
+sudo systemctl stop mesh-router || true
+
 # Build e start
 MESH_AUTH_TOKEN=xxx MESH_MATRIX_ACCESS_TOKEN=yyy docker compose -f deploy/compose.yml up -d --build
 
@@ -94,6 +103,12 @@ In questo modo:
 - room IDs / homeserver / topology path non dipendono dal worktree
 - i rebuild da checkout pulito non perdono la config live
 - il bridge continua a leggere il topology file da `/app/config/...`
+
+Nota deploy:
+
+- `scripts/mesh` continua a riavviare il router `systemd` quando quello e` il supervisor live
+- se il router live gira in Docker, usa `deploy/live-compose.sh` per start/restart del router
+- il wrapper ora evita il restart `systemd` se vede il container `mesh-router` attivo
 
 Nota permessi:
 - `deploy/live-compose.sh` gira come utente operatore, quindi `/etc/mesh-router/compose.env`
