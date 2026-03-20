@@ -7,7 +7,6 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
-from http.server import ThreadingHTTPServer
 import pytest
 import requests
 from unittest.mock import MagicMock, patch
@@ -18,7 +17,7 @@ from src.router.longpoll import LongPollRegistry
 from src.router.metrics import MeshMetrics
 from src.router.models import Task, TaskCreateRequest, TaskStatus, Worker, ThreadCreateRequest, ThreadStepRequest
 from src.router.scheduler import Scheduler
-from src.router.server import MeshRouterHandler
+from src.router.server import MeshRouterHandler, build_mesh_http_server
 from src.router.worker_manager import WorkerManager
 from src.router.bridge.transport import InProcessTransport
 
@@ -43,7 +42,7 @@ def server_url(db):
     transport = InProcessTransport(db)
     metrics = MeshMetrics()
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), MeshRouterHandler)
+    server = build_mesh_http_server("127.0.0.1", 0, request_queue_size=32)
     server.router_state = {
         "db": db,
         "worker_manager": worker_manager,
@@ -70,6 +69,14 @@ def server_url(db):
 
 
 class TestServerCoverageExtra:
+    def test_build_mesh_http_server_uses_custom_request_queue_size(self):
+        server = build_mesh_http_server("127.0.0.1", 0, request_queue_size=64)
+        try:
+            assert server.request_queue_size == 64
+            assert server.daemon_threads is True
+        finally:
+            server.server_close()
+
     def test_handle_events_valid(self, server_url):
         resp = requests.post(f"{server_url}/events", json={"id": "e1", "type": "test"})
         assert resp.status_code == 202

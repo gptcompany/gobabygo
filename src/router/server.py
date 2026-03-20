@@ -50,6 +50,41 @@ logger = logging.getLogger("mesh.server")
 _CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError)
 
 
+class MeshThreadingHTTPServer(ThreadingHTTPServer):
+    """HTTP server tuned for many concurrent worker connections.
+
+    The default TCPServer listen backlog is only 5. That is too small for the
+    router's traffic pattern, where long-poll requests stay open while separate
+    heartbeat/ack/message requests continue to arrive from many workers.
+    """
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+def build_mesh_http_server(
+    host: str,
+    port: int,
+    *,
+    request_queue_size: int | None = None,
+) -> MeshThreadingHTTPServer:
+    """Create a router HTTP server with a configurable accept backlog."""
+    queue_size = request_queue_size
+    if queue_size is None:
+        raw = os.environ.get("MESH_HTTP_REQUEST_QUEUE_SIZE", "128").strip()
+        try:
+            queue_size = int(raw)
+        except ValueError:
+            queue_size = 128
+    queue_size = max(8, queue_size)
+
+    class _ConfiguredMeshHTTPServer(MeshThreadingHTTPServer):
+        pass
+
+    _ConfiguredMeshHTTPServer.request_queue_size = queue_size
+    return _ConfiguredMeshHTTPServer((host, port), MeshRouterHandler)
+
+
 class MeshRouterHandler(BaseHTTPRequestHandler):
     """HTTP request handler for mesh router endpoints."""
     _verifier_gate_lock = threading.Lock()
@@ -1527,7 +1562,7 @@ def run_server(
     integrity_check_interval = int(os.environ.get("MESH_DB_INTEGRITY_CHECK_INTERVAL", "10"))  # every 10 cycles
     start_time = datetime.now(timezone.utc)
 
-    server = ThreadingHTTPServer((host, port), MeshRouterHandler)
+    server = build_mesh_http_server(host, port)
     server.router_state = {  # type: ignore[attr-defined]
         "db": db,
         "worker_manager": worker_manager,
