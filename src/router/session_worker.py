@@ -670,24 +670,6 @@ class MeshSessionWorker:
 
             start = time.monotonic()
             after_seq = 0
-            # Mark any messages already present so we don't replay our own initial prompt.
-            try:
-                msgs = self._list_session_messages(session_id, after_seq=0, limit=1000)
-            except SessionNotFoundError:
-                logger.warning(
-                    "Session %s disappeared before initial sync; continuing with after_seq=0",
-                    session_id,
-                )
-                msgs = []
-            except requests.RequestException as e:
-                logger.warning(
-                    "Initial session message sync failed for %s: %s; continuing with after_seq=0",
-                    session_id,
-                    e,
-                )
-                msgs = []
-            if msgs:
-                after_seq = max(int(m.get("seq") or 0) for m in msgs)
             last_capture = ""
             last_emitted_capture = ""
             auto_exit_sent = False
@@ -931,7 +913,7 @@ class MeshSessionWorker:
 
     def _prepare_cli_runtime(self, work_dir: str, target_account: str) -> None:
         """Preseed provider runtime metadata needed for unattended session startup."""
-        if self.config.cli_type != "claude":
+        if self.config.cli_type not in {"claude", "gemini", "codex"}:
             return
         self._preseed_claude_runtime(work_dir, target_account)
 
@@ -947,13 +929,9 @@ class MeshSessionWorker:
         state_paths = [os.path.join(home_dir, ".claude.json")]
         if target_account:
             instance_dir = os.path.join(home_dir, ".ccs", "instances", target_account)
-            if os.path.isdir(instance_dir):
-                state_paths.append(os.path.join(instance_dir, ".claude.json"))
-            else:
-                logger.info(
-                    "Skipping Claude instance preseed; CCS profile dir missing: %s",
-                    instance_dir,
-                )
+            # Create instance dir if missing to ensure we can write the state file
+            os.makedirs(instance_dir, exist_ok=True)
+            state_paths.append(os.path.join(instance_dir, ".claude.json"))
         for state_path in state_paths:
             self._preseed_claude_state_file(state_path, work_dir, enabled_servers)
 
@@ -1601,8 +1579,11 @@ class MeshSessionWorker:
             max_seq = max(max_seq, seq)
             if msg.get("direction") != "in":
                 continue
-            content = str(msg.get("content", ""))
             metadata = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+            # Do not replay the initial prompt already sent during bootstrap
+            if (metadata or {}).get("source") == "task.payload.prompt":
+                continue
+            content = str(msg.get("content", ""))
             control = str((metadata or {}).get("control", "")).strip().lower()
             # Skip empty inputs to avoid accidental extra Enter spam.
             try:

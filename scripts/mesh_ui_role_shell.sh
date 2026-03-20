@@ -219,14 +219,18 @@ bootstrap_shell() {
   if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
     live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$ROLE_SET" 2>/dev/null || true)"
     if [[ -n "$live_attach" ]]; then
-      eval "$live_attach"
+      if ! eval "$live_attach"; then
+        printf '[mesh:%s] WARNING: live attach failed. Falling back to role shell.\n' "$role"
+      fi
     fi
   fi
   if [[ "$live_attach_mode" != "pre_resolved" && -z "$remote_init" && -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
     printf '[mesh:%s] WARNING: no active mesh session attached. This is a detached control shell on the WS, not the live worker runtime.\n' "$role"
   fi
   if [[ -n "$remote_init" ]]; then
-    eval "$remote_init"
+    if ! eval "$remote_init"; then
+      printf '[mesh:%s] ERROR: remote init command failed: %s\n' "$role" "$remote_init"
+    fi
   fi
   exec "${SHELL:-/bin/bash}" -l
 }
@@ -353,14 +357,18 @@ live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
 if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
   live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$role_set" 2>/dev/null || true)"
   if [[ -n "$live_attach" ]]; then
-    eval "$live_attach"
+    if ! eval "$live_attach"; then
+      printf "[mesh:%s] WARNING: live attach failed. Falling back to role shell.\n" "$role"
+    fi
   fi
 fi
 if [[ "$live_attach_mode" != "pre_resolved" && -z "$remote_init" && -z "${live_attach:-}" && ( "$role" == worker-* || "$role" == "verifier" ) ]]; then
   printf "[mesh:%s] WARNING: no active mesh session attached. This is a detached control shell on the WS, not the live worker runtime.\n" "$role"
 fi
 if [[ -n "$remote_init" ]]; then
-  eval "$remote_init"
+  if ! eval "$remote_init"; then
+    printf "[mesh:%s] ERROR: remote init command failed: %s\n" "$role" "$remote_init"
+  fi
 fi
 exec "${SHELL:-/bin/bash}" -l
 '

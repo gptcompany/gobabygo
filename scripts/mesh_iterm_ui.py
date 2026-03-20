@@ -362,6 +362,20 @@ def _router_has_live_ui_group(router_url: str, auth_token: str, ui_group_id: str
     return False
 
 
+def _discover_live_remote_inits(cfg: UiConfig) -> dict[str, str]:
+    """Helper for the WS-side live attach resolution."""
+    router_url, auth_token = _load_router_env()
+    if not router_url or not auth_token:
+        return {}
+    session_pairs = _fetch_live_session_pairs(router_url, auth_token)
+    plans = _build_role_launch_plans(cfg, session_pairs)
+    return {
+        role: plan.remote_init
+        for role, plan in plans.items()
+        if plan.mode == "attach" and plan.remote_init
+    }
+
+
 def _resolve_active_ui_group_id(
     repo_name: str,
     *,

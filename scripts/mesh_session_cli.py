@@ -371,9 +371,9 @@ def _choice_attach_label(choice: SessionChoice) -> str:
 def _is_active_choice(choice: SessionChoice) -> bool:
     if choice.state != "open":
         return False
-    if not choice.repo:
-        return False
-    return choice.task_status in _ACTIVE_TASK_STATUSES
+    # If it is open, we want to see it even if the task is finished
+    # or the repo is missing, to help triage stale sessions.
+    return True
 
 
 def _choice_table_header() -> str:
