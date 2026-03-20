@@ -446,6 +446,39 @@ def test_select_live_sessions_prefers_exact_role_match():
     assert "worker-codex" not in selected
 
 
+def test_select_live_sessions_allows_exact_worker_role_under_provider_override():
+    module = _load_module()
+    session = {
+        "session_id": "sess-worker",
+        "cli_type": "gemini",
+        "metadata": {
+            "tmux_session": "mesh-gemini-gemini-1234",
+            "repo": "/media/sam/1TB/demo",
+            "ui_group_id": "demo-ui-1",
+        },
+        "updated_at": "2026-03-10T19:20:00Z",
+        "created_at": "2026-03-10T19:10:00Z",
+    }
+    task = {
+        "task_id": "task-worker",
+        "repo": "/media/sam/1TB/demo",
+        "role": "worker-codex",
+        "target_cli": "gemini",
+        "status": "running",
+        "updated_at": "2026-03-10T19:21:00Z",
+    }
+
+    selected = module._select_live_sessions_for_roles(
+        ["worker-codex"],
+        "/media/sam/1TB/demo",
+        "demo",
+        "demo-ui-1",
+        [(session, task)],
+    )
+
+    assert selected["worker-codex"][0]["session_id"] == "sess-worker"
+
+
 def test_build_role_launch_plans_attaches_matching_session_and_spawns_missing_roles(monkeypatch):
     module = _load_module()
     cfg = module.UiConfig(

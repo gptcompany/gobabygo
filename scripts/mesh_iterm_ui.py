@@ -643,10 +643,10 @@ def _role_session_score(role: str, session: dict[str, Any], task: dict[str, Any]
         return -1
     if role.startswith("worker-"):
         provider = role.split("-", 1)[1]
-        if cli_type != provider:
-            return -1
         if task_role == role:
             return 325
+        if cli_type != provider:
+            return -1
         if task_role == "worker":
             return 300
         if not task_role:
