@@ -542,6 +542,24 @@ def test_control_plane_operations_use_configured_timeout() -> None:
     assert get_timeouts == [17.5]
 
 
+def test_poll_loop_uses_control_plane_timeout_when_it_exceeds_longpoll_budget() -> None:
+    worker = _make_worker(control_plane_timeout=60.0, longpoll_timeout=25.0)
+    worker._http = MagicMock()
+    seen: list[float] = []
+
+    def fake_get(*args, **kwargs):
+        seen.append(kwargs["timeout"])
+        worker._running = False
+        raise requests.RequestException("timeout")
+
+    worker._http.get.side_effect = fake_get
+    worker._running = True
+
+    worker._poll_loop()
+
+    assert seen == [60.0]
+
+
 def test_report_failure_includes_error_kind() -> None:
     worker = _make_worker(control_plane_timeout=17.5)
     worker._http = MagicMock()

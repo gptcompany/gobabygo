@@ -233,10 +233,17 @@ class TestEnvironmentFiles:
 
     def test_session_common_env_has_shared_session_defaults(self):
         content = (DEPLOY_DIR / "mesh-session.common.env").read_text()
-        assert "MESH_HEARTBEAT_TIMEOUT_S=5" in content
+        assert "MESH_HEARTBEAT_TIMEOUT_S=10" in content
+        assert "MESH_CONTROL_PLANE_TIMEOUT_S=60" in content
         assert "MESH_EXECUTION_MODES=session" in content
         assert "MESH_WORK_DIR=/tmp/mesh-tasks" in content
         assert "MESH_AUTO_COMPLETE_ON_EXIT=1" in content
+    content = (DEPLOY_DIR / "mesh-session.common.env").read_text()
+    assert "MESH_HEARTBEAT_TIMEOUT_S=10" in content
+    assert "MESH_CONTROL_PLANE_TIMEOUT_S=60" in content
+    assert "MESH_EXECUTION_MODES=session" in content
+    assert "MESH_WORK_DIR=/tmp/mesh-tasks" in content
+    assert "MESH_AUTO_COMPLETE_ON_EXIT=1" in content
 
     @pytest.mark.parametrize("session_env", [
         "mesh-session-claude-work.env",

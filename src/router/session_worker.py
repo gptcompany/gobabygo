@@ -322,8 +322,8 @@ class SessionWorkerConfig:
     account_profile: str = "work"
     auth_token: str | None = None
     heartbeat_interval: float = 5.0
-    heartbeat_timeout: float = 5.0
-    control_plane_timeout: float = 30.0
+    heartbeat_timeout: float = 10.0
+    control_plane_timeout: float = 60.0
     longpoll_timeout: float = 25.0
     capabilities: list[str] = field(
         default_factory=lambda: ["code", "tests", "refactor", "interactive", "ui_role"]
@@ -383,8 +383,8 @@ class SessionWorkerConfig:
             capabilities=capabilities,
             allowed_accounts=allowed_accounts,
             allowed_work_dirs=allowed_work_dirs,
-            heartbeat_timeout=float(os.environ.get("MESH_HEARTBEAT_TIMEOUT_S", "5")),
-            control_plane_timeout=float(os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "30")),
+            heartbeat_timeout=float(os.environ.get("MESH_HEARTBEAT_TIMEOUT_S", "10")),
+            control_plane_timeout=float(os.environ.get("MESH_CONTROL_PLANE_TIMEOUT_S", "60")),
             longpoll_timeout=float(os.environ.get("MESH_LONGPOLL_TIMEOUT_S", "25")),
             cli_command=os.environ.get("MESH_CLI_COMMAND", "claude"),
             provider_runtime_config=os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG"),
@@ -545,7 +545,10 @@ class MeshSessionWorker:
             if backoff > 0:
                 time.sleep(backoff + random.uniform(0.1, 0.5))
             try:
-                resp = self._http.get(url, timeout=self.config.longpoll_timeout + 5)
+                resp = self._http.get(
+                    url,
+                    timeout=max(self.config.longpoll_timeout + 5, self.config.control_plane_timeout),
+                )
                 if resp.status_code == 200:
                     backoff = 0.0
                     try:
