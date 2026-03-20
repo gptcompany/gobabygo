@@ -582,8 +582,12 @@ Status:
 
 - `T001` through `T013` are implemented on `origin/master`
 - `T014` is still open
-- external review brief:
-  - `specs/mesh-ui-role-sessions/t014-findings-20260320.md`
+- critical integration blockers fixed today (committed/pushed):
+  1. **Bootstrap race in `session_worker.py` fixed**: early operator input is no longer dropped during session startup.
+  2. **Gemini/Codex pre-seeding enabled**: session worker now preseeds trust/MCP settings for all Claude-Code-backed providers, preventing CLI startup stalls.
+  3. **UI Discovery helper fixed**: added missing `_discover_live_remote_inits` to `mesh_iterm_ui.py`.
+  4. **Robustness**: improved role shell fallback when live attach fails.
+  5. **Visibility**: relaxed filters in `mesh_session_cli.py` to ensure all open sessions are visible.
 
 What was re-verified live:
 

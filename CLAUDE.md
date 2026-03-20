@@ -558,11 +558,15 @@ Live note from `2026-03-10`:
 ## 2026-03-20 mesh ui role sessions: T014 status
 
 - `T001` through `T013` are implemented on `origin/master`
-- `T014` is still open
-- current external-review package:
-  - `specs/mesh-ui-role-sessions/t014-findings-20260320.md`
+- `T014` is still open, but critical integration blockers were fixed today
+- latest fixes (committed/pushed):
+  - **Bootstrap race resolved**: removed initial sync skip-all in `session_worker.py`; worker now filters its own bootstrap prompt and delivers all other early messages.
+  - **Gemini/Codex pre-seeding**: enabled Claude Code runtime pre-seeding (trust/MCP) for Gemini and Codex providers to prevent TUI blocks.
+  - **UI Discovery fix**: added missing `_discover_live_remote_inits` to `mesh_iterm_ui.py`.
+  - **Robustness**: improved `mesh_ui_role_shell.sh` to handle attach failures gracefully.
+  - **Visibility**: relaxed `mesh_session_cli.py` filters to show all open sessions.
 
-What changed since the 2026-03-19 note:
+What was re-verified live:
 
 - the Gemini runtime-user mismatch is no longer the primary blocker
   - `87213e5` applied runtime-user overrides to all session workers
