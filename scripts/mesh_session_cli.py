@@ -685,10 +685,11 @@ def _wait_for_ui_group_closure(
     repo_path: str,
     repo_name: str,
     ui_group_id: str,
-    timeout_s: float = 10.0,
+    timeout_s: float | None = None,
     poll_s: float = 0.5,
 ) -> tuple[bool, list[str], str]:
-    deadline = time.monotonic() + max(0.0, timeout_s)
+    effective_timeout = _control_plane_timeout() if timeout_s is None else timeout_s
+    deadline = time.monotonic() + max(0.0, effective_timeout)
     while True:
         try:
             open_choices = build_session_choices(router_url, auth_token, state="open")

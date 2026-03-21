@@ -1534,6 +1534,60 @@ def test_main_summary_rejects_repo_name_collision_with_stale_open_context(monkey
     assert "multiple repo matches" in capsys.readouterr().err
 
 
+def test_wait_for_ui_group_closure_uses_control_plane_timeout_by_default(monkeypatch):
+    module = _load_module()
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+    responses = [[choice], [choice], []]
+    calls = {"count": 0}
+
+    monkeypatch.setenv("MESH_CONTROL_PLANE_TIMEOUT_S", "60")
+
+    def fake_build_session_choices(*args, **kwargs):
+        idx = min(calls["count"], len(responses) - 1)
+        calls["count"] += 1
+        return responses[idx]
+
+    timeline = iter([0.0, 11.0, 12.0])
+
+    monkeypatch.setattr(module, "build_session_choices", fake_build_session_choices)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(timeline))
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    closed, remaining, error = module._wait_for_ui_group_closure(
+        "http://router",
+        "token",
+        repo_path="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        ui_group_id="snake-ui-1",
+    )
+
+    assert closed is True
+    assert remaining == []
+    assert error == ""
+    assert calls["count"] == 3
+
+
 def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, capsys):
     module = _load_module()
     cache_dir = tmp_path / "ui-cache"
