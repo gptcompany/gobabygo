@@ -748,6 +748,37 @@ def test_create_ui_role_task_posts_expected_payload(monkeypatch):
     assert "prompt" not in payload["payload"]
 
 
+def test_create_ui_role_task_bootstraps_worker_codex_prompt(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        roles=["worker-codex"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="snake-game-ui-1",
+    )
+    calls = []
+
+    def fake_post(router_url: str, auth_token: str, path: str, payload: dict):
+        calls.append((router_url, auth_token, path, payload))
+        return {"task_id": "task-worker-codex-1"}
+
+    monkeypatch.setattr(module, "_router_post_json", fake_post)
+
+    task_info = module._create_ui_role_task("http://router", "token", cfg, "worker-codex")
+
+    assert task_info == {"role": "worker-codex", "task_id": "task-worker-codex-1", "target_cli": "codex", "created": True}
+    _, _, path, payload = calls[0]
+    assert path == "/tasks"
+    assert payload["target_account"] == "work-codex"
+    assert payload["payload"]["prompt"].startswith("You are worker-codex for repository snake-game")
+    assert "Do not exit" in payload["payload"]["prompt"]
+
+
 def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
     module = _load_module()
     cfg = module.UiConfig(

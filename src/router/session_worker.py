@@ -19,6 +19,7 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -634,13 +635,19 @@ class MeshSessionWorker:
             )
             self._prepare_cli_runtime(work_dir, target_account)
             tmux_session_name = self._tmux_session_name(task_id, target_account)
+            bootstrap_prompt_via_stdin = bool(prompt) and self.config.cli_type == "codex"
             if self._tmux_has_session(tmux_session_name):
                 logger.warning(
                     "Killing stale tmux session before retry: %s",
                     tmux_session_name,
                 )
                 self._tmux_kill_session(tmux_session_name)
-            self._tmux_new_session(tmux_session_name, work_dir, cmd_base)
+            self._tmux_new_session(
+                tmux_session_name,
+                work_dir,
+                cmd_base,
+                initial_stdin=prompt if bootstrap_prompt_via_stdin else None,
+            )
             time.sleep(max(0.0, float(self.config.startup_post_launch_settle_s)))
 
             attach_meta, upterm_proc = self._create_attach_handle(tmux_session_name)
@@ -653,11 +660,6 @@ class MeshSessionWorker:
                 content=f"tmux session created: {tmux_session_name}",
                 metadata={"tmux_session": tmux_session_name, "working_dir": work_dir},
             )
-            if not self._wait_for_cli_ready(tmux_session_name):
-                logger.warning(
-                    "CLI prompt readiness timeout for session %s; sending prompt anyway",
-                    tmux_session_name,
-                )
             if prompt:
                 self._send_session_message(
                     session_id,
@@ -666,10 +668,17 @@ class MeshSessionWorker:
                     content=prompt,
                     metadata={"source": "task.payload.prompt", "task_id": task_id},
                 )
-                pre_prompt_capture = self._tmux_capture_pane(tmux_session_name)
-                self._tmux_send_text(tmux_session_name, prompt)
-                self._ensure_prompt_submitted(tmux_session_name)
-                self._ensure_prompt_delivered(tmux_session_name, prompt, pre_prompt_capture)
+            if not bootstrap_prompt_via_stdin:
+                if not self._wait_for_cli_ready(tmux_session_name):
+                    logger.warning(
+                        "CLI prompt readiness timeout for session %s; sending prompt anyway",
+                        tmux_session_name,
+                    )
+                if prompt:
+                    pre_prompt_capture = self._tmux_capture_pane(tmux_session_name)
+                    self._tmux_send_text(tmux_session_name, prompt)
+                    self._ensure_prompt_submitted(tmux_session_name)
+                    self._ensure_prompt_delivered(tmux_session_name, prompt, pre_prompt_capture)
 
             start = time.monotonic()
             after_seq = 0
@@ -994,10 +1003,28 @@ class MeshSessionWorker:
         base = f"{self.config.tmux_session_prefix}-{self.config.cli_type}-{account}-{task_fragment}"
         return _sanitize_session_name(base)
 
-    def _tmux_new_session(self, session_name: str, work_dir: str, cli_command: str) -> None:
+    def _tmux_new_session(
+        self,
+        session_name: str,
+        work_dir: str,
+        cli_command: str,
+        *,
+        initial_stdin: str | None = None,
+    ) -> None:
         # Launch command directly inside a non-interactive bash wrapper so tmux session ends when CLI exits.
+        launch_command = cli_command
+        if initial_stdin:
+            launch_command = " ".join([
+                shlex.quote(sys.executable),
+                "-c",
+                shlex.quote(
+                    "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1], input=sys.argv[2], text=True, shell=True).returncode)"
+                ),
+                shlex.quote(cli_command),
+                shlex.quote(initial_stdin),
+            ])
         subprocess.run(
-            [self.config.tmux_bin, "new-session", "-d", "-s", session_name, "-c", work_dir, "bash", "-lc", cli_command],
+            [self.config.tmux_bin, "new-session", "-d", "-s", session_name, "-c", work_dir, "bash", "-lc", launch_command],
             check=True,
             capture_output=True,
             text=True,

@@ -511,6 +511,15 @@ def _default_target_account_for_provider(provider: str) -> str:
     return provider
 
 
+def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
+    if target_cli != "codex":
+        return ""
+    return (
+        f"You are {role} for repository {cfg.repo_name} at {cfg.repo}. "
+        "Acknowledge readiness briefly, remain in this interactive session, and wait for further instructions. Do not exit."
+    )
+
+
 def _resolve_role_task_target(role: str) -> tuple[str, str]:
     rules = _load_ui_role_rules()
     rule = rules.get(role, {})
@@ -881,6 +890,16 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
         }
 
     target_cli, target_account = _resolve_role_task_target(role)
+    task_payload = {
+        "ui_role_session": True,
+        "ui_role": role,
+        "ui_group_id": cfg.ui_group_id,
+        "working_dir": cfg.repo,
+    }
+    bootstrap_prompt = _ui_role_bootstrap_prompt(cfg, role, target_cli)
+    if bootstrap_prompt:
+        task_payload["prompt"] = bootstrap_prompt
+
     payload = {
         "title": f"mesh ui {role} {cfg.repo_name}",
         "repo": cfg.repo,
@@ -888,12 +907,7 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
         "target_cli": target_cli,
         "target_account": target_account,
         "execution_mode": "session",
-        "payload": {
-            "ui_role_session": True,
-            "ui_role": role,
-            "ui_group_id": cfg.ui_group_id,
-            "working_dir": cfg.repo,
-        },
+        "payload": task_payload,
         "idempotency_key": _ui_role_task_idempotency_key(cfg, role),
     }
     try:

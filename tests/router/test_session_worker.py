@@ -859,6 +859,79 @@ class TestStartUpterm:
         assert "upterm launch failed" in caplog.text
         assert "denied" in caplog.text
 
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-codex-bootstrap")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.time.sleep")
+    def test_execute_task_bootstraps_codex_prompt_via_stdin(
+        self,
+        mock_sleep: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_text: Mock,
+        mock_wait_ready: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker = _make_worker()
+        http = MagicMock()
+        worker._http = http
+        ack_resp = MagicMock(status_code=200)
+        open_resp = MagicMock()
+        open_resp.json.return_value = {"session": {"session_id": "s-99"}}
+        ok_resp = MagicMock(status_code=200)
+        ok_resp.json.return_value = {"messages": []}
+
+        def post_dispatch(url, **kw):
+            if "/tasks/ack" in url:
+                return ack_resp
+            if "/sessions/open" in url:
+                return open_resp
+            return ok_resp
+
+        http.post.side_effect = post_dispatch
+        http.get.return_value = ok_resp
+        worker.config.cli_type = "codex"
+        worker.config.cli_command = "ccs codex"
+        worker._running = True
+
+        task = {
+            "task_id": "t-codex-bootstrap",
+            "execution_mode": "session",
+            "repo": "/media/sam/1TB/snake-game",
+            "role": "worker-codex",
+            "target_account": "work-codex",
+            "payload": {
+                "prompt": "You are worker-codex. Do not exit.",
+                "ui_role_session": True,
+                "ui_role": "worker-codex",
+                "ui_group_id": "snake-ui-codex-1",
+                "working_dir": "/media/sam/1TB/snake-game",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_tmux_new.assert_called_once_with(
+            "mesh-codex-work-codex-tcodexbootstrap",
+            "/media/sam/1TB/snake-game",
+            "ccs codex",
+            initial_stdin="You are worker-codex. Do not exit.",
+        )
+        mock_wait_ready.assert_not_called()
+        mock_send_text.assert_not_called()
+        mock_report_complete.assert_called_once()
+
+
     @patch.object(MeshSessionWorker, "_stop_upterm")
     @patch.object(MeshSessionWorker, "_poll_upterm_target", return_value=None)
     @patch("src.router.session_worker.os.makedirs")
