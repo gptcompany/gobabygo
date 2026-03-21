@@ -1671,6 +1671,7 @@ def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, cap
     assert posted == [
         ("/sessions/signal", {"session_id": "sess-1", "signal": "terminate"}),
         ("/sessions/signal", {"session_id": "sess-2", "signal": "terminate"}),
+        ("/sessions/close", {"session_id": "sess-2", "state": "errored"}),
     ]
     assert not cache_file.exists()
     assert "signaled=2" in capsys.readouterr().out
@@ -1980,5 +1981,8 @@ def test_main_close_uses_cached_stale_group_on_repo_name_collision(monkeypatch, 
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
     assert module.main() == 0
-    assert signals == [{"session_id": "sess-stale", "signal": "terminate"}]
+    assert signals == [
+        {"session_id": "sess-stale", "signal": "terminate"},
+        {"session_id": "sess-stale", "state": "errored"},
+    ]
     assert not cache_file.exists()

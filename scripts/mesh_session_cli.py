@@ -384,6 +384,15 @@ def _is_active_choice(choice: SessionChoice) -> bool:
     return choice.task_status in _ACTIVE_TASK_STATUSES
 
 
+def _terminal_session_state_for_choice(choice: SessionChoice) -> str | None:
+    status = str(choice.task_status or "").strip().lower()
+    if status == "completed":
+        return "closed"
+    if status in {"failed", "timeout", "canceled"}:
+        return "errored"
+    return None
+
+
 def _choice_table_header() -> str:
     return "  ".join(
         [
@@ -1042,6 +1051,14 @@ def main() -> int:
                     "/sessions/signal",
                     {"session_id": choice.session_id, "signal": "terminate"},
                 )
+                terminal_state = _terminal_session_state_for_choice(choice)
+                if terminal_state:
+                    router_post_json(
+                        router_url,
+                        auth_token,
+                        "/sessions/close",
+                        {"session_id": choice.session_id, "state": terminal_state},
+                    )
                 closed_session_ids.append(choice.session_id)
             except HTTPError as exc:
                 if exc.code in {404, 409}:
