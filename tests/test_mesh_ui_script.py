@@ -441,6 +441,35 @@ def test_resolve_active_ui_group_id_replaces_stale_cached_group(tmp_path, monkey
     }
 
 
+def test_resolve_active_ui_group_id_preserves_cached_group_when_live_check_is_indeterminate(tmp_path, monkeypatch):
+    module = _load_module()
+    repo_path = "/Users/sam/snake-game"
+    module._write_ui_group_cache(
+        "snake-game",
+        "snake-game-ui-20260314T120000Z",
+        repo_path=repo_path,
+        cache_dir=tmp_path,
+    )
+
+    monkeypatch.setattr(module, "_router_has_live_ui_group", lambda *args, **kwargs: None)
+
+    ui_group_id = module._resolve_active_ui_group_id(
+        "snake-game",
+        repo_path=repo_path,
+        router_url="http://router",
+        auth_token="token",
+        cache_dir=tmp_path,
+        timestamp="20260315T130000Z",
+    )
+
+    assert ui_group_id == "snake-game-ui-20260314T120000Z"
+    assert module._read_ui_group_cache("snake-game", repo_path=repo_path, cache_dir=tmp_path) == {
+        "repo_name": "snake-game",
+        "ui_group_id": "snake-game-ui-20260314T120000Z",
+        "repo_path": repo_path,
+    }
+
+
 def test_resolve_active_ui_group_id_ignores_cache_for_other_repo_path(tmp_path, monkeypatch):
     module = _load_module()
     module._write_ui_group_cache(
@@ -741,11 +770,12 @@ def test_create_ui_role_task_posts_expected_payload(monkeypatch):
     assert payload["role"] == "lead"
     assert payload["target_cli"] == "gemini"
     assert payload["execution_mode"] == "session"
-    assert payload["idempotency_key"] == "mesh-ui::demo-ui-1::lead"
+    assert payload["idempotency_key"].startswith("mesh-ui::demo-ui-1::lead::")
     assert payload["payload"]["ui_role_session"] is True
     assert payload["payload"]["ui_group_id"] == "demo-ui-1"
     assert payload["payload"]["working_dir"] == "/media/sam/1TB/demo"
-    assert "prompt" not in payload["payload"]
+    assert payload["payload"]["prompt"].startswith("You are lead for repository demo")
+    assert "Acknowledge readiness briefly" in payload["payload"]["prompt"]
 
 
 def test_create_ui_role_task_bootstraps_worker_codex_prompt(monkeypatch):
@@ -777,6 +807,33 @@ def test_create_ui_role_task_bootstraps_worker_codex_prompt(monkeypatch):
     assert payload["target_account"] == "work-codex"
     assert payload["payload"]["prompt"].startswith("You are worker-codex for repository snake-game")
     assert "Do not exit" in payload["payload"]["prompt"]
+
+
+def test_ui_role_bootstrap_prompt_uses_role_override_env(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["president"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+
+    monkeypatch.setenv(
+        "MESH_UI_BOOTSTRAP_PROMPT_PRESIDENT",
+        "Ciao dal {role} per {repo_name} in {repo}. Coordina un saluto collettivo e non uscire.",
+    )
+
+    prompt = module._ui_role_bootstrap_prompt(cfg, "president", "gemini")
+
+    assert prompt == (
+        "Ciao dal president per demo in /media/sam/1TB/demo. "
+        "Coordina un saluto collettivo e non uscire."
+    )
 
 
 def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
@@ -818,6 +875,48 @@ def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
     assert called["post"] is False
 
 
+def test_create_ui_role_task_does_not_reuse_terminal_existing_task(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    monkeypatch.setattr(module, "_load_ui_role_rules", lambda config_path=None: {"lead": {"provider": "gemini"}})
+    monkeypatch.setattr(
+        module,
+        "_find_existing_ui_role_task",
+        lambda router_url, auth_token, cfg_value, role: {
+            "task_id": "task-lead-failed",
+            "target_cli": "gemini",
+            "status": "failed",
+        },
+    )
+    calls = []
+
+    def fake_post(router_url: str, auth_token: str, path: str, payload: dict):
+        calls.append(payload)
+        return {"task_id": "task-lead-new"}
+
+    monkeypatch.setattr(module, "_router_post_json", fake_post)
+
+    task_info = module._create_ui_role_task("http://router", "token", cfg, "lead")
+
+    assert task_info == {
+        "role": "lead",
+        "task_id": "task-lead-new",
+        "target_cli": "gemini",
+        "created": True,
+    }
+    assert len(calls) == 1
+
+
 def test_create_ui_role_task_recovers_existing_task_on_duplicate_idempotency(monkeypatch):
     module = _load_module()
     cfg = module.UiConfig(
@@ -854,6 +953,51 @@ def test_create_ui_role_task_recovers_existing_task_on_duplicate_idempotency(mon
         "target_cli": "gemini",
         "created": False,
     }
+
+
+def test_create_ui_role_task_retries_duplicate_when_only_terminal_task_exists(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    monkeypatch.setattr(module, "_load_ui_role_rules", lambda config_path=None: {"lead": {"provider": "gemini"}})
+    calls = {"find": 0}
+
+    def fake_find(router_url, auth_token, cfg_value, role):
+        calls["find"] += 1
+        if calls["find"] == 1:
+            return None
+        return {"task_id": "task-lead-cancelled", "target_cli": "gemini", "status": "canceled"}
+
+    post_payloads = []
+
+    def fake_post(router_url, auth_token, path, payload):
+        post_payloads.append(dict(payload))
+        if len(post_payloads) == 1:
+            raise module.HTTPError(path, 409, "duplicate", None, None)
+        return {"task_id": "task-lead-new"}
+
+    monkeypatch.setattr(module, "_find_existing_ui_role_task", fake_find)
+    monkeypatch.setattr(module, "_router_post_json", fake_post)
+
+    task_info = module._create_ui_role_task("http://router", "token", cfg, "lead")
+
+    assert task_info == {
+        "role": "lead",
+        "task_id": "task-lead-new",
+        "target_cli": "gemini",
+        "created": True,
+    }
+    assert len(post_payloads) == 2
+    assert post_payloads[0]["idempotency_key"] != post_payloads[1]["idempotency_key"]
 
 
 def test_find_existing_ui_role_task_prefers_running_over_queued_duplicates(monkeypatch):
@@ -958,6 +1102,86 @@ def test_find_existing_ui_role_task_ignores_other_ui_groups(monkeypatch):
     assert task["task_id"] == "task-current-group"
 
 
+def test_find_existing_ui_role_task_includes_terminal_states_for_duplicate_recovery(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+
+    def fake_get(router_url: str, auth_token: str, path: str):
+        if path == "/tasks?status=failed&limit=200":
+            return {
+                "tasks": [
+                    {
+                        "task_id": "task-failed",
+                        "status": "failed",
+                        "repo": "/media/sam/1TB/demo",
+                        "role": "lead",
+                        "payload": {"ui_role_session": True, "ui_group_id": "demo-ui-1"},
+                        "updated_at": "2026-03-21T10:20:00Z",
+                    }
+                ]
+            }
+        return {"tasks": []}
+
+    monkeypatch.setattr(module, "_router_get_json", fake_get)
+
+    task = module._find_existing_ui_role_task("http://router", "token", cfg, "lead")
+
+    assert task is not None
+    assert task["task_id"] == "task-failed"
+
+
+def test_find_existing_ui_role_task_matches_repo_name_when_cfg_repo_is_path(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/progressive-deploy",
+        repo_name="progressive-deploy",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="progressive-deploy-ui-20260321T101109Z",
+    )
+
+    def fake_get(router_url: str, auth_token: str, path: str):
+        if path == "/tasks?status=running&limit=200":
+            return {
+                "tasks": [
+                    {
+                        "task_id": "task-short-repo",
+                        "status": "running",
+                        "repo": "progressive-deploy",
+                        "role": "lead",
+                        "payload": {
+                            "ui_role_session": True,
+                            "ui_group_id": "progressive-deploy-ui-20260321T101109Z",
+                            "working_dir": "progressive-deploy",
+                        },
+                        "updated_at": "2026-03-21T10:20:00Z",
+                    }
+                ]
+            }
+        return {"tasks": []}
+
+    monkeypatch.setattr(module, "_router_get_json", fake_get)
+
+    task = module._find_existing_ui_role_task("http://router", "token", cfg, "lead")
+
+    assert task is not None
+    assert task["task_id"] == "task-short-repo"
+
+
 def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
     module = _load_module()
     cfg = module.UiConfig(
@@ -990,10 +1214,10 @@ def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
 
     fetch_calls = {"count": 0}
 
-    def fake_fetch(router_url: str, auth_token: str):
+    def fake_fetch(router_url: str, auth_token: str, task_id: str):
         fetch_calls["count"] += 1
-        return [
-            (
+        if task_id == "task-lead-1":
+            return (
                 {
                     "session_id": "sess-lead",
                     "cli_type": "gemini",
@@ -1010,8 +1234,9 @@ def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
                     "target_cli": "gemini",
                     "status": "running",
                 },
-            ),
-            (
+            )
+        if task_id == "task-worker-1":
+            return (
                 {
                     "session_id": "sess-worker",
                     "cli_type": "codex",
@@ -1028,11 +1253,11 @@ def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
                     "target_cli": "codex",
                     "status": "running",
                 },
-            ),
-        ]
+            )
+        return None
 
     monkeypatch.setattr(module, "_create_ui_role_task", fake_create)
-    monkeypatch.setattr(module, "_fetch_live_session_pairs", fake_fetch)
+    monkeypatch.setattr(module, "_fetch_live_session_pair_for_task", fake_fetch)
     monkeypatch.setattr(module, "_load_provider_session_users", lambda config_path=None: {"codex": "mesh-worker"})
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
 
@@ -1085,51 +1310,31 @@ def test_spawn_missing_agent_role_plans_ignores_other_group_sessions_until_match
 
     polls = {"count": 0}
 
-    def fake_fetch(router_url: str, auth_token: str):
+    def fake_fetch(router_url: str, auth_token: str, task_id: str):
+        assert task_id == "task-lead-2"
         polls["count"] += 1
         if polls["count"] == 1:
-            return [
-                (
-                    {
-                        "session_id": "sess-other-group",
-                        "cli_type": "gemini",
-                        "metadata": {
-                            "repo": "/media/sam/1TB/demo",
-                            "ui_group_id": "demo-ui-1",
-                            "tmux_session": "mesh-gemini-other",
-                        },
-                    },
-                    {
-                        "task_id": "task-lead-1",
-                        "repo": "/media/sam/1TB/demo",
-                        "role": "lead",
-                        "target_cli": "gemini",
-                        "status": "running",
-                    },
-                )
-            ]
-        return [
-            (
-                {
-                    "session_id": "sess-current-group",
-                    "cli_type": "gemini",
-                    "metadata": {
-                        "repo": "/media/sam/1TB/demo",
-                        "ui_group_id": "demo-ui-2",
-                        "tmux_session": "mesh-gemini-current",
-                    },
-                },
-                {
-                    "task_id": "task-lead-2",
+            return None
+        return (
+            {
+                "session_id": "sess-current-group",
+                "cli_type": "gemini",
+                "metadata": {
                     "repo": "/media/sam/1TB/demo",
-                    "role": "lead",
-                    "target_cli": "gemini",
-                    "status": "running",
+                    "ui_group_id": "demo-ui-2",
+                    "tmux_session": "mesh-gemini-current",
                 },
-            )
-        ]
+            },
+            {
+                "task_id": "task-lead-2",
+                "repo": "/media/sam/1TB/demo",
+                "role": "lead",
+                "target_cli": "gemini",
+                "status": "running",
+            },
+        )
 
-    monkeypatch.setattr(module, "_fetch_live_session_pairs", fake_fetch)
+    monkeypatch.setattr(module, "_fetch_live_session_pair_for_task", fake_fetch)
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
 
     plans = module._spawn_missing_agent_role_plans(
@@ -1172,7 +1377,7 @@ def test_spawn_missing_agent_role_plans_marks_timeout(monkeypatch):
             "created": True,
         },
     )
-    monkeypatch.setattr(module, "_fetch_live_session_pairs", lambda router_url, auth_token: [])
+    monkeypatch.setattr(module, "_fetch_live_session_pair_for_task", lambda router_url, auth_token, task_id: None)
     canceled = []
     monkeypatch.setattr(module, "_cancel_ui_role_task", lambda router_url, auth_token, task_id: canceled.append(task_id))
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
@@ -1216,7 +1421,7 @@ def test_spawn_missing_agent_role_plans_does_not_cancel_reused_task_on_timeout(m
             "created": False,
         },
     )
-    monkeypatch.setattr(module, "_fetch_live_session_pairs", lambda router_url, auth_token: [])
+    monkeypatch.setattr(module, "_fetch_live_session_pair_for_task", lambda router_url, auth_token, task_id: None)
     canceled = []
     monkeypatch.setattr(module, "_cancel_ui_role_task", lambda router_url, auth_token, task_id: canceled.append(task_id))
     monkeypatch.setattr(module.time, "sleep", lambda _: None)
@@ -1356,6 +1561,63 @@ def test_fetch_live_session_pairs_keeps_session_when_task_lookup_fails(monkeypat
     session, task = session_pairs[0]
     assert session["metadata"]["repo"] == "/media/sam/1TB/demo"
     assert task == {"task_id": "task-lead"}
+
+
+def test_fetch_live_session_pair_for_task_returns_router_backed_pair(monkeypatch):
+    module = _load_module()
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/tasks/task-lead":
+            return {
+                "task_id": "task-lead",
+                "session_id": "sess-lead",
+                "repo": "/media/sam/1TB/demo",
+                "role": "lead",
+                "target_cli": "gemini",
+                "status": "running",
+            }
+        if path == "/sessions/sess-lead":
+            return {
+                "session_id": "sess-lead",
+                "task_id": "task-lead",
+                "cli_type": "gemini",
+                "metadata": {
+                    "repo": "/media/sam/1TB/demo",
+                    "ui_group_id": "demo-ui-1",
+                    "tmux_session": "mesh-gemini-lead",
+                },
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
+
+    pair = module._fetch_live_session_pair_for_task("http://router", "token", "task-lead")
+
+    assert pair is not None
+    session, task = pair
+    assert session["session_id"] == "sess-lead"
+    assert task["task_id"] == "task-lead"
+
+
+def test_fetch_live_session_pair_for_task_returns_none_without_session_id(monkeypatch):
+    module = _load_module()
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/tasks/task-lead":
+            return {
+                "task_id": "task-lead",
+                "repo": "/media/sam/1TB/demo",
+                "role": "lead",
+                "target_cli": "gemini",
+                "status": "assigned",
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
+
+    pair = module._fetch_live_session_pair_for_task("http://router", "token", "task-lead")
+
+    assert pair is None
 
 
 def test_default_ui_roles_fit_two_tabs_with_three_panes():

@@ -281,6 +281,10 @@ def _role_env_key(role: str) -> str:
     return "MESH_UI_CMD_" + role.upper().replace("-", "_")
 
 
+def _role_bootstrap_env_key(role: str) -> str:
+    return "MESH_UI_BOOTSTRAP_PROMPT_" + role.upper().replace("-", "_")
+
+
 def _extract_env_value(text: str, key: str) -> str:
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -343,13 +347,13 @@ def _router_post_json(router_url: str, auth_token: str, path: str, payload: dict
         return json.load(resp)
 
 
-def _router_has_live_ui_group(router_url: str, auth_token: str, ui_group_id: str) -> bool:
+def _router_has_live_ui_group(router_url: str, auth_token: str, ui_group_id: str) -> bool | None:
     if not router_url or not auth_token or not ui_group_id:
         return False
     try:
         payload = _router_get_json(router_url, auth_token, "/sessions?state=open&limit=200")
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return False
+        return None
     sessions = payload.get("sessions") if isinstance(payload, dict) else None
     if not isinstance(sessions, list):
         return False
@@ -387,8 +391,13 @@ def _resolve_active_ui_group_id(
 ) -> str:
     cached = _read_ui_group_cache(repo_name, repo_path=repo_path, cache_dir=cache_dir)
     cached_group = str((cached or {}).get("ui_group_id", "")).strip()
-    if cached_group and _router_has_live_ui_group(router_url, auth_token, cached_group):
-        return cached_group
+    if cached_group:
+        live_group = _router_has_live_ui_group(router_url, auth_token, cached_group)
+        # Preserve the cached group when the live check is indeterminate (for
+        # example a slow router list call) so partial relaunches do not fragment
+        # the active UI into multiple groups.
+        if live_group is not False:
+            return cached_group
 
     ui_group_id = _generate_ui_group_id(repo_name, timestamp=timestamp)
     _write_ui_group_cache(repo_name, ui_group_id, repo_path=repo_path, cache_dir=cache_dir)
@@ -512,11 +521,25 @@ def _default_target_account_for_provider(provider: str) -> str:
 
 
 def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
-    if target_cli != "codex":
+    env_key = _role_bootstrap_env_key(role)
+    explicit = os.environ.get(env_key, "").strip() or os.environ.get("MESH_UI_BOOTSTRAP_PROMPT", "").strip()
+    if explicit:
+        return explicit.format(
+            repo=cfg.repo,
+            repo_name=cfg.repo_name,
+            role=role,
+            target_cli=target_cli,
+        )
+    if role == "boss":
         return ""
+    if role == "president":
+        return (
+            f"You are president for repository {cfg.repo_name} at {cfg.repo}. "
+            "Acknowledge readiness briefly, remain in this interactive session, and wait for instructions from the operator. Do not exit."
+        )
     return (
         f"You are {role} for repository {cfg.repo_name} at {cfg.repo}. "
-        "Acknowledge readiness briefly, remain in this interactive session, and wait for further instructions. Do not exit."
+        "Acknowledge readiness briefly, remain in this interactive session, and wait for further instructions from the president/operator. Do not exit."
     )
 
 
@@ -756,6 +779,33 @@ def _fetch_live_session_pairs(router_url: str, auth_token: str) -> list[tuple[di
     return session_pairs
 
 
+def _fetch_live_session_pair_for_task(
+    router_url: str,
+    auth_token: str,
+    task_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if not router_url or not auth_token or not task_id:
+        return None
+    try:
+        task_payload = _router_get_json(router_url, auth_token, f"/tasks/{quote(task_id)}")
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(task_payload, dict):
+        return None
+
+    session_id = str(task_payload.get("session_id", "")).strip()
+    if not session_id:
+        return None
+
+    try:
+        session_payload = _router_get_json(router_url, auth_token, f"/sessions/{quote(session_id)}")
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(session_payload, dict):
+        return None
+    return session_payload, task_payload
+
+
 def _build_role_launch_plan(
     role: str,
     pair: tuple[dict[str, Any], dict[str, Any]] | None,
@@ -803,7 +853,7 @@ def _spawn_error_remote_init(role: str, message: str) -> str:
 
 
 def _ui_role_task_idempotency_key(cfg: UiConfig, role: str) -> str:
-    return f"mesh-ui::{cfg.ui_group_id}::{role}"
+    return f"mesh-ui::{cfg.ui_group_id}::{role}::{time.time_ns()}"
 
 
 def _task_payload(task: dict[str, Any]) -> dict[str, Any]:
@@ -814,13 +864,18 @@ def _task_matches_ui_role(cfg: UiConfig, role: str, task: dict[str, Any]) -> boo
     payload = _task_payload(task)
     if not payload.get("ui_role_session"):
         return False
-    if str(task.get("repo") or "").strip() != cfg.repo:
+    task_repo = str(task.get("repo") or payload.get("working_dir") or "").strip()
+    if task_repo != cfg.repo and os.path.basename(task_repo.rstrip("/")) != cfg.repo_name:
         return False
     if str(task.get("role") or payload.get("ui_role") or "").strip() != role:
         return False
     if str(payload.get("ui_group_id") or "").strip() != cfg.ui_group_id:
         return False
     return True
+
+
+def _is_terminal_task_status(status: str) -> bool:
+    return status in {"completed", "failed", "cancelled", "canceled"}
 
 
 def _find_existing_ui_role_task(
@@ -830,14 +885,18 @@ def _find_existing_ui_role_task(
     role: str,
 ) -> dict[str, Any] | None:
     status_priority = {
-        "running": 5,
-        "assigned": 4,
-        "review": 3,
-        "blocked": 2,
-        "queued": 1,
+        "running": 7,
+        "assigned": 6,
+        "review": 5,
+        "blocked": 4,
+        "queued": 3,
+        "completed": 2,
+        "failed": 1,
+        "cancelled": 0,
+        "canceled": 0,
     }
     matches: list[dict[str, Any]] = []
-    for status in ("queued", "assigned", "blocked", "review", "running"):
+    for status in ("queued", "assigned", "blocked", "review", "running", "completed", "failed", "cancelled", "canceled"):
         try:
             payload = _router_get_json(router_url, auth_token, f"/tasks?status={quote(status)}&limit=200")
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
@@ -881,7 +940,7 @@ def _cancel_ui_role_task(router_url: str, auth_token: str, task_id: str) -> None
 
 def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: str) -> dict[str, Any]:
     existing = _find_existing_ui_role_task(router_url, auth_token, cfg, role)
-    if existing is not None:
+    if existing is not None and not _is_terminal_task_status(str(existing.get("status", "")).strip()):
         return {
             "role": role,
             "task_id": str(existing.get("task_id", "")).strip(),
@@ -918,12 +977,16 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
         existing = _find_existing_ui_role_task(router_url, auth_token, cfg, role)
         if existing is None:
             raise RuntimeError(f"duplicate ui role task for {role} but existing task was not found") from exc
-        return {
-            "role": role,
-            "task_id": str(existing.get("task_id", "")).strip(),
-            "target_cli": str(existing.get("target_cli", "")).strip() or target_cli,
-            "created": False,
-        }
+        if _is_terminal_task_status(str(existing.get("status", "")).strip()):
+            payload["idempotency_key"] = _ui_role_task_idempotency_key(cfg, role)
+            created = _router_post_json(router_url, auth_token, "/tasks", payload)
+        else:
+            return {
+                "role": role,
+                "task_id": str(existing.get("task_id", "")).strip(),
+                "target_cli": str(existing.get("target_cli", "")).strip() or target_cli,
+                "created": False,
+            }
     if not isinstance(created, dict):
         raise RuntimeError(f"invalid task creation response for role {role}")
     task_id = str(created.get("task_id", "")).strip()
@@ -983,12 +1046,13 @@ def _spawn_missing_agent_role_plans(
 
     deadline = time.monotonic() + max(0.0, timeout_s)
     while pending and time.monotonic() < deadline:
-        session_pairs = _fetch_live_session_pairs(router_url, auth_token)
-        latest_plans = _build_role_launch_plans(cfg, session_pairs)
         resolved: list[str] = []
         for role, task_info in pending.items():
-            plan = latest_plans.get(role)
-            if plan is None or plan.mode != "attach" or plan.task_id != task_info["task_id"]:
+            pair = _fetch_live_session_pair_for_task(router_url, auth_token, str(task_info.get("task_id", "")).strip())
+            if pair is None:
+                continue
+            plan = _build_role_launch_plan(role, pair)
+            if plan.mode != "attach" or plan.task_id != task_info["task_id"]:
                 continue
             existing_plans[role] = RoleLaunchPlan(
                 role=role,
@@ -1118,21 +1182,26 @@ def _tab_sessions(tab) -> list[Any]:
     return [current] if current is not None else []
 
 
-async def _is_mesh_ui_tab(tab) -> bool:
+async def _is_mesh_ui_tab(tab, repo: str) -> bool:
     for session in _tab_sessions(tab):
         try:
             marker = await session.async_get_variable("user.mesh_ui_tab")
-            if str(marker) == "1":
+            if str(marker) != "1":
+                continue
+            tab_repo = await session.async_get_variable("user.mesh_repo")
+            if not tab_repo or str(tab_repo) == repo:
                 return True
         except Exception:
             continue
     return False
 
 
-async def _mark_mesh_ui_sessions(sessions: list[Any]) -> None:
-    for session in sessions:
+async def _mark_mesh_ui_sessions(sessions: list[Any], cfg: UiConfig, roles: list[str]) -> None:
+    for session, role in zip(sessions, roles):
         try:
             await session.async_set_variable("user.mesh_ui_tab", "1")
+            await session.async_set_variable("user.mesh_repo", cfg.repo)
+            await session.async_set_variable("user.mesh_role", role)
         except Exception:
             continue
 
@@ -1149,10 +1218,10 @@ async def _close_tab(tab) -> None:
         pass
 
 
-async def _cleanup_existing_mesh_tabs(window) -> None:
+async def _cleanup_existing_mesh_tabs(window, repo: str) -> None:
     tabs = list(window.tabs)
     for tab in tabs:
-        if await _is_mesh_ui_tab(tab):
+        if await _is_mesh_ui_tab(tab, repo):
             await _close_tab(tab)
 
 
@@ -1165,7 +1234,7 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
         window = await iterm2.Window.async_create(connection)
 
     if cfg.replace_tabs:
-        await _cleanup_existing_mesh_tabs(window)
+        await _cleanup_existing_mesh_tabs(window, cfg.repo)
 
     if cfg.single_tab:
         groups = [cfg.roles]
@@ -1186,7 +1255,7 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
     for roles in groups:
         tab = await window.async_create_tab()
         sessions = await _create_panes_for_roles(tab, roles)
-        await _mark_mesh_ui_sessions(sessions)
+        await _mark_mesh_ui_sessions(sessions, cfg, roles)
         for sess, role in zip(sessions, roles):
             plan = launch_plans.get(role) or RoleLaunchPlan(role=role, mode="spawn")
             cmd = _command_for_role(
