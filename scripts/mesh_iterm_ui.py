@@ -976,8 +976,12 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
             raise
         existing = _find_existing_ui_role_task(router_url, auth_token, cfg, role)
         if existing is None:
-            raise RuntimeError(f"duplicate ui role task for {role} but existing task was not found") from exc
-        if _is_terminal_task_status(str(existing.get("status", "")).strip()):
+            # We got a 409 but could not find the task. This can happen if the router
+            # has a stale task that didn't match _task_matches_ui_role or synchronization delay.
+            # Force a retry with a fresh idempotency key.
+            payload["idempotency_key"] = _ui_role_task_idempotency_key(cfg, role)
+            created = _router_post_json(router_url, auth_token, "/tasks", payload)
+        elif _is_terminal_task_status(str(existing.get("status", "")).strip()):
             payload["idempotency_key"] = _ui_role_task_idempotency_key(cfg, role)
             created = _router_post_json(router_url, auth_token, "/tasks", payload)
         else:
