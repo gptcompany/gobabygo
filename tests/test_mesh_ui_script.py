@@ -1639,17 +1639,17 @@ def test_default_ui_roles_fit_two_tabs_with_three_panes():
 
 class _FakeSession:
     def __init__(self, marker: str | None = None):
-        self.marker = marker
+        self.variables = {}
+        if marker is not None:
+            self.variables["user.mesh_ui_tab"] = marker
 
     async def async_get_variable(self, name: str):
-        assert name == "user.mesh_ui_tab"
-        if self.marker is None:
+        if name not in self.variables:
             raise RuntimeError("missing marker")
-        return self.marker
+        return self.variables[name]
 
     async def async_set_variable(self, name: str, value: str):
-        assert name == "user.mesh_ui_tab"
-        self.marker = value
+        self.variables[name] = value
 
 
 class _FakeTab:
@@ -1665,26 +1665,42 @@ class _FakeTab:
 def test_is_mesh_ui_tab_checks_all_sessions():
     module = _load_module()
     tab = _FakeTab([_FakeSession(None), _FakeSession("1")])
+    asyncio.run(tab.sessions[1].async_set_variable("user.mesh_repo", "/media/sam/1TB/demo"))
 
-    assert asyncio.run(module._is_mesh_ui_tab(tab)) is True
+    assert asyncio.run(module._is_mesh_ui_tab(tab, "/media/sam/1TB/demo")) is True
 
 
 def test_mark_mesh_ui_sessions_marks_all_sessions():
     module = _load_module()
     sessions = [_FakeSession(None), _FakeSession(None), _FakeSession(None)]
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "lead", "verifier"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
 
-    asyncio.run(module._mark_mesh_ui_sessions(sessions))
+    asyncio.run(module._mark_mesh_ui_sessions(sessions, cfg, ["boss", "lead", "verifier"]))
 
-    assert [s.marker for s in sessions] == ["1", "1", "1"]
+    assert [s.variables["user.mesh_ui_tab"] for s in sessions] == ["1", "1", "1"]
+    assert [s.variables["user.mesh_repo"] for s in sessions] == [cfg.repo, cfg.repo, cfg.repo]
+    assert [s.variables["user.mesh_role"] for s in sessions] == ["boss", "lead", "verifier"]
 
 
 def test_cleanup_existing_mesh_tabs_closes_marked_tab_even_if_current_session_unmarked():
     module = _load_module()
     marked_tab = _FakeTab([_FakeSession(None), _FakeSession("1")])
     plain_tab = _FakeTab([_FakeSession(None)])
+    asyncio.run(plain_tab.current_session.async_set_variable("user.mesh_repo", "/media/sam/1TB/other"))
+    asyncio.run(marked_tab.sessions[1].async_set_variable("user.mesh_repo", "/media/sam/1TB/demo"))
     window = type("Window", (), {"tabs": [marked_tab, plain_tab]})()
 
-    asyncio.run(module._cleanup_existing_mesh_tabs(window))
+    asyncio.run(module._cleanup_existing_mesh_tabs(window, "/media/sam/1TB/demo"))
 
     assert marked_tab.closed is True
     assert plain_tab.closed is False
