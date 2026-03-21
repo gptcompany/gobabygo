@@ -1053,7 +1053,7 @@ def main() -> int:
             except (TimeoutError, OSError, json.JSONDecodeError) as exc:
                 failures.append(f"{choice.session_id[:12]}: {exc}")
 
-        if not failures and clear_cache:
+        if not failures:
             closed, remaining_session_ids, observe_error = _wait_for_ui_group_closure(
                 router_url,
                 auth_token,
@@ -1072,11 +1072,12 @@ def main() -> int:
         if not failures and clear_cache:
             _clear_ui_group_cache(repo_name, repo_path=repo_path)
 
+        cache_cleared = bool(not failures and (not cached_group or clear_cache))
         result = {
             "repo_name": repo_name,
             "ui_group_id": ui_group_id,
             "closed_sessions": closed_session_ids,
-            "cleared_cache": bool(not failures and clear_cache),
+            "cleared_cache": cache_cleared,
             "failures": failures,
         }
         if getattr(args, "output", ""):

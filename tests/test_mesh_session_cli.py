@@ -1813,6 +1813,53 @@ def test_main_close_targets_explicit_repo_argument(monkeypatch, tmp_path):
     assert seen == ["/media/sam/1TB/rektslug"]
 
 
+def test_main_close_waits_for_closure_without_cache(monkeypatch, tmp_path):
+    module = _load_module()
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="lead",
+        title="Review movement",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@192.168.1.111:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+    waited = {"called": False}
+
+    monkeypatch.setenv("MESH_UI_GROUP_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [choice])
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: ("/Users/sam/snake-game", "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "router_post_json",
+        lambda *args, **kwargs: {"status": "accepted"},
+    )
+
+    def fake_wait(*args, **kwargs):
+        waited["called"] = True
+        return True, [], ""
+
+    monkeypatch.setattr(module, "_wait_for_ui_group_closure", fake_wait)
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
+
+    assert module.main() == 0
+    assert waited["called"] is True
+
+
 def test_main_close_resolves_group_from_non_active_open_sessions(monkeypatch, tmp_path):
     module = _load_module()
     choice = module.SessionChoice(
