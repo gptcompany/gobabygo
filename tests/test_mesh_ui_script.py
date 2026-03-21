@@ -857,12 +857,17 @@ def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
             "target_cli": "gemini",
         },
     )
-    called = {"post": False}
-    monkeypatch.setattr(
-        module,
-        "_router_post_json",
-        lambda *args, **kwargs: called.__setitem__("post", True),
-    )
+    called = {"post": 0}
+
+    def fake_post(router_url, auth_token, path, payload):
+        called["post"] += 1
+        if called["post"] == 1:
+            # First attempt returns 409 Conflict
+            raise module.HTTPError(path, 409, "duplicate", None, None)
+        # Second attempt (after recovery) returns success
+        return {"task_id": "task-lead-new"}
+
+    monkeypatch.setattr(module, "_router_post_json", fake_post)
 
     task_info = module._create_ui_role_task("http://router", "token", cfg, "lead")
 
@@ -872,7 +877,7 @@ def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
         "target_cli": "gemini",
         "created": False,
     }
-    assert called["post"] is False
+    assert called["post"] == 1
 
 
 def test_create_ui_role_task_does_not_reuse_terminal_existing_task(monkeypatch):
@@ -939,8 +944,13 @@ def test_create_ui_role_task_recovers_existing_task_on_duplicate_idempotency(mon
             return None
         return {"task_id": "task-lead-existing", "target_cli": "gemini"}
 
+    post_calls = {"count": 0}
+
     def fake_post(router_url, auth_token, path, payload):
-        raise module.HTTPError(path, 409, "duplicate", None, None)
+        post_calls["count"] += 1
+        if post_calls["count"] == 1:
+            raise module.HTTPError(path, 409, "duplicate", None, None)
+        return {"task_id": "task-lead-new"}
 
     monkeypatch.setattr(module, "_find_existing_ui_role_task", fake_find)
     monkeypatch.setattr(module, "_router_post_json", fake_post)
@@ -949,10 +959,11 @@ def test_create_ui_role_task_recovers_existing_task_on_duplicate_idempotency(mon
 
     assert task_info == {
         "role": "lead",
-        "task_id": "task-lead-existing",
+        "task_id": "task-lead-new",
         "target_cli": "gemini",
-        "created": False,
+        "created": True,
     }
+    assert post_calls["count"] == 2
 
 
 def test_create_ui_role_task_retries_duplicate_when_only_terminal_task_exists(monkeypatch):
@@ -1015,7 +1026,7 @@ def test_find_existing_ui_role_task_prefers_running_over_queued_duplicates(monke
     )
 
     def fake_get(router_url: str, auth_token: str, path: str):
-        if path == "/tasks?status=queued&limit=200":
+        if path == "/tasks?limit=300":
             return {
                 "tasks": [
                     {
@@ -1025,12 +1036,7 @@ def test_find_existing_ui_role_task_prefers_running_over_queued_duplicates(monke
                         "role": "lead",
                         "payload": {"ui_role_session": True, "ui_group_id": "demo-ui-1"},
                         "updated_at": "2026-03-10T19:20:00Z",
-                    }
-                ]
-            }
-        if path == "/tasks?status=running&limit=200":
-            return {
-                "tasks": [
+                    },
                     {
                         "task_id": "task-running",
                         "status": "running",
@@ -1066,7 +1072,7 @@ def test_find_existing_ui_role_task_ignores_other_ui_groups(monkeypatch):
     )
 
     def fake_get(router_url: str, auth_token: str, path: str):
-        if path == "/tasks?status=queued&limit=200":
+        if path == "/tasks?limit=300":
             return {
                 "tasks": [
                     {
@@ -1076,12 +1082,7 @@ def test_find_existing_ui_role_task_ignores_other_ui_groups(monkeypatch):
                         "role": "lead",
                         "payload": {"ui_role_session": True, "ui_group_id": "demo-ui-1"},
                         "updated_at": "2026-03-10T19:20:00Z",
-                    }
-                ]
-            }
-        if path == "/tasks?status=running&limit=200":
-            return {
-                "tasks": [
+                    },
                     {
                         "task_id": "task-current-group",
                         "status": "running",
@@ -1117,7 +1118,7 @@ def test_find_existing_ui_role_task_includes_terminal_states_for_duplicate_recov
     )
 
     def fake_get(router_url: str, auth_token: str, path: str):
-        if path == "/tasks?status=failed&limit=200":
+        if path == "/tasks?limit=300":
             return {
                 "tasks": [
                     {
@@ -1155,7 +1156,7 @@ def test_find_existing_ui_role_task_matches_repo_name_when_cfg_repo_is_path(monk
     )
 
     def fake_get(router_url: str, auth_token: str, path: str):
-        if path == "/tasks?status=running&limit=200":
+        if path == "/tasks?limit=300":
             return {
                 "tasks": [
                     {

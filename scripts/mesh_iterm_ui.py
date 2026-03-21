@@ -331,7 +331,7 @@ def _load_router_env() -> tuple[str, str]:
 def _router_get_json(router_url: str, auth_token: str, path: str) -> Any:
     req = Request(router_url.rstrip("/") + path)
     req.add_header("Authorization", f"Bearer {auth_token}")
-    with urlopen(req, timeout=5) as resp:
+    with urlopen(req, timeout=15) as resp:
         return json.load(resp)
 
 
@@ -343,7 +343,7 @@ def _router_post_json(router_url: str, auth_token: str, path: str, payload: dict
     )
     req.add_header("Authorization", f"Bearer {auth_token}")
     req.add_header("Content-Type", "application/json")
-    with urlopen(req, timeout=10) as resp:
+    with urlopen(req, timeout=15) as resp:
         return json.load(resp)
 
 
@@ -761,6 +761,12 @@ def _fetch_live_session_pairs(router_url: str, auth_token: str) -> list[tuple[di
     for session in sessions:
         if not isinstance(session, dict):
             continue
+        # Optimization: only fetch tasks for sessions that look like UI roles.
+        # This avoids sequential GETs for unrelated sessions.
+        meta = _session_metadata(session)
+        if not meta.get("ui_group_id") and not meta.get("ui_role"):
+            continue
+
         task_id = str(session.get("task_id", "")).strip()
         task: dict[str, Any] = {}
         if task_id:
@@ -895,21 +901,21 @@ def _find_existing_ui_role_task(
         "cancelled": 0,
         "canceled": 0,
     }
-    matches: list[dict[str, Any]] = []
-    for status in ("queued", "assigned", "blocked", "review", "running", "completed", "failed", "cancelled", "canceled"):
-        try:
-            payload = _router_get_json(router_url, auth_token, f"/tasks?status={quote(status)}&limit=200")
-        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-            continue
-        tasks = payload.get("tasks") if isinstance(payload, dict) else None
-        if not isinstance(tasks, list):
-            continue
-        status_matches = [
-            task
-            for task in tasks
-            if isinstance(task, dict) and _task_matches_ui_role(cfg, role, task)
-        ]
-        matches.extend(status_matches)
+    # Optimize by fetching recent tasks once instead of per-status.
+    try:
+        payload = _router_get_json(router_url, auth_token, "/tasks?limit=300")
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+
+    tasks = payload.get("tasks") if isinstance(payload, dict) else None
+    if not isinstance(tasks, list):
+        return None
+
+    matches = [
+        task
+        for task in tasks
+        if isinstance(task, dict) and _task_matches_ui_role(cfg, role, task)
+    ]
     if not matches:
         return None
     matches.sort(
@@ -939,15 +945,6 @@ def _cancel_ui_role_task(router_url: str, auth_token: str, task_id: str) -> None
 
 
 def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: str) -> dict[str, Any]:
-    existing = _find_existing_ui_role_task(router_url, auth_token, cfg, role)
-    if existing is not None and not _is_terminal_task_status(str(existing.get("status", "")).strip()):
-        return {
-            "role": role,
-            "task_id": str(existing.get("task_id", "")).strip(),
-            "target_cli": str(existing.get("target_cli", "")).strip(),
-            "created": False,
-        }
-
     target_cli, target_account = _resolve_role_task_target(role)
     task_payload = {
         "ui_role_session": True,
