@@ -13,6 +13,7 @@ roles:
     target_account: work-claude
   worker-codex:
     provider: codex
+    target_account: work-codex
   worker-gemini:
     provider: gemini
   verifier:

@@ -198,6 +198,17 @@ def test_command_for_role_env_override_accepts_ui_group_placeholder(monkeypatch)
     assert "echo group=rektslug-ui-1" in command
 
 
+def test_default_mapping_routes_worker_codex_to_work_codex(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+    monkeypatch.delenv("MESH_UI_PROVIDER_OVERRIDE", raising=False)
+
+    provider, target_account = module._resolve_role_task_target("worker-codex")
+
+    assert provider == "codex"
+    assert target_account == "work-codex"
+
+
 def test_command_for_role_provider_override_wins_for_worker(tmp_path, monkeypatch):
     module = _load_module()
     config = tmp_path / "operator_ui.yaml"
