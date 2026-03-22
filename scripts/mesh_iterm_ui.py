@@ -606,6 +606,9 @@ def _build_tmux_attach_remote_init(role: str, session: dict[str, Any], task: dic
     cli_type = str(session.get("cli_type", "")).strip()
     users = _load_provider_session_users()
     user = users.get(cli_type, "").strip()
+    # Force mesh-worker for gemini as the worker always runs under this user
+    if cli_type == "gemini":
+        user = "mesh-worker"
     attach_cmd = f"tmux attach -t {shlex.quote(tmux_session)}"
     if user and user != "sam":
         attach_cmd = f"sudo -u {shlex.quote(user)} {attach_cmd}"
@@ -1057,7 +1060,7 @@ def _spawn_missing_agent_role_plans(
                 continue
             existing_plans[role] = RoleLaunchPlan(
                 role=role,
-                mode="spawn",
+                mode="spawn" if bool(task_info.get("created")) else "attach",
                 remote_init=plan.remote_init,
                 session_id=plan.session_id,
                 task_id=plan.task_id,
