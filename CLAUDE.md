@@ -9,8 +9,13 @@ Primary docs for restart/resume in this repo:
 - `README.md`
 - `ARCHITECTURE.md`
 - `CLAUDE.md`
+- `specs/mesh-ui-role-sessions/t014-handoff-20260322.md` for the current T014 state
 
 `HANDOFF.md` is supplemental session log, not the only canonical source.
+
+Important: older `.100` router notes in this file are historical context. For the
+current mesh UI role session live topology, treat `10.0.0.4:8780` on `vpsazure`
+as canonical unless newer evidence explicitly replaces it.
 
 ### Core principles
 

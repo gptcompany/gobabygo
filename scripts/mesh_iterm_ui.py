@@ -307,11 +307,7 @@ def _load_router_env() -> tuple[str, str]:
     if router_url and auth_token:
         return router_url, auth_token
 
-    candidates = [
-        Path.home() / ".mesh" / "router.env",
-        Path.home() / ".mesh" / ".env.mesh",
-        Path("/etc/mesh-worker/common.env"),
-    ]
+    candidates = _router_env_candidate_paths()
     for path in candidates:
         if not path.is_file():
             continue
@@ -328,10 +324,19 @@ def _load_router_env() -> tuple[str, str]:
     return "", ""
 
 
+def _router_env_candidate_paths(home: Path | None = None) -> list[Path]:
+    home_dir = home or Path.home()
+    return [
+        Path("/etc/mesh-worker/common.env"),
+        home_dir / ".mesh" / "router.env",
+        home_dir / ".mesh" / ".env.mesh",
+    ]
+
+
 def _router_get_json(router_url: str, auth_token: str, path: str) -> Any:
     req = Request(router_url.rstrip("/") + path)
     req.add_header("Authorization", f"Bearer {auth_token}")
-    with urlopen(req, timeout=15) as resp:
+    with urlopen(req, timeout=30) as resp:
         return json.load(resp)
 
 
@@ -343,7 +348,7 @@ def _router_post_json(router_url: str, auth_token: str, path: str, payload: dict
     )
     req.add_header("Authorization", f"Bearer {auth_token}")
     req.add_header("Content-Type", "application/json")
-    with urlopen(req, timeout=15) as resp:
+    with urlopen(req, timeout=30) as resp:
         return json.load(resp)
 
 
@@ -606,9 +611,6 @@ def _build_tmux_attach_remote_init(role: str, session: dict[str, Any], task: dic
     cli_type = str(session.get("cli_type", "")).strip()
     users = _load_provider_session_users()
     user = users.get(cli_type, "").strip()
-    # Force mesh-worker for gemini as the worker always runs under this user
-    if cli_type == "gemini":
-        user = "mesh-worker"
     attach_cmd = f"tmux attach -t {shlex.quote(tmux_session)}"
     if user and user != "sam":
         attach_cmd = f"sudo -u {shlex.quote(user)} {attach_cmd}"
@@ -788,6 +790,42 @@ def _fetch_live_session_pairs(router_url: str, auth_token: str) -> list[tuple[di
     return session_pairs
 
 
+def _fallback_task_from_session(task_id: str, session: dict[str, Any]) -> dict[str, Any]:
+    meta = _session_metadata(session)
+    return {
+        "task_id": task_id,
+        "repo": str(meta.get("repo") or meta.get("working_dir") or "").strip(),
+        "role": str(meta.get("ui_role") or meta.get("role") or "").strip(),
+        "target_cli": str(session.get("cli_type", "")).strip(),
+        "status": "running",
+        "title": str(meta.get("task_title", "")).strip(),
+        "payload": {
+            "ui_group_id": str(meta.get("ui_group_id") or "").strip(),
+            "ui_role": str(meta.get("ui_role") or meta.get("role") or "").strip(),
+        },
+    }
+
+
+def _find_open_session_for_task(router_url: str, auth_token: str, task_id: str) -> dict[str, Any] | None:
+    if not router_url or not auth_token or not task_id:
+        return None
+    try:
+        sessions_payload = _router_get_json(router_url, auth_token, "/sessions?state=open&limit=200")
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+
+    sessions = sessions_payload.get("sessions") if isinstance(sessions_payload, dict) else None
+    if not isinstance(sessions, list):
+        return None
+
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        if str(session.get("task_id", "")).strip() == task_id:
+            return session
+    return None
+
+
 def _fetch_live_session_pair_for_task(
     router_url: str,
     auth_token: str,
@@ -798,18 +836,23 @@ def _fetch_live_session_pair_for_task(
     try:
         task_payload = _router_get_json(router_url, auth_token, f"/tasks/{quote(task_id)}")
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return None
+        task_payload = None
     if not isinstance(task_payload, dict):
-        return None
+        session_payload = _find_open_session_for_task(router_url, auth_token, task_id)
+        if not isinstance(session_payload, dict):
+            return None
+        return session_payload, _fallback_task_from_session(task_id, session_payload)
 
     session_id = str(task_payload.get("session_id", "")).strip()
-    if not session_id:
-        return None
+    if session_id:
+        try:
+            session_payload = _router_get_json(router_url, auth_token, f"/sessions/{quote(session_id)}")
+        except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+            session_payload = None
+        if isinstance(session_payload, dict):
+            return session_payload, task_payload
 
-    try:
-        session_payload = _router_get_json(router_url, auth_token, f"/sessions/{quote(session_id)}")
-    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return None
+    session_payload = _find_open_session_for_task(router_url, auth_token, task_id)
     if not isinstance(session_payload, dict):
         return None
     return session_payload, task_payload
@@ -1010,7 +1053,7 @@ def _spawn_missing_agent_role_plans(
     *,
     router_url: str,
     auth_token: str,
-    timeout_s: float = 60.0,
+    timeout_s: float = 180.0,
     poll_interval_s: float = 1.0,
 ) -> dict[str, RoleLaunchPlan]:
     pending: dict[str, dict[str, Any]] = {}
@@ -1050,6 +1093,7 @@ def _spawn_missing_agent_role_plans(
 
     deadline = time.monotonic() + max(0.0, timeout_s)
     while pending and time.monotonic() < deadline:
+        print(f"DEBUG: Waiting for {len(pending)} sessions to materialize... ({int(deadline - time.monotonic())}s left)")
         resolved: list[str] = []
         for role, task_info in pending.items():
             pair = _fetch_live_session_pair_for_task(router_url, auth_token, str(task_info.get("task_id", "")).strip())
@@ -1078,8 +1122,8 @@ def _spawn_missing_agent_role_plans(
         existing_plans[role] = RoleLaunchPlan(
             role=role,
             mode="error",
-            remote_init=_spawn_error_remote_init(role, "session spawn timeout after 60s"),
-            error="session spawn timeout after 60s",
+            remote_init=_spawn_error_remote_init(role, f"session spawn timeout after {int(timeout_s)}s"),
+            error=f"session spawn timeout after {int(timeout_s)}s",
         )
     return existing_plans
 
@@ -1150,7 +1194,7 @@ def _command_for_role(
         or _default_remote_init_for_role(role)
     )
     helper = _repo_root() / "scripts" / "mesh_ui_role_shell.sh"
-    live_attach_mode = "pre_resolved" if live_remote_init else "auto"
+    live_attach_mode = "pre_resolved" if live_remote_init and launch_mode == "attach" else "auto"
     return " ".join(
         [
             shlex.quote(str(helper)),

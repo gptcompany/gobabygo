@@ -2,6 +2,17 @@
 
 Date: `2026-03-09`
 
+## 2026-03-22 note for external agents
+
+For current `T014` / mesh UI role session recovery, do **not** start from the old
+`.100` assumptions in this file. Use:
+
+- `specs/mesh-ui-role-sessions/t014-findings-20260320.md`
+- `specs/mesh-ui-role-sessions/t014-handoff-20260322.md`
+
+The current canonical live router for this work is `10.0.0.4:8780` on `vpsazure`,
+not `.100`.
+
 ## Scope closed in this session
 
 The operational recovery path was closed:

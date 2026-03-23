@@ -234,11 +234,32 @@ def test_command_for_role_marks_pre_resolved_live_attach(monkeypatch):
         "lead",
         "/media/sam/1TB/rektslug",
         "rektslug",
+        launch_mode="attach",
         live_remote_init="tmux attach -t mesh-demo",
     )
 
     assert "tmux attach -t mesh-demo" in command
     assert "pre_resolved" in command
+
+
+def test_command_for_role_does_not_mark_error_shell_as_pre_resolved(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CMD_LEAD", raising=False)
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+
+    command = module._command_for_role(
+        "lead",
+        "/media/sam/1TB/rektslug",
+        "rektslug",
+        launch_mode="error",
+        provider="gemini",
+        live_remote_init="printf 'error\\n'",
+    )
+
+    assert "printf " in command
+    assert "error\\n" in command
+    assert "pre_resolved" not in command
+    assert " auto " in f" {command} "
 
 
 def test_command_for_role_passes_ui_group_id(monkeypatch):
@@ -359,6 +380,16 @@ def test_command_for_role_uses_provider_runtime_config_override(tmp_path, monkey
     command = module._command_for_role("boss", "/media/sam/1TB/rektslug", "rektslug")
 
     assert "custom-gemini --repo gemini" in command
+
+
+def test_router_env_candidate_paths_prefers_systemd_worker_env():
+    module = _load_module()
+
+    candidates = module._router_env_candidate_paths(Path("/tmp/demo-home"))
+
+    assert candidates[0] == Path("/etc/mesh-worker/common.env")
+    assert candidates[1] == Path("/tmp/demo-home/.mesh/router.env")
+    assert candidates[2] == Path("/tmp/demo-home/.mesh/.env.mesh")
 
 
 def test_ui_group_cache_round_trip(tmp_path):
@@ -1612,6 +1643,8 @@ def test_fetch_live_session_pair_for_task_returns_none_without_session_id(monkey
                 "target_cli": "gemini",
                 "status": "assigned",
             }
+        if path == "/sessions?state=open&limit=200":
+            return {"sessions": []}
         raise AssertionError(f"unexpected path: {path}")
 
     monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
@@ -1619,6 +1652,86 @@ def test_fetch_live_session_pair_for_task_returns_none_without_session_id(monkey
     pair = module._fetch_live_session_pair_for_task("http://router", "token", "task-lead")
 
     assert pair is None
+
+
+def test_fetch_live_session_pair_for_task_falls_back_to_open_sessions_when_task_lookup_times_out(monkeypatch):
+    module = _load_module()
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/tasks/task-lead":
+            raise TimeoutError("router task lookup timed out")
+        if path == "/sessions?state=open&limit=200":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "sess-lead",
+                        "task_id": "task-lead",
+                        "cli_type": "gemini",
+                        "metadata": {
+                            "repo": "/media/sam/1TB/demo",
+                            "ui_group_id": "demo-ui-1",
+                            "ui_role": "lead",
+                            "tmux_session": "mesh-gemini-lead",
+                        },
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
+
+    pair = module._fetch_live_session_pair_for_task("http://router", "token", "task-lead")
+
+    assert pair is not None
+    session, task = pair
+    assert session["session_id"] == "sess-lead"
+    assert task["task_id"] == "task-lead"
+    assert task["role"] == "lead"
+    assert task["target_cli"] == "gemini"
+
+
+def test_fetch_live_session_pair_for_task_falls_back_to_open_sessions_when_session_lookup_fails(monkeypatch):
+    module = _load_module()
+
+    def fake_router_get_json(router_url: str, auth_token: str, path: str):
+        if path == "/tasks/task-lead":
+            return {
+                "task_id": "task-lead",
+                "session_id": "sess-lead",
+                "repo": "/media/sam/1TB/demo",
+                "role": "lead",
+                "target_cli": "gemini",
+                "status": "running",
+            }
+        if path == "/sessions/sess-lead":
+            raise TimeoutError("router session lookup timed out")
+        if path == "/sessions?state=open&limit=200":
+            return {
+                "sessions": [
+                    {
+                        "session_id": "sess-lead",
+                        "task_id": "task-lead",
+                        "cli_type": "gemini",
+                        "metadata": {
+                            "repo": "/media/sam/1TB/demo",
+                            "ui_group_id": "demo-ui-1",
+                            "ui_role": "lead",
+                            "tmux_session": "mesh-gemini-lead",
+                        },
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected path: {path}")
+
+    monkeypatch.setattr(module, "_router_get_json", fake_router_get_json)
+
+    pair = module._fetch_live_session_pair_for_task("http://router", "token", "task-lead")
+
+    assert pair is not None
+    session, task = pair
+    assert session["session_id"] == "sess-lead"
+    assert task["task_id"] == "task-lead"
+    assert task["status"] == "running"
 
 
 def test_default_ui_roles_fit_two_tabs_with_three_panes():
