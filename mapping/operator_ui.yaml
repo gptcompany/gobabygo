@@ -2,8 +2,7 @@ version: 1
 
 roles:
   boss:
-    remote_init: >-
-      printf '[mesh:boss] operator control shell ready in %s\n' "$PWD"
+    provider: gemini
   president:
     provider: gemini
   lead:

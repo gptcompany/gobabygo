@@ -739,7 +739,8 @@ class MeshSessionWorker:
                     delta_text = capture_emit[0] if capture_emit else ""
                     if not prompt_delivery_confirmed:
                         if captured.strip() and (
-                            not _looks_like_start_screen(captured)
+                            _capture_contains_prompt_text(captured, prompt)
+                            or not _looks_like_start_screen(captured)
                             or _capture_shows_activity(captured)
                         ):
                             prompt_delivery_confirmed = True
@@ -1148,7 +1149,9 @@ class MeshSessionWorker:
                 continue
             if not _looks_like_start_screen(captured):
                 return
-            if captured.strip() == baseline or _capture_contains_prompt_text(captured, prompt):
+            if _capture_contains_prompt_text(captured, prompt):
+                return
+            if captured.strip() == baseline:
                 logger.info(
                     "Prompt not visible and pane unchanged for %s; resending prompt attempt %d/%d",
                     session_name,

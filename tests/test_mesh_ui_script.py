@@ -71,14 +71,13 @@ def test_mesh_ui_role_shell_exports_ui_group_id():
     assert 'UI_GROUP_ID=%q LAUNCH_MODE=%q PROVIDER=%q SESSION_ID=%q bash -lc %q' in content
 
 
-def test_operator_ui_boss_is_not_provider_backed():
+def test_operator_ui_boss_is_provider_backed():
     config_path = Path(__file__).resolve().parents[1] / "mapping" / "operator_ui.yaml"
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
     boss = data["roles"]["boss"]
 
-    assert "provider" not in boss
-    assert "remote_init" in boss
+    assert boss["provider"] == "gemini"
 
 
 def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
@@ -141,6 +140,16 @@ def test_command_for_role_uses_yaml_remote_init(tmp_path, monkeypatch):
     assert "mesh_ui_role_shell.sh" in command
     assert "boss-ready" in command
     assert "/media/sam/1TB/rektslug" in command
+
+
+def test_resolve_repo_bare_name_maps_to_ws_repo_base(monkeypatch):
+    module = _load_module()
+    monkeypatch.setenv("MESH_WS_REPO_BASE", "/srv/ws")
+
+    repo_path, repo_name = module._resolve_repo("rektslug")
+
+    assert repo_path == "/srv/ws/rektslug"
+    assert repo_name == "rektslug"
 
 
 def test_command_for_role_uses_yaml_provider_runtime(tmp_path, monkeypatch):
@@ -866,6 +875,27 @@ def test_ui_role_bootstrap_prompt_uses_role_override_env(monkeypatch):
         "Ciao dal president per demo in /media/sam/1TB/demo. "
         "Coordina un saluto collettivo e non uscire."
     )
+
+
+def test_ui_role_bootstrap_prompt_for_boss_mentions_president_and_mesh_send():
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+
+    prompt = module._ui_role_bootstrap_prompt(cfg, "boss", "gemini")
+
+    assert "You are boss for repository demo" in prompt
+    assert "mesh send president" in prompt
+    assert "$MESH_HOME/scripts/mesh send president" in prompt
 
 
 def test_ui_role_bootstrap_prompt_mentions_absolute_mesh_fallback_for_president():

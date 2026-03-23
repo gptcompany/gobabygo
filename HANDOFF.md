@@ -9,9 +9,18 @@ For current `T014` / mesh UI role session recovery, do **not** start from the ol
 
 - `specs/mesh-ui-role-sessions/t014-findings-20260320.md`
 - `specs/mesh-ui-role-sessions/t014-handoff-20260322.md`
+- `specs/mesh-ui-role-sessions/t014-handoff-20260323.md`
 
 The current canonical live router for this work is `10.0.0.4:8780` on `vpsazure`,
 not `.100`.
+
+Current 2026-03-23 blocker summary:
+
+- the main blocker is now Mac-side `iTerm2` Python API availability
+- new `mesh ui` launches can fail before router task creation if the private
+  `iTerm2` socket is missing
+- latest mesh UI checkpoint and resume instructions are in
+  `specs/mesh-ui-role-sessions/t014-handoff-20260323.md`
 
 ## Scope closed in this session
 

@@ -237,18 +237,17 @@ def _repo_root_path(root: str) -> str:
     return target
 
 
+def _ws_repo_base() -> str:
+    return os.environ.get("MESH_WS_REPO_BASE", "/media/sam/1TB").strip() or "/media/sam/1TB"
+
+
 def _resolve_repo(repo_arg: str) -> tuple[str, str]:
     if repo_arg:
         if "/" in repo_arg or repo_arg.startswith("."):
             repo_path = _repo_root_path(repo_arg)
             repo_name = os.path.basename(repo_path.rstrip("/"))
             return repo_path, repo_name
-        candidate = os.path.abspath(repo_arg)
-        if os.path.isdir(candidate):
-            repo_path = _repo_root_path(candidate)
-            repo_name = os.path.basename(repo_path.rstrip("/"))
-            return repo_path, repo_name
-        return repo_arg, repo_arg
+        return os.path.join(_ws_repo_base(), repo_arg), repo_arg
     cwd = _repo_root_path(os.getcwd())
     return cwd, os.path.basename(cwd)
 
@@ -536,7 +535,16 @@ def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
             target_cli=target_cli,
         )
     if role == "boss":
-        return ""
+        return (
+            f"You are boss for repository {cfg.repo_name} at {cfg.repo}. "
+            "You are the primary AI interface for the human operator. "
+            "President is your execution coordinator and your live peers include president, lead, worker-gemini, and verifier. "
+            "When you need president to coordinate or delegate, use "
+            f"`mesh send president \"<message>\"` from {cfg.repo}. "
+            "If a subprocess cannot find `mesh`, use the absolute command "
+            "`$MESH_HOME/scripts/mesh send president \"<message>\"` instead. "
+            "Stay in this interactive session, answer the operator directly, and delegate through the mesh hierarchy when needed. Do not exit."
+        )
     if role == "president":
         return (
             f"You are president for repository {cfg.repo_name} at {cfg.repo}. "
@@ -555,6 +563,7 @@ def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
         f"`mesh send <role> \"<message>\"` from {cfg.repo}. "
         "If a subprocess cannot find `mesh`, use the absolute command "
         "`$MESH_HOME/scripts/mesh send <role> \"<message>\"` instead, and stay within the mesh hierarchy. "
+        "When your task is complete, keep the final report concise: summary, artifacts, and commit hash if you made one. "
         "Acknowledge readiness briefly, remain in this interactive session, and wait for further instructions from the president/operator. Do not exit."
     )
 
@@ -1371,10 +1380,18 @@ def main() -> int:
         )
         return 3
 
+    socket_path = os.path.expanduser("~/Library/Application Support/iTerm2/private/socket")
     try:
-        iterm2.run_until_complete(lambda conn: _launch_layout(conn, cfg))
+        iterm2.run_until_complete(lambda conn: _launch_layout(conn, cfg), retry=False)
     except Exception as exc:
-        print(f"Error: failed to open iTerm2 layout: {exc}", file=sys.stderr)
+        if not os.path.exists(socket_path):
+            print(
+                "Error: iTerm2 Python API is not active (private socket missing). "
+                "Open iTerm2 and enable the Python API, or restart iTerm2.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Error: failed to open iTerm2 layout: {exc}", file=sys.stderr)
         return 1
     return 0
 

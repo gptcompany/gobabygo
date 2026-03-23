@@ -2234,7 +2234,7 @@ class TestTmuxOperations:
         mock_ensure_submitted.assert_not_called()
 
     @patch("src.router.session_worker.time.sleep")
-    def test_ensure_prompt_delivered_resends_when_start_screen_contains_prompt_text(self, mock_sleep: Mock) -> None:
+    def test_ensure_prompt_delivered_does_not_resend_when_start_screen_contains_prompt_text(self, mock_sleep: Mock) -> None:
         worker = _make_worker(prompt_submit_retry_count=2, prompt_submit_retry_poll_s=0.2)
         prompt = "Create GEMINI_E2E_OK.md and reply GEMINI_E2E_OK."
         baseline = (
@@ -2253,8 +2253,8 @@ class TestTmuxOperations:
             patch.object(worker, "_ensure_prompt_submitted") as mock_ensure_submitted,
         ):
             worker._ensure_prompt_delivered("mysess", prompt, baseline)
-        mock_send_text.assert_called_once_with("mysess", prompt)
-        mock_ensure_submitted.assert_called_once_with("mysess")
+        mock_send_text.assert_not_called()
+        mock_ensure_submitted.assert_not_called()
 
     @patch("src.router.session_worker.time.sleep")
     def test_ensure_prompt_delivered_does_not_resend_when_activity_is_visible(self, mock_sleep: Mock) -> None:

@@ -132,7 +132,7 @@ set_session_label() {
     session_short="${SESSION_ID:0:12}"
   fi
 
-  if [[ "$role" == "boss" ]]; then
+  if [[ "$role" == "boss" && -z "${LAUNCH_MODE:-}" && -z "${PROVIDER:-}" ]]; then
     label="mesh:${role} (operator) | ${repo_name}"
   elif [[ -n "${LAUNCH_MODE:-}" && -n "${PROVIDER:-}" && -n "$session_short" ]]; then
     label="mesh:${role} (${LAUNCH_MODE}:${PROVIDER}:${session_short}) | ${repo_name}"
@@ -155,7 +155,7 @@ emit_role_banner() {
     session_short="${SESSION_ID:0:12}"
   fi
 
-  if [[ "$role" == "boss" ]]; then
+  if [[ "$role" == "boss" && -z "${LAUNCH_MODE:-}" && -z "${PROVIDER:-}" ]]; then
     printf '[mesh:%s] operator repo=%s ui_group=%s\n' "$role" "$repo_name" "${MESH_UI_GROUP_ID:-unset}"
     return 0
   fi

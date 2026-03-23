@@ -10,12 +10,20 @@ Primary docs for restart/resume in this repo:
 - `ARCHITECTURE.md`
 - `CLAUDE.md`
 - `specs/mesh-ui-role-sessions/t014-handoff-20260322.md` for the current T014 state
+- `specs/mesh-ui-role-sessions/t014-handoff-20260323.md` for the latest T014 checkpoint
 
 `HANDOFF.md` is supplemental session log, not the only canonical source.
 
 Important: older `.100` router notes in this file are historical context. For the
 current mesh UI role session live topology, treat `10.0.0.4:8780` on `vpsazure`
 as canonical unless newer evidence explicitly replaces it.
+
+Current 2026-03-23 note:
+
+- the main blocker for fresh `mesh ui` launches is the Mac-side `iTerm2` Python
+  API state, not the router topology
+- if `~/Library/Application Support/iTerm2/private/socket` is missing, fresh UI
+  launches can fail before any role tasks are created
 
 ### Core principles
 
