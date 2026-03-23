@@ -214,6 +214,7 @@ bootstrap_shell() {
   if [[ -x "$mesh_script" ]]; then
     mesh() { "$mesh_script" "$@"; }
     export MESH_HOME="$mesh_home"
+    export PATH="$(dirname "$mesh_script"):$PATH"
   fi
   live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
   if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then

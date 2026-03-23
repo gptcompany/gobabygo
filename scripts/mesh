@@ -116,10 +116,6 @@ run_meshctl() {
   if command -v uv >/dev/null 2>&1 && [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
     if [[ "$use_dotenvx" == "1" ]] && command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
       (cd "$REPO_ROOT" && dotenvx run -f "$ENV_FILE" -- uv run -- python -m src.meshctl "$@")
-    elif [[ -f "$FALLBACK_EXPORTS" ]]; then
-      # shellcheck source=/dev/null
-      source "$FALLBACK_EXPORTS"
-      (cd "$REPO_ROOT" && uv run -- python -m src.meshctl "$@")
     else
       (cd "$REPO_ROOT" && uv run -- python -m src.meshctl "$@")
     fi
@@ -129,10 +125,6 @@ run_meshctl() {
   py_bin="$(detect_python)" || exit $?
   if [[ "$use_dotenvx" == "1" ]] && command -v dotenvx >/dev/null 2>&1 && [[ -f "$ENV_FILE" ]]; then
     (cd "$REPO_ROOT" && dotenvx run -f "$ENV_FILE" -- "$py_bin" -m src.meshctl "$@")
-  elif [[ -f "$FALLBACK_EXPORTS" ]]; then
-    # shellcheck source=/dev/null
-    source "$FALLBACK_EXPORTS"
-    (cd "$REPO_ROOT" && "$py_bin" -m src.meshctl "$@")
   else
     (cd "$REPO_ROOT" && "$py_bin" -m src.meshctl "$@")
   fi

@@ -51,9 +51,9 @@ def load_router_env() -> tuple[str, str]:
         return router_url, auth_token
 
     candidates = [
+        Path("/etc/mesh-worker/common.env"),
         Path.home() / ".mesh" / "router.env",
         Path.home() / ".mesh" / ".env.mesh",
-        Path("/etc/mesh-worker/common.env"),
     ]
     for path in candidates:
         if not path.is_file():

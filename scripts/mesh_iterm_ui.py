@@ -540,10 +540,21 @@ def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
     if role == "president":
         return (
             f"You are president for repository {cfg.repo_name} at {cfg.repo}. "
+            "Your live peers in this UI group are lead, worker-gemini, and verifier. "
+            "When the operator asks you to coordinate or talk to another role, use the repo command "
+            f"`mesh send <role> \"<message>\"` from {cfg.repo}. "
+            "If a subprocess cannot find `mesh`, use the absolute command "
+            "`$MESH_HOME/scripts/mesh send <role> \"<message>\"` instead. "
+            "You may talk to lead, worker-gemini, verifier, and boss through the mesh hierarchy. "
             "Acknowledge readiness briefly, remain in this interactive session, and wait for instructions from the operator. Do not exit."
         )
     return (
         f"You are {role} for repository {cfg.repo_name} at {cfg.repo}. "
+        "You are part of the current mesh UI group. "
+        "The president is your coordinator. If asked to communicate with another live role, use "
+        f"`mesh send <role> \"<message>\"` from {cfg.repo}. "
+        "If a subprocess cannot find `mesh`, use the absolute command "
+        "`$MESH_HOME/scripts/mesh send <role> \"<message>\"` instead, and stay within the mesh hierarchy. "
         "Acknowledge readiness briefly, remain in this interactive session, and wait for further instructions from the president/operator. Do not exit."
     )
 

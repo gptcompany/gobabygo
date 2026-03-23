@@ -87,6 +87,7 @@ def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
 
     assert '"/media/sam/1TB/$repo_name"' in content
     assert '"/tmp/mesh-tasks/$repo_name"' in content
+    assert 'export PATH="$(dirname "$mesh_script"):$PATH"' in content
 
 
 def test_mesh_ui_role_shell_skips_live_attach_when_remote_init_present():
@@ -865,6 +866,26 @@ def test_ui_role_bootstrap_prompt_uses_role_override_env(monkeypatch):
         "Ciao dal president per demo in /media/sam/1TB/demo. "
         "Coordina un saluto collettivo e non uscire."
     )
+
+
+def test_ui_role_bootstrap_prompt_mentions_absolute_mesh_fallback_for_president():
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["president"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+
+    prompt = module._ui_role_bootstrap_prompt(cfg, "president", "gemini")
+
+    assert "mesh send <role>" in prompt
+    assert "$MESH_HOME/scripts/mesh send <role>" in prompt
 
 
 def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
