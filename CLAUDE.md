@@ -314,7 +314,7 @@ Provided commands:
 - `mesh ui <repo>` -> iTerm2 Python API layout (tabs/panes for operator roles)
 - `mesh sessions [--all] [repo|session|role]` -> primary session helper; on a TTY it opens a hierarchical picker (`Layout -> Panels`) and then offers `Attach Layout`, `Attach Panel`, or `Kill`, use `--list` for the raw router list
 - `mesh session list [--all] [repo|session|role]` -> raw list only, no wizard
-- `mesh attach [repo|session|role]` -> compatibility alias: same picker, forced to `attach`
+- `mesh attach [repo|session|role]` -> legacy compatibility alias: same picker, forced to `attach`
 - `wss` / `wss <repo>` -> SSH WS shortcut
 - `wsattach <tmux-session>` -> attach tmux on WS (auto-detect service user)
 - `yazi`/`lf` -> mapped to `yazicd`/`lfcd` (keep selected directory)
@@ -326,7 +326,7 @@ Current `mesh ui` behavior:
 - each role can have its own provider-backed bootstrap command
 - if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of starting a fresh CLI
 - default operator layout is now repo-centric `2 tabs x 3 panes` (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened on demand via explicit `--roles`
-- for single-session inspection, prefer `mesh sessions`; it is router-backed, defaults to the current repo, and uses `--all` only when you intentionally want cross-repo selection
+- for single-session inspection, prefer `mesh sessions`; it is the canonical router-backed helper, defaults to the current repo, and uses `--all` only when you intentionally want cross-repo selection
 - `mesh` with no args is the shortest repo-local operator entrypoint after `wss` + `yazicd`; `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` now resolve the git repo root even when launched from nested subdirectories
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
 - live attach resolution also runs on the WS during pane bootstrap, so it still works when the Mac operator host cannot reach the router directly

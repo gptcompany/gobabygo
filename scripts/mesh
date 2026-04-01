@@ -241,7 +241,10 @@ elif action == "attach":
     else:
         print(f"[mesh attach panel] session={session_id} repo={repo} role={role} cli={cli}")
 elif action == "quit":
-    print(f"[mesh sessions] cancelled repo={repo} role={role} session={session_id}")
+    if target_kind == "layout":
+        print(f"[mesh sessions] cancelled repo={repo} target=layout ui_group={ui_group}")
+    else:
+        print(f"[mesh sessions] cancelled repo={repo} target=panel role={role} session={session_id}")
 PY
 }
 
@@ -465,9 +468,8 @@ Usage:
   ./scripts/mesh
   ./scripts/mesh status
   ./scripts/mesh thread [thread-name]
-  ./scripts/mesh session list [--all] [repo|session|role]
-  ./scripts/mesh session manage [--all] [repo|session|role]
   ./scripts/mesh sessions [--list] [--all] [repo|session|role]
+  ./scripts/mesh session list [--all] [repo|session|role]
   ./scripts/mesh attach [repo|session|role]
   ./scripts/mesh send <role> <text>
   ./scripts/mesh enter <role>
@@ -490,12 +492,11 @@ Env:
 Examples:
   ./scripts/mesh
   ./scripts/mesh status
-  ./scripts/mesh session list --all snake-game
-  ./scripts/mesh session manage
   ./scripts/mesh sessions
   ./scripts/mesh sessions --all
   ./scripts/mesh sessions --list --all
   ./scripts/mesh sessions snake-game
+  ./scripts/mesh session list --all snake-game
   ./scripts/mesh attach
   ./scripts/mesh attach snake-game
   ./scripts/mesh attach --all
@@ -519,6 +520,27 @@ Examples:
   ./scripts/mesh run /media/sam/1TB/rektslug 016
   ./scripts/mesh thread
   ./scripts/mesh thread rektslug-spec-016
+
+Compatibility aliases:
+  ./scripts/mesh session manage [--all] [repo|session|role]
+  ./scripts/mesh attach [repo|session|role]
+EOF
+}
+
+session_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh sessions [--list] [--all] [repo|session|role]
+  ./scripts/mesh session list [--all] [repo|session|role]
+
+Behavior:
+  TTY default      hierarchical picker: Layout -> Panels
+  --list           raw router-backed list only
+  --all            search across repos
+
+Compatibility aliases:
+  ./scripts/mesh session manage [--all] [repo|session|role]
+  ./scripts/mesh attach [repo|session|role]
 EOF
 }
 
@@ -688,10 +710,8 @@ if [[ "$cmd" == "session" ]]; then
       cmd="sessions"
       ;;
     manage)
-      py_bin="$(detect_python)" || exit $?
-      ensure_router_env
-      ensure_mac_router_tunnel
-      run_session_manage_flow "$py_bin" "" "${@:3}"
+      set -- sessions "${@:3}"
+      cmd="sessions"
       ;;
     resolve|send|enter|interrupt|summary|close)
       py_bin="$(detect_python)" || exit $?
@@ -774,6 +794,10 @@ PY
     ensure_mac_router_tunnel
     py_bin="$(detect_python)" || exit $?
     session_args=("${@:2}")
+    if [[ ${#session_args[@]} -gt 0 && ( "${session_args[0]}" == "-h" || "${session_args[0]}" == "--help" ) ]]; then
+      session_usage
+      exit 0
+    fi
     if [[ ${#session_args[@]} -gt 0 && "${session_args[0]}" == "--list" ]]; then
       session_args=("${session_args[@]:1}")
     elif [[ -t 0 && -t 1 ]]; then
