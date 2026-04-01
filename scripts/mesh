@@ -216,6 +216,7 @@ payload = json.loads(os.environ["MESH_MANAGE_JSON"])
 action = str(payload.get("action") or "").strip()
 selection = payload.get("selection") or {}
 result = payload.get("result") or {}
+target_kind = str(selection.get("target_kind") or "session").strip()
 
 repo = selection.get("repo_name") or selection.get("repo") or "?"
 session_id = str(selection.get("session_id") or "")[:12]
@@ -225,14 +226,20 @@ ui_group = selection.get("ui_group_id") or "-"
 thread = selection.get("thread_name") or "-"
 
 if action == "kill":
-    print(
-        f"[mesh kill] session={session_id} repo={repo} role={role} "
-        f"cli={cli} state={result.get('state') or '?'} ui_group={ui_group} thread={thread}"
-    )
-    for item in result.get("failures") or []:
-        print(f"  - {item}", file=sys.stderr)
-elif action == "layout":
-    print(f"[mesh ui attach] repo={repo} ui_group={ui_group} via=session-picker")
+    if target_kind == "layout":
+        print(f"[mesh kill layout] repo={repo} ui_group={ui_group} thread={thread}")
+    else:
+        print(
+            f"[mesh kill panel] session={session_id} repo={repo} role={role} "
+            f"cli={cli} state={result.get('state') or '?'} ui_group={ui_group} thread={thread}"
+        )
+        for item in result.get("failures") or []:
+            print(f"  - {item}", file=sys.stderr)
+elif action == "attach":
+    if target_kind == "layout":
+        print(f"[mesh ui attach] repo={repo} ui_group={ui_group} via=session-picker")
+    else:
+        print(f"[mesh attach panel] session={session_id} repo={repo} role={role} cli={cli}")
 elif action == "quit":
     print(f"[mesh sessions] cancelled repo={repo} role={role} session={session_id}")
 PY
@@ -284,9 +291,18 @@ PY
 )" || exit $?
 
   case "$action" in
-    layout)
-      emit_manage_report "$py_bin" "$manage_json"
-      repo_target="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+    attach)
+      target_kind="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+import json
+import os
+payload = json.loads(os.environ["MESH_MANAGE_JSON"])
+selection = payload.get("selection") or {}
+print(str(selection.get("target_kind") or "session").strip())
+PY
+)" || exit $?
+      if [[ "$target_kind" == "layout" ]]; then
+        emit_manage_report "$py_bin" "$manage_json"
+        repo_target="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
 import json
 import os
 payload = json.loads(os.environ["MESH_MANAGE_JSON"])
@@ -296,17 +312,49 @@ repo_name = str(selection.get("repo_name") or "").strip()
 print(repo or repo_name)
 PY
 )" || exit $?
-      if [[ -z "$repo_target" ]]; then
-        echo "Error: selected session has no repo target for layout attach" >&2
-        exit 1
+        if [[ -z "$repo_target" ]]; then
+          echo "Error: selected session has no repo target for layout attach" >&2
+          exit 1
+        fi
+        exec "$0" ui attach "$repo_target"
       fi
-      exec "$0" ui attach "$repo_target"
-      ;;
-    attach)
       exec_attach_from_payload "$py_bin" "$manage_json"
       ;;
     kill)
+      target_kind="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+import json
+import os
+payload = json.loads(os.environ["MESH_MANAGE_JSON"])
+selection = payload.get("selection") or {}
+print(str(selection.get("target_kind") or "session").strip())
+PY
+)" || exit $?
       emit_manage_report "$py_bin" "$manage_json"
+      if [[ "$target_kind" == "layout" ]]; then
+        repo_target="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+import json
+import os
+payload = json.loads(os.environ["MESH_MANAGE_JSON"])
+selection = payload.get("selection") or {}
+repo = str(selection.get("repo") or "").strip()
+repo_name = str(selection.get("repo_name") or "").strip()
+print(repo or repo_name)
+PY
+)" || exit $?
+        ui_group_target="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+import json
+import os
+payload = json.loads(os.environ["MESH_MANAGE_JSON"])
+selection = payload.get("selection") or {}
+print(str(selection.get("ui_group_id") or "").strip())
+PY
+)" || exit $?
+        if [[ -z "$repo_target" || -z "$ui_group_target" ]]; then
+          echo "Error: selected layout has incomplete repo/ui_group metadata" >&2
+          exit 1
+        fi
+        exec "$0" ui close "$repo_target" --ui-group-id "$ui_group_target"
+      fi
       exit "$manage_rc"
       ;;
     ""|quit)

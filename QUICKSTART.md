@@ -213,7 +213,7 @@ This enables:
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh` with no args (interactive current-repo-root launcher: `attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` (iTerm2 layout auto tabs/panes for BOSS/PRESIDENT/LEAD/WORKERS)
-- `mesh sessions [--all] [repo|session|role]` (comando principale: su TTY apre il wizard filtrato e poi scegli `Attach Layout`, `Attach Session` o `Kill`; usa `--list` per la lista grezza)
+- `mesh sessions [--all] [repo|session|role]` (comando principale: su TTY apre un picker gerarchico `Layout -> Panels`; scegli `Attach Layout`, `Attach Panel` o `Kill`; usa `--list` per la lista grezza)
 - `mesh session list [--all] [repo|session|role]` (lista grezza router-backed, senza wizard)
 - `mesh attach [repo|session|role]` (alias compatibile: apre lo stesso picker ma forza `attach`)
 - `yazi` / `lf` aliases to `yazicd` / `lfcd` (keep selected directory on exit)
@@ -226,7 +226,7 @@ mesh deploy
 mesh                          # interactive launcher for current repo
 mesh status
 mesh status --all               # show historical stale/offline workers too
-mesh sessions                   # wizard: pick a live session, then attach layout/session or kill
+mesh sessions                   # wizard: pick a layout or one of its panels, then attach/kill
 mesh sessions snake-game        # same wizard, already filtered to target repo
 mesh sessions --all             # same wizard, across repos
 mesh sessions --list --all      # raw list across repos

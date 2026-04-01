@@ -17,9 +17,9 @@ from mesh_session_cli import (
     build_attach_spec,
     build_session_choices,
     filter_active_session_choices,
+    filter_session_choices,
     load_router_env,
     router_post_json,
-    select_choice,
 )
 
 
@@ -28,6 +28,33 @@ class ManageAction:
     key: str
     title: str
     summary: str
+
+
+@dataclass(frozen=True)
+class ManageTarget:
+    target_kind: str
+    session_id: str = ""
+    worker_id: str = ""
+    cli_type: str = ""
+    account_profile: str = ""
+    state: str = ""
+    task_id: str = ""
+    task_status: str = ""
+    thread_id: str = ""
+    thread_name: str = ""
+    thread_status: str = ""
+    repo: str = ""
+    repo_name: str = ""
+    role: str = ""
+    title: str = ""
+    updated_at: str = ""
+    tmux_session: str = ""
+    attach_kind: str = ""
+    attach_target: str = ""
+    attach_owner: str = ""
+    ui_group_id: str = ""
+    child_roles: tuple[str, ...] = ()
+    child_session_ids: tuple[str, ...] = ()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -57,7 +84,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--action",
         default="",
-        choices=["layout", "attach", "kill", "quit"],
+        choices=["attach", "kill", "quit"],
         help="Optional forced action. If omitted, an action picker is shown.",
     )
     return parser.parse_args()
@@ -72,26 +99,207 @@ def _emit_payload(payload: dict[str, Any], output_path: str) -> None:
 
 
 def _actions() -> list[ManageAction]:
+    return [ManageAction("quit", "Quit", "Exit without doing anything.")]
+
+
+def available_actions(target: ManageTarget) -> list[ManageAction]:
+    if target.target_kind == "layout":
+        return [
+            ManageAction("attach", "Attach Layout", "Reattach the full iTerm2 layout for this session group."),
+            ManageAction("kill", "Kill Layout", "Terminate and close every panel in this session group."),
+            *_actions(),
+        ]
     return [
-        ManageAction("layout", "Attach Layout", "Reattach the full iTerm2 layout for this session group."),
-        ManageAction("attach", "Attach Session", "Open the selected live session only."),
-        ManageAction("kill", "Kill", "Terminate and close the selected live session."),
-        ManageAction("quit", "Quit", "Exit without doing anything."),
+        ManageAction("attach", "Attach Panel", "Open the selected live panel only."),
+        ManageAction("kill", "Kill Panel", "Terminate and close the selected live panel."),
+        *_actions(),
     ]
 
 
-def available_actions(choice) -> list[ManageAction]:
-    actions = _actions()
-    if not str(getattr(choice, "ui_group_id", "") or "").strip():
-        actions = [action for action in actions if action.key != "layout"]
-    return actions
-
-
 def action_by_key(key: str, actions: list[ManageAction] | None = None) -> ManageAction:
-    for action in actions or _actions():
+    candidates = actions or [
+        ManageAction("attach", "Attach", ""),
+        ManageAction("kill", "Kill", ""),
+        *_actions(),
+    ]
+    for action in candidates:
         if action.key == key:
             return action
     raise ValueError(f"unsupported action '{key}'")
+
+
+_ROLE_ORDER = {
+    "boss": 0,
+    "president": 1,
+    "lead": 2,
+    "worker-claude": 3,
+    "worker-codex": 4,
+    "worker-gemini": 5,
+    "verifier": 6,
+}
+
+
+def _role_sort_key(role: str) -> tuple[int, str]:
+    normalized = str(role or "").strip()
+    return (_ROLE_ORDER.get(normalized, 100), normalized)
+
+
+def _target_from_choice(choice) -> ManageTarget:
+    payload = asdict(choice)
+    payload["target_kind"] = "session"
+    return ManageTarget(**payload)
+
+
+def _layout_target(choices: list) -> ManageTarget:
+    representative = sorted(choices, key=lambda item: (item.updated_at, item.session_id), reverse=True)[0]
+    ordered_roles = tuple(
+        choice.role or "-"
+        for choice in sorted(choices, key=lambda item: (_role_sort_key(item.role), item.session_id))
+    )
+    return ManageTarget(
+        target_kind="layout",
+        repo=representative.repo,
+        repo_name=representative.repo_name,
+        thread_id=representative.thread_id,
+        thread_name=representative.thread_name,
+        thread_status=representative.thread_status,
+        title=representative.title,
+        updated_at=representative.updated_at,
+        ui_group_id=representative.ui_group_id,
+        child_roles=ordered_roles,
+        child_session_ids=tuple(choice.session_id for choice in choices),
+    )
+
+
+def build_manage_targets(choices: list, *, query: str = "") -> list[ManageTarget]:
+    filtered = filter_session_choices(choices, query)
+    if not filtered:
+        return []
+
+    grouped: dict[tuple[str, str, str], list] = {}
+    standalone: list = []
+    for choice in filtered:
+        ui_group_id = str(choice.ui_group_id or "").strip()
+        if ui_group_id:
+            key = (choice.repo, choice.repo_name, ui_group_id)
+            grouped.setdefault(key, []).append(choice)
+        else:
+            standalone.append(choice)
+
+    targets: list[ManageTarget] = []
+    grouped_items = sorted(
+        grouped.values(),
+        key=lambda items: max((choice.updated_at, choice.session_id) for choice in items),
+        reverse=True,
+    )
+    for items in grouped_items:
+        ordered_items = sorted(items, key=lambda item: (_role_sort_key(item.role), item.session_id))
+        targets.append(_layout_target(ordered_items))
+        targets.extend(_target_from_choice(choice) for choice in ordered_items)
+
+    standalone_sorted = sorted(
+        standalone,
+        key=lambda item: (item.updated_at, item.session_id),
+        reverse=True,
+    )
+    targets.extend(_target_from_choice(choice) for choice in standalone_sorted)
+    return targets
+
+
+def _target_label(target: ManageTarget) -> str:
+    summary = target.thread_name or target.title or "-"
+    if target.target_kind == "layout":
+        roles = ", ".join(target.child_roles) or "-"
+        return " | ".join(
+            [
+                target.repo_name or target.repo or "-",
+                "layout",
+                f"roles={roles}",
+                f"ui_group={str(target.ui_group_id or '')[:12] or '-'}",
+                summary,
+            ]
+        )
+    parts = [
+        target.role or "-",
+        "panel",
+        target.cli_type or "-",
+        str(target.session_id or "")[:12] or "-",
+        summary,
+    ]
+    if target.ui_group_id:
+        return "  " + " | ".join(parts)
+    return " | ".join([target.repo_name or target.repo or "-", *parts])
+
+
+def render_targets(targets: list[ManageTarget]) -> str:
+    rows = []
+    for index, target in enumerate(targets, start=1):
+        rows.append(f"{index}. {_target_label(target)}")
+    return "\n".join(rows)
+
+
+def _questionary_select_target(targets: list[ManageTarget]) -> ManageTarget | None:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise RuntimeError("interactive selector unavailable")
+    try:
+        import questionary
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("questionary unavailable") from exc
+
+    questionary_choices = []
+    previous_was_layout = False
+    for target in targets:
+        if target.target_kind == "layout" and questionary_choices:
+            questionary_choices.append(questionary.Separator())
+        elif previous_was_layout and target.target_kind != "layout":
+            previous_was_layout = False
+        questionary_choices.append(
+            questionary.Choice(
+                title=_target_label(target),
+                value=target,
+            )
+        )
+        previous_was_layout = target.target_kind == "layout"
+    return questionary.select(
+        "Select layout or panel:",
+        choices=questionary_choices,
+        use_shortcuts=True,
+        use_indicator=True,
+    ).ask()
+
+
+def select_target(
+    targets: list[ManageTarget],
+    *,
+    prompt_fn: Callable[[str], str] = input,
+    interactive: bool = True,
+) -> ManageTarget:
+    if not targets:
+        raise ValueError("no sessions matched")
+    if len(targets) == 1:
+        return targets[0]
+    if interactive:
+        try:
+            selected = _questionary_select_target(targets)
+            if selected is None:
+                raise ValueError("selection cancelled")
+            return selected
+        except RuntimeError:
+            pass
+    if not interactive:
+        raise ValueError("multiple sessions matched; refine the query")
+
+    print(render_targets(targets), file=sys.stderr)
+    print(f"Select target [1-{len(targets)}]: ", end="", file=sys.stderr, flush=True)
+    raw = prompt_fn("").strip()
+    if not raw:
+        raise ValueError("selection cancelled")
+    if not raw.isdigit():
+        raise ValueError("invalid selection")
+    index = int(raw)
+    if index < 1 or index > len(targets):
+        raise ValueError("invalid selection")
+    return targets[index - 1]
 
 
 def _questionary_select_action(actions: list[ManageAction]) -> ManageAction | None:
@@ -156,7 +364,7 @@ def _terminal_state(choice) -> str:
     return "closed"
 
 
-def kill_choice(router_url: str, auth_token: str, choice) -> dict[str, Any]:
+def kill_choice(router_url: str, auth_token: str, choice: ManageTarget) -> dict[str, Any]:
     failures: list[str] = []
     try:
         router_post_json(
@@ -222,7 +430,8 @@ def main() -> int:
 
     selectable = filter_active_session_choices(choices) if args.state == "open" else choices
     try:
-        selected = select_choice(selectable, query=args.query, interactive=sys.stdin.isatty())
+        targets = build_manage_targets(selectable, query=args.query)
+        selected = select_target(targets, interactive=sys.stdin.isatty())
         actions = available_actions(selected)
         action = action_by_key(args.action, actions) if args.action else select_action(actions, interactive=sys.stdin.isatty())
     except ValueError as exc:
@@ -234,14 +443,26 @@ def main() -> int:
         return 0
 
     if action.key == "kill":
+        if selected.target_kind == "layout":
+            payload = {
+                "action": "kill",
+                "selection": asdict(selected),
+                "ui": {
+                    "repo": selected.repo,
+                    "repo_name": selected.repo_name,
+                    "ui_group_id": selected.ui_group_id,
+                },
+            }
+            _emit_payload(payload, args.output)
+            return 0
         result = kill_choice(router_url, auth_token, selected)
         payload = {"action": "kill", "selection": asdict(selected), "result": result}
         _emit_payload(payload, args.output)
         return 1 if result.get("failures") else 0
 
-    if action.key == "layout":
+    if selected.target_kind == "layout":
         payload = {
-            "action": "layout",
+            "action": "attach",
             "selection": asdict(selected),
             "ui": {
                 "repo": selected.repo,

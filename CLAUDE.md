@@ -312,7 +312,7 @@ Provided commands:
 
 - `mesh` -> global wrapper for `scripts/mesh`; with no args it opens the current-repo-root launcher (`attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` -> iTerm2 Python API layout (tabs/panes for operator roles)
-- `mesh sessions [--all] [repo|session|role]` -> primary session helper; on a TTY it opens the picker (`Attach Layout`, `Attach Session`, `Kill`) using the optional filter, use `--list` for the raw router list
+- `mesh sessions [--all] [repo|session|role]` -> primary session helper; on a TTY it opens a hierarchical picker (`Layout -> Panels`) and then offers `Attach Layout`, `Attach Panel`, or `Kill`, use `--list` for the raw router list
 - `mesh session list [--all] [repo|session|role]` -> raw list only, no wizard
 - `mesh attach [repo|session|role]` -> compatibility alias: same picker, forced to `attach`
 - `wss` / `wss <repo>` -> SSH WS shortcut
