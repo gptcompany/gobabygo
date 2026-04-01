@@ -143,30 +143,6 @@ run_with_optional_questionary() {
   local py_bin="$1"
   local script="$2"
   shift 2
-
-  if [[ ! -t 0 || ! -t 1 ]]; then
-    "$py_bin" "$script" "$@"
-    return $?
-  fi
-  for arg in "$@"; do
-    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-      "$py_bin" "$script" "$@"
-      return $?
-    fi
-  done
-
-  if python_has_module "$py_bin" questionary; then
-    "$py_bin" "$script" "$@"
-    return $?
-  fi
-
-  if uv_bin="$(detect_uv)"; then
-    if "$uv_bin" run --with questionary -- python "$script" "$@"; then
-      return 0
-    fi
-    echo "[mesh] warning: questionary bootstrap failed; falling back to plain prompt." >&2
-  fi
-
   "$py_bin" "$script" "$@"
 }
 
