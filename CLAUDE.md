@@ -311,7 +311,9 @@ source ~/.zshrc   # or ~/.bashrc
 Provided commands:
 
 - `mesh` -> global wrapper for `scripts/mesh`; with no args it opens the current-repo-root launcher (`attach`, `sessions`, `ui`, `start`)
-- `mesh ui <repo>` -> iTerm2 Python API layout (tabs/panes for operator roles)
+- `mesh ui <repo>` -> canonical iTerm2 Python API launcher for the repo layout
+- `mesh ui attach <repo>` -> reattach the existing repo layout
+- `mesh ui close <repo>` -> close the existing repo layout/backend group
 - `mesh sessions [--all] [repo|session|role]` -> primary session helper; on a TTY it opens a hierarchical picker (`Layout -> Panels`) and then offers `Attach Layout`, `Attach Panel`, or `Kill`, use `--list` for the raw router list
 - `mesh session list [--all] [repo|session|role]` -> raw list only, no wizard
 - `mesh attach [repo|session|role]` -> legacy compatibility alias: same picker, forced to `attach`
@@ -378,6 +380,7 @@ When launched from WS/Linux, `mesh ui ...` auto-forwards to Mac operator host
 If `iterm2` Python module is missing, `mesh ui` auto-tries
 `uv run --with iterm2` when `uv` is installed.
 Default behavior replaces old mesh-ui tabs; use `--keep-existing` to preserve them.
+`mesh ui resume <repo>` remains only as a compatibility alias for `mesh ui attach <repo>`.
 Default preset is `team-4x3` (2 tab: 4 panes + 3 panes). Use `--preset auto`
 to restore chunking by `--max-panes-per-tab`.
 

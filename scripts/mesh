@@ -544,6 +544,23 @@ Compatibility aliases:
 EOF
 }
 
+ui_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh ui <repo-name|repo-path>
+  ./scripts/mesh ui attach <repo-name|repo-path>
+  ./scripts/mesh ui close <repo-name|repo-path>
+
+Behavior:
+  mesh ui <repo>         open the operator layout for the target repo
+  mesh ui attach <repo>  reattach the existing layout for that repo
+  mesh ui close <repo>   close the existing layout/backend group for that repo
+
+Compatibility aliases:
+  ./scripts/mesh ui resume <repo-name|repo-path>
+EOF
+}
+
 resolve_repo_path_and_name() {
   # Args:
   #   $1: repo input (name or path)
@@ -1066,15 +1083,27 @@ EOF
     ;;
   ui)
     ui_args=("${@:2}")
+    if [[ ${#ui_args[@]} -gt 0 && ( "${ui_args[0]}" == "-h" || "${ui_args[0]}" == "--help" ) ]]; then
+      ui_usage
+      exit 0
+    fi
     if [[ ${#ui_args[@]} -gt 0 ]]; then
       case "${ui_args[0]}" in
         attach|resume)
+          if [[ ${#ui_args[@]} -gt 1 && ( "${ui_args[1]}" == "-h" || "${ui_args[1]}" == "--help" ) ]]; then
+            ui_usage
+            exit 0
+          fi
           ui_args=("${ui_args[@]:1}")
           ui_args+=("--resume")
           ;;
       esac
     fi
     if [[ ${#ui_args[@]} -gt 0 && "${ui_args[0]}" == "close" ]]; then
+      if [[ ${#ui_args[@]} -gt 1 && ( "${ui_args[1]}" == "-h" || "${ui_args[1]}" == "--help" ) ]]; then
+        ui_usage
+        exit 0
+      fi
       close_args=("${ui_args[@]:1}")
       normalized_close_args=()
       skip_next=0

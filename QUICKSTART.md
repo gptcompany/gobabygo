@@ -212,7 +212,9 @@ This enables:
 - `wsattach <tmux-session>` (attach robusto: auto-detect utente tmux service)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh` with no args (interactive current-repo-root launcher: `attach`, `sessions`, `ui`, `start`)
-- `mesh ui <repo>` (iTerm2 layout auto tabs/panes for BOSS/PRESIDENT/LEAD/WORKERS)
+- `mesh ui <repo>` (comando canonico: apre il layout iTerm2 del repo)
+- `mesh ui attach <repo>` (riattacca il layout esistente del repo)
+- `mesh ui close <repo>` (chiude il layout/backend group del repo)
 - `mesh sessions [--all] [repo|session|role]` (comando principale: su TTY apre un picker gerarchico `Layout -> Panels`; scegli `Attach Layout`, `Attach Panel` o `Kill`; usa `--list` per la lista grezza)
 - `mesh session list [--all] [repo|session|role]` (lista grezza router-backed, senza wizard)
 - `mesh attach [repo|session|role]` (alias compatibile legacy: apre lo stesso picker ma forza `attach`)
@@ -233,7 +235,9 @@ mesh sessions --list --all      # raw list across repos
 mesh session list --all         # raw list across repos
 mesh attach                     # legacy alias: picker + forced attach
 mesh attach snake-game          # same, filtered to target repo
-mesh ui rektslug               # iTerm2 default operator view (2 tab: 3 pane + 3 pane)
+mesh ui rektslug               # open operator layout
+mesh ui attach rektslug        # reattach existing operator layout
+mesh ui close rektslug         # close existing operator layout
 mesh ui rektslug --single-tab  # iTerm2: one-tab, multi-pane
 mesh ui rektslug --keep-existing  # keep prior mesh-ui tabs
 mesh ui rektslug --roles boss,president,lead,worker-claude,worker-codex,worker-gemini,verifier --preset team-4x3  # legacy wide view
