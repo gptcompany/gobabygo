@@ -51,7 +51,7 @@ def test_select_action_prefers_questionary(monkeypatch):
 
     selected = module.select_action(actions, interactive=True)
 
-    assert selected.key == "kill"
+    assert selected.key == "attach"
 
 
 def test_main_attach_outputs_payload(monkeypatch):
@@ -141,3 +141,43 @@ def test_action_by_key_resolves_known_action(monkeypatch):
     action = module.action_by_key("kill")
 
     assert action.key == "kill"
+
+
+def test_available_actions_include_layout_for_ui_group():
+    module = _load_module()
+    choice = _choice(module)
+
+    actions = module.available_actions(choice)
+
+    assert [action.key for action in actions][:2] == ["layout", "attach"]
+
+
+def test_available_actions_omit_layout_without_ui_group():
+    module = _load_module()
+    choice = _choice(module)
+    choice = choice.__class__(**{**choice.__dict__, "ui_group_id": ""})
+
+    actions = module.available_actions(choice)
+
+    assert "layout" not in [action.key for action in actions]
+
+
+def test_main_layout_outputs_payload(monkeypatch):
+    module = _load_module()
+    choice = _choice(module)
+    monkeypatch.setattr(module.sys, "argv", ["mesh_session_manage.py", "--action", "layout"])
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [choice])
+    monkeypatch.setattr(module, "select_choice", lambda *args, **kwargs: choice)
+    monkeypatch.setattr(module, "select_action", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("select_action should not run")))
+    monkeypatch.setattr(module.sys, "stdin", io.StringIO())
+    monkeypatch.setattr(module.sys.stdin, "isatty", lambda: False)
+    out = io.StringIO()
+    monkeypatch.setattr(module.sys, "stdout", out)
+
+    rc = module.main()
+
+    assert rc == 0
+    payload = json.loads(out.getvalue())
+    assert payload["action"] == "layout"
+    assert payload["ui"]["repo_name"] == "snake-game"

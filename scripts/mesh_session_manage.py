@@ -57,7 +57,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--action",
         default="",
-        choices=["attach", "kill", "quit"],
+        choices=["layout", "attach", "kill", "quit"],
         help="Optional forced action. If omitted, an action picker is shown.",
     )
     return parser.parse_args()
@@ -73,14 +73,22 @@ def _emit_payload(payload: dict[str, Any], output_path: str) -> None:
 
 def _actions() -> list[ManageAction]:
     return [
-        ManageAction("attach", "Attach", "Open the selected live session."),
+        ManageAction("layout", "Attach Layout", "Reattach the full iTerm2 layout for this session group."),
+        ManageAction("attach", "Attach Session", "Open the selected live session only."),
         ManageAction("kill", "Kill", "Terminate and close the selected live session."),
         ManageAction("quit", "Quit", "Exit without doing anything."),
     ]
 
 
-def action_by_key(key: str) -> ManageAction:
-    for action in _actions():
+def available_actions(choice) -> list[ManageAction]:
+    actions = _actions()
+    if not str(getattr(choice, "ui_group_id", "") or "").strip():
+        actions = [action for action in actions if action.key != "layout"]
+    return actions
+
+
+def action_by_key(key: str, actions: list[ManageAction] | None = None) -> ManageAction:
+    for action in actions or _actions():
         if action.key == key:
             return action
     raise ValueError(f"unsupported action '{key}'")
@@ -215,7 +223,8 @@ def main() -> int:
     selectable = filter_active_session_choices(choices) if args.state == "open" else choices
     try:
         selected = select_choice(selectable, query=args.query, interactive=sys.stdin.isatty())
-        action = action_by_key(args.action) if args.action else select_action(_actions(), interactive=sys.stdin.isatty())
+        actions = available_actions(selected)
+        action = action_by_key(args.action, actions) if args.action else select_action(actions, interactive=sys.stdin.isatty())
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -229,6 +238,19 @@ def main() -> int:
         payload = {"action": "kill", "selection": asdict(selected), "result": result}
         _emit_payload(payload, args.output)
         return 1 if result.get("failures") else 0
+
+    if action.key == "layout":
+        payload = {
+            "action": "layout",
+            "selection": asdict(selected),
+            "ui": {
+                "repo": selected.repo,
+                "repo_name": selected.repo_name,
+                "ui_group_id": selected.ui_group_id,
+            },
+        }
+        _emit_payload(payload, args.output)
+        return 0
 
     payload = {
         "action": "attach",

@@ -231,6 +231,8 @@ if action == "kill":
     )
     for item in result.get("failures") or []:
         print(f"  - {item}", file=sys.stderr)
+elif action == "layout":
+    print(f"[mesh ui attach] repo={repo} ui_group={ui_group} via=session-picker")
 elif action == "quit":
     print(f"[mesh sessions] cancelled repo={repo} role={role} session={session_id}")
 PY
@@ -282,6 +284,24 @@ PY
 )" || exit $?
 
   case "$action" in
+    layout)
+      emit_manage_report "$py_bin" "$manage_json"
+      repo_target="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+import json
+import os
+payload = json.loads(os.environ["MESH_MANAGE_JSON"])
+selection = payload.get("selection") or {}
+repo = str(selection.get("repo") or "").strip()
+repo_name = str(selection.get("repo_name") or "").strip()
+print(repo or repo_name)
+PY
+)" || exit $?
+      if [[ -z "$repo_target" ]]; then
+        echo "Error: selected session has no repo target for layout attach" >&2
+        exit 1
+      fi
+      exec "$0" ui attach "$repo_target"
+      ;;
     attach)
       exec_attach_from_payload "$py_bin" "$manage_json"
       ;;
