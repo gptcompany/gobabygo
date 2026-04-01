@@ -212,7 +212,7 @@ This enables:
 - `wsattach <tmux-session>` (attach robusto: auto-detect utente tmux service)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh` with no args (interactive current-repo-root launcher: `attach`, `sessions`, `ui`, `start`)
-- `mesh ui <repo>` (comando canonico: apre il layout iTerm2 del repo)
+- `mesh ui <repo>` (comando canonico: apre il layout iTerm2 del repo; default minimale `boss,president`)
 - `mesh ui attach <repo>` (riattacca il layout esistente del repo)
 - `mesh ui close <repo>` (chiude il layout/backend group del repo)
 - `mesh sessions [--all] [repo|session|role]` (comando principale: su TTY apre un picker gerarchico `Layout -> Panels`; scegli `Attach Layout`, `Attach Panel` o `Kill`; usa `--list` per la lista grezza)
@@ -238,9 +238,6 @@ mesh attach snake-game          # same, filtered to target repo
 mesh ui rektslug               # open operator layout
 mesh ui attach rektslug        # reattach existing operator layout
 mesh ui close rektslug         # close existing operator layout
-mesh ui rektslug --single-tab  # iTerm2: one-tab, multi-pane
-mesh ui rektslug --keep-existing  # keep prior mesh-ui tabs
-mesh ui rektslug --roles boss,president,lead,worker-claude,worker-codex,worker-gemini,verifier --preset team-4x3  # legacy wide view
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
@@ -250,7 +247,15 @@ wss <repo>
 wsattach <tmux-session>
 ```
 
-`mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach` and `mesh session manage` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
+`mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach`, `mesh session manage`, and `mesh ui resume` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
+
+Current canonical UI slice:
+
+- default layout is intentionally minimal: `boss`, `president`
+- `mesh ui <repo>` opens a fresh layout for that repo
+- `mesh ui attach <repo>` reattaches the existing layout
+- `mesh ui close <repo>` closes the existing layout/backend group
+- on iTerm2 `3.6.9`, the launcher uses safe `tabs-only` mode by default to avoid `splitPane` crashes
 
 Matrix room inbound commands:
 

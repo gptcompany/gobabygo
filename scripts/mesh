@@ -475,12 +475,11 @@ Usage:
   ./scripts/mesh enter <role>
   ./scripts/mesh interrupt <role>
   ./scripts/mesh summary <role>
-  ./scripts/mesh ui close
+  ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
-  ./scripts/mesh ui resume [repo-name|repo-path]
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
-  ./scripts/mesh ui [repo-name|repo-path] [--resume] [--single-tab] [--max-panes-per-tab N]
+  ./scripts/mesh ui <repo-name|repo-path> [--single-tab] [--max-panes-per-tab N]
   ./scripts/mesh start [feature text]
   ./scripts/mesh new [feature text]
   ./scripts/mesh run <phase>
@@ -504,14 +503,11 @@ Examples:
   ./scripts/mesh enter lead
   ./scripts/mesh interrupt worker-gemini
   ./scripts/mesh summary lead
-  ./scripts/mesh ui close
+  ./scripts/mesh ui close snake-game
   ./scripts/mesh ui attach snake-game
-  ./scripts/mesh ui resume snake-game
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui rektslug
-  ./scripts/mesh ui /media/sam/1TB/rektslug --single-tab
-  ./scripts/mesh ui rektslug --resume
   ./scripts/mesh start
   ./scripts/mesh start "checkout hardening"
   ./scripts/mesh new "spec 017"
@@ -524,6 +520,7 @@ Examples:
 Compatibility aliases:
   ./scripts/mesh session manage [--all] [repo|session|role]
   ./scripts/mesh attach [repo|session|role]
+  ./scripts/mesh ui resume <repo-name|repo-path>
 EOF
 }
 

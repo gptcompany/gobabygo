@@ -327,7 +327,11 @@ Current `mesh ui` behavior:
 - default launcher is `scripts/mesh_ui_role_shell.sh`
 - each role can have its own provider-backed bootstrap command
 - if the router already has an open session for the same repo and matching role/provider, the pane now auto-attaches to the live tmux session instead of starting a fresh CLI
-- default operator layout is now repo-centric `2 tabs x 3 panes` (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened on demand via explicit `--roles`
+- default operator layout is intentionally minimal `boss,president`
+- `mesh ui <repo>` is the canonical fresh open path for that minimal layout
+- `mesh ui attach <repo>` is the canonical reattach path for the same layout
+- `mesh ui close <repo>` is the canonical teardown path
+- on iTerm2 `3.6.9`, the launcher uses safe `tabs-only` mode by default to avoid `apiServerSplitPane` crashes during reopen
 - for single-session inspection, prefer `mesh sessions`; it is the canonical router-backed helper, defaults to the current repo, and uses `--all` only when you intentionally want cross-repo selection
 - `mesh` with no args is the shortest repo-local operator entrypoint after `wss` + `yazicd`; `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` now resolve the git repo root even when launched from nested subdirectories
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
