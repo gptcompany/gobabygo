@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import io
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -75,9 +76,12 @@ def test_operator_ui_boss_is_provider_backed():
     config_path = Path(__file__).resolve().parents[1] / "mapping" / "operator_ui.yaml"
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
 
+    assert data["default_roles"] == ["boss", "president"]
     boss = data["roles"]["boss"]
 
     assert boss["provider"] == "gemini"
+    assert boss["relay"]["enabled"] is True
+    assert boss["relay"]["target_role"] == "president"
 
 
 def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
@@ -86,7 +90,7 @@ def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
 
     assert '"/media/sam/1TB/$repo_name"' in content
     assert '"/tmp/mesh-tasks/$repo_name"' in content
-    assert 'export PATH="$(dirname "$mesh_script"):$PATH"' in content
+    assert content.count('export PATH="$(dirname "$mesh_script"):$PATH"') >= 2
 
 
 def test_mesh_ui_role_shell_skips_live_attach_when_remote_init_present():
@@ -233,6 +237,20 @@ def test_command_for_role_provider_override_wins_for_worker(tmp_path, monkeypatc
 
     assert "ccs gemini" in command
     assert "ccs codex" not in command
+
+
+def test_role_cli_args_reads_max_turns_and_extra_args(tmp_path, monkeypatch):
+    module = _load_module()
+    config = tmp_path / "operator_ui.yaml"
+    config.write_text(
+        "roles:\n  president:\n    provider: gemini\n    max_turns: 7\n    extra_args:\n      - --permission-mode\n      - plan\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MESH_UI_CONFIG", str(config))
+
+    args = module._role_cli_args("president")
+
+    assert args == ["--max-turns", "7", "--permission-mode", "plan"]
 
 
 def test_command_for_role_marks_pre_resolved_live_attach(monkeypatch):
@@ -503,10 +521,40 @@ def test_resolve_active_ui_group_id_preserves_cached_group_when_live_check_is_in
         timestamp="20260315T130000Z",
     )
 
-    assert ui_group_id == "snake-game-ui-20260314T120000Z"
+    assert ui_group_id == "snake-game-ui-20260315T130000Z"
     assert module._read_ui_group_cache("snake-game", repo_path=repo_path, cache_dir=tmp_path) == {
         "repo_name": "snake-game",
-        "ui_group_id": "snake-game-ui-20260314T120000Z",
+        "ui_group_id": "snake-game-ui-20260315T130000Z",
+        "repo_path": repo_path,
+    }
+
+
+def test_resolve_active_ui_group_id_fresh_ignores_live_cached_group(tmp_path, monkeypatch):
+    module = _load_module()
+    repo_path = "/Users/sam/snake-game"
+    module._write_ui_group_cache(
+        "snake-game",
+        "snake-game-ui-20260314T120000Z",
+        repo_path=repo_path,
+        cache_dir=tmp_path,
+    )
+
+    monkeypatch.setattr(module, "_router_has_live_ui_group", lambda *args, **kwargs: True)
+
+    ui_group_id = module._resolve_active_ui_group_id(
+        "snake-game",
+        repo_path=repo_path,
+        router_url="http://router",
+        auth_token="token",
+        cache_dir=tmp_path,
+        timestamp="20260315T130000Z",
+        fresh=True,
+    )
+
+    assert ui_group_id == "snake-game-ui-20260315T130000Z"
+    assert module._read_ui_group_cache("snake-game", repo_path=repo_path, cache_dir=tmp_path) == {
+        "repo_name": "snake-game",
+        "ui_group_id": "snake-game-ui-20260315T130000Z",
         "repo_path": repo_path,
     }
 
@@ -815,8 +863,11 @@ def test_create_ui_role_task_posts_expected_payload(monkeypatch):
     assert payload["payload"]["ui_role_session"] is True
     assert payload["payload"]["ui_group_id"] == "demo-ui-1"
     assert payload["payload"]["working_dir"] == "/media/sam/1TB/demo"
+    assert payload["payload"]["cli_args"][0] == "--session-id"
+    assert len(payload["payload"]["cli_args"][1]) == 36
     assert payload["payload"]["prompt"].startswith("You are lead for repository demo")
-    assert "Acknowledge readiness briefly" in payload["payload"]["prompt"]
+    assert "You are the delivery lead for the current mesh UI group" in payload["payload"]["prompt"]
+    assert "Do not default to implementing everything yourself" in payload["payload"]["prompt"]
 
 
 def test_create_ui_role_task_bootstraps_worker_codex_prompt(monkeypatch):
@@ -846,6 +897,8 @@ def test_create_ui_role_task_bootstraps_worker_codex_prompt(monkeypatch):
     _, _, path, payload = calls[0]
     assert path == "/tasks"
     assert payload["target_account"] == "work-codex"
+    assert payload["payload"]["cli_args"][0] == "--session-id"
+    assert len(payload["payload"]["cli_args"][1]) == 36
     assert payload["payload"]["prompt"].startswith("You are worker-codex for repository snake-game")
     assert "Do not exit" in payload["payload"]["prompt"]
 
@@ -894,8 +947,12 @@ def test_ui_role_bootstrap_prompt_for_boss_mentions_president_and_mesh_send():
     prompt = module._ui_role_bootstrap_prompt(cfg, "boss", "gemini")
 
     assert "You are boss for repository demo" in prompt
-    assert "mesh send president" in prompt
-    assert "$MESH_HOME/scripts/mesh send president" in prompt
+    assert "Do not tell the operator to run mesh commands" in prompt
+    assert "The operator should talk only to you." in prompt
+    assert "The runtime may auto-relay operator prompts to president" in prompt
+    assert "Do not enter planning mode before you have delegated the request" in prompt
+    assert "If the operator asks you to message or notify president" in prompt
+    assert "Do not inspect files or implement changes yourself" not in prompt
 
 
 def test_ui_role_bootstrap_prompt_mentions_absolute_mesh_fallback_for_president():
@@ -915,7 +972,56 @@ def test_ui_role_bootstrap_prompt_mentions_absolute_mesh_fallback_for_president(
     prompt = module._ui_role_bootstrap_prompt(cfg, "president", "gemini")
 
     assert "mesh send <role>" in prompt
-    assert "$MESH_HOME/scripts/mesh send <role>" in prompt
+    assert "/media/sam/1TB/gobabygo/scripts/mesh send <role>" in prompt
+    assert "autonomous execution coordinator" in prompt
+    assert "delegate execution ownership to lead by default" in prompt
+    assert "Use lead as the delivery owner" in prompt
+    assert "Expect status and completion reports back from lead" in prompt
+
+
+def test_ui_role_bootstrap_prompt_for_lead_models_subordinate_coordination():
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["lead"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+
+    prompt = module._ui_role_bootstrap_prompt(cfg, "lead", "gemini")
+
+    assert "delivery lead" in prompt
+    assert "Do not default to implementing everything yourself" in prompt
+    assert "Worker-gemini is your implementation or parallel-analysis subordinate" in prompt
+    assert "Send concise progress and completion updates back to president" in prompt
+
+
+def test_infer_workflow_context_detects_speckit_tasks_phase(tmp_path):
+    module = _load_module()
+    (tmp_path / "spec.md").write_text("# spec\n", encoding="utf-8")
+    (tmp_path / "plan.md").write_text("# plan\n", encoding="utf-8")
+    (tmp_path / "tasks.md").write_text("# tasks\n", encoding="utf-8")
+
+    context = module._infer_workflow_context(str(tmp_path))
+
+    assert context["framework"] == "speckit"
+    assert context["phase"] == "implement"
+
+
+def test_infer_workflow_context_detects_gsd_plan_phase(tmp_path):
+    module = _load_module()
+    (tmp_path / "RESEARCH.md").write_text("# research\n", encoding="utf-8")
+    (tmp_path / "CONTEXT.md").write_text("# context\n", encoding="utf-8")
+
+    context = module._infer_workflow_context(str(tmp_path))
+
+    assert context["framework"] == "gsd"
+    assert context["phase"] == "plan"
 
 
 def test_create_ui_role_task_reuses_existing_pending_task(monkeypatch):
@@ -1284,7 +1390,7 @@ def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
         "worker-codex": module.RoleLaunchPlan(role="worker-codex", mode="spawn"),
     }
     created_roles = []
-    task_ids = {"lead": "task-lead-1", "worker-codex": "task-worker-1"}
+    task_ids = {"boss": "task-boss-1", "lead": "task-lead-1", "worker-codex": "task-worker-1"}
 
     def fake_create(router_url: str, auth_token: str, cfg_value, role: str):
         created_roles.append(role)
@@ -1314,6 +1420,25 @@ def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
                     "task_id": "task-lead-1",
                     "repo": "/media/sam/1TB/demo",
                     "role": "lead",
+                    "target_cli": "gemini",
+                    "status": "running",
+                },
+            )
+        if task_id == "task-boss-1":
+            return (
+                {
+                    "session_id": "sess-boss",
+                    "cli_type": "gemini",
+                    "metadata": {
+                        "repo": "/media/sam/1TB/demo",
+                        "ui_group_id": "demo-ui-1",
+                        "tmux_session": "mesh-gemini-boss",
+                    },
+                },
+                {
+                    "task_id": "task-boss-1",
+                    "repo": "/media/sam/1TB/demo",
+                    "role": "boss",
                     "target_cli": "gemini",
                     "status": "running",
                 },
@@ -1353,7 +1478,9 @@ def test_spawn_missing_agent_role_plans_resolves_spawned_sessions(monkeypatch):
         poll_interval_s=0.01,
     )
 
-    assert created_roles == ["lead", "worker-codex"]
+    assert created_roles == ["boss", "lead", "worker-codex"]
+    assert plans["boss"].mode == "spawn"
+    assert plans["boss"].session_id == "sess-boss"
     assert plans["lead"].mode == "spawn"
     assert plans["lead"].session_id == "sess-lead"
     assert plans["worker-codex"].mode == "spawn"
@@ -1385,7 +1512,7 @@ def test_spawn_missing_agent_role_plans_ignores_other_group_sessions_until_match
         "_create_ui_role_task",
         lambda router_url, auth_token, cfg_value, role: {
             "role": role,
-            "task_id": "task-lead-2",
+            "task_id": "task-boss-2" if role == "boss" else "task-lead-2",
             "target_cli": "gemini",
             "created": True,
         },
@@ -1394,10 +1521,29 @@ def test_spawn_missing_agent_role_plans_ignores_other_group_sessions_until_match
     polls = {"count": 0}
 
     def fake_fetch(router_url: str, auth_token: str, task_id: str):
-        assert task_id == "task-lead-2"
+        assert task_id in {"task-boss-2", "task-lead-2"}
         polls["count"] += 1
         if polls["count"] == 1:
             return None
+        if task_id == "task-boss-2":
+            return (
+                {
+                    "session_id": "sess-boss-current-group",
+                    "cli_type": "gemini",
+                    "metadata": {
+                        "repo": "/media/sam/1TB/demo",
+                        "ui_group_id": "demo-ui-2",
+                        "tmux_session": "mesh-gemini-boss-current",
+                    },
+                },
+                {
+                    "task_id": "task-boss-2",
+                    "repo": "/media/sam/1TB/demo",
+                    "role": "boss",
+                    "target_cli": "gemini",
+                    "status": "running",
+                },
+            )
         return (
             {
                 "session_id": "sess-current-group",
@@ -1430,6 +1576,8 @@ def test_spawn_missing_agent_role_plans_ignores_other_group_sessions_until_match
     )
 
     assert polls["count"] >= 2
+    assert plans["boss"].mode == "spawn"
+    assert plans["boss"].session_id == "sess-boss-current-group"
     assert plans["lead"].mode == "spawn"
     assert plans["lead"].session_id == "sess-current-group"
     assert "mesh-gemini-current" in plans["lead"].remote_init
@@ -1547,7 +1695,8 @@ def test_spawn_missing_agent_role_plans_marks_router_unavailable():
         auth_token="",
     )
 
-    assert plans["boss"].mode == "spawn"
+    assert plans["boss"].mode == "error"
+    assert "router unavailable" in plans["boss"].error
     assert plans["lead"].mode == "error"
     assert "router unavailable" in plans["lead"].error
 
@@ -1785,21 +1934,14 @@ def test_fetch_live_session_pair_for_task_falls_back_to_open_sessions_when_sessi
     assert task["status"] == "running"
 
 
-def test_default_ui_roles_fit_two_tabs_with_three_panes():
+def test_default_ui_roles_now_focus_on_boss_and_president():
     module = _load_module()
 
     assert module.DEFAULT_ROLES == [
         "boss",
         "president",
-        "lead",
-        "worker-codex",
-        "worker-gemini",
-        "verifier",
     ]
-    assert module._split_groups(module.DEFAULT_ROLES, 3) == [
-        ["boss", "president", "lead"],
-        ["worker-codex", "worker-gemini", "verifier"],
-    ]
+    assert module._split_groups(module.DEFAULT_ROLES, 3) == [["boss", "president"]]
 
 
 class _FakeSession:
@@ -1825,6 +1967,15 @@ class _FakeTab:
 
     async def async_close(self, force=True):
         self.closed = True
+
+
+class _FakeLaunchSession:
+    def __init__(self, name: str):
+        self.name = name
+        self.sent = []
+
+    async def async_send_text(self, text: str):
+        self.sent.append(text)
 
 
 def test_is_mesh_ui_tab_checks_all_sessions():
@@ -1869,3 +2020,202 @@ def test_cleanup_existing_mesh_tabs_closes_marked_tab_even_if_current_session_un
 
     assert marked_tab.closed is True
     assert plain_tab.closed is False
+
+
+def test_cleanup_existing_mesh_tabs_in_app_scans_all_windows():
+    module = _load_module()
+    first_window_tab = _FakeTab([_FakeSession("1")])
+    second_window_tab = _FakeTab([_FakeSession("1")])
+    asyncio.run(first_window_tab.current_session.async_set_variable("user.mesh_repo", "/media/sam/1TB/demo"))
+    asyncio.run(second_window_tab.current_session.async_set_variable("user.mesh_repo", "/media/sam/1TB/demo"))
+    app = type(
+        "App",
+        (),
+        {
+            "windows": [
+                type("Window", (), {"tabs": [first_window_tab]})(),
+                type("Window", (), {"tabs": [second_window_tab]})(),
+            ]
+        },
+    )()
+
+    asyncio.run(module._cleanup_existing_mesh_tabs_in_app(app, "/media/sam/1TB/demo"))
+
+    assert first_window_tab.closed is True
+    assert second_window_tab.closed is True
+
+
+class _FakeWindow:
+    def __init__(self):
+        self.current_tab = _FakeTab([_FakeLaunchSession("initial")])
+        self.created_tabs = []
+
+    async def async_create_tab(self):
+        tab = _FakeTab([_FakeLaunchSession(f"created-{len(self.created_tabs) + 1}")])
+        self.created_tabs.append(tab)
+        return tab
+
+
+def test_launch_layout_creates_tabs_for_each_group(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "president", "lead", "worker-gemini", "verifier"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=False,
+        preset="auto",
+        attach_live=False,
+        ui_group_id="demo-ui-1",
+    )
+    fake_window = _FakeWindow()
+    fake_app = type("App", (), {"windows": [fake_window]})()
+    create_calls = []
+
+    class FakeIterm2:
+        @staticmethod
+        async def async_get_app(connection):
+            return fake_app
+
+        class Window:
+            @staticmethod
+            async def async_create(connection):
+                return fake_window
+
+    monkeypatch.setitem(sys.modules, "iterm2", FakeIterm2)
+    monkeypatch.setattr(module, "_should_avoid_split_panes", lambda version=None: False)
+    monkeypatch.setattr(module, "_load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(
+        module,
+        "_build_role_launch_plans",
+        lambda cfg, session_pairs: {
+            role: module.RoleLaunchPlan(role=role, mode="spawn")
+            for role in cfg.roles
+        },
+    )
+    monkeypatch.setattr(module, "_command_for_role", lambda *args, **kwargs: "echo ok")
+    monkeypatch.setattr(module, "_mark_mesh_ui_sessions", lambda sessions, cfg, roles: asyncio.sleep(0))
+
+    async def fake_create_panes(tab, roles):
+        create_calls.append(tab)
+        return [_FakeLaunchSession(role) for role in roles]
+
+    monkeypatch.setattr(module, "_create_panes_for_roles", fake_create_panes)
+
+    asyncio.run(module._launch_layout(None, cfg))
+
+    assert len(fake_window.created_tabs) == 2
+    assert create_calls == fake_window.created_tabs
+
+
+def test_launch_layout_avoids_split_panes_in_safe_tabs_mode(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "president"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=False,
+        preset="auto",
+        attach_live=False,
+        ui_group_id="demo-ui-1",
+    )
+    fake_window = _FakeWindow()
+    fake_app = type("App", (), {"windows": [fake_window]})()
+    create_calls = []
+
+    class FakeIterm2:
+        @staticmethod
+        async def async_get_app(connection):
+            return fake_app
+
+        class Window:
+            @staticmethod
+            async def async_create(connection):
+                return fake_window
+
+    monkeypatch.setitem(sys.modules, "iterm2", FakeIterm2)
+    monkeypatch.setattr(module, "_should_avoid_split_panes", lambda version=None: True)
+    monkeypatch.setattr(module, "_load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(
+        module,
+        "_build_role_launch_plans",
+        lambda cfg, session_pairs: {
+            role: module.RoleLaunchPlan(role=role, mode="spawn")
+            for role in cfg.roles
+        },
+    )
+    monkeypatch.setattr(module, "_command_for_role", lambda *args, **kwargs: "echo ok")
+    monkeypatch.setattr(module, "_mark_mesh_ui_sessions", lambda sessions, cfg, roles: asyncio.sleep(0))
+
+    async def fake_create_panes(tab, roles):
+        create_calls.append((tab, list(roles)))
+        return [_FakeLaunchSession(role) for role in roles]
+
+    monkeypatch.setattr(module, "_create_panes_for_roles", fake_create_panes)
+
+    asyncio.run(module._launch_layout(None, cfg))
+
+    assert len(fake_window.created_tabs) == 2
+    assert [roles for _, roles in create_calls] == [["boss"], ["president"]]
+
+
+def test_launch_layout_creates_surfaces_before_spawning_sessions(monkeypatch):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "president"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=False,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    fake_window = _FakeWindow()
+    fake_app = type("App", (), {"windows": [fake_window]})()
+    order: list[str] = []
+
+    class FakeIterm2:
+        @staticmethod
+        async def async_get_app(connection):
+            return fake_app
+
+        class Window:
+            @staticmethod
+            async def async_create(connection):
+                return fake_window
+
+    monkeypatch.setitem(sys.modules, "iterm2", FakeIterm2)
+    monkeypatch.setattr(module, "_should_avoid_split_panes", lambda version=None: False)
+    monkeypatch.setattr(module, "_load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "_fetch_live_session_pairs", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        module,
+        "_build_role_launch_plans",
+        lambda cfg, session_pairs: {
+            role: module.RoleLaunchPlan(role=role, mode="spawn")
+            for role in cfg.roles
+        },
+    )
+
+    def fake_spawn(cfg, plans, **kwargs):
+        order.append("spawn")
+        return plans
+
+    monkeypatch.setattr(module, "_spawn_missing_agent_role_plans", fake_spawn)
+    monkeypatch.setattr(module, "_command_for_role", lambda *args, **kwargs: "echo ok")
+    monkeypatch.setattr(module, "_mark_mesh_ui_sessions", lambda sessions, cfg, roles: asyncio.sleep(0))
+
+    async def fake_create_panes(tab, roles):
+        order.append("panes")
+        return [_FakeLaunchSession(role) for role in roles]
+
+    monkeypatch.setattr(module, "_create_panes_for_roles", fake_create_panes)
+
+    asyncio.run(module._launch_layout(None, cfg))
+
+    assert order == ["panes", "spawn"]

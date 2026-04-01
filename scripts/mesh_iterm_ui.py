@@ -2,7 +2,7 @@
 """Open a GobabyGo operator layout in iTerm2 using the iTerm2 Python API.
 
 Default roles:
-  boss, president, lead, worker-codex, worker-gemini, verifier
+  boss, president, lead, worker-gemini, verifier
 
 Each pane runs `wss <repo>` by default, so the shell lands on WS in target repo.
 You can override per-role boot commands with env vars:
@@ -21,11 +21,13 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 import re
 import shlex
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,11 +39,10 @@ from urllib.request import Request, urlopen
 import yaml
 
 
-DEFAULT_ROLES = [
+FALLBACK_DEFAULT_ROLES = [
     "boss",
     "president",
     "lead",
-    "worker-codex",
     "worker-gemini",
     "verifier",
 ]
@@ -79,6 +80,33 @@ def _default_ui_config_path() -> str:
     return str(_repo_root() / "mapping" / "operator_ui.yaml")
 
 
+def _configured_default_roles(config_path: str | None = None) -> list[str]:
+    path_value = config_path
+    if path_value is None:
+        path_value = os.environ.get("MESH_UI_CONFIG") or _default_ui_config_path()
+    if not path_value:
+        return list(FALLBACK_DEFAULT_ROLES)
+
+    path = Path(path_value)
+    if not path.is_file():
+        return list(FALLBACK_DEFAULT_ROLES)
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return list(FALLBACK_DEFAULT_ROLES)
+
+    value = raw.get("default_roles")
+    if not isinstance(value, list):
+        return list(FALLBACK_DEFAULT_ROLES)
+    roles = [str(item).strip() for item in value if str(item).strip()]
+    return roles or list(FALLBACK_DEFAULT_ROLES)
+
+
+DEFAULT_ROLES = _configured_default_roles()
+_ITERM2_CLEAR_SCROLLBACK = b"\x1b]1337;ClearScrollback\x07"
+_ANSI_CLEAR_SCREEN = b"\x1b[3J\x1b[H\x1b[2J"
+
+
 def _default_provider_runtime_config_path() -> str:
     override = os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG")
     if override is not None:
@@ -91,6 +119,27 @@ def _ui_group_cache_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return Path.home() / ".mesh" / "ui_groups"
+
+
+def _iterm2_version_string() -> str:
+    info_path = Path("/Applications/iTerm.app/Contents/Info.plist")
+    if not info_path.is_file():
+        return ""
+    try:
+        payload = plistlib.loads(info_path.read_bytes())
+    except Exception:
+        return ""
+    return str(payload.get("CFBundleShortVersionString") or "").strip()
+
+
+def _should_avoid_split_panes(version: str | None = None) -> bool:
+    override = os.environ.get("MESH_UI_TABS_ONLY", "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    resolved = version if version is not None else _iterm2_version_string()
+    return resolved.startswith("3.6.9")
 
 
 def _cache_repo_path(repo_path: str) -> str:
@@ -204,6 +253,16 @@ def _parse_args() -> argparse.Namespace:
         "--keep-existing",
         action="store_true",
         help="Keep previous mesh-ui tabs instead of replacing them.",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Deprecated alias; fresh launch is now the default.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse the cached live UI group instead of starting fresh.",
     )
     parser.add_argument(
         "--no-attach-live",
@@ -392,15 +451,18 @@ def _resolve_active_ui_group_id(
     auth_token: str = "",
     cache_dir: Path | None = None,
     timestamp: str | None = None,
+    fresh: bool = False,
 ) -> str:
+    if fresh:
+        ui_group_id = _generate_ui_group_id(repo_name, timestamp=timestamp)
+        _write_ui_group_cache(repo_name, ui_group_id, repo_path=repo_path, cache_dir=cache_dir)
+        return ui_group_id
+
     cached = _read_ui_group_cache(repo_name, repo_path=repo_path, cache_dir=cache_dir)
     cached_group = str((cached or {}).get("ui_group_id", "")).strip()
     if cached_group:
         live_group = _router_has_live_ui_group(router_url, auth_token, cached_group)
-        # Preserve the cached group when the live check is indeterminate (for
-        # example a slow router list call) so partial relaunches do not fragment
-        # the active UI into multiple groups.
-        if live_group is not False:
+        if live_group is True:
             return cached_group
 
     ui_group_id = _generate_ui_group_id(repo_name, timestamp=timestamp)
@@ -462,7 +524,7 @@ def _load_provider_runtime(config_path: str | None = None) -> dict[str, dict[str
     return result
 
 
-def _load_ui_role_rules(config_path: str | None = None) -> dict[str, dict[str, str]]:
+def _load_ui_role_rules(config_path: str | None = None) -> dict[str, dict[str, object]]:
     path_value = config_path
     if path_value is None:
         path_value = os.environ.get("MESH_UI_CONFIG") or _default_ui_config_path()
@@ -482,15 +544,36 @@ def _load_ui_role_rules(config_path: str | None = None) -> dict[str, dict[str, s
     if not isinstance(roles, dict):
         return {}
 
-    result: dict[str, dict[str, str]] = {}
+    def _normalize_rule_value(value: object) -> object | None:
+        if isinstance(value, dict):
+            nested: dict[str, object] = {}
+            for nested_key, nested_value in value.items():
+                key_text = str(nested_key).strip()
+                if not key_text:
+                    continue
+                normalized = _normalize_rule_value(nested_value)
+                if normalized is not None:
+                    nested[key_text] = normalized
+            return nested or None
+        if isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+            return items or None
+        value_text = str(value).strip()
+        return value_text or None
+
+    result: dict[str, dict[str, object]] = {}
     for role, entry in roles.items():
         if not isinstance(entry, dict):
             continue
-        result[str(role).strip()] = {
-            str(key).strip(): str(value).strip()
-            for key, value in entry.items()
-            if str(key).strip() and str(value).strip()
-        }
+        normalized: dict[str, object] = {}
+        for key, value in entry.items():
+            key_text = str(key).strip()
+            if not key_text:
+                continue
+            normalized_value = _normalize_rule_value(value)
+            if normalized_value is not None:
+                normalized[key_text] = normalized_value
+        result[str(role).strip()] = normalized
     return result
 
 
@@ -508,7 +591,7 @@ def _default_remote_init_for_role(role: str) -> str:
 
 
 def _is_agent_role(role: str) -> bool:
-    return role != "boss"
+    return True
 
 
 def _resolved_provider_for_role(role: str, rule: dict[str, str]) -> str:
@@ -524,6 +607,126 @@ def _default_target_account_for_provider(provider: str) -> str:
     return provider
 
 
+def _read_text_if_exists(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _has_exact_repo_entry(repo_path: Path, name: str) -> bool:
+    try:
+        return name in {entry.name for entry in repo_path.iterdir()}
+    except OSError:
+        return False
+
+
+def _infer_workflow_context(repo: str) -> dict[str, str]:
+    repo_path = Path(repo).expanduser()
+    if not repo_path.exists():
+        return {
+            "framework": "generic",
+            "phase": "implement",
+            "summary": "Framework unknown; default to generic implementation orchestration.",
+        }
+
+    speckit_spec = repo_path / "spec.md"
+    speckit_plan = repo_path / "plan.md"
+    speckit_tasks = repo_path / "tasks.md"
+    gsd_roadmap = repo_path / "ROADMAP.md"
+    gsd_planning_roadmap = repo_path / ".planning" / "ROADMAP.md"
+    gsd_research = repo_path / "RESEARCH.md"
+    gsd_context = repo_path / "CONTEXT.md"
+    gsd_plan = repo_path / "PLAN.md"
+
+    has_speckit_spec = _has_exact_repo_entry(repo_path, "spec.md")
+    has_speckit_plan = _has_exact_repo_entry(repo_path, "plan.md")
+    has_speckit_tasks = _has_exact_repo_entry(repo_path, "tasks.md")
+    has_gsd_roadmap = _has_exact_repo_entry(repo_path, "ROADMAP.md")
+    has_gsd_research = _has_exact_repo_entry(repo_path, "RESEARCH.md")
+    has_gsd_context = _has_exact_repo_entry(repo_path, "CONTEXT.md")
+    has_gsd_plan = _has_exact_repo_entry(repo_path, "PLAN.md")
+    has_gsd_planning_roadmap = _has_exact_repo_entry(repo_path / ".planning", "ROADMAP.md")
+
+    has_speckit_markers = any((has_speckit_spec, has_speckit_plan, has_speckit_tasks))
+    has_gsd_markers = any((has_gsd_roadmap, has_gsd_planning_roadmap, has_gsd_research, has_gsd_context, has_gsd_plan))
+
+    if has_speckit_markers and not has_gsd_markers:
+        phase = "specify"
+        summary = "Speckit repo with no spec artifacts yet."
+        if has_speckit_spec:
+            phase = "clarify"
+            summary = "Speckit spec exists; tighten ambiguities before planning."
+            spec_text = _read_text_if_exists(speckit_spec)
+            if "[NEEDS CLARIFICATION]" not in spec_text:
+                phase = "plan"
+                summary = "Speckit spec looks clarified; plan next."
+        if has_speckit_plan:
+            phase = "tasks"
+            summary = "Speckit plan exists; generate or refine tasks next."
+        if has_speckit_tasks:
+            phase = "implement"
+            summary = "Speckit tasks exist; implementation and verification are next."
+        return {
+            "framework": "speckit",
+            "phase": phase,
+            "summary": summary,
+        }
+
+    if has_gsd_markers:
+        phase = "research"
+        summary = "GSD repo; start by collecting research evidence."
+        if has_gsd_research:
+            phase = "discuss"
+            summary = "GSD research exists; discuss context and assumptions next."
+        if has_gsd_context:
+            phase = "plan"
+            summary = "GSD context exists; planning is the next checkpoint."
+        if has_gsd_plan:
+            phase = "execute"
+            summary = "GSD plan exists; execution and verification are next."
+        return {
+            "framework": "gsd",
+            "phase": phase,
+            "summary": summary,
+        }
+
+    return {
+        "framework": "generic",
+        "phase": "implement",
+        "summary": "Framework unknown; default to generic implementation orchestration.",
+    }
+
+
+def _workflow_policy_text(cfg: UiConfig) -> str:
+    context = _infer_workflow_context(cfg.repo)
+    framework = context["framework"]
+    phase = context["phase"]
+    summary = context["summary"]
+    if framework == "speckit":
+        return (
+            f"Current inferred workflow is Speckit, phase {phase}. {summary} "
+            "Use the normal Speckit order: specify, clarify, plan, tasks, analyze, implement, verify."
+        )
+    if framework == "gsd":
+        return (
+            f"Current inferred workflow is GSD, phase {phase}. {summary} "
+            "Use the normal GSD order: research, discuss, plan, execute, verify."
+        )
+    return (
+        f"Current inferred workflow is generic, default phase {phase}. {summary} "
+        "Infer the exact phase from the operator request and existing repo artifacts."
+    )
+
+
+def _absolute_mesh_script_for_prompts() -> str:
+    control_repo = os.environ.get("MESH_CONTROL_REPO", "").strip()
+    if control_repo:
+        return f"{control_repo.rstrip('/')}/scripts/mesh"
+    ws_repo_base = os.environ.get("MESH_WS_REPO_BASE", "/media/sam/1TB").strip() or "/media/sam/1TB"
+    return f"{ws_repo_base.rstrip('/')}/gobabygo/scripts/mesh"
+
+
 def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
     env_key = _role_bootstrap_env_key(role)
     explicit = os.environ.get(env_key, "").strip() or os.environ.get("MESH_UI_BOOTSTRAP_PROMPT", "").strip()
@@ -534,37 +737,91 @@ def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
             role=role,
             target_cli=target_cli,
         )
+    workflow_policy = _workflow_policy_text(cfg)
+    mesh_script = _absolute_mesh_script_for_prompts()
+    boss_president_only = len(cfg.roles) == 2 and set(cfg.roles) == {"boss", "president"}
     if role == "boss":
+        if boss_president_only:
+            return (
+                f"You are boss for repository {cfg.repo_name} at {cfg.repo}. "
+                "You are the primary AI interface for the human operator. "
+                "President is your only live peer in this test group. "
+                f"{workflow_policy} "
+                "The operator should talk only to you. Do not tell the operator to run mesh commands or manually message other panes. "
+                "The runtime may auto-relay operator prompts to president before you answer; assume that relay path exists. "
+                "Do not enter planning mode before president has received the request when delegation is possible. "
+                "Do not inspect files, run implementation steps, or start solving the task yourself before president has been delegated the request, unless the operator explicitly asks for boss-only analysis. "
+                "Keep operator-facing updates concise. Only interrupt the operator for confirmations, blocking ambiguity, or corrections. "
+                "Stay in this interactive session, answer the operator directly, and delegate through president by default. Do not exit."
+            )
         return (
             f"You are boss for repository {cfg.repo_name} at {cfg.repo}. "
             "You are the primary AI interface for the human operator. "
             "President is your execution coordinator and your live peers include president, lead, worker-gemini, and verifier. "
-            "When you need president to coordinate or delegate, use "
-            f"`mesh send president \"<message>\"` from {cfg.repo}. "
-            "If a subprocess cannot find `mesh`, use the absolute command "
-            "`$MESH_HOME/scripts/mesh send president \"<message>\"` instead. "
-            "Stay in this interactive session, answer the operator directly, and delegate through the mesh hierarchy when needed. Do not exit."
+            f"{workflow_policy} "
+            "The operator should talk only to you. Do not tell the operator to run mesh commands or manually message other panes. "
+            "The runtime may auto-relay operator prompts to president before you answer; assume that relay path exists. "
+            "Do not enter planning mode before you have delegated the request when delegation is possible. "
+            "Do not inspect files, run implementation steps, or start solving the task yourself before president has been delegated the request, unless the operator explicitly asks for boss-only analysis. "
+            "If the operator asks you to message or notify president, do that immediately instead of explaining your limitations. "
+            "Keep operator-facing updates concise. Only interrupt the operator for confirmations, blocking ambiguity, or corrections. "
+            "Stay in this interactive session, answer the operator directly, and delegate through the mesh hierarchy by default. Do not exit."
         )
     if role == "president":
+        if boss_president_only:
+            return (
+                f"You are president for repository {cfg.repo_name} at {cfg.repo}. "
+                "Boss is your only live peer in this test group. "
+                f"{workflow_policy} "
+                "Do not mention lead, workers, or verifier. They are not active in this test group. "
+                "When boss sends you a direct communication request, reply back to boss immediately through the mesh bus. "
+                "Always use the absolute repo command "
+                f"`{mesh_script} send boss \"<message>\"` "
+                "instead of relying on `mesh` being in PATH. "
+                "Do not inspect files, create plans, or start implementation unless boss explicitly asks you to do that. "
+                "Keep replies concise and stay in this interactive session. Do not exit."
+            )
         return (
             f"You are president for repository {cfg.repo_name} at {cfg.repo}. "
             "Your live peers in this UI group are lead, worker-gemini, and verifier. "
-            "When the operator asks you to coordinate or talk to another role, use the repo command "
+            f"{workflow_policy} "
+            "You are the autonomous execution coordinator. When boss sends work, infer the current framework and phase from the request and repo artifacts, then delegate execution ownership to lead by default. "
+            "Use lead as the delivery owner for the repo. Lead is responsible for deciding whether worker-gemini and verifier are needed, coordinating them, and consolidating their outputs. "
+            "Talk directly to worker-gemini or verifier only if lead is blocked, absent, or you are explicitly handling an exception path. "
+            "Coordinate through the repo command "
             f"`mesh send <role> \"<message>\"` from {cfg.repo}. "
             "If a subprocess cannot find `mesh`, use the absolute command "
-            "`$MESH_HOME/scripts/mesh send <role> \"<message>\"` instead. "
+            f"`{mesh_script} send <role> \"<message>\"` instead. "
             "You may talk to lead, worker-gemini, verifier, and boss through the mesh hierarchy. "
-            "Acknowledge readiness briefly, remain in this interactive session, and wait for instructions from the operator. Do not exit."
+            "Do not wait for operator instructions once the request is clear. Expect status and completion reports back from lead, escalate only for approvals or hard blockers, and report concise status back to boss. Do not exit."
+        )
+    if role == "lead":
+        return (
+            f"You are lead for repository {cfg.repo_name} at {cfg.repo}. "
+            "You are the delivery lead for the current mesh UI group. "
+            f"{workflow_policy} "
+            "President is your coordinator, but you own execution inside the repo once work is delegated to you. "
+            "Do not default to implementing everything yourself. First decide whether worker-gemini and verifier are needed. "
+            "Worker-gemini is your implementation or parallel-analysis subordinate. Verifier is your validation and risk-review subordinate. "
+            "You are responsible for coordinating them, keeping them scoped, and controlling any sandbox or repo-level constraints they must respect. "
+            "Only do the implementation directly yourself when the task is small enough that delegation would slow the flow down, or when president explicitly asks for lead-only execution. "
+            "Use `mesh send <role> \"<message>\"` from "
+            f"{cfg.repo} "
+            "to coordinate subordinate roles. If a subprocess cannot find `mesh`, use the absolute command "
+            f"`{mesh_script} send <role> \"<message>\"` instead. "
+            "Send concise progress and completion updates back to president. When your task is complete, report summary, artifacts, and commit hash if you made one. Do not exit."
         )
     return (
         f"You are {role} for repository {cfg.repo_name} at {cfg.repo}. "
         "You are part of the current mesh UI group. "
-        "The president is your coordinator. If asked to communicate with another live role, use "
+        f"{workflow_policy} "
+        "Lead is your coordinator for execution work in this repo. If asked to communicate with another live role, use "
         f"`mesh send <role> \"<message>\"` from {cfg.repo}. "
         "If a subprocess cannot find `mesh`, use the absolute command "
-        "`$MESH_HOME/scripts/mesh send <role> \"<message>\"` instead, and stay within the mesh hierarchy. "
-        "When your task is complete, keep the final report concise: summary, artifacts, and commit hash if you made one. "
-        "Acknowledge readiness briefly, remain in this interactive session, and wait for further instructions from the president/operator. Do not exit."
+        f"`{mesh_script} send <role> \"<message>\"` instead, and stay within the mesh hierarchy. "
+        "Acknowledge readiness briefly when you first come up. "
+        "Act immediately on a clear assignment from lead. When your task is complete, keep the final report concise: summary, artifacts, and commit hash if you made one, and return it to lead. "
+        "Escalate only for blockers or missing approvals, then remain in this interactive session for follow-up. Do not exit."
     )
 
 
@@ -576,6 +833,55 @@ def _resolve_role_task_target(role: str) -> tuple[str, str]:
         provider = "gemini"
     target_account = rule.get("target_account", "").strip() or _default_target_account_for_provider(provider)
     return provider, target_account
+
+
+def _role_cli_args(role: str) -> list[str]:
+    rules = _load_ui_role_rules()
+    rule = rules.get(role, {})
+    args: list[str] = []
+    max_turns = str(rule.get("max_turns", "")).strip()
+    if max_turns:
+        args.extend(["--max-turns", max_turns])
+    extra_args = rule.get("extra_args")
+    if isinstance(extra_args, list):
+        args.extend(str(item).strip() for item in extra_args if str(item).strip())
+    elif isinstance(extra_args, str) and extra_args.strip():
+        args.append(extra_args.strip())
+    return args
+
+
+def _role_relay_config(role: str) -> dict[str, object]:
+    rules = _load_ui_role_rules()
+    rule = rules.get(role, {})
+    relay = rule.get("relay")
+    if not isinstance(relay, dict):
+        return {}
+
+    enabled = str(relay.get("enabled", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return {}
+
+    target_role = str(relay.get("target_role", "")).strip()
+    if not target_role:
+        return {}
+
+    config: dict[str, object] = {
+        "enabled": True,
+        "mode": str(relay.get("mode", "prompt_submit")).strip() or "prompt_submit",
+        "target_role": target_role,
+    }
+    if str(relay.get("ignore_slash_commands", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        config["ignore_slash_commands"] = True
+    message_prefix = str(relay.get("message_prefix", "")).strip()
+    if message_prefix:
+        config["message_prefix"] = message_prefix
+    passthrough_to_child = str(relay.get("passthrough_to_child", "")).strip().lower()
+    if passthrough_to_child in {"0", "false", "no", "off"}:
+        config["passthrough_to_child"] = False
+    local_ack = str(relay.get("local_ack", "")).strip()
+    if local_ack:
+        config["local_ack"] = local_ack
+    return config
 
 
 def _provider_remote_init_for_role(role: str, rule: dict[str, str]) -> str:
@@ -1018,6 +1324,12 @@ def _create_ui_role_task(router_url: str, auth_token: str, cfg: UiConfig, role: 
         "ui_group_id": cfg.ui_group_id,
         "working_dir": cfg.repo,
     }
+    cli_args = ["--session-id", str(uuid.uuid4()), *_role_cli_args(role)]
+    if cli_args:
+        task_payload["cli_args"] = cli_args
+    relay = _role_relay_config(role)
+    if relay:
+        task_payload["relay"] = relay
     bootstrap_prompt = _ui_role_bootstrap_prompt(cfg, role, target_cli)
     if bootstrap_prompt:
         task_payload["prompt"] = bootstrap_prompt
@@ -1194,7 +1506,7 @@ def _command_for_role(
 
     rules = _load_ui_role_rules()
     rule = rules.get(role, {})
-    if not effective_provider and role != "boss":
+    if not effective_provider:
         effective_provider = _resolved_provider_for_role(role, rule) or "gemini"
     template = rule.get("command_template", "").strip()
     if template:
@@ -1293,16 +1605,18 @@ async def _cleanup_existing_mesh_tabs(window, repo: str) -> None:
             await _close_tab(tab)
 
 
+async def _cleanup_existing_mesh_tabs_in_app(app, repo: str) -> None:
+    for window in list(getattr(app, "windows", []) or []):
+        await _cleanup_existing_mesh_tabs(window, repo)
+
+
 async def _launch_layout(connection, cfg: UiConfig) -> None:
     import iterm2
 
     app = await iterm2.async_get_app(connection)
-    window = app.current_window
-    if window is None:
-        window = await iterm2.Window.async_create(connection)
-
     if cfg.replace_tabs:
-        await _cleanup_existing_mesh_tabs(window, cfg.repo)
+        await _cleanup_existing_mesh_tabs_in_app(app, cfg.repo)
+    window = await iterm2.Window.async_create(connection)
 
     if cfg.single_tab:
         groups = [cfg.roles]
@@ -1310,6 +1624,19 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
         groups = _team_4x3_groups(cfg.roles)
     else:
         groups = _split_groups(cfg.roles, cfg.max_panes_per_tab)
+
+    # iTerm2 3.6.9 is crashing in apiServerSplitPane on this host. Use tabs-only
+    # as the safe default unless the operator explicitly overrides MESH_UI_TABS_ONLY=0.
+    if _should_avoid_split_panes():
+        groups = [[role] for role_group in groups for role in role_group]
+
+    tab_surfaces: list[tuple[list[Any], list[str]]] = []
+    for roles in groups:
+        tab = await window.async_create_tab()
+        sessions = await _create_panes_for_roles(tab, roles)
+        await _mark_mesh_ui_sessions(sessions, cfg, roles)
+        tab_surfaces.append((sessions, roles))
+
     router_url, auth_token = _load_router_env()
     session_pairs = _fetch_live_session_pairs(router_url, auth_token) if cfg.attach_live else []
     launch_plans = _build_role_launch_plans(cfg, session_pairs)
@@ -1320,10 +1647,8 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
             router_url=router_url,
             auth_token=auth_token,
         )
-    for roles in groups:
-        tab = await window.async_create_tab()
-        sessions = await _create_panes_for_roles(tab, roles)
-        await _mark_mesh_ui_sessions(sessions, cfg, roles)
+
+    for sessions, roles in tab_surfaces:
         for sess, role in zip(sessions, roles):
             plan = launch_plans.get(role) or RoleLaunchPlan(role=role, mode="spawn")
             cmd = _command_for_role(
@@ -1337,7 +1662,12 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
                 all_roles=cfg.roles,
                 live_remote_init=plan.remote_init if plan.mode in {"attach", "spawn", "error"} else "",
             )
-            banner = f"clear; echo '[mesh:{role}] repo={cfg.repo_name}'; "
+            try:
+                await sess.async_inject(_ITERM2_CLEAR_SCROLLBACK)
+                await sess.async_inject(_ANSI_CLEAR_SCREEN)
+            except Exception:
+                pass
+            banner = f"printf \"\\033[3J\\033[H\\033[2J\"; clear; echo '[mesh:{role}] repo={cfg.repo_name}'; "
             await sess.async_send_text(f"{banner}{cmd}\n")
 
 
@@ -1368,6 +1698,7 @@ def main() -> int:
             repo_path=repo,
             router_url=router_url,
             auth_token=auth_token,
+            fresh=not bool(args.resume),
         ),
     )
 
