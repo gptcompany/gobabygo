@@ -7,7 +7,7 @@ ENV_FILE="${MESH_ENV_FILE:-$HOME/.mesh/.env.mesh}"
 FALLBACK_EXPORTS="${HOME}/.mesh/router.env"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 PIPELINE_TEMPLATE="${MESH_PIPELINE_TEMPLATE:-speckit}"
-MESH_UI_FORWARD_HOST="${MESH_UI_FORWARD_HOST-sam@192.168.1.112}"
+MESH_UI_FORWARD_HOST="${MESH_UI_FORWARD_HOST-sam@10.0.0.5}"
 MESH_UI_FORWARD_REPO="${MESH_UI_FORWARD_REPO-/Users/sam/gobabygo}"
 MESH_ENV_SOURCES=(
   "/etc/mesh-worker/common.env"
@@ -84,10 +84,76 @@ detect_uv() {
   return 1
 }
 
+router_url_scheme() {
+  local url="$1"
+  if [[ "$url" == *"://"* ]]; then
+    printf '%s\n' "${url%%://*}"
+    return 0
+  fi
+  printf 'http\n'
+}
+
+router_url_host() {
+  local url="$1"
+  url="${url#*://}"
+  url="${url%%/*}"
+  printf '%s\n' "${url%%:*}"
+}
+
+router_url_port() {
+  local url="$1"
+  local scheme hostport port
+  scheme="$(router_url_scheme "$url")"
+  url="${url#*://}"
+  hostport="${url%%/*}"
+  if [[ "$hostport" == *:* ]]; then
+    port="${hostport##*:}"
+    printf '%s\n' "$port"
+    return 0
+  fi
+  if [[ "$scheme" == "https" ]]; then
+    printf '443\n'
+  else
+    printf '80\n'
+  fi
+}
+
+ensure_mac_router_tunnel() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  [[ "${MESH_MAC_ROUTER_TUNNEL:-1}" != "0" ]] || return 0
+  [[ -n "${MESH_ROUTER_URL:-}" ]] || return 0
+
+  local scheme host port local_port ws_host
+  scheme="$(router_url_scheme "$MESH_ROUTER_URL")"
+  host="$(router_url_host "$MESH_ROUTER_URL")"
+  port="$(router_url_port "$MESH_ROUTER_URL")"
+  if [[ -z "$host" || "$host" == "127.0.0.1" || "$host" == "localhost" ]]; then
+    return 0
+  fi
+
+  local_port="${MESH_ROUTER_LOCAL_PORT:-8782}"
+  ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+  if ! lsof -nP -iTCP:"$local_port" -sTCP:LISTEN >/dev/null 2>&1; then
+    ssh -f -N -L "${local_port}:${host}:${port}" "$ws_host"
+  fi
+  export MESH_ROUTER_URL="${scheme}://127.0.0.1:${local_port}"
+}
+
 run_with_optional_questionary() {
   local py_bin="$1"
   local script="$2"
   shift 2
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    "$py_bin" "$script" "$@"
+    return $?
+  fi
+  for arg in "$@"; do
+    if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+      "$py_bin" "$script" "$@"
+      return $?
+    fi
+  done
 
   if python_has_module "$py_bin" questionary; then
     "$py_bin" "$script" "$@"
@@ -104,8 +170,163 @@ run_with_optional_questionary() {
   "$py_bin" "$script" "$@"
 }
 
+exec_attach_from_payload() {
+  local py_bin="$1"
+  local selection_json="$2"
+
+  selection_env="$(MESH_SELECTION_JSON="$selection_json" "$py_bin" - <<'PY'
+import json
+import shlex
+import os
+
+payload = json.loads(os.environ["MESH_SELECTION_JSON"])
+selection = payload.get("selection") or {}
+attach = payload.get("attach") or {}
+values = {
+    "MESH_ATTACH_MODE": attach.get("mode", ""),
+    "MESH_ATTACH_SSH_TARGET": attach.get("ssh_target", ""),
+    "MESH_ATTACH_SSH_PORT": attach.get("ssh_port", ""),
+    "MESH_ATTACH_REMOTE_CMD": attach.get("remote_cmd", ""),
+    "MESH_ATTACH_SESSION_ID": selection.get("session_id", ""),
+    "MESH_ATTACH_REPO": selection.get("repo", ""),
+    "MESH_ATTACH_ROLE": selection.get("role", ""),
+    "MESH_ATTACH_CLI": selection.get("cli_type", ""),
+}
+for key, value in values.items():
+    print(f"{key}={shlex.quote(str(value or ''))}")
+PY
+)" || exit $?
+  eval "$selection_env"
+
+  if [[ "${MESH_ATTACH_MODE:-}" == "unavailable" || -z "${MESH_ATTACH_MODE:-}" ]]; then
+    echo "Error: selected session has no attach handle or tmux session metadata." >&2
+    exit 1
+  fi
+
+  echo "[mesh attach] session=${MESH_ATTACH_SESSION_ID:0:12} repo=${MESH_ATTACH_REPO:-?} role=${MESH_ATTACH_ROLE:-?} cli=${MESH_ATTACH_CLI:-?}"
+
+  ssh_port_args=()
+  if [[ -n "${MESH_ATTACH_SSH_PORT:-}" && "${MESH_ATTACH_SSH_PORT:-}" != "22" ]]; then
+    ssh_port_args=(-p "$MESH_ATTACH_SSH_PORT")
+  fi
+
+  case "${MESH_ATTACH_MODE}" in
+    upterm)
+      exec ssh -tt "${ssh_port_args[@]}" "$MESH_ATTACH_SSH_TARGET"
+      ;;
+    ssh_tmux|ws_tmux)
+      if is_local_host "$MESH_ATTACH_SSH_TARGET"; then
+        exec bash -lc "$MESH_ATTACH_REMOTE_CMD"
+      fi
+      exec ssh -tt "${ssh_port_args[@]}" "$MESH_ATTACH_SSH_TARGET" "bash -lc $(printf '%q' "$MESH_ATTACH_REMOTE_CMD")"
+      ;;
+    *)
+      echo "Error: unsupported attach mode '${MESH_ATTACH_MODE}'" >&2
+      exit 1
+      ;;
+  esac
+}
+
+emit_manage_report() {
+  local py_bin="$1"
+  local manage_json="$2"
+
+  MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+import json
+import os
+import sys
+
+payload = json.loads(os.environ["MESH_MANAGE_JSON"])
+action = str(payload.get("action") or "").strip()
+selection = payload.get("selection") or {}
+result = payload.get("result") or {}
+
+repo = selection.get("repo_name") or selection.get("repo") or "?"
+session_id = str(selection.get("session_id") or "")[:12]
+role = selection.get("role") or "-"
+cli = selection.get("cli_type") or "-"
+ui_group = selection.get("ui_group_id") or "-"
+thread = selection.get("thread_name") or "-"
+
+if action == "kill":
+    print(
+        f"[mesh kill] session={session_id} repo={repo} role={role} "
+        f"cli={cli} state={result.get('state') or '?'} ui_group={ui_group} thread={thread}"
+    )
+    for item in result.get("failures") or []:
+        print(f"  - {item}", file=sys.stderr)
+elif action == "quit":
+    print(f"[mesh sessions] cancelled repo={repo} role={role} session={session_id}")
+PY
+}
+
+run_session_manage_flow() {
+  local py_bin="$1"
+  local forced_action="${2:-}"
+  shift 2
+
+  local manage_script manage_output manage_json action manage_rc
+  local -a manage_args
+
+  manage_script="${REPO_ROOT}/scripts/mesh_session_manage.py"
+  if [[ ! -f "$manage_script" ]]; then
+    echo "Error: missing session manage script at $manage_script" >&2
+    exit 1
+  fi
+
+  manage_output="$(mktemp "${TMPDIR:-/tmp}/mesh-manage.XXXXXX.json")"
+  trap 'rm -f "${manage_output:-}"' EXIT
+  manage_args=()
+  if [[ -n "$forced_action" ]]; then
+    manage_args+=(--action "$forced_action")
+  fi
+  manage_args+=("$@")
+
+  set +e
+  run_with_optional_questionary "$py_bin" "$manage_script" "${manage_args[@]}" --output "$manage_output"
+  manage_rc=$?
+  set -e
+
+  if [[ ! -s "$manage_output" ]]; then
+    rm -f "$manage_output"
+    trap - EXIT
+    exit "$manage_rc"
+  fi
+
+  manage_json="$(cat "$manage_output")" || exit $?
+  rm -f "$manage_output"
+  trap - EXIT
+
+  action="$(MESH_MANAGE_JSON="$manage_json" "$py_bin" - <<'PY'
+import json
+import os
+payload = json.loads(os.environ["MESH_MANAGE_JSON"])
+print(str(payload.get("action") or "").strip())
+PY
+)" || exit $?
+
+  case "$action" in
+    attach)
+      exec_attach_from_payload "$py_bin" "$manage_json"
+      ;;
+    kill)
+      emit_manage_report "$py_bin" "$manage_json"
+      exit "$manage_rc"
+      ;;
+    ""|quit)
+      emit_manage_report "$py_bin" "$manage_json"
+      exit 0
+      ;;
+    *)
+      echo "Error: unsupported manage action '$action'" >&2
+      exit 1
+      ;;
+  esac
+}
+
 run_meshctl() {
   ensure_router_env
+  ensure_mac_router_tunnel
 
   local use_dotenvx=0
   if [[ -z "${MESH_ROUTER_URL:-}" || -z "${MESH_AUTH_TOKEN:-}" ]]; then
@@ -200,16 +421,20 @@ Usage:
   ./scripts/mesh
   ./scripts/mesh status
   ./scripts/mesh thread [thread-name]
-  ./scripts/mesh sessions [repo|session|role]
+  ./scripts/mesh session list [--all] [repo|session|role]
+  ./scripts/mesh session manage [--all] [repo|session|role]
+  ./scripts/mesh sessions [--list] [--all] [repo|session|role]
   ./scripts/mesh attach [repo|session|role]
   ./scripts/mesh send <role> <text>
   ./scripts/mesh enter <role>
   ./scripts/mesh interrupt <role>
   ./scripts/mesh summary <role>
   ./scripts/mesh ui close
+  ./scripts/mesh ui attach [repo-name|repo-path]
+  ./scripts/mesh ui resume [repo-name|repo-path]
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
-  ./scripts/mesh ui [repo-name|repo-path] [--single-tab] [--max-panes-per-tab N]
+  ./scripts/mesh ui [repo-name|repo-path] [--resume] [--single-tab] [--max-panes-per-tab N]
   ./scripts/mesh start [feature text]
   ./scripts/mesh new [feature text]
   ./scripts/mesh run <phase>
@@ -221,7 +446,11 @@ Env:
 Examples:
   ./scripts/mesh
   ./scripts/mesh status
+  ./scripts/mesh session list --all snake-game
+  ./scripts/mesh session manage
   ./scripts/mesh sessions
+  ./scripts/mesh sessions --all
+  ./scripts/mesh sessions --list --all
   ./scripts/mesh sessions snake-game
   ./scripts/mesh attach
   ./scripts/mesh attach snake-game
@@ -231,10 +460,13 @@ Examples:
   ./scripts/mesh interrupt worker-gemini
   ./scripts/mesh summary lead
   ./scripts/mesh ui close
+  ./scripts/mesh ui attach snake-game
+  ./scripts/mesh ui resume snake-game
   ./scripts/mesh bootstrap
   ./scripts/mesh deploy
   ./scripts/mesh ui rektslug
   ./scripts/mesh ui /media/sam/1TB/rektslug --single-tab
+  ./scripts/mesh ui rektslug --resume
   ./scripts/mesh start
   ./scripts/mesh start "checkout hardening"
   ./scripts/mesh new "spec 017"
@@ -403,6 +635,40 @@ PY
 }
 
 cmd="${1:-}"
+
+if [[ "$cmd" == "session" ]]; then
+  subcmd="${2:-}"
+  case "$subcmd" in
+    list|"")
+      set -- sessions "${@:3}"
+      cmd="sessions"
+      ;;
+    manage)
+      py_bin="$(detect_python)" || exit $?
+      ensure_router_env
+      ensure_mac_router_tunnel
+      run_session_manage_flow "$py_bin" "" "${@:3}"
+      ;;
+    resolve|send|enter|interrupt|summary|close)
+      py_bin="$(detect_python)" || exit $?
+      ensure_router_env
+      ensure_mac_router_tunnel
+      session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
+      if [[ ! -f "$session_script" ]]; then
+        echo "Error: missing session CLI script at $session_script" >&2
+        exit 1
+      fi
+      exec "$py_bin" "$session_script" "$subcmd" "${@:3}"
+      ;;
+    *)
+      echo "Error: unsupported session subcommand '$subcmd'" >&2
+      echo "Use: ./scripts/mesh session list [--all] [query]" >&2
+      echo "Or:  ./scripts/mesh sessions [--list] [--all] [query]" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 case "$cmd" in
   "")
     if [[ ! -t 0 || ! -t 1 ]]; then
@@ -438,9 +704,13 @@ PY
     exec "$0" "$@"
     ;;
   status)
+    ensure_router_env
+    ensure_mac_router_tunnel
     run_meshctl status
     ;;
   thread)
+    ensure_router_env
+    ensure_mac_router_tunnel
     thread_name="${2:-}"
     if [[ -z "$thread_name" ]]; then
       resolve_current_repo_context
@@ -456,81 +726,31 @@ PY
     run_meshctl thread status "$thread_name"
     ;;
   sessions)
+    ensure_router_env
+    ensure_mac_router_tunnel
     py_bin="$(detect_python)" || exit $?
+    session_args=("${@:2}")
+    if [[ ${#session_args[@]} -gt 0 && "${session_args[0]}" == "--list" ]]; then
+      session_args=("${session_args[@]:1}")
+    elif [[ -t 0 && -t 1 ]]; then
+      run_session_manage_flow "$py_bin" "" "${session_args[@]}"
+    fi
     session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
     if [[ ! -f "$session_script" ]]; then
       echo "Error: missing session CLI script at $session_script" >&2
       exit 1
     fi
-    exec "$py_bin" "$session_script" list "${@:2}"
+    exec "$py_bin" "$session_script" list "${session_args[@]}"
     ;;
   attach)
-    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+    ensure_router_env
+    ensure_mac_router_tunnel
     py_bin="$(detect_python)" || exit $?
-    session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
-    if [[ ! -f "$session_script" ]]; then
-      echo "Error: missing session CLI script at $session_script" >&2
-      exit 1
-    fi
-    selection_output="$(mktemp "${TMPDIR:-/tmp}/mesh-attach.XXXXXX.json")"
-    trap 'rm -f "${selection_output:-}"' EXIT
-    run_with_optional_questionary "$py_bin" "$session_script" resolve --ws-host "$ws_host" --output "$selection_output" "${@:2}" || exit $?
-    selection_json="$(cat "$selection_output")" || exit $?
-    selection_env="$(MESH_SELECTION_JSON="$selection_json" "$py_bin" - <<'PY'
-import json
-import shlex
-import os
-
-payload = json.loads(os.environ["MESH_SELECTION_JSON"])
-selection = payload.get("selection") or {}
-attach = payload.get("attach") or {}
-values = {
-    "MESH_ATTACH_MODE": attach.get("mode", ""),
-    "MESH_ATTACH_SSH_TARGET": attach.get("ssh_target", ""),
-    "MESH_ATTACH_SSH_PORT": attach.get("ssh_port", ""),
-    "MESH_ATTACH_REMOTE_CMD": attach.get("remote_cmd", ""),
-    "MESH_ATTACH_SESSION_ID": selection.get("session_id", ""),
-    "MESH_ATTACH_REPO": selection.get("repo", ""),
-    "MESH_ATTACH_ROLE": selection.get("role", ""),
-    "MESH_ATTACH_CLI": selection.get("cli_type", ""),
-}
-for key, value in values.items():
-    print(f"{key}={shlex.quote(str(value or ''))}")
-PY
-)" || exit $?
-    eval "$selection_env"
-    rm -f "$selection_output"
-    trap - EXIT
-
-    if [[ "${MESH_ATTACH_MODE:-}" == "unavailable" || -z "${MESH_ATTACH_MODE:-}" ]]; then
-      echo "Error: selected session has no attach handle or tmux session metadata." >&2
-      exit 1
-    fi
-
-    echo "[mesh attach] session=${MESH_ATTACH_SESSION_ID:0:12} repo=${MESH_ATTACH_REPO:-?} role=${MESH_ATTACH_ROLE:-?} cli=${MESH_ATTACH_CLI:-?}"
-
-    ssh_port_args=()
-    if [[ -n "${MESH_ATTACH_SSH_PORT:-}" && "${MESH_ATTACH_SSH_PORT:-}" != "22" ]]; then
-      ssh_port_args=(-p "$MESH_ATTACH_SSH_PORT")
-    fi
-
-    case "${MESH_ATTACH_MODE}" in
-      upterm)
-        exec ssh -tt "${ssh_port_args[@]}" "$MESH_ATTACH_SSH_TARGET"
-        ;;
-      ssh_tmux|ws_tmux)
-        if is_local_host "$MESH_ATTACH_SSH_TARGET"; then
-          exec bash -lc "$MESH_ATTACH_REMOTE_CMD"
-        fi
-        exec ssh -tt "${ssh_port_args[@]}" "$MESH_ATTACH_SSH_TARGET" "bash -lc $(printf '%q' "$MESH_ATTACH_REMOTE_CMD")"
-        ;;
-      *)
-        echo "Error: unsupported attach mode '${MESH_ATTACH_MODE}'" >&2
-        exit 1
-        ;;
-    esac
+    run_session_manage_flow "$py_bin" "attach" "${@:2}"
     ;;
   send|enter|interrupt|summary)
+    ensure_router_env
+    ensure_mac_router_tunnel
     py_bin="$(detect_python)" || exit $?
     session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
     if [[ ! -f "$session_script" ]]; then
@@ -540,7 +760,7 @@ PY
     exec "$py_bin" "$session_script" "$cmd" "${@:2}"
     ;;
   bootstrap)
-    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
     ws_env_dir="${MESH_WS_ENV_DIR:-/etc/mesh-worker}"
     stop_batch="${MESH_BOOTSTRAP_STOP_BATCH:-0}"
     bootstrap_script="$(cat <<'EOF'
@@ -778,6 +998,14 @@ EOF
     ;;
   ui)
     ui_args=("${@:2}")
+    if [[ ${#ui_args[@]} -gt 0 ]]; then
+      case "${ui_args[0]}" in
+        attach|resume)
+          ui_args=("${ui_args[@]:1}")
+          ui_args+=("--resume")
+          ;;
+      esac
+    fi
     if [[ ${#ui_args[@]} -gt 0 && "${ui_args[0]}" == "close" ]]; then
       close_args=("${ui_args[@]:1}")
       normalized_close_args=()
@@ -805,6 +1033,8 @@ EOF
         normalized_close_args+=("$arg")
       done
       py_bin="$(detect_python)" || exit $?
+      ensure_router_env
+      ensure_mac_router_tunnel
       session_script="${REPO_ROOT}/scripts/mesh_session_cli.py"
       if [[ ! -f "$session_script" ]]; then
         echo "Error: missing session CLI script at $session_script" >&2
@@ -814,6 +1044,12 @@ EOF
     fi
     if [[ ${#ui_args[@]} -eq 0 ]]; then
       resolve_current_repo_context
+      if [[ "$CURRENT_REPO_PATH" == "$REPO_ROOT" ]]; then
+        echo "Error: running 'mesh ui' from the control repo requires an explicit target repo." >&2
+        echo "Use: ./scripts/mesh ui snake-game" >&2
+        echo "Or:  ./scripts/mesh ui /media/sam/1TB/snake-game" >&2
+        exit 2
+      fi
       ui_args=("$CURRENT_REPO_PATH")
     fi
     if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -836,6 +1072,8 @@ EOF
     fi
 
     py_bin="$(detect_python)" || exit $?
+    ensure_router_env
+    ensure_mac_router_tunnel
     ui_script="${REPO_ROOT}/scripts/mesh_iterm_ui.py"
     if [[ ! -f "$ui_script" ]]; then
       echo "Error: missing iTerm UI script at $ui_script" >&2
@@ -851,7 +1089,7 @@ EOF
     exec "$py_bin" "$ui_script" "${ui_args[@]}"
     ;;
   deploy)
-    ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
     ws_repo_dir="${MESH_WS_REPO_DIR:-/opt/mesh-router}"
     caller_repo_root="${REPO_ROOT}"
     branch="${MESH_DEPLOY_BRANCH:-master}"

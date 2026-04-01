@@ -135,7 +135,7 @@ wss() {
     fi
     return 1
   }
-  ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+  ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
   while IFS= read -r -d '' opt; do
     ssh_opts+=("$opt")
@@ -185,7 +185,7 @@ unalias wsattach >/dev/null 2>&1 || true
 wsattach() {
   local ws_host session
   local -a ssh_opts=()
-  ws_host="${MESH_WS_HOST:-sam@192.168.1.111}"
+  ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
   session="${1:-}"
   if [[ -z "$session" ]]; then
     echo "Usage: wsattach <tmux-session>"

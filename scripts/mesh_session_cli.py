@@ -846,7 +846,7 @@ def _parse_args() -> argparse.Namespace:
     )
     resolve_parser.add_argument(
         "--ws-host",
-        default=os.environ.get("MESH_WS_HOST", "sam@192.168.1.111"),
+        default=os.environ.get("MESH_WS_HOST", "sam@10.0.0.2"),
         help="WS SSH target for tmux fallback.",
     )
     resolve_parser.add_argument(
@@ -985,6 +985,7 @@ def main() -> int:
             if not message:
                 return _print_error("missing message content")
             path = "/sessions/send"
+            source_role = os.environ.get("MESH_UI_ROLE", "").strip()
             payload = {
                 "session_id": selected.session_id,
                 "direction": "in",
@@ -992,6 +993,8 @@ def main() -> int:
                 "content": message,
                 "metadata": {"ui_group_id": ui_group_id, "target_role": args.role},
             }
+            if source_role:
+                payload["metadata"]["source_role"] = source_role
         elif args.cmd == "enter":
             path = "/sessions/send-key"
             payload = {

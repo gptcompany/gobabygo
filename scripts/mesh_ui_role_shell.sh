@@ -18,7 +18,7 @@ fi
 [[ -n "$ROLE_SET" ]] || ROLE_SET="$ROLE"
 REMOTE_INIT_B64=""
 
-WS_HOST="${MESH_WS_HOST:-sam@192.168.1.111}"
+WS_HOST="${MESH_WS_HOST:-sam@10.0.0.2}"
 WS_REPO_BASE="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
 MESH_CONTROL_REPO="${MESH_CONTROL_REPO:-/media/sam/1TB/gobabygo}"
 
@@ -193,6 +193,7 @@ bootstrap_shell() {
   fi
 
   if [[ -n "${TERM:-}" ]]; then
+    printf '\033[3J\033[H\033[2J'
     clear
   fi
   export MESH_UI_GROUP_ID="$ui_group_id"
@@ -332,6 +333,7 @@ else
 fi
 
 if [[ -n "${TERM:-}" ]]; then
+  printf '\033[3J\033[H\033[2J'
   clear
 fi
 export MESH_UI_GROUP_ID="$ui_group_id"
@@ -353,6 +355,7 @@ mesh_script="$mesh_home/scripts/mesh"
 if [[ -x "$mesh_script" ]]; then
   mesh() { "$mesh_script" "$@"; }
   export MESH_HOME="$mesh_home"
+  export PATH="$(dirname "$mesh_script"):$PATH"
 fi
 live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
 if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
