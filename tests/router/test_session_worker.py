@@ -28,6 +28,7 @@ from src.router.session_worker import (
     _detect_interactive_failure_screen,
     _discover_project_mcp_servers,
     _ensure_claude_mesh_hook_settings,
+    _format_inbound_notice,
     _last_prompt_line_has_content,
     _looks_like_start_screen,
     _mesh_script_path,
@@ -2536,6 +2537,36 @@ class TestDeliverInboundMessages:
         new_seq = worker._deliver_inbound_messages("sid", "tsess", 5)
         assert new_seq == 5
 
+    def test_boss_inbound_is_displayed_not_submitted(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "messages": [
+                {
+                    "seq": 10,
+                    "direction": "in",
+                    "role": "president",
+                    "content": "reply from president",
+                    "metadata": {"source_role": "president"},
+                }
+            ]
+        }
+        worker._http.get.return_value = mock_resp
+
+        with (
+            patch.object(worker, "_tmux_send_text") as mock_send,
+            patch.object(worker, "_tmux_display_message") as mock_display,
+        ):
+            new_seq = worker._deliver_inbound_messages("sid", "tsess", 9, ui_role="boss")
+
+        assert new_seq == 10
+        mock_send.assert_not_called()
+        mock_display.assert_called_once_with(
+            "tsess",
+            _format_inbound_notice("reply from president", source_role="president"),
+        )
+
     def test_list_session_messages_raises_session_not_found(self) -> None:
         worker = _make_worker()
         worker._http = MagicMock()
@@ -2704,6 +2735,21 @@ class TestTmuxOperations:
         assert mock_run.call_count == 1
         assert mock_run.call_args[0][0][4] == "Enter"
         mock_sleep.assert_not_called()
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_tmux_display_message(self, mock_run: Mock) -> None:
+        worker = _make_worker()
+        worker._tmux_display_message("mysess", "[mesh][president] ok", duration_ms=9000)
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0] == [
+            "tmux",
+            "display-message",
+            "-d",
+            "9000",
+            "-t",
+            "mysess:0.0",
+            "[mesh][president] ok",
+        ]
 
     @patch("src.router.session_worker.time.sleep")
     def test_ensure_prompt_submitted_retries_until_prompt_clears(self, mock_sleep: Mock) -> None:

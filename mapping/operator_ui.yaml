@@ -7,6 +7,7 @@ default_roles:
 roles:
   boss:
     provider: gemini
+    max_turns: 1
     relay:
       enabled: true
       mode: claude_hooks
@@ -16,6 +17,7 @@ roles:
       local_ack: ""
   president:
     provider: gemini
+    max_turns: 1
     relay:
       enabled: true
       mode: claude_hooks

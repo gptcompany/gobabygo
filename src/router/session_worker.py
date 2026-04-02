@@ -563,6 +563,13 @@ def _encode_inbound_proxy_message(content: str, *, source_role: str) -> str:
     return f"{_INBOUND_PROXY_PREFIX}{role}:{content}"
 
 
+def _format_inbound_notice(content: str, *, source_role: str, max_chars: int = 240) -> str:
+    role = str(source_role or "").strip() or "peer"
+    clean = " ".join(str(content or "").replace("\xa0", " ").split())
+    clean = clean[: max(32, int(max_chars))].strip()
+    return f"[mesh][{role}] {clean}" if clean else f"[mesh][{role}]"
+
+
 def _detect_role_state(captured: str) -> RoleState:
     body = str(captured or "")
     if not body.strip():
@@ -1507,6 +1514,23 @@ class MeshSessionWorker:
             text=True,
         )
 
+    def _tmux_display_message(self, session_name: str, message: str, *, duration_ms: int = 12000) -> None:
+        target = f"{session_name}:0.0"
+        subprocess.run(
+            [
+                self.config.tmux_bin,
+                "display-message",
+                "-d",
+                str(max(1000, int(duration_ms))),
+                "-t",
+                target,
+                message,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
     def _tmux_resize(self, session_name: str, cols: int, rows: int) -> None:
         subprocess.run(
             [
@@ -2242,10 +2266,16 @@ class MeshSessionWorker:
                 continue
             source_role = str(envelope.get("sender_role") or metadata.get("source_role") or msg.get("role") or "").strip()
             try:
-                self._tmux_send_text(
-                    tmux_session,
-                    _encode_inbound_proxy_message(content, source_role=source_role),
-                )
+                if ui_role == "boss":
+                    self._tmux_display_message(
+                        tmux_session,
+                        _format_inbound_notice(content, source_role=source_role),
+                    )
+                else:
+                    self._tmux_send_text(
+                        tmux_session,
+                        _encode_inbound_proxy_message(content, source_role=source_role),
+                    )
             except subprocess.SubprocessError as e:
                 logger.warning("Failed to deliver group message seq=%s to %s: %s", seq, tmux_session, e)
         return max_seq
@@ -2303,11 +2333,12 @@ class MeshSessionWorker:
                 current_role = str(ui_role or "").strip()
                 source_role = str((metadata or {}).get("source_role") or msg.get("role") or "").strip()
                 if current_role == "boss" and source_role and source_role != "boss":
-                    content = _encode_inbound_proxy_message(
-                        content,
-                        source_role=source_role,
+                    self._tmux_display_message(
+                        tmux_session,
+                        _format_inbound_notice(content, source_role=source_role),
                     )
-                self._tmux_send_text(tmux_session, content)
+                else:
+                    self._tmux_send_text(tmux_session, content)
             except subprocess.SubprocessError as e:
                 logger.warning("Failed to deliver message seq=%s to tmux session %s: %s", seq, tmux_session, e)
             except (TypeError, ValueError) as e:
