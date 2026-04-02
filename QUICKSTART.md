@@ -238,6 +238,11 @@ mesh attach snake-game          # same, filtered to target repo
 mesh ui rektslug               # open operator layout
 mesh ui attach rektslug        # reattach existing operator layout
 mesh ui close rektslug         # close existing operator layout
+mesh term list --repo /media/sam/1TB/rektslug
+mesh term focus /media/sam/1TB/rektslug boss
+mesh term send /media/sam/1TB/rektslug boss "status?"
+mesh term key /media/sam/1TB/rektslug boss enter
+mesh term dump /media/sam/1TB/rektslug president --lines 30
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
@@ -248,6 +253,8 @@ wsattach <tmux-session>
 ```
 
 `mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach`, `mesh session manage`, and `mesh ui resume` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
+
+`mesh term` is intentionally separate from `mesh sessions`: it is a local Mac/iTerm helper for already-open mesh panes and can `focus`, `send`, `key`, or `dump` by exact `repo + role`. It does not query the router or make layout decisions.
 
 Current canonical UI slice:
 

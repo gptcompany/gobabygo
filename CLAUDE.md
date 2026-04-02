@@ -317,6 +317,7 @@ Provided commands:
 - `mesh sessions [--all] [repo|session|role]` -> primary session helper; on a TTY it opens a hierarchical picker (`Layout -> Panels`) and then offers `Attach Layout`, `Attach Panel`, or `Kill`, use `--list` for the raw router list
 - `mesh session list [--all] [repo|session|role]` -> raw list only, no wizard
 - `mesh attach [repo|session|role]` -> legacy compatibility alias: same picker, forced to `attach`
+- `mesh term list|focus|send|key|dump` -> local Mac/iTerm helper for already-open mesh panes, addressed by exact `repo + role`
 - `wss` / `wss <repo>` -> SSH WS shortcut
 - `wsattach <tmux-session>` -> attach tmux on WS (auto-detect service user)
 - `yazi`/`lf` -> mapped to `yazicd`/`lfcd` (keep selected directory)

@@ -475,6 +475,11 @@ Usage:
   ./scripts/mesh enter <role>
   ./scripts/mesh interrupt <role>
   ./scripts/mesh summary <role>
+  ./scripts/mesh term list [--repo <repo-path>]
+  ./scripts/mesh term focus <repo-path> <role>
+  ./scripts/mesh term send <repo-path> <role> <text>
+  ./scripts/mesh term key <repo-path> <role> <key>
+  ./scripts/mesh term dump <repo-path> <role> [--lines N]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
   ./scripts/mesh bootstrap
@@ -503,6 +508,11 @@ Examples:
   ./scripts/mesh enter lead
   ./scripts/mesh interrupt worker-gemini
   ./scripts/mesh summary lead
+  ./scripts/mesh term list --repo /media/sam/1TB/snake-game
+  ./scripts/mesh term focus /media/sam/1TB/snake-game boss
+  ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
+  ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
+  ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
   ./scripts/mesh ui close snake-game
   ./scripts/mesh ui attach snake-game
   ./scripts/mesh bootstrap
@@ -556,6 +566,47 @@ Behavior:
 Compatibility aliases:
   ./scripts/mesh ui resume <repo-name|repo-path>
 EOF
+}
+
+term_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh term list [--repo <repo-path>]
+  ./scripts/mesh term focus <repo-path> <role>
+  ./scripts/mesh term send <repo-path> <role> <text>
+  ./scripts/mesh term key <repo-path> <role> <key>
+  ./scripts/mesh term dump <repo-path> <role> [--lines N]
+
+Behavior:
+  mesh term is a thin iTerm2 control helper for mesh-marked panes.
+  It targets panes by exact repo path + role and does not talk to the router.
+
+Examples:
+  ./scripts/mesh term list --repo /media/sam/1TB/snake-game
+  ./scripts/mesh term focus /media/sam/1TB/snake-game boss
+  ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
+  ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
+  ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
+EOF
+}
+
+run_iterm_control() {
+  local py_bin ui_script uv_bin
+  py_bin="$(detect_python)" || exit $?
+  ui_script="${REPO_ROOT}/scripts/mesh_iterm_control.py"
+  if [[ ! -f "$ui_script" ]]; then
+    echo "Error: missing iTerm control script at $ui_script" >&2
+    exit 1
+  fi
+  if ! python_has_module "$py_bin" iterm2; then
+    if uv_bin="$(detect_uv)"; then
+      export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
+      exec "$uv_bin" run --with iterm2 -- python "$ui_script" "$@"
+    fi
+    echo "Error: Python package 'iterm2' not found. Install with: uv run --with iterm2 -- python scripts/mesh_iterm_control.py ..." >&2
+    exit 1
+  fi
+  exec "$py_bin" "$ui_script" "$@"
 }
 
 resolve_repo_path_and_name() {
@@ -823,6 +874,71 @@ PY
       exit 1
     fi
     exec "$py_bin" "$session_script" list "${session_args[@]}"
+    ;;
+  term)
+    shift
+    term_cmd="${1:-}"
+    case "$term_cmd" in
+      ""|-h|--help)
+        term_usage
+        exit 0
+        ;;
+      list)
+        shift
+        run_iterm_control list "$@"
+        ;;
+      focus)
+        if [[ $# -lt 3 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        role="$2"
+        shift 2
+        run_iterm_control focus --repo "$repo" --role "$role" "$@"
+        ;;
+      send)
+        if [[ $# -lt 4 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        role="$2"
+        text="$3"
+        shift 3
+        run_iterm_control send-text --repo "$repo" --role "$role" "$text" "$@"
+        ;;
+      key)
+        if [[ $# -lt 4 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        role="$2"
+        key_name="$3"
+        shift 3
+        run_iterm_control send-key --repo "$repo" --role "$role" "$key_name" "$@"
+        ;;
+      dump)
+        if [[ $# -lt 3 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        role="$2"
+        shift 2
+        run_iterm_control dump --repo "$repo" --role "$role" "$@"
+        ;;
+      *)
+        echo "Error: unsupported term subcommand '$term_cmd'" >&2
+        term_usage
+        exit 2
+        ;;
+    esac
     ;;
   attach)
     ensure_router_env
