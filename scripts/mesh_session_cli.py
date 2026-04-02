@@ -161,7 +161,8 @@ for session in sorted(targets):
 print(json.dumps(result))
 """.strip()
     proc = subprocess.run(
-        ["ssh", ws_host, "python3", "-c", code, ui_group_id, *targets],
+        ["ssh", ws_host, "python3", "-", ui_group_id, *targets],
+        input=code,
         capture_output=True,
         text=True,
         check=False,

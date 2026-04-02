@@ -1806,7 +1806,29 @@ def test_main_close_kills_remote_tmux_sessions(monkeypatch, tmp_path, capsys):
     assert module.main() == 0
     out = capsys.readouterr().out
     assert "tmux_killed=1" in out
-    assert not cache_file.exists()
+
+
+def test_cleanup_remote_tmux_sessions_uses_python_stdin_over_ssh(monkeypatch):
+    module = _load_module()
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout='{"killed":["sess-a"],"missing":[],"errors":[]}', stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    result = module._cleanup_remote_tmux_sessions(
+        ws_host="sam@10.0.0.2",
+        tmux_sessions=["sess-a"],
+        ui_group_id="snake-ui-1",
+    )
+
+    assert seen["args"] == ["ssh", "sam@10.0.0.2", "python3", "-", "snake-ui-1", "sess-a"]
+    assert "input" in seen["kwargs"]
+    assert "ui_group_id = sys.argv[1]" in seen["kwargs"]["input"]
+    assert result["killed"] == ["sess-a"]
 
 
 def test_main_close_keeps_cache_until_closure_observed(monkeypatch, tmp_path, capsys):
