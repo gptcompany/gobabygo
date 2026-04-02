@@ -49,6 +49,10 @@ class SessionNotFoundError(RuntimeError):
     """Raised when the router no longer has a record for a session."""
 
 
+class SessionClosedError(RuntimeError):
+    """Raised when the router marks the session as closed or errored."""
+
+
 def _sanitize_session_name(value: str) -> str:
     """Return tmux-safe session name (ASCII-ish, bounded length)."""
     s = re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
@@ -1153,6 +1157,13 @@ class MeshSessionWorker:
                         task_id,
                     )
                     break
+                except SessionClosedError:
+                    logger.info(
+                        "Router marked session %s as closed; stopping interactive loop for task %s",
+                        session_id,
+                        task_id,
+                    )
+                    break
                 if new_after_seq > after_seq:
                     auto_exit_baseline_capture = ""
                 after_seq = max(after_seq, new_after_seq)
@@ -1397,6 +1408,9 @@ class MeshSessionWorker:
                     pass
             self._report_failure(task_id, f"unexpected: {e}")
         finally:
+            if tmux_session_name and self._tmux_has_session(tmux_session_name):
+                logger.info("Cleaning up tmux session %s for task %s", tmux_session_name, task_id)
+                self._tmux_kill_session(tmux_session_name)
             if upterm_proc is not None:
                 log_path = self._upterm_log_path(tmux_session_name) if tmux_session_name else None
                 self._stop_upterm(upterm_proc, log_path=log_path)
@@ -2221,7 +2235,12 @@ class MeshSessionWorker:
             if isinstance(payload, dict) and payload.get("error") == "session_not_found":
                 raise SessionNotFoundError(session_id)
         resp.raise_for_status()
-        return resp.json().get("messages", [])
+        
+        data = resp.json()
+        if data.get("session_state") in {"closed", "errored"}:
+            raise SessionClosedError(session_id)
+            
+        return data.get("messages", [])
 
     def _list_group_messages(
         self,

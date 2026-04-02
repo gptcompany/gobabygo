@@ -1144,7 +1144,11 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             return
 
         messages = db.list_session_messages(session_id, after_seq=after_seq, limit=limit)
-        self._send_json(200, {"messages": [m.model_dump(mode="json") for m in messages]})
+        session_state = session.state.value if hasattr(session.state, "value") else str(session.state)
+        self._send_json(200, {
+            "messages": [m.model_dump(mode="json") for m in messages],
+            "session_state": session_state,
+        })
 
     def _handle_claim_turn(self) -> None:
         if not self._check_auth():
