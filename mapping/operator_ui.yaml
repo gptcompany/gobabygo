@@ -9,20 +9,18 @@ roles:
     provider: gemini
     relay:
       enabled: true
-      mode: response_summary
+      mode: router_relay
       target_role: president
       ignore_slash_commands: true
-      message_prefix: "[boss summary] "
       passthrough_to_child: true
       local_ack: ""
   president:
     provider: gemini
     relay:
       enabled: true
-      mode: response_summary
+      mode: router_relay
       target_role: boss
       ignore_slash_commands: true
-      message_prefix: "[president summary] "
       passthrough_to_child: true
       local_ack: ""
   lead:

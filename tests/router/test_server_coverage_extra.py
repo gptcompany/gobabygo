@@ -277,6 +277,66 @@ class TestServerCoverageExtra:
         assert resp.status_code == 200
         assert "messages" in resp.json()
 
+    def test_group_messages_filters_target_role(self, server_url):
+        requests.post(f"{server_url}/register", json={
+            "worker_id": "w1",
+            "machine": "m1",
+            "cli_type": "claude",
+            "account_profile": "default",
+        })
+        requests.post(f"{server_url}/sessions/open", json={
+            "session_id": "11111111-1111-4111-8111-111111111111",
+            "worker_id": "w1",
+            "cli_type": "claude",
+            "metadata": {"ui_group_id": "snake-ui-1", "ui_role": "boss"},
+        })
+        send = requests.post(f"{server_url}/sessions/send", json={
+            "session_id": "11111111-1111-4111-8111-111111111111",
+            "direction": "out",
+            "role": "boss",
+            "content": "hello president",
+            "metadata": {
+                "envelope": {
+                    "msg_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    "sender_role": "boss",
+                    "sender_session_id": "11111111-1111-4111-8111-111111111111",
+                    "target_role": "president",
+                    "msg_type": "relay",
+                    "ui_group_id": "snake-ui-1",
+                }
+            },
+        })
+        assert send.status_code == 201
+
+        resp = requests.get(
+            f"{server_url}/sessions/group-messages",
+            params={"ui_group_id": "snake-ui-1", "target_role": "president"},
+        )
+        assert resp.status_code == 200
+        assert [m["content"] for m in resp.json()["messages"]] == ["hello president"]
+
+    def test_turn_endpoints_support_claim_release_and_query(self, server_url):
+        claim = requests.post(
+            f"{server_url}/sessions/turn/claim",
+            json={"ui_group_id": "snake-ui-1", "role": "president"},
+        )
+        assert claim.status_code == 200
+        assert claim.json()["claimed"] is True
+
+        current = requests.get(
+            f"{server_url}/sessions/turn",
+            params={"ui_group_id": "snake-ui-1"},
+        )
+        assert current.status_code == 200
+        assert current.json()["current_speaker"] == "president"
+
+        release = requests.post(
+            f"{server_url}/sessions/turn/release",
+            json={"ui_group_id": "snake-ui-1", "role": "president"},
+        )
+        assert release.status_code == 200
+        assert release.json()["released"] is True
+
     def test_handle_notifications_success(self, server_url):
         # Create notification
         resp = requests.post(f"{server_url}/notifications", json={

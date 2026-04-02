@@ -25,13 +25,16 @@ import time
 from dataclasses import dataclass, field
 
 import requests
+import yaml
 
 from src.router.failure_classifier import classify_cli_failure
+from src.router.models import CrossRoleMessageType, MessageEnvelope, RoleState
 from src.router.provider_runtime import resolve_cli_command
 from src.router.workdir_guard import parse_allowed_work_dirs, resolve_work_dir
 
 logger = logging.getLogger("mesh.session_worker")
 _CLAUDE_CODE_READY_MARKERS = ("❯",)
+_INBOUND_PROXY_PREFIX = "__mesh_inbound__:"
 _CLAUDE_RATE_LIMIT_SCREEN_MARKERS = (
     "/rate-limit-options",
     "what do you want to do?",
@@ -48,6 +51,26 @@ def _sanitize_session_name(value: str) -> str:
     """Return tmux-safe session name (ASCII-ish, bounded length)."""
     s = re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
     return (s or "mesh-session")[:64]
+
+
+def _default_mesh_home() -> str:
+    """Return the control-repo root used to expose the mesh CLI to sessions."""
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _default_operator_ui_config_path(mesh_home: str | None = None) -> str:
+    base = (mesh_home or "").strip() or os.environ.get("MESH_HOME", "").strip() or _default_mesh_home()
+    return os.path.join(base, "mapping", "operator_ui.yaml")
+
+
+def _mesh_script_path(mesh_home: str | None = None) -> str:
+    base = (mesh_home or "").strip() or os.environ.get("MESH_HOME", "").strip() or _default_mesh_home()
+    return os.path.join(base, "scripts", "mesh")
+
+
+def _relay_proxy_script_path(mesh_home: str | None = None) -> str:
+    base = (mesh_home or "").strip() or os.environ.get("MESH_HOME", "").strip() or _default_mesh_home()
+    return os.path.join(base, "scripts", "mesh_prompt_relay_proxy.py")
 
 
 def _parse_upterm_ssh_url(output: str) -> str | None:
@@ -150,6 +173,97 @@ def _coerce_string_list(value: object) -> list[str]:
         return items
     item = str(value).strip()
     return [item] if item else []
+
+
+def _coerce_relay_config(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    enabled = _coerce_bool(value.get("enabled"), default=False)
+    if not enabled:
+        return {}
+    target_role = str(value.get("target_role", "")).strip()
+    if not target_role:
+        return {}
+    config: dict[str, object] = {
+        "enabled": True,
+        "mode": str(value.get("mode", "prompt_submit")).strip() or "prompt_submit",
+        "target_role": target_role,
+    }
+    if _coerce_bool(value.get("ignore_slash_commands"), default=False):
+        config["ignore_slash_commands"] = True
+    message_prefix = str(value.get("message_prefix", "")).strip()
+    if message_prefix:
+        config["message_prefix"] = message_prefix
+    passthrough_to_child = value.get("passthrough_to_child")
+    if passthrough_to_child is not None and not _coerce_bool(passthrough_to_child, default=True):
+        config["passthrough_to_child"] = False
+    local_ack = str(value.get("local_ack", "")).strip()
+    if local_ack:
+        config["local_ack"] = local_ack
+    return config
+
+
+def _load_role_relay_from_mapping(role: str, *, mesh_home: str | None = None) -> dict[str, object]:
+    role_name = str(role or "").strip()
+    if not role_name:
+        return {}
+    path = _default_operator_ui_config_path(mesh_home)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    roles = raw.get("roles")
+    if not isinstance(roles, dict):
+        return {}
+    entry = roles.get(role_name)
+    if not isinstance(entry, dict):
+        return {}
+    return _coerce_relay_config(entry.get("relay"))
+
+
+def _wrap_cli_command_with_relay_proxy(
+    child_command: str,
+    *,
+    relay: dict[str, object],
+    ui_group_id: str,
+    ui_role: str,
+    mesh_home: str | None = None,
+) -> str:
+    if not child_command.strip() or not ui_group_id.strip():
+        return child_command
+    mode = str(relay.get("mode", "prompt_submit")).strip() or "prompt_submit"
+    if mode not in {"prompt_submit", "response_summary", "router_relay"}:
+        return child_command
+
+    command = [
+        shlex.quote(sys.executable),
+        shlex.quote(_relay_proxy_script_path(mesh_home)),
+        "--mode",
+        shlex.quote(mode),
+        "--target-role",
+        shlex.quote(str(relay.get("target_role", "")).strip()),
+        "--ui-group-id",
+        shlex.quote(ui_group_id),
+        "--mesh-script",
+        shlex.quote(_mesh_script_path(mesh_home)),
+        "--source-role",
+        shlex.quote(ui_role),
+    ]
+    if _coerce_bool(relay.get("ignore_slash_commands"), default=False):
+        command.append("--ignore-slash-commands")
+    message_prefix = str(relay.get("message_prefix", "")).strip()
+    if message_prefix:
+        command.extend(["--message-prefix", shlex.quote(message_prefix)])
+    if not _coerce_bool(relay.get("passthrough_to_child"), default=True):
+        command.append("--no-child-passthrough")
+    local_ack = str(relay.get("local_ack", "")).strip()
+    if local_ack:
+        command.extend(["--local-ack", shlex.quote(local_ack)])
+    command.extend(["--child-command", shlex.quote(child_command)])
+    return " ".join(command)
 
 
 def _prompt_is_idle(captured: str) -> bool:
@@ -308,9 +422,54 @@ def _default_completion_summary_text(role: str, status: str) -> str:
 
 
 def _default_completion_summary_targets(role: str) -> list[str]:
+    if role in {"worker-gemini", "worker-claude", "worker-codex", "verifier"}:
+        return ["lead"]
     if role == "lead":
         return ["president", "boss"]
+    if role == "president":
+        return ["boss"]
     return []
+
+
+def _encode_inbound_proxy_message(content: str, *, source_role: str) -> str:
+    role = str(source_role or "").strip() or "peer"
+    return f"{_INBOUND_PROXY_PREFIX}{role}:{content}"
+
+
+def _detect_role_state(captured: str) -> RoleState:
+    body = str(captured or "")
+    if not body.strip():
+        return RoleState.awaiting_input
+    if _capture_shows_activity(body):
+        return RoleState.responding
+    if _prompt_is_idle(body):
+        return RoleState.idle
+    if _looks_like_start_screen(body) or _last_prompt_line_has_content(body):
+        return RoleState.awaiting_input
+    return RoleState.responding
+
+
+def _extract_clean_response(text: str, *, max_chars: int = 1200) -> str:
+    lines: list[str] = []
+    for raw in str(text or "").splitlines():
+        line = raw.replace("\xa0", " ").strip()
+        if not line:
+            continue
+        if line.startswith("❯"):
+            continue
+        if line.startswith("✻"):
+            continue
+        if line.startswith("⎿"):
+            continue
+        if line.startswith("Stop says:"):
+            continue
+        if line.startswith(_INBOUND_PROXY_PREFIX):
+            continue
+        lines.append(line)
+    summary = " ".join(lines).strip()
+    if not summary:
+        return ""
+    return summary[-max(1, int(max_chars)) :]
 
 
 @dataclass
@@ -578,6 +737,20 @@ class MeshSessionWorker:
         payload = task.get("payload", {})
         prompt = str(payload.get("prompt", ""))
         ui_role_session = _coerce_bool(payload.get("ui_role_session"), default=False)
+        ui_role = str(payload.get("ui_role") or task.get("role") or "").strip()
+        role_for_relay = ui_role or str(task.get("role") or "").strip()
+        ui_group_id = str(payload.get("ui_group_id") or "").strip()
+        relay = _coerce_relay_config(payload.get("relay"))
+        if not relay and role_for_relay:
+            relay = _load_role_relay_from_mapping(role_for_relay)
+        if not relay and role_for_relay == "boss":
+            relay = {
+                "enabled": True,
+                "mode": "router_relay",
+                "target_role": "president",
+                "ignore_slash_commands": True,
+                "passthrough_to_child": True,
+            }
         execution_mode = str(task.get("execution_mode", "batch")).strip() or "batch"
         target_account = str(task.get("target_account") or self.config.account_profile).strip() or self.config.account_profile
         requested_work_dir = payload.get("working_dir", self.config.work_dir)
@@ -592,6 +765,7 @@ class MeshSessionWorker:
         success_file_contains = str(payload.get("success_file_contains") or "")
         success_file_min_mtime_ns = time.time_ns() if success_file_path else None
         exit_command = str(payload.get("exit_command") or "/exit").strip() or "/exit"
+        cli_args = _coerce_string_list(payload.get("cli_args"))
 
         logger.info("Starting interactive task %s (%s)", task_id, task.get("title", "untitled"))
 
@@ -633,9 +807,21 @@ class MeshSessionWorker:
                 fallback_command=self.config.cli_command,
                 config_path=self.config.provider_runtime_config,
             )
+            if prompt and self.config.cli_type != "codex":
+                cli_args = [*cli_args, "--append-system-prompt", prompt]
+            if cli_args:
+                cmd_base = " ".join([cmd_base, *[shlex.quote(arg) for arg in cli_args]])
+            if relay:
+                cmd_base = _wrap_cli_command_with_relay_proxy(
+                    cmd_base,
+                    relay=relay,
+                    ui_group_id=ui_group_id,
+                    ui_role=role_for_relay,
+                )
             self._prepare_cli_runtime(work_dir, target_account)
             tmux_session_name = self._tmux_session_name(task_id, target_account)
             bootstrap_prompt_via_stdin = bool(prompt) and self.config.cli_type == "codex"
+            prompt_delivery_requires_composer = bootstrap_prompt_via_stdin
             if self._tmux_has_session(tmux_session_name):
                 logger.warning(
                     "Killing stale tmux session before retry: %s",
@@ -647,6 +833,11 @@ class MeshSessionWorker:
                 work_dir,
                 cmd_base,
                 initial_stdin=prompt if bootstrap_prompt_via_stdin else None,
+                extra_env={
+                    "MESH_UI_GROUP_ID": ui_group_id,
+                    "MESH_UI_ROLE": ui_role,
+                    "MESH_UI_REPO_NAME": os.path.basename(str(task.get("repo") or work_dir).rstrip("/")),
+                },
             )
             time.sleep(max(0.0, float(self.config.startup_post_launch_settle_s)))
 
@@ -663,12 +854,12 @@ class MeshSessionWorker:
             if prompt:
                 self._send_session_message(
                     session_id,
-                    direction="in",
-                    role="president",
+                    direction="system",
+                    role="bootstrap",
                     content=prompt,
                     metadata={"source": "task.payload.prompt", "task_id": task_id},
                 )
-            if not bootstrap_prompt_via_stdin:
+            if prompt and not bootstrap_prompt_via_stdin and self.config.cli_type == "codex":
                 if not self._wait_for_cli_ready(tmux_session_name):
                     logger.warning(
                         "CLI prompt readiness timeout for session %s; sending prompt anyway",
@@ -682,11 +873,15 @@ class MeshSessionWorker:
 
             start = time.monotonic()
             after_seq = 0
+            group_after_seq = 0
             last_capture = ""
             last_emitted_capture = ""
+            last_role_state: RoleState | None = None
+            relay_baseline_capture = ""
+            turn_claimed = False
             auto_exit_sent = False
             auto_exit_baseline_capture = ""
-            prompt_delivery_confirmed = not bool(prompt)
+            prompt_delivery_confirmed = not prompt_delivery_requires_composer
             prompt_delivery_attempts = 0
             if auto_exit_on_success and not success_markers and not success_file_path:
                 logger.warning(
@@ -719,7 +914,12 @@ class MeshSessionWorker:
                     break
 
                 try:
-                    new_after_seq = self._deliver_inbound_messages(session_id, tmux_session_name, after_seq)
+                    new_after_seq = self._deliver_inbound_messages(
+                        session_id,
+                        tmux_session_name,
+                        after_seq,
+                        ui_role=ui_role,
+                    )
                 except SessionNotFoundError:
                     logger.info(
                         "Router no longer has session %s; stopping interactive loop for task %s",
@@ -729,15 +929,24 @@ class MeshSessionWorker:
                     break
                 if new_after_seq > after_seq:
                     auto_exit_baseline_capture = ""
-                    prompt_delivery_confirmed = not bool(prompt)
-                    prompt_delivery_attempts = 0
                 after_seq = max(after_seq, new_after_seq)
+                if ui_group_id and ui_role:
+                    group_after_seq = max(
+                        group_after_seq,
+                        self._deliver_group_messages(
+                            session_id=session_id,
+                            tmux_session=tmux_session_name,
+                            ui_group_id=ui_group_id,
+                            after_seq=group_after_seq,
+                            ui_role=ui_role,
+                        ),
+                    )
                 captured = self._tmux_capture_pane(tmux_session_name)
                 if captured:
                     prior_capture = last_capture
                     capture_emit = _compute_output_emit(prior_capture, captured)
                     delta_text = capture_emit[0] if capture_emit else ""
-                    if not prompt_delivery_confirmed:
+                    if prompt_delivery_requires_composer and not prompt_delivery_confirmed:
                         if captured.strip() and (
                             _capture_contains_prompt_text(captured, prompt)
                             or not _looks_like_start_screen(captured)
@@ -759,6 +968,46 @@ class MeshSessionWorker:
                     last_emitted_capture = self._emit_cli_output_if_changed(
                         session_id, captured, last_emitted_capture
                     )
+                    if ui_group_id and ui_role:
+                        new_state = _detect_role_state(captured)
+                        if new_state != last_role_state:
+                            self._emit_state_change(
+                                session_id=session_id,
+                                ui_role=ui_role,
+                                ui_group_id=ui_group_id,
+                                state=new_state,
+                            )
+                            if new_state == RoleState.responding:
+                                turn_claimed = self._claim_turn_via_bus(ui_group_id, ui_role)
+                                if turn_claimed:
+                                    relay_baseline_capture = prior_capture
+                            elif (
+                                new_state == RoleState.idle
+                                and last_role_state == RoleState.responding
+                            ):
+                                target_role = str(relay.get("target_role") or "").strip()
+                                if target_role and turn_claimed:
+                                    self._emit_response_relay(
+                                        session_id=session_id,
+                                        ui_role=ui_role,
+                                        ui_group_id=ui_group_id,
+                                        target_role=target_role,
+                                        baseline_capture=relay_baseline_capture,
+                                        current_capture=captured,
+                                    )
+                                if turn_claimed:
+                                    self._release_turn_via_bus(ui_group_id, ui_role)
+                                turn_claimed = False
+                                relay_baseline_capture = ""
+                            elif (
+                                new_state == RoleState.awaiting_input
+                                and last_role_state == RoleState.responding
+                            ):
+                                if turn_claimed:
+                                    self._release_turn_via_bus(ui_group_id, ui_role)
+                                turn_claimed = False
+                                relay_baseline_capture = ""
+                            last_role_state = new_state
                     live_failure_kind = _detect_interactive_failure_screen(
                         self.config.cli_type, captured
                     )
@@ -1011,9 +1260,20 @@ class MeshSessionWorker:
         cli_command: str,
         *,
         initial_stdin: str | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> None:
         # Launch command directly inside a non-interactive bash wrapper so tmux session ends when CLI exits.
-        launch_command = cli_command
+        mesh_home = os.environ.get("MESH_HOME", "").strip() or _default_mesh_home()
+        mesh_scripts = os.path.join(mesh_home, "scripts")
+        exports = [
+            f"export MESH_HOME={shlex.quote(mesh_home)};",
+            f"export PATH={shlex.quote(mesh_scripts)}:$PATH;",
+        ]
+        for key, value in sorted((extra_env or {}).items()):
+            if not key or value is None:
+                continue
+            exports.append(f"export {key}={shlex.quote(str(value))};")
+        launch_command = " ".join([*exports, cli_command])
         if initial_stdin:
             launch_command = " ".join([
                 shlex.quote(sys.executable),
@@ -1437,8 +1697,6 @@ class MeshSessionWorker:
         source_role = str(summary.get("role") or "").strip()
         summary_text = str(summary.get("summary_text") or "")
         for target_role in target_roles:
-            if target_role == "boss":
-                continue
             candidates = []
             for session in sessions:
                 if str(session.get("session_id") or "").strip() == source_session_id:
@@ -1597,7 +1855,185 @@ class MeshSessionWorker:
         resp.raise_for_status()
         return resp.json().get("messages", [])
 
-    def _deliver_inbound_messages(self, session_id: str, tmux_session: str, after_seq: int) -> int:
+    def _list_group_messages(
+        self,
+        ui_group_id: str,
+        *,
+        after_seq: int,
+        target_role: str,
+        limit: int = 200,
+    ) -> list[dict]:
+        resp = self._http.get(
+            f"{self.config.router_url}/sessions/group-messages",
+            params={
+                "ui_group_id": ui_group_id,
+                "after_seq": after_seq,
+                "target_role": target_role,
+                "limit": limit,
+            },
+            timeout=self.config.control_plane_timeout,
+        )
+        resp.raise_for_status()
+        return resp.json().get("messages", [])
+
+    def _claim_turn_via_bus(self, ui_group_id: str, role: str) -> bool:
+        try:
+            resp = self._http.post(
+                f"{self.config.router_url}/sessions/turn/claim",
+                json={"ui_group_id": ui_group_id, "role": role},
+                timeout=self.config.control_plane_timeout,
+            )
+        except requests.RequestException as e:
+            logger.warning("Failed to claim turn for %s/%s: %s", ui_group_id, role, e)
+            return False
+        return resp.status_code == 200
+
+    def _release_turn_via_bus(self, ui_group_id: str, role: str) -> bool:
+        try:
+            resp = self._http.post(
+                f"{self.config.router_url}/sessions/turn/release",
+                json={"ui_group_id": ui_group_id, "role": role},
+                timeout=self.config.control_plane_timeout,
+            )
+        except requests.RequestException as e:
+            logger.warning("Failed to release turn for %s/%s: %s", ui_group_id, role, e)
+            return False
+        return resp.status_code == 200
+
+    def _send_cross_role_message(
+        self,
+        *,
+        session_id: str,
+        sender_role: str,
+        target_role: str,
+        ui_group_id: str,
+        msg_type: CrossRoleMessageType,
+        content: str,
+        turn_id: str | None = None,
+        reply_to_msg_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        if not session_id or not sender_role or not target_role or not ui_group_id or not content.strip():
+            return None
+        envelope = MessageEnvelope(
+            sender_role=sender_role,
+            sender_session_id=session_id,
+            target_role=target_role,
+            msg_type=msg_type,
+            turn_id=turn_id,
+            reply_to_msg_id=reply_to_msg_id,
+            ui_group_id=ui_group_id,
+        )
+        merged_metadata = dict(metadata or {})
+        merged_metadata.setdefault("ui_group_id", ui_group_id)
+        merged_metadata["envelope"] = envelope.model_dump(mode="json")
+        self._send_session_message(
+            session_id,
+            direction="out",
+            role=sender_role,
+            content=content,
+            metadata=merged_metadata,
+        )
+        return envelope.model_dump(mode="json")
+
+    def _emit_state_change(
+        self,
+        *,
+        session_id: str,
+        ui_role: str,
+        ui_group_id: str,
+        state: RoleState,
+    ) -> None:
+        self._send_cross_role_message(
+            session_id=session_id,
+            sender_role=ui_role,
+            target_role="*",
+            ui_group_id=ui_group_id,
+            msg_type=CrossRoleMessageType.state_change,
+            content=state.value,
+            metadata={"state": state.value},
+        )
+
+    def _emit_response_relay(
+        self,
+        *,
+        session_id: str,
+        ui_role: str,
+        ui_group_id: str,
+        target_role: str,
+        baseline_capture: str,
+        current_capture: str,
+    ) -> None:
+        emit = _compute_output_emit(baseline_capture, current_capture, max_chars=4000)
+        if not emit:
+            return
+        clean = _extract_clean_response(emit[0])
+        if not clean:
+            return
+        self._send_cross_role_message(
+            session_id=session_id,
+            sender_role=ui_role,
+            target_role=target_role,
+            ui_group_id=ui_group_id,
+            msg_type=CrossRoleMessageType.relay,
+            content=clean,
+            metadata={"source_role": ui_role},
+        )
+
+    def _deliver_group_messages(
+        self,
+        *,
+        session_id: str,
+        tmux_session: str,
+        ui_group_id: str,
+        after_seq: int,
+        ui_role: str,
+    ) -> int:
+        if not ui_group_id or not ui_role:
+            return after_seq
+        try:
+            messages = self._list_group_messages(
+                ui_group_id,
+                after_seq=after_seq,
+                target_role=ui_role,
+                limit=200,
+            )
+        except requests.RequestException as e:
+            logger.warning("Failed to fetch group messages for %s/%s: %s", ui_group_id, ui_role, e)
+            return after_seq
+
+        max_seq = after_seq
+        for msg in messages:
+            seq = int(msg.get("seq") or 0)
+            max_seq = max(max_seq, seq)
+            if str(msg.get("session_id") or "").strip() == session_id:
+                continue
+            metadata = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+            envelope = metadata.get("envelope") if isinstance(metadata.get("envelope"), dict) else {}
+            msg_type = str(envelope.get("msg_type") or "")
+            if msg_type != CrossRoleMessageType.relay.value:
+                continue
+            content = str(msg.get("content") or "").strip()
+            if not content:
+                continue
+            source_role = str(envelope.get("sender_role") or metadata.get("source_role") or msg.get("role") or "").strip()
+            try:
+                self._tmux_send_text(
+                    tmux_session,
+                    _encode_inbound_proxy_message(content, source_role=source_role),
+                )
+            except subprocess.SubprocessError as e:
+                logger.warning("Failed to deliver group message seq=%s to %s: %s", seq, tmux_session, e)
+        return max_seq
+
+    def _deliver_inbound_messages(
+        self,
+        session_id: str,
+        tmux_session: str,
+        after_seq: int,
+        *,
+        ui_role: str = "",
+    ) -> int:
         try:
             messages = self._list_session_messages(session_id, after_seq=after_seq, limit=200)
         except SessionNotFoundError:
@@ -1640,6 +2076,13 @@ class MeshSessionWorker:
                     continue
                 if not content:
                     continue
+                current_role = str(ui_role or "").strip()
+                source_role = str((metadata or {}).get("source_role") or msg.get("role") or "").strip()
+                if current_role == "boss" and source_role and source_role != "boss":
+                    content = _encode_inbound_proxy_message(
+                        content,
+                        source_role=source_role,
+                    )
                 self._tmux_send_text(tmux_session, content)
             except subprocess.SubprocessError as e:
                 logger.warning("Failed to deliver message seq=%s to tmux session %s: %s", seq, tmux_session, e)

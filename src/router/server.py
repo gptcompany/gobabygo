@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 from pydantic import ValidationError
 
 from src.router.admin import cleanup_stale_runtime_state
+from src.router.comms import CommunicationPolicy, TurnCoordinator
 from src.router.db import RouterDB
 from src.router.heartbeat import HeartbeatManager
 from src.router.longpoll import LongPollRegistry
@@ -28,6 +29,7 @@ from src.router.metrics import MeshMetrics
 from src.router.models import (
     HandoffRepoError,
     HandoffRoleError,
+    MessageEnvelope,
     NotificationLedgerEntry,
     NotificationLedgerWriteRequest,
     Session,
@@ -118,6 +120,10 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._handle_list_sessions()
             elif path == "/sessions/messages":
                 self._handle_list_session_messages()
+            elif path == "/sessions/group-messages":
+                self._handle_list_group_messages()
+            elif path == "/sessions/turn":
+                self._handle_get_turn()
             elif path.startswith("/sessions/"):
                 session_id = path[len("/sessions/"):]
                 if session_id:
@@ -169,6 +175,10 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
                 self._handle_open_session()
             elif path == "/sessions/send":
                 self._handle_send_session_message()
+            elif path == "/sessions/turn/claim":
+                self._handle_claim_turn()
+            elif path == "/sessions/turn/release":
+                self._handle_release_turn()
             elif path == "/sessions/send-key":
                 self._handle_send_session_key()
             elif path == "/sessions/resize":
@@ -225,6 +235,24 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": "internal_error", "details": str(e)})
 
     # --- Endpoint implementations ---
+
+    def _comm_policy(self) -> CommunicationPolicy:
+        state = self.server.router_state  # type: ignore[attr-defined]
+        policy = state.get("comm_policy")
+        if isinstance(policy, CommunicationPolicy):
+            return policy
+        policy = CommunicationPolicy()
+        state["comm_policy"] = policy
+        return policy
+
+    def _turn_coordinator(self) -> TurnCoordinator:
+        state = self.server.router_state  # type: ignore[attr-defined]
+        coordinator = state.get("turn_coordinator")
+        if isinstance(coordinator, TurnCoordinator):
+            return coordinator
+        coordinator = TurnCoordinator()
+        state["turn_coordinator"] = coordinator
+        return coordinator
 
     def _handle_health(self) -> None:
         """GET /health — liveness check. No auth (internal wg0 network only)."""
@@ -842,6 +870,24 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         if session_state in {"closed", "errored"}:
             self._send_json(409, {"error": "session_closed"})
             return
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        envelope_raw = metadata.get("envelope")
+        if envelope_raw is not None:
+            try:
+                envelope = MessageEnvelope(**envelope_raw)
+            except (ValidationError, ValueError, TypeError) as e:
+                self._send_json(400, {"error": "invalid_envelope", "detail": str(e)})
+                return
+            if envelope.sender_session_id != message.session_id:
+                self._send_json(400, {"error": "envelope_session_mismatch"})
+                return
+            target_role = str(envelope.target_role or "").strip()
+            if target_role != "*" and not self._comm_policy().validate_communication(
+                envelope.sender_role,
+                target_role,
+            ):
+                self._send_json(403, {"error": "invalid_communication_edge"})
+                return
 
         try:
             seq = db.append_session_message(message)
@@ -1040,6 +1086,31 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
         sessions = db.list_sessions(state=state_q, worker_id=worker_id, limit=limit)
         self._send_json(200, {"sessions": [s.model_dump(mode="json") for s in sessions]})
 
+    def _handle_list_group_messages(self) -> None:
+        """GET /sessions/group-messages?ui_group_id=...&after_seq=N&target_role=R."""
+        if not self._check_auth():
+            return
+        query = parse_qs(urlparse(self.path).query)
+        ui_group_id = str(query.get("ui_group_id", [None])[0] or "").strip()
+        if not ui_group_id:
+            self._send_json(400, {"error": "missing_ui_group_id"})
+            return
+        try:
+            after_seq = int(query.get("after_seq", ["0"])[0])
+            limit = max(1, min(1000, int(query.get("limit", ["200"])[0])))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "invalid_pagination"})
+            return
+        target_role = str(query.get("target_role", [None])[0] or "").strip() or None
+        db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
+        messages = db.list_ui_group_messages(
+            ui_group_id,
+            after_seq=after_seq,
+            target_role=target_role,
+            limit=limit,
+        )
+        self._send_json(200, {"messages": [m.model_dump(mode="json") for m in messages]})
+
     def _handle_get_session(self, session_id: str) -> None:
         """GET /sessions/<id> — fetch a single session."""
         if not self._check_auth():
@@ -1074,6 +1145,57 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
 
         messages = db.list_session_messages(session_id, after_seq=after_seq, limit=limit)
         self._send_json(200, {"messages": [m.model_dump(mode="json") for m in messages]})
+
+    def _handle_claim_turn(self) -> None:
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+        ui_group_id = str(data.get("ui_group_id") or "").strip()
+        role = str(data.get("role") or "").strip()
+        if not ui_group_id or not role:
+            self._send_json(400, {"error": "missing_turn_fields"})
+            return
+        claimed = self._turn_coordinator().claim_turn(ui_group_id, role)
+        status = 200 if claimed else 409
+        self._send_json(status, {"ui_group_id": ui_group_id, "role": role, "claimed": claimed})
+
+    def _handle_release_turn(self) -> None:
+        if not self._check_auth():
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+        ui_group_id = str(data.get("ui_group_id") or "").strip()
+        role = str(data.get("role") or "").strip()
+        if not ui_group_id or not role:
+            self._send_json(400, {"error": "missing_turn_fields"})
+            return
+        released = self._turn_coordinator().release_turn(ui_group_id, role)
+        status = 200 if released else 409
+        self._send_json(status, {"ui_group_id": ui_group_id, "role": role, "released": released})
+
+    def _handle_get_turn(self) -> None:
+        if not self._check_auth():
+            return
+        query = parse_qs(urlparse(self.path).query)
+        ui_group_id = str(query.get("ui_group_id", [None])[0] or "").strip()
+        if not ui_group_id:
+            self._send_json(400, {"error": "missing_ui_group_id"})
+            return
+        speaker = self._turn_coordinator().current_speaker(ui_group_id)
+        self._send_json(200, {"ui_group_id": ui_group_id, "current_speaker": speaker})
 
     def _handle_create_notification(self) -> None:
         """POST /notifications — persist notification delivery attempt."""

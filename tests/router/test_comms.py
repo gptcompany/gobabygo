@@ -10,9 +10,11 @@ Covers:
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
-from src.router.comms import CommunicationPolicy
+from src.router.comms import CommunicationPolicy, TurnCoordinator
 from src.router.models import Task, TaskPhase, TaskStatus
 
 
@@ -216,3 +218,25 @@ class TestCanViewAllTasks:
     def test_can_view_all_tasks_worker(self, policy: CommunicationPolicy) -> None:
         """Worker has scoped visibility (cannot view all)."""
         assert policy.can_view_all_tasks("worker") is False
+
+
+class TestTurnCoordinator:
+    def test_boss_override_claims_even_when_turn_is_busy(self) -> None:
+        coordinator = TurnCoordinator(timeout_s=120)
+
+        assert coordinator.claim_turn("snake-ui-1", "president") is True
+        assert coordinator.claim_turn("snake-ui-1", "boss") is True
+        assert coordinator.current_speaker("snake-ui-1") == "boss"
+
+    def test_non_boss_claim_is_rejected_when_other_role_speaks(self) -> None:
+        coordinator = TurnCoordinator(timeout_s=120)
+
+        assert coordinator.claim_turn("snake-ui-1", "president") is True
+        assert coordinator.claim_turn("snake-ui-1", "lead") is False
+
+    def test_turn_auto_expires(self) -> None:
+        coordinator = TurnCoordinator(timeout_s=1)
+
+        assert coordinator.claim_turn("snake-ui-1", "president") is True
+        coordinator._turns["snake-ui-1"] = ("president", time.monotonic() - 5)
+        assert coordinator.current_speaker("snake-ui-1") is None

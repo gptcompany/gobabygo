@@ -746,6 +746,49 @@ class RouterDB:
             )
             return [self._session_message_from_row(row) for row in cur.fetchall()]
 
+    def list_ui_group_messages(
+        self,
+        ui_group_id: str,
+        *,
+        after_seq: int = 0,
+        target_role: str | None = None,
+        limit: int = 200,
+    ) -> list[SessionMessage]:
+        group = str(ui_group_id or "").strip()
+        if not group:
+            return []
+        desired_role = str(target_role or "").strip() or None
+        with self._lock:
+            cur = self._conn.execute(
+                """SELECT * FROM session_messages
+                WHERE seq > ?
+                ORDER BY seq ASC
+                LIMIT ?""",
+                (after_seq, max(limit * 4, limit)),
+            )
+            rows = cur.fetchall()
+
+        matched: list[SessionMessage] = []
+        for row in rows:
+            message = self._session_message_from_row(row)
+            metadata = message.metadata if isinstance(message.metadata, dict) else {}
+            envelope = metadata.get("envelope") if isinstance(metadata.get("envelope"), dict) else {}
+            message_group = str(
+                envelope.get("ui_group_id")
+                or metadata.get("ui_group_id")
+                or ""
+            ).strip()
+            if message_group != group:
+                continue
+            if desired_role:
+                target = str(envelope.get("target_role") or "").strip()
+                if target not in {"*", desired_role}:
+                    continue
+            matched.append(message)
+            if len(matched) >= limit:
+                break
+        return matched
+
     # -- Notification ledger --
 
     def _notification_from_row(self, row: sqlite3.Row) -> NotificationLedgerEntry:

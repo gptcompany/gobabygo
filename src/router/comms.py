@@ -9,6 +9,10 @@ pure policy engine that returns bool for each authorization check.
 
 from __future__ import annotations
 
+import os
+import threading
+import time
+
 from src.router.models import CommunicationRole, Task
 
 # Allowed communication edges (directed graph).
@@ -88,3 +92,71 @@ class CommunicationPolicy:
         except ValueError:
             return False
         return receiver in HIERARCHY_EDGES.get(sender, set())
+
+
+class TurnCoordinator:
+    """In-memory turn discipline for a single router process."""
+
+    def __init__(self, *, timeout_s: float | None = None) -> None:
+        if timeout_s is None:
+            raw = os.environ.get("MESH_TURN_TIMEOUT_S", "120").strip()
+            try:
+                timeout_s = float(raw)
+            except ValueError:
+                timeout_s = 120.0
+        self._timeout_s = max(1.0, float(timeout_s))
+        self._lock = threading.RLock()
+        self._turns: dict[str, tuple[str, float]] = {}
+
+    def _expire_if_stale(self, ui_group_id: str) -> None:
+        current = self._turns.get(ui_group_id)
+        if current is None:
+            return
+        role, claimed_at = current
+        if (time.monotonic() - claimed_at) > self._timeout_s:
+            self._turns.pop(ui_group_id, None)
+
+    def claim_turn(self, ui_group_id: str, role: str) -> bool:
+        group = str(ui_group_id or "").strip()
+        speaker = str(role or "").strip()
+        if not group or not speaker:
+            return False
+        with self._lock:
+            self._expire_if_stale(group)
+            if speaker == CommunicationRole.boss.value:
+                self._turns[group] = (speaker, time.monotonic())
+                return True
+            current = self._turns.get(group)
+            if current is None or current[0] == speaker:
+                self._turns[group] = (speaker, time.monotonic())
+                return True
+            return False
+
+    def release_turn(self, ui_group_id: str, role: str) -> bool:
+        group = str(ui_group_id or "").strip()
+        speaker = str(role or "").strip()
+        if not group or not speaker:
+            return False
+        with self._lock:
+            self._expire_if_stale(group)
+            current = self._turns.get(group)
+            if current is None or current[0] != speaker:
+                return False
+            self._turns.pop(group, None)
+            return True
+
+    def current_speaker(self, ui_group_id: str) -> str | None:
+        group = str(ui_group_id or "").strip()
+        if not group:
+            return None
+        with self._lock:
+            self._expire_if_stale(group)
+            current = self._turns.get(group)
+            return current[0] if current else None
+
+    def force_release(self, ui_group_id: str) -> None:
+        group = str(ui_group_id or "").strip()
+        if not group:
+            return
+        with self._lock:
+            self._turns.pop(group, None)

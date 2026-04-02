@@ -207,7 +207,9 @@ def _run_proxy(args: argparse.Namespace) -> int:
         old_tty = termios.tcgetattr(stdin_fd)
 
     tracker = _InputTracker(ignore_slash_commands=args.ignore_slash_commands)
-    capture_reply = str(args.mode or "prompt_submit").strip() == "response_summary"
+    mode = str(args.mode or "prompt_submit").strip()
+    capture_reply = mode == "response_summary"
+    router_relay = mode == "router_relay"
     awaiting_summary = False
     output_decoder = codecs.getincrementaldecoder("utf-8")("ignore")
     output_buffer = ""
@@ -268,7 +270,7 @@ def _run_proxy(args: argparse.Namespace) -> int:
                     inbound_only = bool(decoded_lines) and all(kind == "inbound" for kind, _ in decoded_lines)
                     for kind, payload in decoded_lines:
                         if kind == "relay":
-                            if str(args.mode or "prompt_submit").strip() == "prompt_submit":
+                            if mode == "prompt_submit":
                                 _relay_prompt(args, str(payload))
                             elif capture_reply:
                                 awaiting_summary = True
@@ -276,9 +278,14 @@ def _run_proxy(args: argparse.Namespace) -> int:
                                 output_decoder.reset()
                         elif kind == "inbound":
                             source_role, content = payload
-                            rendered = _format_inbound_message(source_role, content)
-                            if rendered:
-                                os.write(stdout_fd, rendered.encode("utf-8", "ignore"))
+                            if router_relay:
+                                if content:
+                                    os.write(master_fd, content.encode("utf-8", "ignore"))
+                                    os.write(master_fd, b"\r")
+                            else:
+                                rendered = _format_inbound_message(source_role, content)
+                                if rendered:
+                                    os.write(stdout_fd, rendered.encode("utf-8", "ignore"))
                 if not args.no_child_passthrough:
                     if not inbound_only:
                         os.write(master_fd, data)
@@ -295,12 +302,17 @@ def _run_proxy(args: argparse.Namespace) -> int:
                     inbound = _decode_inbound_line(cleaned or "")
                     if inbound is not None:
                         source_role, content = inbound
-                        rendered = _format_inbound_message(source_role, content)
-                        if rendered:
-                            os.write(stdout_fd, rendered.encode("utf-8", "ignore"))
+                        if router_relay:
+                            if content:
+                                os.write(master_fd, content.encode("utf-8", "ignore"))
+                                os.write(master_fd, b"\r")
+                        else:
+                            rendered = _format_inbound_message(source_role, content)
+                            if rendered:
+                                os.write(stdout_fd, rendered.encode("utf-8", "ignore"))
                         continue
                     if cleaned:
-                        if str(args.mode or "prompt_submit").strip() == "prompt_submit":
+                        if mode == "prompt_submit":
                             _relay_prompt(args, cleaned)
                         elif capture_reply:
                             awaiting_summary = True

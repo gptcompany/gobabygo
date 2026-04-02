@@ -317,6 +317,63 @@ def test_session_crud_and_messages(db: RouterDB, sample_worker: Worker) -> None:
     assert str(getattr(closed.state, "value", closed.state)) == "closed"
 
 
+def test_list_ui_group_messages_filters_by_target_role(db: RouterDB, sample_worker: Worker) -> None:
+    db.insert_worker(sample_worker)
+    boss = Session(
+        session_id="11111111-1111-4111-8111-111111111111",
+        worker_id=sample_worker.worker_id,
+        cli_type=sample_worker.cli_type,
+        account_profile=sample_worker.account_profile,
+        metadata={"ui_group_id": "snake-ui-1", "ui_role": "boss"},
+    )
+    president = Session(
+        session_id="22222222-2222-4222-8222-222222222222",
+        worker_id=sample_worker.worker_id,
+        cli_type=sample_worker.cli_type,
+        account_profile=sample_worker.account_profile,
+        metadata={"ui_group_id": "snake-ui-1", "ui_role": "president"},
+    )
+    db.insert_session(boss)
+    db.insert_session(president)
+
+    db.append_session_message(SessionMessage(
+        session_id=boss.session_id,
+        direction="out",
+        role="boss",
+        content="boss->president",
+        metadata={
+            "envelope": {
+                "msg_id": str(uuid.uuid4()),
+                "sender_role": "boss",
+                "sender_session_id": boss.session_id,
+                "target_role": "president",
+                "msg_type": "relay",
+                "ui_group_id": "snake-ui-1",
+            }
+        },
+    ))
+    db.append_session_message(SessionMessage(
+        session_id=president.session_id,
+        direction="out",
+        role="president",
+        content="broadcast-state",
+        metadata={
+            "envelope": {
+                "msg_id": str(uuid.uuid4()),
+                "sender_role": "president",
+                "sender_session_id": president.session_id,
+                "target_role": "*",
+                "msg_type": "state_change",
+                "ui_group_id": "snake-ui-1",
+            }
+        },
+    ))
+
+    msgs = db.list_ui_group_messages("snake-ui-1", target_role="president")
+
+    assert [m.content for m in msgs] == ["boss->president", "broadcast-state"]
+
+
 def test_notification_ledger_roundtrip(db: RouterDB) -> None:
     entry = NotificationLedgerEntry(
         trace_id="ntf_1234567890abcdef0123",

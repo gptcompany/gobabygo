@@ -195,6 +195,56 @@ class SessionState(str, Enum):
     errored = "errored"
 
 
+class CrossRoleMessageType(str, Enum):
+    relay = "relay"
+    summary = "summary"
+    control = "control"
+    state_change = "state_change"
+    turn_signal = "turn_signal"
+
+
+class RoleState(str, Enum):
+    idle = "idle"
+    responding = "responding"
+    awaiting_input = "awaiting_input"
+
+
+class MessageEnvelope(BaseModel):
+    msg_id: str = Field(default_factory=_uuid4)
+    sender_role: str
+    sender_session_id: str
+    target_role: str
+    msg_type: CrossRoleMessageType
+    turn_id: str | None = None
+    reply_to_msg_id: str | None = None
+    ui_group_id: str
+
+    @field_validator("msg_id", "sender_session_id")
+    @classmethod
+    def validate_uuid_like_fields(cls, v: str) -> str:
+        try:
+            uuid.UUID(str(v))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("must be a UUID4 string") from exc
+        return str(v)
+
+    @field_validator("sender_role", "ui_group_id")
+    @classmethod
+    def validate_non_empty(cls, v: str) -> str:
+        text = str(v or "").strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+    @field_validator("target_role")
+    @classmethod
+    def validate_target_role(cls, v: str) -> str:
+        text = str(v or "").strip()
+        if not text:
+            raise ValueError("must not be empty")
+        return text
+
+
 class Session(BaseModel):
     session_id: str = Field(default_factory=_uuid4)
     worker_id: str
