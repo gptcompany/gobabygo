@@ -298,9 +298,32 @@ def _capture_shows_activity(captured: str) -> bool:
         return True
     if "· flowing" in lowered or "✻ " in body or "⎿" in body:
         return True
-    return any(
-        line.lstrip().startswith("● ")
-        for line in body.splitlines()
+    return any(_line_shows_activity(line) for line in body.splitlines())
+
+
+def _line_shows_activity(line: str) -> bool:
+    stripped = str(line or "").replace("\xa0", " ").strip()
+    if not stripped.startswith("● "):
+        return False
+    content = stripped[2:].strip()
+    if not content:
+        return False
+    if re.match(r"^[A-Z][A-Za-z0-9_-]*\(", content):
+        return True
+    lowered = content.lower()
+    return lowered.startswith(
+        (
+            "running ",
+            "executing ",
+            "reading ",
+            "writing ",
+            "editing ",
+            "searching ",
+            "updating ",
+            "creating ",
+            "calling ",
+            "using tool",
+        )
     )
 
 
@@ -1290,6 +1313,15 @@ class MeshSessionWorker:
             capture_output=True,
             text=True,
         )
+        for key, value in sorted((extra_env or {}).items()):
+            if not key or value is None:
+                continue
+            subprocess.run(
+                [self.config.tmux_bin, "set-environment", "-t", session_name, key, str(value)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
 
     def _tmux_has_session(self, session_name: str) -> bool:
         proc = subprocess.run(

@@ -79,6 +79,10 @@ def _control_plane_timeout() -> float:
         return 60.0
 
 
+def _default_ws_host() -> str:
+    return os.environ.get("MESH_WS_HOST", "sam@10.0.0.2").strip() or "sam@10.0.0.2"
+
+
 def router_get_json(router_url: str, auth_token: str, path: str) -> Any:
     req = Request(router_url.rstrip("/") + path)
     req.add_header("Authorization", f"Bearer {auth_token}")
@@ -96,6 +100,96 @@ def router_post_json(router_url: str, auth_token: str, path: str, payload: dict[
     req.add_header("Content-Type", "application/json")
     with urlopen(req, timeout=_control_plane_timeout()) as resp:
         return json.load(resp)
+
+
+def _cleanup_remote_tmux_sessions(
+    *,
+    ws_host: str,
+    tmux_sessions: list[str],
+    ui_group_id: str = "",
+) -> dict[str, Any]:
+    targets = sorted({str(session).strip() for session in tmux_sessions if str(session).strip()})
+    code = """
+import json
+import subprocess
+import sys
+
+ui_group_id = sys.argv[1]
+targets = {arg for arg in sys.argv[2:] if arg}
+result = {"requested": sorted(targets), "killed": [], "missing": [], "errors": []}
+
+try:
+    proc = subprocess.run(
+        ["tmux", "ls", "-F", "#{session_name}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    existing = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+except OSError as exc:
+    print(json.dumps({"requested": sorted(targets), "killed": [], "missing": [], "errors": [str(exc)]}))
+    raise SystemExit(0)
+
+if ui_group_id:
+    for session in list(existing):
+        probe = subprocess.run(
+            ["tmux", "show-environment", "-t", session, "MESH_UI_GROUP_ID"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        value = probe.stdout.strip()
+        if value.startswith("MESH_UI_GROUP_ID=") and value.split("=", 1)[1] == ui_group_id:
+            targets.add(session)
+
+for session in sorted(targets):
+    if session not in existing:
+        result["missing"].append(session)
+        continue
+    proc = subprocess.run(
+        ["tmux", "kill-session", "-t", session],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        result["killed"].append(session)
+    else:
+        err = (proc.stderr or proc.stdout or f"tmux exited {proc.returncode}").strip()
+        result["errors"].append(f"{session}: {err}")
+
+print(json.dumps(result))
+""".strip()
+    proc = subprocess.run(
+        ["ssh", ws_host, "python3", "-c", code, ui_group_id, *targets],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        error = (proc.stderr or proc.stdout or f"ssh exited {proc.returncode}").strip()
+        return {"requested": targets, "killed": [], "missing": [], "errors": [error]}
+    try:
+        payload = json.loads(proc.stdout.strip() or "{}")
+    except json.JSONDecodeError:
+        return {
+            "requested": targets,
+            "killed": [],
+            "missing": [],
+            "errors": [f"invalid cleanup response: {proc.stdout.strip() or '<empty>'}"],
+        }
+    if not isinstance(payload, dict):
+        return {
+            "requested": targets,
+            "killed": [],
+            "missing": [],
+            "errors": [f"invalid cleanup payload type: {type(payload).__name__}"],
+        }
+    payload.setdefault("requested", targets)
+    payload.setdefault("killed", [])
+    payload.setdefault("missing", [])
+    payload.setdefault("errors", [])
+    return payload
 
 
 def _load_provider_session_users(config_path: str | None = None) -> dict[str, str]:
@@ -1044,6 +1138,8 @@ def main() -> int:
             repo_name=repo_name,
             ui_group_id=ui_group_id,
         )
+        ws_host = _default_ws_host()
+        tmux_targets = sorted({choice.tmux_session for choice in matched if choice.tmux_session})
         failures: list[str] = []
         closed_session_ids: list[str] = []
         for choice in matched:
@@ -1089,6 +1185,25 @@ def main() -> int:
                         "still open after terminate: " + ", ".join(session_id[:12] for session_id in remaining_session_ids)
                     )
 
+        killed_tmux_sessions: list[str] = []
+        if tmux_targets:
+            cleanup_result = _cleanup_remote_tmux_sessions(
+                ws_host=ws_host,
+                tmux_sessions=tmux_targets,
+                ui_group_id=ui_group_id,
+            )
+            cleanup_errors = [
+                str(item).strip()
+                for item in cleanup_result.get("errors", [])
+                if str(item).strip()
+            ]
+            failures.extend(cleanup_errors)
+            killed_tmux_sessions = [
+                str(item).strip()
+                for item in cleanup_result.get("killed", [])
+                if str(item).strip()
+            ]
+
         if not failures and clear_cache:
             _clear_ui_group_cache(repo_name, repo_path=repo_path)
 
@@ -1097,6 +1212,7 @@ def main() -> int:
             "repo_name": repo_name,
             "ui_group_id": ui_group_id,
             "closed_sessions": closed_session_ids,
+            "killed_tmux_sessions": killed_tmux_sessions,
             "cleared_cache": cache_cleared,
             "failures": failures,
         }
@@ -1105,7 +1221,8 @@ def main() -> int:
         else:
             print(
                 f"[mesh ui close] repo={repo_name} ui_group={ui_group_id} "
-                f"signaled={len(closed_session_ids)} cleared_cache={str(result['cleared_cache']).lower()}"
+                f"signaled={len(closed_session_ids)} tmux_killed={len(killed_tmux_sessions)} "
+                f"cleared_cache={str(result['cleared_cache']).lower()}"
             )
             if failures:
                 print("Failures:", file=sys.stderr)

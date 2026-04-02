@@ -23,6 +23,16 @@ def test_detect_role_state_minimal_states() -> None:
     assert _detect_role_state("Done\n❯ ") == RoleState.idle
 
 
+def test_detect_role_state_treats_final_bullet_answer_as_idle() -> None:
+    captured = "❯ saluta il president\n\n● Ciao Presidente!\n\n❯ "
+    assert _detect_role_state(captured) == RoleState.idle
+
+
+def test_detect_role_state_keeps_tool_activity_as_responding() -> None:
+    captured = "❯ saluta il president\n\n● Write(summary.txt)\n· Flowing…\n\n❯ "
+    assert _detect_role_state(captured) == RoleState.responding
+
+
 def test_extract_clean_response_strips_terminal_noise() -> None:
     text = """✻ Thinking...\n● Result ready\n⎿ note\nStop says: noop\n❯ \n"""
     assert _extract_clean_response(text) == "● Result ready"

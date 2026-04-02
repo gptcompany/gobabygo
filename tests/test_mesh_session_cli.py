@@ -1665,6 +1665,11 @@ def test_main_close_signals_sessions_and_clears_cache(monkeypatch, tmp_path, cap
         "_wait_for_ui_group_closure",
         lambda *args, **kwargs: (True, [], ""),
     )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {"requested": [], "killed": [], "missing": [], "errors": []},
+    )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
     assert module.main() == 0
@@ -1725,11 +1730,83 @@ def test_main_close_keeps_cache_when_failures_occur(monkeypatch, tmp_path, capsy
         lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
     )
     monkeypatch.setattr(module, "router_post_json", fake_router_post_json)
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {"requested": [], "killed": [], "missing": [], "errors": []},
+    )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
     assert module.main() == 1
     assert cache_file.exists()
     assert "Failures:" in capsys.readouterr().err
+
+
+def test_main_close_kills_remote_tmux_sessions(monkeypatch, tmp_path, capsys):
+    module = _load_module()
+    cache_dir = tmp_path / "ui-cache"
+    cache_dir.mkdir()
+    repo_path = "/Users/sam/snake-game"
+    cache_file = module._ui_group_cache_path("snake-game", repo_path=repo_path, cache_dir=cache_dir)
+    cache_file.write_text(
+        json.dumps({"repo_name": "snake-game", "ui_group_id": "snake-ui-1", "repo_path": repo_path}) + "\n",
+        encoding="utf-8",
+    )
+    choice = module.SessionChoice(
+        session_id="sess-1",
+        worker_id="worker-1",
+        cli_type="gemini",
+        account_profile="default",
+        state="open",
+        task_id="task-1",
+        task_status="running",
+        thread_id="thread-1",
+        thread_name="snake-demo",
+        thread_status="active",
+        repo="/media/sam/1TB/snake-game",
+        repo_name="snake-game",
+        role="boss",
+        title="mesh ui boss snake-game",
+        updated_at="2026-03-11T14:00:00Z",
+        tmux_session="mesh-gemini-sam-1111",
+        attach_kind="ssh_tmux",
+        attach_target="ssh://sam@10.0.0.2:22?tmux_session=mesh-gemini-sam-1111",
+        attach_owner="sam",
+        ui_group_id="snake-ui-1",
+    )
+
+    monkeypatch.setenv("MESH_UI_GROUP_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("MESH_WS_HOST", "sam@10.0.0.2")
+    monkeypatch.setattr(module, "load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "build_session_choices", lambda *args, **kwargs: [choice])
+    monkeypatch.setattr(module, "detect_repo_context", lambda cwd=None: (repo_path, "snake-game"))
+    monkeypatch.setattr(
+        module,
+        "resolve_active_ui_group_id",
+        lambda repo_name, *, repo_path, choices, include_non_active=False: "snake-ui-1",
+    )
+    monkeypatch.setattr(module, "router_post_json", lambda *args, **kwargs: {"status": "accepted"})
+    monkeypatch.setattr(
+        module,
+        "_wait_for_ui_group_closure",
+        lambda *args, **kwargs: (True, [], ""),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {
+            "requested": ["mesh-gemini-sam-1111"],
+            "killed": ["mesh-gemini-sam-1111"],
+            "missing": [],
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
+
+    assert module.main() == 0
+    out = capsys.readouterr().out
+    assert "tmux_killed=1" in out
+    assert not cache_file.exists()
 
 
 def test_main_close_keeps_cache_until_closure_observed(monkeypatch, tmp_path, capsys):
@@ -1780,6 +1857,11 @@ def test_main_close_keeps_cache_until_closure_observed(monkeypatch, tmp_path, ca
         "_wait_for_ui_group_closure",
         lambda *args, **kwargs: (False, ["sess-1"], ""),
     )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {"requested": [], "killed": [], "missing": [], "errors": []},
+    )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
     assert module.main() == 1
@@ -1807,6 +1889,11 @@ def test_main_close_targets_explicit_repo_argument(monkeypatch, tmp_path):
         module,
         "_wait_for_ui_group_closure",
         lambda *args, **kwargs: (True, [], ""),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {"requested": [], "killed": [], "missing": [], "errors": []},
     )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close", "/media/sam/1TB/rektslug"])
 
@@ -1855,6 +1942,11 @@ def test_main_close_waits_for_closure_without_cache(monkeypatch, tmp_path):
         return True, [], ""
 
     monkeypatch.setattr(module, "_wait_for_ui_group_closure", fake_wait)
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {"requested": [], "killed": [], "missing": [], "errors": []},
+    )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
     assert module.main() == 0
@@ -1900,10 +1992,18 @@ def test_main_close_resolves_group_from_non_active_open_sessions(monkeypatch, tm
         "_wait_for_ui_group_closure",
         lambda *args, **kwargs: (True, [], ""),
     )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {"requested": [], "killed": [], "missing": [], "errors": []},
+    )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
     assert module.main() == 0
-    assert signals == [{"session_id": "sess-1", "signal": "terminate"}]
+    assert signals == [
+        {"session_id": "sess-1", "signal": "terminate"},
+        {"session_id": "sess-1", "state": "closed"},
+    ]
 
 
 def test_main_close_uses_cached_stale_group_on_repo_name_collision(monkeypatch, tmp_path, capsys):
@@ -1977,6 +2077,11 @@ def test_main_close_uses_cached_stale_group_on_repo_name_collision(monkeypatch, 
         module,
         "_wait_for_ui_group_closure",
         lambda *args, **kwargs: (True, [], ""),
+    )
+    monkeypatch.setattr(
+        module,
+        "_cleanup_remote_tmux_sessions",
+        lambda **kwargs: {"requested": [], "killed": [], "missing": [], "errors": []},
     )
     monkeypatch.setattr(sys, "argv", ["mesh_session_cli.py", "close"])
 
