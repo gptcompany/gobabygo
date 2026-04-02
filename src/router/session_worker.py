@@ -84,6 +84,45 @@ def _claude_settings_local_path(work_dir: str) -> str:
     return os.path.join(work_dir, ".claude", "settings.local.json")
 
 
+def _claude_command_path(work_dir: str, command_name: str) -> str:
+    return os.path.join(work_dir, ".claude", "commands", f"{command_name}.md")
+
+
+def _build_claude_gbg_command() -> str:
+    return (
+        "---\n"
+        "description: Emit a Gobabygo relay envelope for the current response. Usage: /GBG <request>\n"
+        "argument-hint: <request>\n"
+        "disable-model-invocation: true\n"
+        "---\n\n"
+        "# /GBG\n\n"
+        "Execute the request in `$ARGUMENTS` and answer the user normally.\n\n"
+        "At the very end, append exactly one final line in this format:\n\n"
+        "`GBG: {\"actionable\":true,\"message\":\"...\"}`\n\n"
+        "Rules:\n"
+        "1. The final `GBG: {...}` line must be valid single-line JSON with double quotes.\n"
+        "2. `message` must be a short, action-oriented handoff or status summary, not chit-chat.\n"
+        "3. If the request should not be relayed, append `GBG: {\"actionable\":false}`.\n"
+        "4. Do not output anything after the `GBG: {...}` line.\n"
+    )
+
+
+def _ensure_claude_project_command(
+    work_dir: str,
+    *,
+    command_name: str,
+    content: str,
+) -> str | None:
+    command_path = Path(_claude_command_path(work_dir, command_name))
+    try:
+        command_path.parent.mkdir(parents=True, exist_ok=True)
+        command_path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to install Claude command %s in %s: %s", command_name, work_dir, exc)
+        return None
+    return str(command_path)
+
+
 def _build_claude_mesh_hook_settings(mesh_home: str | None = None) -> dict[str, object]:
     hook_script = _claude_router_hook_script_path(mesh_home)
     hook_python = shlex.quote(sys.executable)
@@ -963,6 +1002,17 @@ class MeshSessionWorker:
                     self._report_failure(
                         task_id,
                         f"failed to install Claude mesh hook settings in {work_dir}",
+                    )
+                    return
+                gbg_command_path = _ensure_claude_project_command(
+                    work_dir,
+                    command_name="GBG",
+                    content=_build_claude_gbg_command(),
+                )
+                if not gbg_command_path or not os.path.isfile(gbg_command_path):
+                    self._report_failure(
+                        task_id,
+                        f"failed to install Claude command /GBG in {work_dir}",
                     )
                     return
             elif relay:
@@ -2274,7 +2324,7 @@ class MeshSessionWorker:
                 else:
                     self._tmux_send_text(
                         tmux_session,
-                        _encode_inbound_proxy_message(content, source_role=source_role),
+                        content,
                     )
             except subprocess.SubprocessError as e:
                 logger.warning("Failed to deliver group message seq=%s to %s: %s", seq, tmux_session, e)

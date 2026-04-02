@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -127,6 +128,51 @@ def _clean_summary(text: str, *, max_chars: int = 1600) -> str:
     return clean[-max(1, int(max_chars)) :]
 
 
+def _extract_gbg_payload(text: str) -> dict[str, Any]:
+    body = str(text or "")
+    candidates: list[tuple[int, str]] = []
+    for match in re.finditer(r"<GBG>\s*(\{.*?\})\s*</GBG>", body, flags=re.DOTALL):
+        candidates.append((match.end(), match.group(1).strip()))
+    for match in re.finditer(r"^\s*GBG:\s*(\{.*\})\s*$", body, flags=re.MULTILINE):
+        candidates.append((match.end(), match.group(1).strip()))
+    if candidates:
+        _, raw = max(candidates, key=lambda item: item[0])
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            return payload
+
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if not lines:
+        return {}
+    raw = lines[-1]
+    if not (raw.startswith("{") and raw.endswith("}")):
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _normalize_gbg_relay(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    actionable = payload.get("actionable")
+    if actionable is not True:
+        return {}
+    message = _clean_summary(str(payload.get("message") or ""))
+    if not message:
+        return {}
+    normalized: dict[str, Any] = {"actionable": True, "message": message}
+    kind = str(payload.get("kind") or "").strip()
+    if kind:
+        normalized["kind"] = kind
+    return normalized
+
+
 def _extract_summary_from_transcript(path: str) -> str:
     if not path or not os.path.isfile(path):
         return ""
@@ -167,6 +213,48 @@ def _capture_tmux_summary() -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return _clean_summary(result.stdout)
+
+
+def _extract_gbg_relay_from_transcript(path: str) -> dict[str, Any]:
+    if not path or not os.path.isfile(path):
+        return {}
+    last = ""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                if not _looks_assistant_entry(entry):
+                    continue
+                text = _extract_text(entry)
+                if text:
+                    last = text
+    except OSError:
+        return {}
+    return _normalize_gbg_relay(_extract_gbg_payload(last))
+
+
+def _extract_gbg_relay_from_tmux() -> dict[str, Any]:
+    tmux_session = _env("MESH_TMUX_SESSION")
+    if not tmux_session:
+        return {}
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-pt", tmux_session, "-S", "-120"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    return _normalize_gbg_relay(_extract_gbg_payload(result.stdout))
 
 
 def _send_cross_role_message(*, msg_type: str, content: str, metadata: dict[str, Any] | None = None) -> None:
@@ -232,14 +320,18 @@ def _handle_stop(hook_input: dict[str, Any]) -> None:
     transcript_path = str(
         hook_input.get("transcript_path") or _env("CLAUDE_TRANSCRIPT_PATH") or ""
     ).strip()
-    summary = _extract_summary_from_transcript(transcript_path)
-    if not summary:
-        summary = _capture_tmux_summary()
-    if summary:
+    relay = _extract_gbg_relay_from_transcript(transcript_path)
+    if not relay:
+        relay = _extract_gbg_relay_from_tmux()
+    if relay:
         _send_cross_role_message(
             msg_type="relay",
-            content=summary,
-            metadata={"source_role": _env("MESH_UI_ROLE"), "summary_source": "hook_stop"},
+            content=str(relay.get("message") or ""),
+            metadata={
+                "source_role": _env("MESH_UI_ROLE"),
+                "summary_source": "hook_stop",
+                "gbg": relay,
+            },
         )
     _release_turn()
     _emit_state("idle")

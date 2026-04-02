@@ -21,6 +21,47 @@ def test_extract_summary_from_transcript_reads_last_assistant_entry(tmp_path) ->
     assert hook._extract_summary_from_transcript(str(transcript)) == "Final answer"
 
 
+def test_extract_gbg_payload_parses_last_block() -> None:
+    text = (
+        "Risposta normale\n"
+        "<GBG>{\"actionable\":false}</GBG>\n"
+        "GBG: {\"actionable\":true,\"message\":\"handoff pulito\"}\n"
+    )
+    assert hook._extract_gbg_payload(text) == {
+        "actionable": True,
+        "message": "handoff pulito",
+    }
+
+
+def test_extract_gbg_payload_accepts_final_json_line_fallback() -> None:
+    text = (
+        "Risposta normale\n"
+        "{\"actionable\":true,\"message\":\"fallback pulito\"}\n"
+    )
+    assert hook._extract_gbg_payload(text) == {
+        "actionable": True,
+        "message": "fallback pulito",
+    }
+
+
+def test_extract_gbg_relay_from_transcript_requires_actionable_payload(tmp_path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "assistant", "message": "Ciao\n<GBG>{\"actionable\":false}</GBG>"}),
+                json.dumps({"type": "assistant", "message": "Ok\n<GBG>{\"actionable\":true,\"message\":\"passa al president\"}</GBG>"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
+        "actionable": True,
+        "message": "passa al president",
+    }
+
+
 def test_clean_summary_strips_terminal_noise() -> None:
     text = "❯ hi\n✻ Thinking...\n● Ready\n⎿ trace\nStop says: noop\n[mesh:boss] repo=x\n"
     assert hook._clean_summary(text) == "Ready"
@@ -50,8 +91,12 @@ def test_handle_stop_emits_relay_and_idle(monkeypatch: object) -> None:
     monkeypatch.setenv("MESH_ROUTER_SESSION_ID", "11111111-1111-4111-8111-111111111111")
     monkeypatch.setenv("MESH_RELAY_TARGET_ROLE", "president")
 
-    monkeypatch.setattr(hook, "_extract_summary_from_transcript", lambda path: "boss summary")
-    monkeypatch.setattr(hook, "_capture_tmux_summary", lambda: "")
+    monkeypatch.setattr(
+        hook,
+        "_extract_gbg_relay_from_transcript",
+        lambda path: {"actionable": True, "message": "boss summary"},
+    )
+    monkeypatch.setattr(hook, "_extract_gbg_relay_from_tmux", lambda: {})
     monkeypatch.setattr(hook, "_router_post", lambda path, body: calls.append((path, body.get("role", ""), body)))
 
     hook._handle_stop({"transcript_path": "/tmp/fake.jsonl"})

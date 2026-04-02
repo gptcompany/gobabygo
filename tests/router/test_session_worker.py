@@ -6,6 +6,7 @@ import json
 import os
 import shlex
 import subprocess
+from pathlib import Path
 import requests
 from unittest.mock import ANY, MagicMock, Mock, call, mock_open, patch
 
@@ -16,7 +17,9 @@ from src.router.session_worker import (
     SessionNotFoundError,
     SessionWorkerConfig,
     _build_claude_mesh_hook_settings,
+    _build_claude_gbg_command,
     _claude_router_hook_script_path,
+    _claude_command_path,
     _claude_settings_local_path,
     _capture_shows_activity,
     _capture_contains_prompt_text,
@@ -27,6 +30,7 @@ from src.router.session_worker import (
     _default_mesh_home,
     _detect_interactive_failure_screen,
     _discover_project_mcp_servers,
+    _ensure_claude_project_command,
     _ensure_claude_mesh_hook_settings,
     _format_inbound_notice,
     _last_prompt_line_has_content,
@@ -118,6 +122,23 @@ def test_ensure_claude_mesh_hook_settings_merges_existing_file(tmp_path) -> None
     ]
     assert "echo existing" in stop_commands
     assert any(_claude_router_hook_script_path() in command for command in stop_commands)
+
+
+def test_build_claude_gbg_command_mentions_structured_block() -> None:
+    content = _build_claude_gbg_command()
+    assert "/GBG" in content
+    assert "GBG: {\"actionable\":true,\"message\":\"...\"}" in content
+
+
+def test_ensure_claude_project_command_writes_command_file(tmp_path) -> None:
+    written = _ensure_claude_project_command(
+        str(tmp_path),
+        command_name="GBG",
+        content="hello\n",
+    )
+
+    assert written == _claude_command_path(str(tmp_path), "GBG")
+    assert Path(written).read_text(encoding="utf-8") == "hello\n"
 
 
 def test_should_auto_exit_on_success_requires_marker_as_standalone_output_line() -> None:
@@ -1043,6 +1064,7 @@ class TestStartUpterm:
     @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
     @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch("src.router.session_worker._ensure_claude_project_command", return_value=__file__)
     @patch("src.router.session_worker._ensure_claude_mesh_hook_settings")
     @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
     @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
@@ -1069,6 +1091,7 @@ class TestStartUpterm:
         mock_ensure_prompt_delivered: Mock,
         mock_wait_ready: Mock,
         mock_install_hooks: Mock,
+        mock_install_command: Mock,
         mock_tmux_new: Mock,
         mock_attach: Mock,
         mock_deliver: Mock,
@@ -1118,6 +1141,7 @@ class TestStartUpterm:
             "/media/sam/1TB/snake-game",
             mesh_home=_default_mesh_home(),
         )
+        mock_install_command.assert_called_once()
         mock_tmux_new.assert_called_once_with(
             "mesh-gemini-gemini-tbossrelay",
             "/media/sam/1TB/snake-game",
@@ -1201,6 +1225,7 @@ class TestStartUpterm:
     @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
     @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch("src.router.session_worker._ensure_claude_project_command", return_value=__file__)
     @patch("src.router.session_worker._ensure_claude_mesh_hook_settings")
     @patch.object(MeshSessionWorker, "_tmux_send_text")
     @patch.object(MeshSessionWorker, "_prepare_cli_runtime")
@@ -1217,6 +1242,7 @@ class TestStartUpterm:
         mock_prepare_cli_runtime: Mock,
         mock_send_text: Mock,
         mock_install_hooks: Mock,
+        mock_install_command: Mock,
         mock_tmux_new: Mock,
         mock_attach: Mock,
         mock_deliver: Mock,
@@ -1271,6 +1297,7 @@ class TestStartUpterm:
             "/media/sam/1TB/snake-game",
             mesh_home=_default_mesh_home(),
         )
+        mock_install_command.assert_called_once()
         mock_tmux_new.assert_called_once_with(
             "mesh-claude-work-claude-tbossclaude",
             "/media/sam/1TB/snake-game",
@@ -1288,6 +1315,7 @@ class TestStartUpterm:
     @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
     @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
     @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch("src.router.session_worker._ensure_claude_project_command", return_value=__file__)
     @patch("src.router.session_worker._ensure_claude_mesh_hook_settings")
     @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
     @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
@@ -1314,6 +1342,7 @@ class TestStartUpterm:
         mock_ensure_prompt_delivered: Mock,
         mock_wait_ready: Mock,
         mock_install_hooks: Mock,
+        mock_install_command: Mock,
         mock_tmux_new: Mock,
         mock_attach: Mock,
         mock_deliver: Mock,
@@ -1364,6 +1393,7 @@ class TestStartUpterm:
             "/media/sam/1TB/snake-game",
             mesh_home=_default_mesh_home(),
         )
+        mock_install_command.assert_called_once()
         mock_tmux_new.assert_called_once_with(
             "mesh-gemini-gemini-tpresidentrelay",
             "/media/sam/1TB/snake-game",

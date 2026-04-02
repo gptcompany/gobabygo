@@ -59,7 +59,7 @@ def test_emit_response_relay_sends_structured_envelope() -> None:
     assert envelope["target_role"] == "president"
 
 
-def test_deliver_group_messages_targets_tmux_with_proxy_prefix() -> None:
+def test_deliver_group_messages_targets_tmux_with_plain_text_for_non_boss() -> None:
     worker = _make_worker()
     with (
         patch.object(worker, "_list_group_messages", return_value=[
@@ -79,12 +79,12 @@ def test_deliver_group_messages_targets_tmux_with_proxy_prefix() -> None:
     ):
         after = worker._deliver_group_messages(
             session_id="11111111-1111-4111-8111-111111111111",
-            tmux_session="mesh-boss",
+            tmux_session="mesh-president",
             ui_group_id="snake-ui-1",
             after_seq=0,
-            ui_role="boss",
+            ui_role="president",
         )
 
     assert after == 3
     sent = mock_send_text.call_args.args[1]
-    assert sent.startswith("__mesh_inbound__:president:")
+    assert sent == "president summary"
