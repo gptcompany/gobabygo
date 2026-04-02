@@ -1154,6 +1154,7 @@ class TestStartUpterm:
         assert extra_env["MESH_UI_GROUP_ID"] == "snake-ui-boss-1"
         assert extra_env["MESH_UI_ROLE"] == "boss"
         assert extra_env["MESH_UI_REPO_NAME"] == "snake-game"
+        assert extra_env["MESH_BOSS_INBOX_LOG"].endswith("/snake-game/.mesh/boss_inbox.log")
         assert extra_env["MESH_RELAY_MODE"] == "claude_hooks"
         assert extra_env["MESH_RELAY_TARGET_ROLE"] == "president"
         assert extra_env["MESH_ROUTER_SESSION_ID"]
@@ -2568,7 +2569,7 @@ class TestDeliverInboundMessages:
         new_seq = worker._deliver_inbound_messages("sid", "tsess", 5)
         assert new_seq == 5
 
-    def test_boss_inbound_is_displayed_not_submitted(self) -> None:
+    def test_boss_inbound_is_logged_and_rings_bell_not_submitted(self) -> None:
         worker = _make_worker()
         worker._http = MagicMock()
         mock_resp = MagicMock()
@@ -2587,7 +2588,8 @@ class TestDeliverInboundMessages:
 
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
-            patch.object(worker, "_tmux_display_message") as mock_notice,
+            patch.object(worker, "_append_boss_inbox_notice") as mock_notice,
+            patch.object(worker, "_tmux_ring_bell") as mock_bell,
         ):
             new_seq = worker._deliver_inbound_messages("sid", "tsess", 9, ui_role="boss")
 
@@ -2595,9 +2597,10 @@ class TestDeliverInboundMessages:
         mock_send.assert_not_called()
         mock_notice.assert_called_once_with(
             "tsess",
-            _format_inbound_notice("reply from president", source_role="president"),
-            duration_ms=30000,
+            "reply from president",
+            source_role="president",
         )
+        mock_bell.assert_called_once_with("tsess")
 
     def test_inbound_relay_messages_are_skipped_because_group_delivery_handles_them(self) -> None:
         worker = _make_worker()
@@ -2621,13 +2624,15 @@ class TestDeliverInboundMessages:
 
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
-            patch.object(worker, "_tmux_display_message") as mock_notice,
+            patch.object(worker, "_append_boss_inbox_notice") as mock_notice,
+            patch.object(worker, "_tmux_ring_bell") as mock_bell,
         ):
             new_seq = worker._deliver_inbound_messages("sid", "tsess", 11, ui_role="boss")
 
         assert new_seq == 12
         mock_send.assert_not_called()
         mock_notice.assert_not_called()
+        mock_bell.assert_not_called()
 
     def test_list_session_messages_raises_session_not_found(self) -> None:
         worker = _make_worker()

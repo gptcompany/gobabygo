@@ -168,7 +168,11 @@ def _extract_gbg_payload(text: str) -> dict[str, Any]:
     candidates: list[tuple[int, str]] = []
     for match in re.finditer(r"<GBG>\s*(\{.*?\})\s*</GBG>", body, flags=re.DOTALL):
         candidates.append((match.end(), match.group(1).strip()))
-    for match in re.finditer(r"^\s*GBG:\s*(\{.*\})\s*$", body, flags=re.MULTILINE):
+    for match in re.finditer(
+        r"^\s*(?:[●*+-]\s*)?(?:[`'\"])?\s*GBG:\s*(\{.*\})\s*(?:[`'\"])?\s*$",
+        body,
+        flags=re.MULTILINE,
+    ):
         candidates.append((match.end(), match.group(1).strip()))
     if candidates:
         _, raw = max(candidates, key=lambda item: item[0])
@@ -271,6 +275,17 @@ def _extract_gbg_relay_from_transcript(path: str) -> dict[str, Any]:
         if re.match(r"(?i)^/gbg(?:\s|$)", stripped):
             last_gbg_user_index = index
             last_gbg_user_text = stripped
+            break
+        command_name = ""
+        command_args = ""
+        if "<command-name>" in text and "</command-name>" in text:
+            name_match = re.search(r"<command-name>\s*(.*?)\s*</command-name>", text, flags=re.DOTALL | re.IGNORECASE)
+            args_match = re.search(r"<command-args>\s*(.*?)\s*</command-args>", text, flags=re.DOTALL | re.IGNORECASE)
+            command_name = str(name_match.group(1) if name_match else "").strip()
+            command_args = str(args_match.group(1) if args_match else "").strip()
+        if command_name.lower() == "/gbg":
+            last_gbg_user_index = index
+            last_gbg_user_text = f"/gbg {command_args}".strip()
             break
 
     if last_gbg_user_index >= 0:

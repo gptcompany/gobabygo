@@ -42,6 +42,14 @@ def test_extract_gbg_payload_accepts_final_json_line_fallback() -> None:
     }
 
 
+def test_extract_gbg_payload_accepts_backticked_and_bulleted_gbg_line() -> None:
+    text = "● `GBG: {\"message\":\"fallback pulito\",\"target\":\"boss\"}`\n"
+    assert hook._extract_gbg_payload(text) == {
+        "message": "fallback pulito",
+        "target": "boss",
+    }
+
+
 def test_extract_gbg_relay_from_transcript_uses_explicit_gbg_text(tmp_path) -> None:
     transcript = tmp_path / "session.jsonl"
     transcript.write_text(
@@ -57,6 +65,45 @@ def test_extract_gbg_relay_from_transcript_uses_explicit_gbg_text(tmp_path) -> N
 
     assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
         "message": "passa al president",
+    }
+
+
+def test_extract_gbg_relay_from_transcript_reads_command_name_and_args_format(tmp_path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": "<command-message>gbg</command-message>\n<command-name>/gbg</command-name>\n<command-args>boss ciao pulito</command-args>",
+                    }
+                ),
+                json.dumps({"type": "assistant", "message": "Ack breve"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
+        "message": "ciao pulito",
+        "target": "boss",
+    }
+
+
+def test_extract_gbg_relay_from_transcript_falls_back_to_backticked_assistant_payload(tmp_path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "assistant", "message": "`GBG: {\"message\":\"boss ciao pulito\"}`"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
+        "message": "boss ciao pulito",
     }
 
 

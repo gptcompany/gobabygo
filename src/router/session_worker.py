@@ -1049,6 +1049,7 @@ class MeshSessionWorker:
                     "MESH_UI_GROUP_ID": ui_group_id,
                     "MESH_UI_ROLE": ui_role,
                     "MESH_UI_REPO_NAME": os.path.basename(str(task.get("repo") or work_dir).rstrip("/")),
+                    "MESH_BOSS_INBOX_LOG": os.path.join(work_dir, ".mesh", "boss_inbox.log"),
                     "MESH_RELAY_MODE": str(relay.get("mode") or "").strip(),
                     "MESH_RELAY_TARGET_ROLE": str(relay.get("target_role") or "").strip(),
                     "MESH_ROUTER_URL": self.config.router_url,
@@ -1589,6 +1590,21 @@ class MeshSessionWorker:
             text=True,
         )
 
+    def _tmux_environment_value(self, session_name: str, key: str) -> str:
+        proc = subprocess.run(
+            [self.config.tmux_bin, "show-environment", "-t", session_name, key],
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return ""
+        raw = str(proc.stdout or "").strip()
+        if not raw or raw.startswith("-"):
+            return ""
+        if raw.startswith(f"{key}="):
+            return raw.split("=", 1)[1].strip()
+        return ""
+
     def _tmux_pane_tty(self, session_name: str) -> str:
         target = f"{session_name}:0.0"
         proc = subprocess.run(
@@ -1605,6 +1621,25 @@ class MeshSessionWorker:
             text=True,
         )
         return str(proc.stdout or "").strip()
+
+    def _tmux_ring_bell(self, session_name: str) -> None:
+        tty_path = self._tmux_pane_tty(session_name)
+        if not tty_path:
+            raise subprocess.SubprocessError(f"missing pane tty for {session_name}")
+        with open(tty_path, "w", encoding="utf-8", errors="ignore") as fh:
+            fh.write("\a")
+
+    def _append_boss_inbox_notice(self, session_name: str, message: str, *, source_role: str = "") -> str:
+        log_path = self._tmux_environment_value(session_name, "MESH_BOSS_INBOX_LOG")
+        if not log_path:
+            raise subprocess.SubprocessError(f"missing MESH_BOSS_INBOX_LOG for {session_name}")
+        path = Path(log_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rendered = _format_inbound_notice(message, source_role=source_role)
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{stamp}] {rendered}\n")
+        return str(path)
 
     def _tmux_render_notice(self, session_name: str, message: str) -> None:
         tty_path = self._tmux_pane_tty(session_name)
@@ -2352,11 +2387,12 @@ class MeshSessionWorker:
             source_role = str(envelope.get("sender_role") or metadata.get("source_role") or msg.get("role") or "").strip()
             try:
                 if ui_role == "boss":
-                    self._tmux_display_message(
+                    self._append_boss_inbox_notice(
                         tmux_session,
-                        _format_inbound_notice(content, source_role=source_role),
-                        duration_ms=30000,
+                        content,
+                        source_role=source_role,
                     )
+                    self._tmux_ring_bell(tmux_session)
                 else:
                     self._tmux_send_text(
                         tmux_session,
@@ -2424,11 +2460,12 @@ class MeshSessionWorker:
                 current_role = str(ui_role or "").strip()
                 source_role = str((metadata or {}).get("source_role") or msg.get("role") or "").strip()
                 if current_role == "boss" and source_role and source_role != "boss":
-                    self._tmux_display_message(
+                    self._append_boss_inbox_notice(
                         tmux_session,
-                        _format_inbound_notice(content, source_role=source_role),
-                        duration_ms=30000,
+                        content,
+                        source_role=source_role,
                     )
+                    self._tmux_ring_bell(tmux_session)
                 else:
                     self._tmux_send_text(tmux_session, content)
             except subprocess.SubprocessError as e:
