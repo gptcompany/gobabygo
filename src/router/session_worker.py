@@ -22,7 +22,9 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import requests
 import yaml
@@ -71,6 +73,108 @@ def _mesh_script_path(mesh_home: str | None = None) -> str:
 def _relay_proxy_script_path(mesh_home: str | None = None) -> str:
     base = (mesh_home or "").strip() or os.environ.get("MESH_HOME", "").strip() or _default_mesh_home()
     return os.path.join(base, "scripts", "mesh_prompt_relay_proxy.py")
+
+
+def _claude_router_hook_script_path(mesh_home: str | None = None) -> str:
+    base = (mesh_home or "").strip() or os.environ.get("MESH_HOME", "").strip() or _default_mesh_home()
+    return os.path.join(base, "scripts", "mesh_claude_router_hook.py")
+
+
+def _claude_settings_local_path(work_dir: str) -> str:
+    return os.path.join(work_dir, ".claude", "settings.local.json")
+
+
+def _build_claude_mesh_hook_settings(mesh_home: str | None = None) -> dict[str, object]:
+    hook_script = _claude_router_hook_script_path(mesh_home)
+    hook_python = shlex.quote(sys.executable)
+    hook_path = shlex.quote(hook_script)
+
+    def _hook_entry(event_name: str, timeout: int) -> dict[str, object]:
+        return {
+            "matcher": "*",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": f"{hook_python} {hook_path} {shlex.quote(event_name)}",
+                    "timeout": timeout,
+                }
+            ],
+        }
+
+    return {
+        "hooks": {
+            "UserPromptSubmit": [_hook_entry("UserPromptSubmit", 3)],
+            "Stop": [_hook_entry("Stop", 5)],
+            "Notification": [_hook_entry("Notification", 3)],
+        }
+    }
+
+
+def _merge_claude_mesh_hook_settings(
+    existing: dict[str, object] | None,
+    *,
+    mesh_home: str | None = None,
+) -> dict[str, object]:
+    merged = dict(existing or {})
+    hooks = merged.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+        merged["hooks"] = hooks
+
+    desired = _build_claude_mesh_hook_settings(mesh_home).get("hooks", {})
+    if not isinstance(desired, dict):
+        return merged
+
+    for event_name, desired_entries in desired.items():
+        if not isinstance(desired_entries, list):
+            continue
+        current_entries = hooks.get(event_name)
+        if not isinstance(current_entries, list):
+            current_entries = []
+            hooks[event_name] = current_entries
+        existing_commands = {
+            str(hook.get("command") or "").strip()
+            for entry in current_entries
+            if isinstance(entry, dict)
+            for hook in entry.get("hooks", [])
+            if isinstance(hook, dict)
+        }
+        for entry in desired_entries:
+            if not isinstance(entry, dict):
+                continue
+            hook_defs = entry.get("hooks", [])
+            if not isinstance(hook_defs, list):
+                continue
+            entry_commands = [
+                str(hook.get("command") or "").strip()
+                for hook in hook_defs
+                if isinstance(hook, dict)
+            ]
+            if any(command and command in existing_commands for command in entry_commands):
+                continue
+            current_entries.append(entry)
+            existing_commands.update(command for command in entry_commands if command)
+    return merged
+
+
+def _ensure_claude_mesh_hook_settings(work_dir: str, *, mesh_home: str | None = None) -> str | None:
+    settings_path = Path(_claude_settings_local_path(work_dir))
+    try:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        existing: dict[str, object] = {}
+        if settings_path.is_file():
+            with settings_path.open(encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                existing = loaded
+        merged = _merge_claude_mesh_hook_settings(existing, mesh_home=mesh_home)
+        with settings_path.open("w", encoding="utf-8") as fh:
+            json.dump(merged, fh, indent=2, ensure_ascii=True)
+            fh.write("\n")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to install Claude mesh hook settings in %s: %s", work_dir, exc)
+        return None
+    return str(settings_path)
 
 
 def _parse_upterm_ssh_url(output: str) -> str | None:
@@ -495,6 +599,13 @@ def _extract_clean_response(text: str, *, max_chars: int = 1200) -> str:
     return summary[-max(1, int(max_chars)) :]
 
 
+def _relay_mode_uses_claude_hooks(relay: dict[str, object], cli_type: str) -> bool:
+    mode = str(relay.get("mode", "")).strip()
+    if mode != "claude_hooks":
+        return False
+    return str(cli_type or "").strip() in {"claude", "gemini"}
+
+
 @dataclass
 class SessionWorkerConfig:
     """Configuration for a tmux-backed interactive session worker."""
@@ -789,6 +900,8 @@ class MeshSessionWorker:
         success_file_min_mtime_ns = time.time_ns() if success_file_path else None
         exit_command = str(payload.get("exit_command") or "/exit").strip() or "/exit"
         cli_args = _coerce_string_list(payload.get("cli_args"))
+        relay_uses_claude_hooks = _relay_mode_uses_claude_hooks(relay, self.config.cli_type)
+        preallocated_session_id = str(uuid.uuid4())
 
         logger.info("Starting interactive task %s (%s)", task_id, task.get("title", "untitled"))
 
@@ -834,7 +947,9 @@ class MeshSessionWorker:
                 cli_args = [*cli_args, "--append-system-prompt", prompt]
             if cli_args:
                 cmd_base = " ".join([cmd_base, *[shlex.quote(arg) for arg in cli_args]])
-            if relay:
+            if relay_uses_claude_hooks:
+                _ensure_claude_mesh_hook_settings(work_dir, mesh_home=_default_mesh_home())
+            elif relay:
                 cmd_base = _wrap_cli_command_with_relay_proxy(
                     cmd_base,
                     relay=relay,
@@ -860,13 +975,26 @@ class MeshSessionWorker:
                     "MESH_UI_GROUP_ID": ui_group_id,
                     "MESH_UI_ROLE": ui_role,
                     "MESH_UI_REPO_NAME": os.path.basename(str(task.get("repo") or work_dir).rstrip("/")),
+                    "MESH_RELAY_MODE": str(relay.get("mode") or "").strip(),
+                    "MESH_RELAY_TARGET_ROLE": str(relay.get("target_role") or "").strip(),
+                    "MESH_ROUTER_URL": self.config.router_url,
+                    "MESH_AUTH_TOKEN": self.config.auth_token or "",
+                    "MESH_ROUTER_SESSION_ID": preallocated_session_id,
+                    "MESH_TMUX_SESSION": tmux_session_name,
                 },
             )
             time.sleep(max(0.0, float(self.config.startup_post_launch_settle_s)))
 
             attach_meta, upterm_proc = self._create_attach_handle(tmux_session_name)
 
-            session_id = self._open_session(task, tmux_session_name, work_dir, target_account, attach_meta)
+            session_id = self._open_session(
+                task,
+                tmux_session_name,
+                work_dir,
+                target_account,
+                attach_meta,
+                session_id=preallocated_session_id,
+            )
             self._send_session_message(
                 session_id,
                 direction="system",
@@ -991,7 +1119,7 @@ class MeshSessionWorker:
                     last_emitted_capture = self._emit_cli_output_if_changed(
                         session_id, captured, last_emitted_capture
                     )
-                    if ui_group_id and ui_role:
+                    if ui_group_id and ui_role and not relay_uses_claude_hooks:
                         new_state = _detect_role_state(captured)
                         if new_state != last_role_state:
                             self._emit_state_change(
@@ -1802,6 +1930,7 @@ class MeshSessionWorker:
         work_dir: str,
         target_account: str,
         attach_meta: dict | None = None,
+        session_id: str | None = None,
     ) -> str:
         payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
         metadata: dict = {
@@ -1826,6 +1955,8 @@ class MeshSessionWorker:
             "task_id": task["task_id"],
             "metadata": metadata,
         }
+        if session_id:
+            body["session_id"] = session_id
         resp = self._http.post(
             f"{self.config.router_url}/sessions/open",
             json=body,

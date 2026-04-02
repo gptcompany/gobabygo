@@ -9,7 +9,7 @@ roles:
     provider: gemini
     relay:
       enabled: true
-      mode: router_relay
+      mode: claude_hooks
       target_role: president
       ignore_slash_commands: true
       passthrough_to_child: true
@@ -18,7 +18,7 @@ roles:
     provider: gemini
     relay:
       enabled: true
-      mode: router_relay
+      mode: claude_hooks
       target_role: boss
       ignore_slash_commands: true
       passthrough_to_child: true

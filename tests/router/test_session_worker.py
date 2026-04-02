@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import requests
-from unittest.mock import MagicMock, Mock, call, mock_open, patch
+from unittest.mock import ANY, MagicMock, Mock, call, mock_open, patch
 
 import pytest
 
@@ -14,20 +15,29 @@ from src.router.session_worker import (
     MeshSessionWorker,
     SessionNotFoundError,
     SessionWorkerConfig,
+    _build_claude_mesh_hook_settings,
+    _claude_router_hook_script_path,
+    _claude_settings_local_path,
     _capture_shows_activity,
     _capture_contains_prompt_text,
     _coerce_bool,
+    _coerce_relay_config,
     _coerce_string_list,
     _compute_output_emit,
+    _default_mesh_home,
     _detect_interactive_failure_screen,
     _discover_project_mcp_servers,
+    _ensure_claude_mesh_hook_settings,
     _last_prompt_line_has_content,
     _looks_like_start_screen,
+    _mesh_script_path,
     _parse_upterm_ssh_url,
     _prompt_is_idle,
+    _relay_proxy_script_path,
     _sanitize_session_name,
     _success_file_matches,
     _should_auto_exit_on_success,
+    _wrap_cli_command_with_relay_proxy,
 )
 
 
@@ -71,6 +81,42 @@ def test_success_file_matches_accepts_updated_artifact_after_cutoff(tmp_path) ->
         )
         is True
     )
+
+
+def test_build_claude_mesh_hook_settings_contains_router_hook_commands() -> None:
+    hooks = _build_claude_mesh_hook_settings()
+    stop_entries = hooks["hooks"]["Stop"]
+    command = stop_entries[0]["hooks"][0]["command"]
+    assert _claude_router_hook_script_path() in command
+    assert "Stop" in command
+
+
+def test_ensure_claude_mesh_hook_settings_merges_existing_file(tmp_path) -> None:
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    settings_path = claude_dir / "settings.local.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "env": {"FOO": "bar"},
+                "hooks": {"Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "echo existing"}]}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    written = _ensure_claude_mesh_hook_settings(str(tmp_path))
+
+    assert written == _claude_settings_local_path(str(tmp_path))
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert payload["env"]["FOO"] == "bar"
+    stop_commands = [
+        hook["command"]
+        for entry in payload["hooks"]["Stop"]
+        for hook in entry["hooks"]
+    ]
+    assert "echo existing" in stop_commands
+    assert any(_claude_router_hook_script_path() in command for command in stop_commands)
 
 
 def test_should_auto_exit_on_success_requires_marker_as_standalone_output_line() -> None:
@@ -212,6 +258,27 @@ def test_build_completion_summary_only_for_ui_role_tasks() -> None:
         "artifacts": ["plan.md"],
         "target_roles": ["president", "boss"],
     }
+
+
+def test_build_completion_summary_for_worker_routes_to_lead() -> None:
+    worker = _make_worker()
+
+    ui = worker._build_completion_summary(
+        {
+            "task_id": "task-3",
+            "role": "worker-gemini",
+            "payload": {
+                "ui_role_session": True,
+                "ui_role": "worker-gemini",
+                "ui_group_id": "snake-ui-1",
+            },
+        },
+        status="completed",
+        final_snapshot="done",
+    )
+
+    assert ui is not None
+    assert ui["target_roles"] == ["lead"]
 
 
 def test_emit_completion_summary_routes_to_president_peer() -> None:
@@ -865,16 +932,22 @@ class TestStartUpterm:
     @patch.object(MeshSessionWorker, "_tmux_new_session")
     @patch.object(MeshSessionWorker, "_wait_for_cli_ready")
     @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_send_session_message")
     @patch.object(MeshSessionWorker, "_open_session", return_value="sid-codex-bootstrap")
     @patch.object(MeshSessionWorker, "_close_session")
     @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_prepare_cli_runtime")
+    @patch("src.router.session_worker.os.makedirs")
     @patch("src.router.session_worker.time.sleep")
     def test_execute_task_bootstraps_codex_prompt_via_stdin(
         self,
         mock_sleep: Mock,
+        mock_makedirs: Mock,
+        mock_prepare_cli_runtime: Mock,
         mock_report_complete: Mock,
         mock_close: Mock,
         mock_open: Mock,
+        mock_send_session_message: Mock,
         mock_send_text: Mock,
         mock_wait_ready: Mock,
         mock_tmux_new: Mock,
@@ -926,8 +999,304 @@ class TestStartUpterm:
             "/media/sam/1TB/snake-game",
             "ccs codex",
             initial_stdin="You are worker-codex. Do not exit.",
+            extra_env=ANY,
         )
+        extra_env = mock_tmux_new.call_args.kwargs["extra_env"]
+        assert extra_env["MESH_UI_GROUP_ID"] == "snake-ui-codex-1"
+        assert extra_env["MESH_UI_ROLE"] == "worker-codex"
+        assert extra_env["MESH_UI_REPO_NAME"] == "snake-game"
+        assert extra_env["MESH_RELAY_MODE"] == ""
+        assert extra_env["MESH_RELAY_TARGET_ROLE"] == ""
+        assert extra_env["MESH_ROUTER_SESSION_ID"]
         mock_wait_ready.assert_not_called()
+        mock_send_text.assert_not_called()
+        assert any(
+            call.kwargs.get("direction") == "system"
+            and call.kwargs.get("role") == "bootstrap"
+            and call.kwargs.get("metadata", {}).get("source") == "task.payload.prompt"
+            for call in mock_send_session_message.call_args_list
+        )
+        mock_report_complete.assert_called_once()
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch("src.router.session_worker._ensure_claude_mesh_hook_settings")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
+    @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_send_session_message")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-boss")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_prepare_cli_runtime")
+    @patch("src.router.session_worker.os.makedirs")
+    @patch("src.router.session_worker.time.sleep")
+    def test_execute_task_configures_boss_for_claude_hooks(
+        self,
+        mock_sleep: Mock,
+        mock_makedirs: Mock,
+        mock_prepare_cli_runtime: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_session_message: Mock,
+        mock_send_text: Mock,
+        mock_ensure_prompt_submitted: Mock,
+        mock_ensure_prompt_delivered: Mock,
+        mock_wait_ready: Mock,
+        mock_install_hooks: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker = _make_worker()
+        http = MagicMock()
+        worker._http = http
+        ack_resp = MagicMock(status_code=200)
+        ok_resp = MagicMock(status_code=200)
+        ok_resp.json.return_value = {"messages": []}
+        http.post.return_value = ack_resp
+        http.get.return_value = ok_resp
+        worker.config.cli_type = "gemini"
+        worker.config.cli_command = "ccs gemini"
+        worker._running = True
+
+        task = {
+            "task_id": "t-boss-relay",
+            "execution_mode": "session",
+            "repo": "/media/sam/1TB/snake-game",
+            "role": "boss",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "You are boss. Do not exit.",
+                "cli_args": ["--max-turns", "6"],
+                "ui_role_session": True,
+                "ui_role": "boss",
+                "ui_group_id": "snake-ui-boss-1",
+                "working_dir": "/media/sam/1TB/snake-game",
+                "relay": {
+                    "enabled": True,
+                    "mode": "claude_hooks",
+                    "target_role": "president",
+                    "ignore_slash_commands": True,
+                    "message_prefix": "[boss relay] ",
+                    "passthrough_to_child": False,
+                    "local_ack": "Inoltrato a president.",
+                },
+            },
+        }
+
+        worker._execute_task(task)
+
+        expected_child = "ccs gemini --max-turns 6 --append-system-prompt 'You are boss. Do not exit.'"
+        mock_install_hooks.assert_called_once_with(
+            "/media/sam/1TB/snake-game",
+            mesh_home=_default_mesh_home(),
+        )
+        mock_tmux_new.assert_called_once_with(
+            "mesh-gemini-gemini-tbossrelay",
+            "/media/sam/1TB/snake-game",
+            expected_child,
+            initial_stdin=None,
+            extra_env=ANY,
+        )
+        extra_env = mock_tmux_new.call_args.kwargs["extra_env"]
+        assert extra_env["MESH_UI_GROUP_ID"] == "snake-ui-boss-1"
+        assert extra_env["MESH_UI_ROLE"] == "boss"
+        assert extra_env["MESH_UI_REPO_NAME"] == "snake-game"
+        assert extra_env["MESH_RELAY_MODE"] == "claude_hooks"
+        assert extra_env["MESH_RELAY_TARGET_ROLE"] == "president"
+        assert extra_env["MESH_ROUTER_SESSION_ID"]
+        assert extra_env["MESH_TMUX_SESSION"] == "mesh-gemini-gemini-tbossrelay"
+        mock_send_text.assert_not_called()
+        mock_report_complete.assert_called_once()
+
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_emit_completion_summary", return_value={})
+    @patch.object(MeshSessionWorker, "_send_session_message")
+    @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch("src.router.session_worker._ensure_claude_mesh_hook_settings")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_prepare_cli_runtime")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-claude-boss")
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch("src.router.session_worker.os.makedirs")
+    @patch("src.router.session_worker.time.sleep")
+    def test_execute_task_configures_claude_boss_for_claude_hooks(
+        self,
+        mock_sleep: Mock,
+        mock_makedirs: Mock,
+        mock_has: Mock,
+        mock_open: Mock,
+        mock_prepare_cli_runtime: Mock,
+        mock_send_text: Mock,
+        mock_install_hooks: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_send_session_message: Mock,
+        mock_emit_completion_summary: Mock,
+        mock_close_session: Mock,
+        mock_report_failure: Mock,
+        mock_report_complete: Mock,
+    ) -> None:
+        worker = _make_worker()
+        http = MagicMock()
+        worker._http = http
+        ack_resp = MagicMock(status_code=200)
+        ok_resp = MagicMock(status_code=200)
+        ok_resp.json.return_value = {"messages": []}
+        http.post.return_value = ack_resp
+        http.get.return_value = ok_resp
+        worker.config.cli_type = "claude"
+        worker.config.cli_command = "ccs work-claude"
+        worker._running = True
+
+        task = {
+            "task_id": "t-boss-claude",
+            "execution_mode": "session",
+            "repo": "/media/sam/1TB/snake-game",
+            "role": "boss",
+            "target_account": "work-claude",
+            "payload": {
+                "prompt": "You are boss. Do not exit.",
+                "cli_args": ["--max-turns", "6"],
+                "ui_role_session": True,
+                "ui_role": "boss",
+                "ui_group_id": "snake-ui-boss-2",
+                "working_dir": "/media/sam/1TB/snake-game",
+                "relay": {
+                    "enabled": True,
+                    "mode": "claude_hooks",
+                    "target_role": "president",
+                    "ignore_slash_commands": True,
+                    "message_prefix": "[boss relay] ",
+                    "passthrough_to_child": False,
+                    "local_ack": "Inoltrato a president.",
+                },
+            },
+        }
+
+        worker._execute_task(task)
+
+        expected_child = "ccs work-claude --max-turns 6 --append-system-prompt 'You are boss. Do not exit.'"
+        mock_install_hooks.assert_called_once_with(
+            "/media/sam/1TB/snake-game",
+            mesh_home=_default_mesh_home(),
+        )
+        mock_tmux_new.assert_called_once_with(
+            "mesh-claude-work-claude-tbossclaude",
+            "/media/sam/1TB/snake-game",
+            expected_child,
+            initial_stdin=None,
+            extra_env=ANY,
+        )
+        extra_env = mock_tmux_new.call_args.kwargs["extra_env"]
+        assert extra_env["MESH_RELAY_MODE"] == "claude_hooks"
+        assert extra_env["MESH_RELAY_TARGET_ROLE"] == "president"
+        mock_report_complete.assert_called_once()
+
+    @patch("src.router.session_worker._load_role_relay_from_mapping")
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=0)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch("src.router.session_worker._ensure_claude_mesh_hook_settings")
+    @patch.object(MeshSessionWorker, "_wait_for_cli_ready", return_value=True)
+    @patch.object(MeshSessionWorker, "_ensure_prompt_delivered")
+    @patch.object(MeshSessionWorker, "_ensure_prompt_submitted")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_send_session_message")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-president")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_prepare_cli_runtime")
+    @patch("src.router.session_worker.os.makedirs")
+    @patch("src.router.session_worker.time.sleep")
+    def test_execute_task_configures_president_for_claude_hooks(
+        self,
+        mock_sleep: Mock,
+        mock_makedirs: Mock,
+        mock_prepare_cli_runtime: Mock,
+        mock_report_complete: Mock,
+        mock_close: Mock,
+        mock_open: Mock,
+        mock_send_session_message: Mock,
+        mock_send_text: Mock,
+        mock_ensure_prompt_submitted: Mock,
+        mock_ensure_prompt_delivered: Mock,
+        mock_wait_ready: Mock,
+        mock_install_hooks: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_deliver: Mock,
+        mock_has: Mock,
+        mock_load_relay: Mock,
+    ) -> None:
+        worker = _make_worker()
+        http = MagicMock()
+        worker._http = http
+        ack_resp = MagicMock(status_code=200)
+        ok_resp = MagicMock(status_code=200)
+        ok_resp.json.return_value = {"messages": []}
+        http.post.return_value = ack_resp
+        http.get.return_value = ok_resp
+        worker.config.cli_type = "gemini"
+        worker.config.cli_command = "ccs gemini"
+        worker._running = True
+        relay = {
+            "enabled": True,
+            "mode": "claude_hooks",
+            "target_role": "boss",
+            "ignore_slash_commands": True,
+            "message_prefix": "[president summary] ",
+            "passthrough_to_child": True,
+        }
+        mock_load_relay.return_value = relay
+
+        task = {
+            "task_id": "t-president-relay",
+            "execution_mode": "session",
+            "repo": "/media/sam/1TB/snake-game",
+            "role": "president",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "You are president. Do not exit.",
+                "cli_args": ["--max-turns", "6"],
+                "ui_role_session": True,
+                "ui_role": "president",
+                "ui_group_id": "snake-ui-president-1",
+                "working_dir": "/media/sam/1TB/snake-game",
+            },
+        }
+
+        worker._execute_task(task)
+
+        expected_child = "ccs gemini --max-turns 6 --append-system-prompt 'You are president. Do not exit.'"
+        mock_install_hooks.assert_called_once_with(
+            "/media/sam/1TB/snake-game",
+            mesh_home=_default_mesh_home(),
+        )
+        mock_tmux_new.assert_called_once_with(
+            "mesh-gemini-gemini-tpresidentrelay",
+            "/media/sam/1TB/snake-game",
+            expected_child,
+            initial_stdin=None,
+            extra_env=ANY,
+        )
+        extra_env = mock_tmux_new.call_args.kwargs["extra_env"]
+        assert extra_env["MESH_RELAY_MODE"] == "claude_hooks"
+        assert extra_env["MESH_RELAY_TARGET_ROLE"] == "boss"
         mock_send_text.assert_not_called()
         mock_report_complete.assert_called_once()
 
@@ -1445,8 +1814,66 @@ class TestAttachCleanupInExecuteTask:
         worker._execute_task(task)
 
         mock_kill_session.assert_called_once_with("mesh-gemini-gemini-tretry")
+
+    @patch.object(MeshSessionWorker, "_tmux_has_session", side_effect=[False, True, False])
+    @patch.object(
+        MeshSessionWorker,
+        "_tmux_capture_pane",
+        return_value='Welcome back gpt!\nTips for getting started\n❯ Try "write a test for <filepath>"',
+    )
+    @patch.object(MeshSessionWorker, "_deliver_inbound_messages", return_value=1)
+    @patch.object(MeshSessionWorker, "_emit_cli_output_if_changed", side_effect=lambda sid, cur, prev: prev)
+    @patch.object(MeshSessionWorker, "_create_attach_handle", return_value=(None, None))
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch.object(MeshSessionWorker, "_tmux_send_text")
+    @patch.object(MeshSessionWorker, "_open_session", return_value="sid-gemini")
+    @patch.object(MeshSessionWorker, "_close_session")
+    @patch.object(MeshSessionWorker, "_emit_completion_summary", return_value={})
+    @patch.object(MeshSessionWorker, "_send_session_message")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch("src.router.session_worker.os.makedirs")
+    @patch("src.router.session_worker.time.sleep")
+    def test_non_codex_system_prompt_is_not_resent_after_bus_activity(
+        self,
+        mock_sleep: Mock,
+        mock_makedirs: Mock,
+        mock_report_complete: Mock,
+        mock_send_session_message: Mock,
+        mock_emit_completion_summary: Mock,
+        mock_close_session: Mock,
+        mock_open_session: Mock,
+        mock_send_text: Mock,
+        mock_tmux_new: Mock,
+        mock_attach: Mock,
+        mock_emit_output: Mock,
+        mock_deliver: Mock,
+        mock_capture: Mock,
+        mock_has: Mock,
+    ) -> None:
+        worker, http = self._setup_worker()
+        worker.config.cli_type = "gemini"
+        worker.config.cli_command = "ccs gemini"
+
+        task = {
+            "task_id": "t-no-resend",
+            "execution_mode": "session",
+            "repo": "/media/sam/1TB/snake-game",
+            "role": "boss",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "You are boss. Relay to president.",
+                "ui_role_session": True,
+                "ui_role": "boss",
+                "ui_group_id": "snake-ui-1",
+                "working_dir": "/media/sam/1TB/snake-game",
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_send_text.assert_not_called()
+        mock_report_complete.assert_called_once()
         mock_tmux_new.assert_called_once()
-        mock_complete.assert_called_once()
 
     @patch.object(MeshSessionWorker, "_tmux_has_session", return_value=False)
     @patch.object(MeshSessionWorker, "_tmux_capture_pane", return_value="")
@@ -2143,6 +2570,39 @@ class TestDeliverInboundMessages:
 
 
 class TestTmuxOperations:
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_tmux_new_session_exports_mesh_home_and_scripts_path(self, mock_run: Mock) -> None:
+        worker = _make_worker()
+
+        worker._tmux_new_session("mysess", "/media/sam/1TB/demo", "ccs gemini")
+
+        args = mock_run.call_args[0][0]
+        assert args[:7] == ["tmux", "new-session", "-d", "-s", "mysess", "-c", "/media/sam/1TB/demo"]
+        launch_command = args[-1]
+        assert f"export MESH_HOME={_default_mesh_home()};" in launch_command
+        assert f"export PATH={os.path.join(_default_mesh_home(), 'scripts')}:$PATH;" in launch_command
+        assert launch_command.endswith("ccs gemini")
+
+    @patch("src.router.session_worker.subprocess.run")
+    def test_tmux_new_session_exports_ui_context(self, mock_run: Mock) -> None:
+        worker = _make_worker()
+
+        worker._tmux_new_session(
+            "mysess",
+            "/media/sam/1TB/demo",
+            "ccs gemini",
+            extra_env={"MESH_UI_GROUP_ID": "demo-ui-1", "MESH_UI_ROLE": "boss"},
+        )
+
+        launch_command = mock_run.call_args_list[0][0][0][-1]
+        assert "export MESH_UI_GROUP_ID=demo-ui-1;" in launch_command
+        assert "export MESH_UI_ROLE=boss;" in launch_command
+
+    def test_boss_hook_settings_path_points_to_control_repo(self) -> None:
+        assert _mesh_script_path().endswith("scripts/mesh")
+        assert _relay_proxy_script_path().endswith("scripts/mesh_prompt_relay_proxy.py")
+        assert _claude_router_hook_script_path().endswith("scripts/mesh_claude_router_hook.py")
 
     @patch("src.router.session_worker.time.sleep")
     @patch("src.router.session_worker.subprocess.run")
