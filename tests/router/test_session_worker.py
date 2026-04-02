@@ -127,7 +127,8 @@ def test_ensure_claude_mesh_hook_settings_merges_existing_file(tmp_path) -> None
 def test_build_claude_gbg_command_mentions_structured_block() -> None:
     content = _build_claude_gbg_command()
     assert "/GBG" in content
-    assert "GBG: {\"actionable\":true,\"message\":\"...\"}" in content
+    assert "GBG: {\"message\":\"...\"}" in content
+    assert "Route your last useful assistant response to the default target." in content
 
 
 def test_ensure_claude_project_command_writes_command_file(tmp_path) -> None:

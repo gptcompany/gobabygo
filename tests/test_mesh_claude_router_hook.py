@@ -24,11 +24,10 @@ def test_extract_summary_from_transcript_reads_last_assistant_entry(tmp_path) ->
 def test_extract_gbg_payload_parses_last_block() -> None:
     text = (
         "Risposta normale\n"
-        "<GBG>{\"actionable\":false}</GBG>\n"
-        "GBG: {\"actionable\":true,\"message\":\"handoff pulito\"}\n"
+        "<GBG>{\"message\":\"vecchio\"}</GBG>\n"
+        "GBG: {\"message\":\"handoff pulito\"}\n"
     )
     assert hook._extract_gbg_payload(text) == {
-        "actionable": True,
         "message": "handoff pulito",
     }
 
@@ -36,29 +35,47 @@ def test_extract_gbg_payload_parses_last_block() -> None:
 def test_extract_gbg_payload_accepts_final_json_line_fallback() -> None:
     text = (
         "Risposta normale\n"
-        "{\"actionable\":true,\"message\":\"fallback pulito\"}\n"
+        "{\"message\":\"fallback pulito\"}\n"
     )
     assert hook._extract_gbg_payload(text) == {
-        "actionable": True,
         "message": "fallback pulito",
     }
 
 
-def test_extract_gbg_relay_from_transcript_requires_actionable_payload(tmp_path) -> None:
+def test_extract_gbg_relay_from_transcript_uses_explicit_gbg_text(tmp_path) -> None:
     transcript = tmp_path / "session.jsonl"
     transcript.write_text(
         "\n".join(
             [
-                json.dumps({"type": "assistant", "message": "Ciao\n<GBG>{\"actionable\":false}</GBG>"}),
-                json.dumps({"type": "assistant", "message": "Ok\n<GBG>{\"actionable\":true,\"message\":\"passa al president\"}</GBG>"}),
+                json.dumps({"type": "assistant", "message": "Risposta precedente"}),
+                json.dumps({"type": "user", "message": "/GBG passa al president"}),
+                json.dumps({"type": "assistant", "message": "Ack breve"}),
             ]
         ),
         encoding="utf-8",
     )
 
     assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
-        "actionable": True,
         "message": "passa al president",
+    }
+
+
+def test_extract_gbg_relay_from_transcript_uses_previous_assistant_response_when_no_args(tmp_path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "assistant", "message": "Risposta utile precedente"}),
+                json.dumps({"type": "user", "message": "/GBG"}),
+                json.dumps({"type": "assistant", "message": "Ack breve"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
+        "message": "Risposta utile precedente",
+        "use_last_response": True,
     }
 
 
@@ -94,7 +111,7 @@ def test_handle_stop_emits_relay_and_idle(monkeypatch: object) -> None:
     monkeypatch.setattr(
         hook,
         "_extract_gbg_relay_from_transcript",
-        lambda path: {"actionable": True, "message": "boss summary"},
+        lambda path: {"message": "boss summary"},
     )
     monkeypatch.setattr(hook, "_extract_gbg_relay_from_tmux", lambda: {})
     monkeypatch.setattr(hook, "_router_post", lambda path, body: calls.append((path, body.get("role", ""), body)))

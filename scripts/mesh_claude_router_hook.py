@@ -75,6 +75,16 @@ def _looks_assistant_entry(entry: dict[str, Any]) -> bool:
     return any(value == "assistant" for value in values)
 
 
+def _looks_user_entry(entry: dict[str, Any]) -> bool:
+    values = [
+        str(entry.get("type") or "").strip().lower(),
+        str(entry.get("role") or "").strip().lower(),
+        str(entry.get("speaker") or "").strip().lower(),
+        str(entry.get("sender") or "").strip().lower(),
+    ]
+    return any(value == "user" for value in values)
+
+
 def _clean_summary(text: str, *, max_chars: int = 1600) -> str:
     raw_lines = [raw.replace("\xa0", " ") for raw in str(text or "").splitlines()]
 
@@ -128,6 +138,27 @@ def _clean_summary(text: str, *, max_chars: int = 1600) -> str:
     return clean[-max(1, int(max_chars)) :]
 
 
+def _read_transcript_entries(path: str) -> list[dict[str, Any]]:
+    if not path or not os.path.isfile(path):
+        return []
+    entries: list[dict[str, Any]] = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    except OSError:
+        return []
+    return entries
+
+
 def _extract_gbg_payload(text: str) -> dict[str, Any]:
     body = str(text or "")
     candidates: list[tuple[int, str]] = []
@@ -160,13 +191,18 @@ def _extract_gbg_payload(text: str) -> dict[str, Any]:
 def _normalize_gbg_relay(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
-    actionable = payload.get("actionable")
-    if actionable is not True:
-        return {}
     message = _clean_summary(str(payload.get("message") or ""))
-    if not message:
+    use_last_response = bool(payload.get("use_last_response"))
+    if not message and not use_last_response:
         return {}
-    normalized: dict[str, Any] = {"actionable": True, "message": message}
+    normalized: dict[str, Any] = {}
+    if message:
+        normalized["message"] = message
+    if use_last_response:
+        normalized["use_last_response"] = True
+    target = str(payload.get("target") or payload.get("target_role") or "").strip()
+    if target:
+        normalized["target"] = target
     kind = str(payload.get("kind") or "").strip()
     if kind:
         normalized["kind"] = kind
@@ -216,28 +252,63 @@ def _capture_tmux_summary() -> str:
 
 
 def _extract_gbg_relay_from_transcript(path: str) -> dict[str, Any]:
-    if not path or not os.path.isfile(path):
+    entries = _read_transcript_entries(path)
+    if not entries:
         return {}
+
+    last_gbg_user_index = -1
+    last_gbg_user_text = ""
+    for index in range(len(entries) - 1, -1, -1):
+        entry = entries[index]
+        if not _looks_user_entry(entry):
+            continue
+        text = _extract_text(entry)
+        if text.lstrip().startswith("/GBG"):
+            last_gbg_user_index = index
+            last_gbg_user_text = text.strip()
+            break
+
+    if last_gbg_user_index >= 0:
+        command_text = last_gbg_user_text.lstrip()[4:].strip()
+        tokens = command_text.split()
+        known_roles = {
+            "boss",
+            "president",
+            "lead",
+            "worker",
+            "worker-gemini",
+            "worker-claude",
+            "worker-codex",
+            "reviewer",
+            "verifier",
+        }
+        target = ""
+        if tokens and tokens[0] in known_roles:
+            target = tokens[0]
+            command_text = command_text[len(tokens[0]) :].strip()
+        if command_text:
+            relay = {"message": command_text}
+            if target:
+                relay["target"] = target
+            return relay
+        for index in range(last_gbg_user_index - 1, -1, -1):
+            entry = entries[index]
+            if not _looks_assistant_entry(entry):
+                continue
+            text = _clean_summary(_extract_text(entry))
+            if text:
+                relay = {"message": text, "use_last_response": True}
+                if target:
+                    relay["target"] = target
+                return relay
+
     last = ""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for raw in fh:
-                raw = raw.strip()
-                if not raw:
-                    continue
-                try:
-                    entry = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(entry, dict):
-                    continue
-                if not _looks_assistant_entry(entry):
-                    continue
-                text = _extract_text(entry)
-                if text:
-                    last = text
-    except OSError:
-        return {}
+    for entry in entries:
+        if not _looks_assistant_entry(entry):
+            continue
+        text = _extract_text(entry)
+        if text:
+            last = text
     return _normalize_gbg_relay(_extract_gbg_payload(last))
 
 
@@ -261,7 +332,7 @@ def _send_cross_role_message(*, msg_type: str, content: str, metadata: dict[str,
     session_id = _env("MESH_ROUTER_SESSION_ID")
     ui_group_id = _env("MESH_UI_GROUP_ID")
     ui_role = _env("MESH_UI_ROLE")
-    target_role = _env("MESH_RELAY_TARGET_ROLE") or "*"
+    target_role = str((metadata or {}).get("target_role") or _env("MESH_RELAY_TARGET_ROLE") or "*").strip() or "*"
     if not session_id or not ui_group_id or not ui_role or not content.strip():
         return
     body = {
@@ -331,6 +402,7 @@ def _handle_stop(hook_input: dict[str, Any]) -> None:
                 "source_role": _env("MESH_UI_ROLE"),
                 "summary_source": "hook_stop",
                 "gbg": relay,
+                "target_role": str(relay.get("target") or "").strip(),
             },
         )
     _release_turn()
