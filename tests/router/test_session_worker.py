@@ -126,7 +126,7 @@ def test_ensure_claude_mesh_hook_settings_merges_existing_file(tmp_path) -> None
 
 def test_build_claude_gbg_command_mentions_structured_block() -> None:
     content = _build_claude_gbg_command()
-    assert "/GBG" in content
+    assert "/gbg" in content
     assert "GBG: {\"message\":\"...\"}" in content
     assert "Route your last useful assistant response to the default target." in content
 
@@ -134,11 +134,11 @@ def test_build_claude_gbg_command_mentions_structured_block() -> None:
 def test_ensure_claude_project_command_writes_command_file(tmp_path) -> None:
     written = _ensure_claude_project_command(
         str(tmp_path),
-        command_name="GBG",
+        command_name="gbg",
         content="hello\n",
     )
 
-    assert written == _claude_command_path(str(tmp_path), "GBG")
+    assert written == _claude_command_path(str(tmp_path), "gbg")
     assert Path(written).read_text(encoding="utf-8") == "hello\n"
 
 
@@ -2587,7 +2587,7 @@ class TestDeliverInboundMessages:
 
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
-            patch.object(worker, "_tmux_render_notice") as mock_notice,
+            patch.object(worker, "_tmux_display_message") as mock_notice,
         ):
             new_seq = worker._deliver_inbound_messages("sid", "tsess", 9, ui_role="boss")
 
@@ -2596,7 +2596,38 @@ class TestDeliverInboundMessages:
         mock_notice.assert_called_once_with(
             "tsess",
             _format_inbound_notice("reply from president", source_role="president"),
+            duration_ms=30000,
         )
+
+    def test_inbound_relay_messages_are_skipped_because_group_delivery_handles_them(self) -> None:
+        worker = _make_worker()
+        worker._http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "messages": [
+                {
+                    "seq": 12,
+                    "direction": "in",
+                    "role": "president",
+                    "content": "reply from president",
+                    "metadata": {
+                        "source_role": "president",
+                        "envelope": {"msg_type": "relay"},
+                    },
+                }
+            ]
+        }
+        worker._http.get.return_value = mock_resp
+
+        with (
+            patch.object(worker, "_tmux_send_text") as mock_send,
+            patch.object(worker, "_tmux_display_message") as mock_notice,
+        ):
+            new_seq = worker._deliver_inbound_messages("sid", "tsess", 11, ui_role="boss")
+
+        assert new_seq == 12
+        mock_send.assert_not_called()
+        mock_notice.assert_not_called()
 
     def test_list_session_messages_raises_session_not_found(self) -> None:
         worker = _make_worker()

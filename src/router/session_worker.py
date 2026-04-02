@@ -91,18 +91,18 @@ def _claude_command_path(work_dir: str, command_name: str) -> str:
 def _build_claude_gbg_command() -> str:
     return (
         "---\n"
-        "description: Route a Gobabygo handoff. Usage: /GBG [role] [text]\n"
+        "description: Route a Gobabygo handoff. Usage: /gbg [role] [text]\n"
         "argument-hint: [role] [text]\n"
         "disable-model-invocation: true\n"
         "---\n\n"
-        "# /GBG\n\n"
-        "Use `/GBG` to route a handoff through the mesh runtime.\n\n"
+        "# /gbg\n\n"
+        "Use `/gbg` to route a handoff through the mesh runtime.\n\n"
         "Forms:\n"
-        "- `/GBG`\n"
+        "- `/gbg`\n"
         "  Route your last useful assistant response to the default target.\n"
-        "- `/GBG <text>`\n"
+        "- `/gbg <text>`\n"
         "  Route `<text>` to the default target.\n"
-        "- `/GBG <role> <text>`\n"
+        "- `/gbg <role> <text>`\n"
         "  Route `<text>` to an explicit role when you have multiple peers.\n\n"
         "Respond with at most one short acknowledgement. Do not explain the protocol.\n"
         "If you print a machine-readable trailer, use only this final line format:\n\n"
@@ -1014,13 +1014,13 @@ class MeshSessionWorker:
                     return
                 gbg_command_path = _ensure_claude_project_command(
                     work_dir,
-                    command_name="GBG",
+                    command_name="gbg",
                     content=_build_claude_gbg_command(),
                 )
                 if not gbg_command_path or not os.path.isfile(gbg_command_path):
                     self._report_failure(
                         task_id,
-                        f"failed to install Claude command /GBG in {work_dir}",
+                        f"failed to install Claude command /gbg in {work_dir}",
                     )
                     return
             elif relay:
@@ -2352,9 +2352,10 @@ class MeshSessionWorker:
             source_role = str(envelope.get("sender_role") or metadata.get("source_role") or msg.get("role") or "").strip()
             try:
                 if ui_role == "boss":
-                    self._tmux_render_notice(
+                    self._tmux_display_message(
                         tmux_session,
                         _format_inbound_notice(content, source_role=source_role),
+                        duration_ms=30000,
                     )
                 else:
                     self._tmux_send_text(
@@ -2388,8 +2389,13 @@ class MeshSessionWorker:
             if msg.get("direction") != "in":
                 continue
             metadata = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+            envelope = metadata.get("envelope") if isinstance(metadata.get("envelope"), dict) else {}
+            msg_type = str(envelope.get("msg_type") or "").strip()
             # Do not replay the initial prompt already sent during bootstrap
             if (metadata or {}).get("source") == "task.payload.prompt":
+                continue
+            # Cross-role relay envelopes are delivered via the ui_group polling path.
+            if msg_type == CrossRoleMessageType.relay.value:
                 continue
             content = str(msg.get("content", ""))
             control = str((metadata or {}).get("control", "")).strip().lower()
@@ -2418,9 +2424,10 @@ class MeshSessionWorker:
                 current_role = str(ui_role or "").strip()
                 source_role = str((metadata or {}).get("source_role") or msg.get("role") or "").strip()
                 if current_role == "boss" and source_role and source_role != "boss":
-                    self._tmux_render_notice(
+                    self._tmux_display_message(
                         tmux_session,
                         _format_inbound_notice(content, source_role=source_role),
+                        duration_ms=30000,
                     )
                 else:
                     self._tmux_send_text(tmux_session, content)

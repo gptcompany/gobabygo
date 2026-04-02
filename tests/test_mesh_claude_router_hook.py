@@ -48,7 +48,7 @@ def test_extract_gbg_relay_from_transcript_uses_explicit_gbg_text(tmp_path) -> N
         "\n".join(
             [
                 json.dumps({"type": "assistant", "message": "Risposta precedente"}),
-                json.dumps({"type": "user", "message": "/GBG passa al president"}),
+                json.dumps({"type": "user", "message": "/gbg passa al president"}),
                 json.dumps({"type": "assistant", "message": "Ack breve"}),
             ]
         ),
@@ -66,7 +66,7 @@ def test_extract_gbg_relay_from_transcript_uses_previous_assistant_response_when
         "\n".join(
             [
                 json.dumps({"type": "assistant", "message": "Risposta utile precedente"}),
-                json.dumps({"type": "user", "message": "/GBG"}),
+                json.dumps({"type": "user", "message": "/gbg"}),
                 json.dumps({"type": "assistant", "message": "Ack breve"}),
             ]
         ),
@@ -76,6 +76,42 @@ def test_extract_gbg_relay_from_transcript_uses_previous_assistant_response_when
     assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
         "message": "Risposta utile precedente",
         "use_last_response": True,
+    }
+
+
+def test_extract_gbg_relay_from_transcript_without_previous_assistant_returns_empty(tmp_path, capsys) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "user", "message": "/GBG"}),
+                json.dumps({"type": "user", "message": "/gbg"}),
+                json.dumps({"type": "assistant", "message": "Ack breve"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {}
+    assert "no previous assistant response" in capsys.readouterr().err.lower()
+
+
+def test_extract_gbg_relay_from_transcript_accepts_uppercase_legacy_command(tmp_path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "assistant", "message": "Risposta precedente"}),
+                json.dumps({"type": "user", "message": "/GBG boss ciao"}),
+                json.dumps({"type": "assistant", "message": "Ack breve"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert hook._extract_gbg_relay_from_transcript(str(transcript)) == {
+        "message": "ciao",
+        "target": "boss",
     }
 
 

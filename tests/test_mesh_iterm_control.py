@@ -71,7 +71,7 @@ class _FakeWindow:
 def test_key_text_maps_common_keys():
     module = _load_module()
 
-    assert module._key_text("enter") == "\r"
+    assert module._key_text("enter") == "\n"
     assert module._key_text("up") == "\x1b[A"
     assert module._key_text("ctrl-c") == "\x03"
 
@@ -117,3 +117,99 @@ def test_screen_tail_keeps_recent_non_empty_lines():
     text = asyncio.run(module._screen_tail(session, lines=2))
 
     assert text == "two\nthree"
+
+
+def test_run_send_text_activates_pane_before_sending():
+    module = _load_module()
+    boss = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True)
+    app = type(
+        "App",
+        (),
+        {"windows": [type("Window", (), {"tabs": [_FakeTab([boss])]})()]},
+    )()
+    args = type("Args", (), {"cmd": "send-text", "repo": "/media/sam/1TB/demo", "role": "boss", "text": "ciao"})()
+
+    async def _wrapped():
+        import types
+
+        async def _async_get_app(_conn):
+            return app
+
+        fake_iterm2 = types.SimpleNamespace(async_get_app=_async_get_app)
+        previous = sys.modules.get("iterm2")
+        try:
+            sys.modules["iterm2"] = fake_iterm2
+            return await module._run(None, args)
+        finally:
+            if previous is None:
+                sys.modules.pop("iterm2", None)
+            else:
+                sys.modules["iterm2"] = previous
+
+    assert asyncio.run(_wrapped()) == 0
+    assert boss.activated is True
+    assert boss.sent == ["ciao"]
+
+
+def test_run_send_key_activates_pane_before_sending():
+    module = _load_module()
+    president = _FakeSession(role="president", repo="/media/sam/1TB/demo", marked=True)
+    app = type(
+        "App",
+        (),
+        {"windows": [type("Window", (), {"tabs": [_FakeTab([president])]})()]},
+    )()
+    args = type("Args", (), {"cmd": "send-key", "repo": "/media/sam/1TB/demo", "role": "president", "key": "enter"})()
+
+    async def _wrapped():
+        import types
+
+        async def _async_get_app(_conn):
+            return app
+
+        fake_iterm2 = types.SimpleNamespace(async_get_app=_async_get_app)
+        previous = sys.modules.get("iterm2")
+        try:
+            sys.modules["iterm2"] = fake_iterm2
+            return await module._run(None, args)
+        finally:
+            if previous is None:
+                sys.modules.pop("iterm2", None)
+            else:
+                sys.modules["iterm2"] = previous
+
+    assert asyncio.run(_wrapped()) == 0
+    assert president.activated is True
+    assert president.sent == ["\n"]
+
+
+def test_run_send_line_appends_newline_and_activates():
+    module = _load_module()
+    boss = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True)
+    app = type(
+        "App",
+        (),
+        {"windows": [type("Window", (), {"tabs": [_FakeTab([boss])]})()]},
+    )()
+    args = type("Args", (), {"cmd": "send-line", "repo": "/media/sam/1TB/demo", "role": "boss", "text": "/GBG status"})()
+
+    async def _wrapped():
+        import types
+
+        async def _async_get_app(_conn):
+            return app
+
+        fake_iterm2 = types.SimpleNamespace(async_get_app=_async_get_app)
+        previous = sys.modules.get("iterm2")
+        try:
+            sys.modules["iterm2"] = fake_iterm2
+            return await module._run(None, args)
+        finally:
+            if previous is None:
+                sys.modules.pop("iterm2", None)
+            else:
+                sys.modules["iterm2"] = previous
+
+    assert asyncio.run(_wrapped()) == 0
+    assert boss.activated is True
+    assert boss.sent == ["/GBG status\n"]

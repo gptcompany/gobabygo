@@ -36,13 +36,13 @@ def _parse_args() -> argparse.Namespace:
     list_parser = sub.add_parser("list", help="List mesh-marked panes.")
     list_parser.add_argument("--repo", default="", help="Filter by repo path.")
 
-    for name in ("focus", "dump", "send-text", "send-key"):
+    for name in ("focus", "dump", "send-text", "send-line", "send-key"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--repo", required=True, help="Exact mesh repo path.")
         cmd.add_argument("--role", required=True, help="Exact mesh role.")
         if name == "dump":
             cmd.add_argument("--lines", type=int, default=20, help="Trailing non-empty lines to print.")
-        elif name == "send-text":
+        elif name in {"send-text", "send-line"}:
             cmd.add_argument("text", help="Text to send verbatim.")
         elif name == "send-key":
             cmd.add_argument("key", help="Logical key: enter/up/down/left/right/esc/tab/backspace/ctrl-c.")
@@ -93,8 +93,8 @@ async def _find_mesh_pane(app, repo: str, role: str) -> MeshPane:
 def _key_text(key: str) -> str:
     normalized = str(key or "").strip().lower()
     mapping = {
-        "enter": "\r",
-        "return": "\r",
+        "enter": "\n",
+        "return": "\n",
         "up": "\x1b[A",
         "down": "\x1b[B",
         "right": "\x1b[C",
@@ -149,10 +149,17 @@ async def _run(connection, args: argparse.Namespace) -> int:
         )
         return 0
     if args.cmd == "send-text":
+        await pane.session.async_activate()
         await pane.session.async_send_text(args.text)
         print(f"sent text to role={pane.role} repo={pane.repo}")
         return 0
+    if args.cmd == "send-line":
+        await pane.session.async_activate()
+        await pane.session.async_send_text(f"{args.text}\n")
+        print(f"sent line to role={pane.role} repo={pane.repo}")
+        return 0
     if args.cmd == "send-key":
+        await pane.session.async_activate()
         await pane.session.async_send_text(_key_text(args.key))
         print(f"sent key {args.key} to role={pane.role} repo={pane.repo}")
         return 0

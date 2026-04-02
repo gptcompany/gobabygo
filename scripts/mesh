@@ -478,6 +478,7 @@ Usage:
   ./scripts/mesh term list [--repo <repo-path>]
   ./scripts/mesh term focus <repo-path> <role>
   ./scripts/mesh term send <repo-path> <role> <text>
+  ./scripts/mesh term exec <repo-path> <role> <text>
   ./scripts/mesh term key <repo-path> <role> <key>
   ./scripts/mesh term dump <repo-path> <role> [--lines N]
   ./scripts/mesh ui close <repo-name|repo-path>
@@ -511,6 +512,7 @@ Examples:
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
   ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
+  ./scripts/mesh term exec /media/sam/1TB/snake-game boss "/GBG status?"
   ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
   ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
   ./scripts/mesh ui close snake-game
@@ -574,6 +576,7 @@ Usage:
   ./scripts/mesh term list [--repo <repo-path>]
   ./scripts/mesh term focus <repo-path> <role>
   ./scripts/mesh term send <repo-path> <role> <text>
+  ./scripts/mesh term exec <repo-path> <role> <text>
   ./scripts/mesh term key <repo-path> <role> <key>
   ./scripts/mesh term dump <repo-path> <role> [--lines N]
 
@@ -585,6 +588,7 @@ Examples:
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
   ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
+  ./scripts/mesh term exec /media/sam/1TB/snake-game boss "/GBG status?"
   ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
   ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
 EOF
@@ -909,6 +913,18 @@ PY
         text="$3"
         shift 3
         run_iterm_control send-text --repo "$repo" --role "$role" "$text" "$@"
+        ;;
+      exec)
+        if [[ $# -lt 4 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        role="$2"
+        text="$3"
+        shift 3
+        run_iterm_control send-line --repo "$repo" --role "$role" "$text" "$@"
         ;;
       key)
         if [[ $# -lt 4 ]]; then

@@ -49,6 +49,10 @@ def _router_post(path: str, body: dict[str, Any]) -> None:
         return
 
 
+def _log(message: str) -> None:
+    print(f"[mesh-hook] {message}", file=sys.stderr)
+
+
 def _extract_text(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()
@@ -263,13 +267,14 @@ def _extract_gbg_relay_from_transcript(path: str) -> dict[str, Any]:
         if not _looks_user_entry(entry):
             continue
         text = _extract_text(entry)
-        if text.lstrip().startswith("/GBG"):
+        stripped = text.lstrip()
+        if re.match(r"(?i)^/gbg(?:\s|$)", stripped):
             last_gbg_user_index = index
-            last_gbg_user_text = text.strip()
+            last_gbg_user_text = stripped
             break
 
     if last_gbg_user_index >= 0:
-        command_text = last_gbg_user_text.lstrip()[4:].strip()
+        command_text = re.sub(r"(?i)^/gbg", "", last_gbg_user_text, count=1).strip()
         tokens = command_text.split()
         known_roles = {
             "boss",
@@ -301,6 +306,8 @@ def _extract_gbg_relay_from_transcript(path: str) -> dict[str, Any]:
                 if target:
                     relay["target"] = target
                 return relay
+        _log("Ignoring /gbg without explicit text because no previous assistant response was found")
+        return {}
 
     last = ""
     for entry in entries:
