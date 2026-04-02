@@ -1589,6 +1589,33 @@ class MeshSessionWorker:
             text=True,
         )
 
+    def _tmux_pane_tty(self, session_name: str) -> str:
+        target = f"{session_name}:0.0"
+        proc = subprocess.run(
+            [
+                self.config.tmux_bin,
+                "display-message",
+                "-p",
+                "-t",
+                target,
+                "#{pane_tty}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return str(proc.stdout or "").strip()
+
+    def _tmux_render_notice(self, session_name: str, message: str) -> None:
+        tty_path = self._tmux_pane_tty(session_name)
+        if not tty_path:
+            raise subprocess.SubprocessError(f"missing pane tty for {session_name}")
+        rendered = str(message or "").strip()
+        if not rendered:
+            return
+        with open(tty_path, "w", encoding="utf-8", errors="ignore") as fh:
+            fh.write(f"\r\n{rendered}\r\n")
+
     def _tmux_resize(self, session_name: str, cols: int, rows: int) -> None:
         subprocess.run(
             [
@@ -2325,7 +2352,7 @@ class MeshSessionWorker:
             source_role = str(envelope.get("sender_role") or metadata.get("source_role") or msg.get("role") or "").strip()
             try:
                 if ui_role == "boss":
-                    self._tmux_display_message(
+                    self._tmux_render_notice(
                         tmux_session,
                         _format_inbound_notice(content, source_role=source_role),
                     )
@@ -2391,7 +2418,7 @@ class MeshSessionWorker:
                 current_role = str(ui_role or "").strip()
                 source_role = str((metadata or {}).get("source_role") or msg.get("role") or "").strip()
                 if current_role == "boss" and source_role and source_role != "boss":
-                    self._tmux_display_message(
+                    self._tmux_render_notice(
                         tmux_session,
                         _format_inbound_notice(content, source_role=source_role),
                     )

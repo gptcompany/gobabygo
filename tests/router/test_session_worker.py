@@ -2587,13 +2587,13 @@ class TestDeliverInboundMessages:
 
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
-            patch.object(worker, "_tmux_display_message") as mock_display,
+            patch.object(worker, "_tmux_render_notice") as mock_notice,
         ):
             new_seq = worker._deliver_inbound_messages("sid", "tsess", 9, ui_role="boss")
 
         assert new_seq == 10
         mock_send.assert_not_called()
-        mock_display.assert_called_once_with(
+        mock_notice.assert_called_once_with(
             "tsess",
             _format_inbound_notice("reply from president", source_role="president"),
         )
@@ -2781,6 +2781,30 @@ class TestTmuxOperations:
             "mysess:0.0",
             "[mesh][president] ok",
         ]
+
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("src.router.session_worker.subprocess.run")
+    def test_tmux_render_notice_writes_to_pane_tty(self, mock_run: Mock, mock_file: Mock) -> None:
+        worker = _make_worker()
+        mock_run.return_value = Mock(stdout="/dev/pts/42\n")
+
+        worker._tmux_render_notice("mysess", "[mesh][president] ok")
+
+        mock_run.assert_called_once_with(
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                "mysess:0.0",
+                "#{pane_tty}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        mock_file.assert_called_once_with("/dev/pts/42", "w", encoding="utf-8", errors="ignore")
+        mock_file().write.assert_called_once_with("\r\n[mesh][president] ok\r\n")
 
     @patch("src.router.session_worker.time.sleep")
     def test_ensure_prompt_submitted_retries_until_prompt_clears(self, mock_sleep: Mock) -> None:
