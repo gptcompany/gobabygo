@@ -374,6 +374,76 @@ def test_list_ui_group_messages_filters_by_target_role(db: RouterDB, sample_work
     assert [m.content for m in msgs] == ["boss->president", "broadcast-state"]
 
 
+def test_list_ui_group_messages_does_not_drop_recent_group_messages_behind_old_noise(
+    db: RouterDB,
+    sample_worker: Worker,
+) -> None:
+    db.insert_worker(sample_worker)
+    boss = Session(
+        session_id="31111111-1111-4111-8111-111111111111",
+        worker_id=sample_worker.worker_id,
+        cli_type=sample_worker.cli_type,
+        account_profile=sample_worker.account_profile,
+        metadata={"ui_group_id": "snake-ui-2", "ui_role": "boss"},
+    )
+    president = Session(
+        session_id="32222222-2222-4222-8222-222222222222",
+        worker_id=sample_worker.worker_id,
+        cli_type=sample_worker.cli_type,
+        account_profile=sample_worker.account_profile,
+        metadata={"ui_group_id": "snake-ui-2", "ui_role": "president"},
+    )
+    noise = Session(
+        session_id="33333333-3333-4333-8333-333333333333",
+        worker_id=sample_worker.worker_id,
+        cli_type=sample_worker.cli_type,
+        account_profile=sample_worker.account_profile,
+        metadata={"ui_group_id": "other-ui", "ui_role": "noise"},
+    )
+    db.insert_session(boss)
+    db.insert_session(president)
+    db.insert_session(noise)
+
+    for idx in range(250):
+        db.append_session_message(SessionMessage(
+            session_id=noise.session_id,
+            direction="out",
+            role="noise",
+            content=f"noise-{idx}",
+            metadata={
+                "envelope": {
+                    "msg_id": str(uuid.uuid4()),
+                    "sender_role": "noise",
+                    "sender_session_id": noise.session_id,
+                    "target_role": "noise",
+                    "msg_type": "relay",
+                    "ui_group_id": "other-ui",
+                }
+            },
+        ))
+
+    db.append_session_message(SessionMessage(
+        session_id=boss.session_id,
+        direction="out",
+        role="boss",
+        content="recent-boss->president",
+        metadata={
+            "envelope": {
+                "msg_id": str(uuid.uuid4()),
+                "sender_role": "boss",
+                "sender_session_id": boss.session_id,
+                "target_role": "president",
+                "msg_type": "relay",
+                "ui_group_id": "snake-ui-2",
+            }
+        },
+    ))
+
+    msgs = db.list_ui_group_messages("snake-ui-2", target_role="president", limit=50)
+
+    assert [m.content for m in msgs] == ["recent-boss->president"]
+
+
 def test_notification_ledger_roundtrip(db: RouterDB) -> None:
     entry = NotificationLedgerEntry(
         trace_id="ntf_1234567890abcdef0123",

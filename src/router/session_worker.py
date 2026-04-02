@@ -1271,19 +1271,21 @@ class MeshSessionWorker:
                     final_snapshot=final_snapshot[-4000:] if final_snapshot else "",
                 )
                 if final_snapshot and final_snapshot.strip() != (last_emitted_capture or "").strip():
-                    self._send_session_message(
+                    self._send_session_message_nonfatal(
                         session_id,
                         direction="out",
                         role="cli",
                         content=final_snapshot[-self.config.output_emit_max_chars:],
                         metadata={"snapshot": True, "final": True},
+                        context="final_snapshot",
                     )
-                self._send_session_message(
+                self._send_session_message_nonfatal(
                     session_id,
                     direction="system",
                     role="system",
                     content="tmux session exited",
                     metadata={"tmux_session": tmux_session_name},
+                    context="session_exit",
                 )
                 self._close_session(
                     session_id,
@@ -1922,12 +1924,13 @@ class MeshSessionWorker:
         if not summary:
             return None
         if session_id:
-            self._send_session_message(
+            self._send_session_message_nonfatal(
                 session_id,
                 direction="system",
                 role="summary",
                 content=str(summary.get("summary_text") or ""),
                 metadata=summary,
+                context="completion_summary",
             )
             self._route_completion_summary(session_id, summary)
         return summary
@@ -1995,6 +1998,55 @@ class MeshSessionWorker:
             timeout=self.config.control_plane_timeout,
         )
         resp.raise_for_status()
+
+    def _send_session_message_nonfatal(
+        self,
+        session_id: str,
+        *,
+        direction: str,
+        role: str,
+        content: str,
+        metadata: dict | None = None,
+        context: str = "",
+    ) -> bool:
+        try:
+            self._send_session_message(
+                session_id,
+                direction=direction,
+                role=role,
+                content=content,
+                metadata=metadata,
+            )
+            return True
+        except requests.HTTPError as e:
+            response = getattr(e, "response", None)
+            status_code = getattr(response, "status_code", None)
+            error_code = ""
+            if response is not None:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+                if isinstance(payload, dict):
+                    error_code = str(payload.get("error") or "").strip()
+            if status_code in {404, 409} or error_code in {"session_not_found", "session_closed"}:
+                logger.warning(
+                    "Skipping non-fatal session send for %s (%s): status=%s error=%s",
+                    session_id,
+                    context or role or direction,
+                    status_code,
+                    error_code or type(e).__name__,
+                )
+                return False
+            raise
+        except requests.RequestException as e:
+            logger.warning(
+                "Skipping non-fatal session send for %s (%s): %s",
+                session_id,
+                context or role or direction,
+                e,
+            )
+            return False
 
     def _close_session(self, session_id: str, *, state: str = "closed") -> None:
         resp = self._http.post(

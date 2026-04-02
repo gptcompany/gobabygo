@@ -762,9 +762,8 @@ class RouterDB:
             cur = self._conn.execute(
                 """SELECT * FROM session_messages
                 WHERE seq > ?
-                ORDER BY seq ASC
-                LIMIT ?""",
-                (after_seq, max(limit * 4, limit)),
+                ORDER BY seq ASC""",
+                (after_seq,),
             )
             rows = cur.fetchall()
 

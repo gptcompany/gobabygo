@@ -226,6 +226,26 @@ def test_session_worker_register_raises_for_account_in_use_conflict() -> None:
         worker._register()
 
 
+def test_send_session_message_nonfatal_tolerates_closed_session() -> None:
+    worker = _make_worker()
+    closed = MagicMock(status_code=409)
+    closed.json.return_value = {"error": "session_closed"}
+    worker._send_session_message = Mock(
+        side_effect=requests.HTTPError("session_closed", response=closed)
+    )  # type: ignore[method-assign]
+
+    ok = worker._send_session_message_nonfatal(
+        "sid-closed",
+        direction="system",
+        role="summary",
+        content="done",
+        metadata={"status": "completed"},
+        context="completion_summary",
+    )
+
+    assert ok is False
+
+
 def test_build_completion_summary_only_for_ui_role_tasks() -> None:
     worker = _make_worker()
 
