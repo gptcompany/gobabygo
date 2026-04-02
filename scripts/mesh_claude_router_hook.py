@@ -75,12 +75,52 @@ def _looks_assistant_entry(entry: dict[str, Any]) -> bool:
 
 
 def _clean_summary(text: str, *, max_chars: int = 1600) -> str:
+    raw_lines = [raw.replace("\xa0", " ") for raw in str(text or "").splitlines()]
+
+    assistant_blocks: list[list[str]] = []
+    current_block: list[str] = []
+    in_assistant_block = False
+    for raw in raw_lines:
+        stripped = raw.strip()
+        if not stripped:
+            if in_assistant_block and current_block:
+                assistant_blocks.append(current_block)
+            current_block = []
+            in_assistant_block = False
+            continue
+        if stripped.startswith("●"):
+            if in_assistant_block and current_block:
+                assistant_blocks.append(current_block)
+            current_block = [stripped[1:].strip()]
+            in_assistant_block = True
+            continue
+        if in_assistant_block:
+            if stripped.startswith(("⎿", "Stop says:", "❯", "✻", "[mesh:", "/model")):
+                assistant_blocks.append(current_block)
+                current_block = []
+                in_assistant_block = False
+                continue
+            if raw.startswith("  ") or raw.startswith("\t"):
+                current_block.append(stripped)
+                continue
+            assistant_blocks.append(current_block)
+            current_block = []
+            in_assistant_block = False
+        if stripped.startswith(("❯", "✻", "⎿", "Stop says:", "[mesh:", "/model")):
+            continue
+    if in_assistant_block and current_block:
+        assistant_blocks.append(current_block)
+
+    if assistant_blocks:
+        clean = "\n".join(line for line in assistant_blocks[-1] if line).strip()
+        return clean[-max(1, int(max_chars)) :]
+
     lines: list[str] = []
-    for raw in str(text or "").splitlines():
-        line = raw.replace("\xa0", " ").strip()
+    for raw in raw_lines:
+        line = raw.strip()
         if not line:
             continue
-        if line.startswith(("❯", "✻", "⎿", "Stop says:", "[mesh:")):
+        if line.startswith(("❯", "✻", "⎿", "Stop says:", "[mesh:", "/model")):
             continue
         lines.append(line)
     clean = "\n".join(lines).strip()

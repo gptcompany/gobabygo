@@ -23,7 +23,23 @@ def test_extract_summary_from_transcript_reads_last_assistant_entry(tmp_path) ->
 
 def test_clean_summary_strips_terminal_noise() -> None:
     text = "❯ hi\n✻ Thinking...\n● Ready\n⎿ trace\nStop says: noop\n[mesh:boss] repo=x\n"
-    assert hook._clean_summary(text) == "● Ready"
+    assert hook._clean_summary(text) == "Ready"
+
+
+def test_clean_summary_prefers_last_assistant_block_over_startup_noise() -> None:
+    text = (
+        "[!] Account safety warning\n"
+        "Details: https://github.com/kaitranntt/ccs/issues/509\n"
+        "╭───Claude Code v2.1.70───╮\n"
+        "● Ho ricevuto le tue istruzioni e il contesto.\n"
+        "  Come posso aiutarti oggi?\n"
+        "⎿ Stop says: noop\n"
+        "❯ __mesh_inbound__:boss:PRESIDENT_HI_1\n"
+        "● Va bene, mi fermo.\n"
+        "  C'è qualcos'altro che posso fare?\n"
+        "⎿ Stop says: noop\n"
+    )
+    assert hook._clean_summary(text) == "Va bene, mi fermo.\nC'è qualcos'altro che posso fare?"
 
 
 def test_handle_stop_emits_relay_and_idle(monkeypatch: object) -> None:
