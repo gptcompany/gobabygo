@@ -1115,6 +1115,62 @@ class TestStartUpterm:
         mock_send_text.assert_not_called()
         mock_report_complete.assert_called_once()
 
+    @patch.object(MeshSessionWorker, "_report_failure")
+    @patch.object(MeshSessionWorker, "_report_complete")
+    @patch.object(MeshSessionWorker, "_prepare_cli_runtime")
+    @patch.object(MeshSessionWorker, "_tmux_new_session")
+    @patch("src.router.session_worker._ensure_claude_mesh_hook_settings", return_value=None)
+    @patch.object(MeshSessionWorker, "_tmux_has_session", return_value=False)
+    @patch("src.router.session_worker.os.makedirs")
+    @patch("src.router.session_worker.time.sleep")
+    def test_execute_task_fails_fast_when_claude_hook_settings_not_installed(
+        self,
+        mock_sleep: Mock,
+        mock_makedirs: Mock,
+        mock_has: Mock,
+        mock_install_hooks: Mock,
+        mock_tmux_new: Mock,
+        mock_prepare_cli_runtime: Mock,
+        mock_report_complete: Mock,
+        mock_report_failure: Mock,
+    ) -> None:
+        worker = _make_worker()
+        http = MagicMock()
+        worker._http = http
+        ack_resp = MagicMock(status_code=200)
+        http.post.return_value = ack_resp
+        worker.config.cli_type = "gemini"
+        worker.config.cli_command = "ccs gemini"
+        worker._running = True
+
+        task = {
+            "task_id": "t-boss-hooks-missing",
+            "execution_mode": "session",
+            "repo": "/media/sam/1TB/snake-game",
+            "role": "boss",
+            "target_account": "gemini",
+            "payload": {
+                "prompt": "You are boss. Do not exit.",
+                "ui_role_session": True,
+                "ui_role": "boss",
+                "ui_group_id": "snake-ui-boss-missing",
+                "working_dir": "/media/sam/1TB/snake-game",
+                "relay": {
+                    "enabled": True,
+                    "mode": "claude_hooks",
+                    "target_role": "president",
+                },
+            },
+        }
+
+        worker._execute_task(task)
+
+        mock_install_hooks.assert_called_once()
+        mock_tmux_new.assert_not_called()
+        mock_report_complete.assert_not_called()
+        mock_report_failure.assert_called_once()
+        assert "failed to install Claude mesh hook settings" in mock_report_failure.call_args.args[1]
+
     @patch.object(MeshSessionWorker, "_report_complete")
     @patch.object(MeshSessionWorker, "_report_failure")
     @patch.object(MeshSessionWorker, "_close_session")

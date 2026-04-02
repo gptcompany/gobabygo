@@ -948,7 +948,16 @@ class MeshSessionWorker:
             if cli_args:
                 cmd_base = " ".join([cmd_base, *[shlex.quote(arg) for arg in cli_args]])
             if relay_uses_claude_hooks:
-                _ensure_claude_mesh_hook_settings(work_dir, mesh_home=_default_mesh_home())
+                hook_settings_path = _ensure_claude_mesh_hook_settings(
+                    work_dir,
+                    mesh_home=_default_mesh_home(),
+                )
+                if not hook_settings_path or not os.path.isfile(hook_settings_path):
+                    self._report_failure(
+                        task_id,
+                        f"failed to install Claude mesh hook settings in {work_dir}",
+                    )
+                    return
             elif relay:
                 cmd_base = _wrap_cli_command_with_relay_proxy(
                     cmd_base,
