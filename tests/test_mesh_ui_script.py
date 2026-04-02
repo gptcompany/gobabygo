@@ -78,10 +78,14 @@ def test_operator_ui_boss_is_provider_backed():
 
     assert data["default_roles"] == ["boss", "president"]
     boss = data["roles"]["boss"]
+    president = data["roles"]["president"]
 
     assert boss["provider"] == "gemini"
     assert boss["relay"]["enabled"] is True
     assert boss["relay"]["target_role"] == "president"
+    assert president["provider"] == "gemini"
+    assert president["relay"]["enabled"] is True
+    assert president["relay"]["target_role"] == "boss"
 
 
 def test_mesh_ui_role_shell_has_remote_repo_fallbacks():
@@ -949,8 +953,8 @@ def test_ui_role_bootstrap_prompt_for_boss_mentions_president_and_mesh_send():
     assert "You are boss for repository demo" in prompt
     assert "Do not tell the operator to run mesh commands" in prompt
     assert "The operator should talk only to you." in prompt
-    assert "The runtime may auto-relay operator prompts to president" in prompt
-    assert "Do not enter planning mode before you have delegated the request" in prompt
+    assert "The runtime may auto-relay your response summary to president" in prompt
+    assert "Do not enter planning mode before you have given a concise answer" in prompt
     assert "If the operator asks you to message or notify president" in prompt
     assert "Do not inspect files or implement changes yourself" not in prompt
 
@@ -999,6 +1003,26 @@ def test_ui_role_bootstrap_prompt_for_lead_models_subordinate_coordination():
     assert "Do not default to implementing everything yourself" in prompt
     assert "Worker-gemini is your implementation or parallel-analysis subordinate" in prompt
     assert "Send concise progress and completion updates back to president" in prompt
+
+
+def test_ui_role_bootstrap_prompt_for_president_two_role_group_mentions_auto_return():
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "president"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+
+    prompt = module._ui_role_bootstrap_prompt(cfg, "president", "gemini")
+
+    assert "The runtime may auto-relay your response summary back to boss" in prompt
+    assert "When you need an explicit manual message to boss" in prompt
 
 
 def test_infer_workflow_context_detects_speckit_tasks_phase(tmp_path):

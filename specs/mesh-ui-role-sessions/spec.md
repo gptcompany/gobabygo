@@ -127,10 +127,11 @@ Lifecycle rules:
 Operator roles:
 
 - `boss`
-- control shell, not provider-backed
+- provider-backed AI pane
 - bus-aware and able to address peer sessions
-- not created as a session-worker task by default
+- created as a real mesh session like the other roles
 - receives `MESH_UI_GROUP_ID` as an exported environment variable at pane bootstrap
+- must enforce role policy through provider-specific runtime wiring, not prompt wording alone
 
 Agent roles:
 
@@ -141,6 +142,15 @@ Agent roles:
 - task-backed
 - session-backed
 - bus-addressable
+
+Provider/runtime rule:
+
+- role policy is provider-agnostic at the spec level
+- each CLI runtime may need a different adapter to enforce the same policy
+- examples:
+  - Claude Code: hook/settings-based relay or stop handling
+  - Gemini/Codex/other CLIs: equivalent launch-time wrapper, env contract, or runtime interception
+- iTerm2 may launch panes with different per-role settings, but it must not become the semantic source of truth for role behavior
 
 ### D4. API surface = extend `POST /tasks`
 
@@ -189,18 +199,14 @@ Peer resolution is strict:
 - if zero match, fail clearly
 - if multiple match, fail clearly and require disambiguation
 
-### D6. Default layout remains six panes
+### D6. Default layout remains minimal
 
-Default `mesh ui` keeps the current six-pane layout:
+Default `mesh ui` keeps the current canonical minimal layout:
 
 - `boss`
 - `president`
-- `lead`
-- `worker-codex`
-- `worker-gemini`
-- `verifier`
 
-`worker-claude` remains explicit/on-demand.
+`lead`, `worker-gemini`, `verifier`, `worker-claude`, and `worker-codex` remain explicit/on-demand until the minimal `boss,president` relay path is stable.
 
 ### D7. `mesh_iterm_ui.py` is a thin client, not a second orchestrator
 
@@ -364,14 +370,27 @@ the local cache is stale.
 
 ### F6. Operator boss behavior
 
-The `boss` pane is an operator control shell.
+The `boss` pane is a provider-backed AI CLI dedicated to the human operator.
 
 It must:
 
 - show role identity and `ui_group_id`
-- be able to address agent-role sessions through helper commands
-- not spawn a provider-backed session by default
 - remain in the target repo with mesh helpers loaded
+- hardwire the runtime-managed relay path to `president` through the mesh bus
+- keep the operator-facing conversation in the `boss` pane while `president` remains the execution coordinator
+- prevent default drift into direct implementation unless the operator explicitly asks for boss-only work
+- implement semantic routing through a provider-specific role-policy adapter, not prompt wording alone
+- keep one canonical role policy across CLIs, with runtime-specific adapters underneath it
+- use iTerm2 wiring only for pane lifecycle, layout, reattach, and per-pane launch configuration
+
+Provider adapter examples for v1:
+
+- Claude Code:
+  - use per-pane settings or hook wiring
+  - repo-level hooks alone are insufficient because they apply to every Claude session in that repo
+- Gemini/Codex/other CLIs:
+  - use an equivalent runtime adapter, wrapper, or interception layer
+  - do not assume Claude hook semantics exist or map 1:1
 
 ### F7. Titles and labels
 
@@ -442,9 +461,9 @@ Given a pane cannot become a mesh-backed session, when `mesh ui` opens that pane
 
 Given a `lead` pane session completes work for the current `ui_group_id`, when it emits a completion summary, then the summary is available as router-backed state and can be delivered to `president` or `boss` through the same mesh addressing model.
 
-### AC7. Boss remains an operator pane
+### AC7. Boss remains an operator-facing AI pane
 
-Given the operator opens `mesh ui X`, when the `boss` pane starts, then it remains a mesh-aware control shell and does not boot a provider CLI by default.
+Given the operator opens `mesh ui X`, when the `boss` pane starts, then it opens as a provider-backed AI pane with role-policy enforcement for a runtime-managed relay path to `president`.
 
 ### AC8. `ui_group_id` is reused safely
 
@@ -486,7 +505,7 @@ Given an active cockpit group exists, when the operator runs `mesh ui close`, th
 
 - keep exact-role attach preference
 - spawn missing agent panes in parallel
-- keep boss as operator shell
+- keep boss as the operator-facing AI pane with hardwired relay to president through provider-specific runtime adapters, starting with the minimal `boss,president` slice
 - render pane mode and session identity clearly
 
 ### Workstream 3. `ui_group_id` tracking
@@ -523,3 +542,4 @@ Deferred post-v1 consideration:
 - Are attach-vs-spawn semantics unambiguous?
 - Are failure states strict enough to avoid misleading UX?
 - Is the role identity model concrete enough to implement without inventing a second orchestration layer?
+- Is the role-policy model clearly provider-agnostic, with Claude/Gemini/Codex treated as adapter implementations rather than separate designs?

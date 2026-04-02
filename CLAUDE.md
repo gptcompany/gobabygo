@@ -332,6 +332,7 @@ Current `mesh ui` behavior:
 - `mesh ui attach <repo>` is the canonical reattach path for the same layout
 - `mesh ui close <repo>` is the canonical teardown path
 - on iTerm2 `3.6.9`, the launcher uses safe `tabs-only` mode by default to avoid `apiServerSplitPane` crashes during reopen
+- the `boss <-> president` relay path is not closed yet; current runtime wiring is `response_summary`, but live smoke still needs to prove that `president` actually receives the boss summary
 - for single-session inspection, prefer `mesh sessions`; it is the canonical router-backed helper, defaults to the current repo, and uses `--all` only when you intentionally want cross-repo selection
 - `mesh` with no args is the shortest repo-local operator entrypoint after `wss` + `yazicd`; `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` now resolve the git repo root even when launched from nested subdirectories
 - exact role matches win first (`lead`, `president`, `verifier`, etc.); provider worker panes only attach when no higher-priority role already owns that same live session
@@ -385,8 +386,8 @@ If `iterm2` Python module is missing, `mesh ui` auto-tries
 `uv run --with iterm2` when `uv` is installed.
 Default behavior replaces old mesh-ui tabs; use `--keep-existing` to preserve them.
 `mesh ui resume <repo>` remains only as a compatibility alias for `mesh ui attach <repo>`.
-Default preset is `team-4x3` (2 tab: 4 panes + 3 panes). Use `--preset auto`
-to restore chunking by `--max-panes-per-tab`.
+Default canonical layout is the minimal `boss,president` slice. Wider layouts are
+explicit and non-canonical until the relay path is stable again.
 
 ## Python Runtime
 

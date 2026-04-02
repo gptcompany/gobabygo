@@ -256,6 +256,7 @@ Current canonical UI slice:
 - `mesh ui attach <repo>` reattaches the existing layout
 - `mesh ui close <repo>` closes the existing layout/backend group
 - on iTerm2 `3.6.9`, the launcher uses safe `tabs-only` mode by default to avoid `splitPane` crashes
+- `boss <-> president` runtime relay is still under active hardening; do not treat that behavior as closed until a live smoke confirms president receives the boss summary
 
 Matrix room inbound commands:
 

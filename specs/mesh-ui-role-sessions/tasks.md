@@ -154,17 +154,24 @@ Done when:
 - timeout path shows explicit failure state and retry hint
 - spawn wait stays as poll-with-timeout only; no local retry/backoff orchestration is added
 
-### T007. Keep `boss` as operator pane with group-aware helpers
+### T007. Make `boss` the operator-facing AI pane with hardwired relay
 
 Scope:
-- Do not spawn a provider-backed session for `boss`
+- Spawn a provider-backed session for `boss`
 - Export `MESH_UI_GROUP_ID` into every pane, including `boss`
 - Ensure `boss` stays in repo context with mesh helper commands available
-- Remove or ignore `boss.provider` in `mapping/operator_ui.yaml`
+- Keep `boss.provider` as a real runtime mapping
+- Add provider-specific role-policy adapters so the `boss -> president` path is enforced by runtime behavior instead of prompt wording
+- Keep one canonical `boss` role policy across CLIs; do not fork behavior by provider
+- Treat Claude Code hooks as one adapter only, not the generic solution for every CLI
+- Keep iTerm2 API usage limited to pane lifecycle/layout concerns
 
 Likely files:
 - `scripts/mesh_ui_role_shell.sh`
 - `scripts/mesh_iterm_ui.py`
+- `src/router/session_worker.py`
+- `scripts/mesh_prompt_relay_proxy.py`
+- `mapping/provider_runtime.yaml`
 - `tests/test_mesh_ui_script.py`
 
 Depends on:
@@ -172,9 +179,12 @@ Depends on:
 - `T004`
 
 Done when:
-- `boss` remains a control shell
+- `boss` opens as a real AI CLI pane
 - `MESH_UI_GROUP_ID` is available in the `boss` environment
-- role title/badge and banner clearly identify `boss` as operator
+- the `boss -> president` path is enforced through the runtime adapter for the active CLI, not prompt wording alone
+- the current canonical relay mode is documented explicitly (`response_summary` for the minimal `boss,president` slice) instead of being implied by prompt wording
+- role-policy enforcement remains possible for non-Claude CLIs that do not expose Claude-style hooks
+- role title/badge and banner clearly identify `boss`
 
 ### T008. Finalize pane labeling from real runtime identity
 
@@ -314,7 +324,7 @@ Done when:
 
 Scope:
 - Open `mesh ui` in `/media/sam/1TB/snake-game`
-- Validate default six-pane cockpit
+- Validate canonical minimal `boss,president` cockpit
 - Use Gemini-only where possible to avoid quota burn
 - Verify inter-role messaging and completion-summary flow
 
@@ -356,7 +366,7 @@ Done when:
 
 The backlog is complete when:
 - `mesh ui` no longer relies on standalone raw CLI panes for agent roles
-- `boss` remains an operator pane
+- `boss` is the operator-facing AI pane and relays to `president` without manual operator mesh commands
 - role-to-role communication works through the router session bus
 - completion summaries are router-backed and routable
 - the cockpit can be closed explicitly by `ui_group_id`

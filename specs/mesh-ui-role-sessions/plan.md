@@ -26,11 +26,12 @@ Out of scope for this phase:
 - API surface: extend `POST /tasks` with UI role session metadata; do not add a new endpoint in v1.
 - Session grouping: use `ui_group_id` shared across all panes in one cockpit, with router-authoritative liveness and local cached lookup.
 - Addressing model: helpers resolve `ui_group_id + role -> session_id` and fail on ambiguity.
-- Role split: `boss` is an operator control shell; `president`, `lead`, `worker-*`, and `verifier` are agent-role sessions.
+- Role split: `boss` is the operator-facing AI pane and `president` is the execution coordinator; the current canonical test slice is the minimal `boss,president` pair, while the wider team layout remains secondary until that relay path is stable.
+- Role policy: define one provider-agnostic role policy per pane, then enforce it via provider-specific runtime adapters instead of assuming Claude-style hooks everywhere.
 - Task contract: `repo` and `role` are top-level task fields; `ui_role_session`, `ui_role`, and `ui_group_id` live in task payload.
 - Worker opt-in: UI role tasks are leaseable only by workers advertising capability `ui_role`.
 - Failure model: hard mesh error state, no silent raw-shell fallback.
-- Default layout: keep the current six-pane operator layout.
+- Default layout: keep the canonical operator layout minimal (`boss`, `president`) until the relay path is stable again.
 - Spawn policy: agent-role spawns run in parallel with a `60s` per-role timeout.
 - Completion summary payload is structured and router-backed.
 - Group-scoped lookup in v1 uses `/sessions?state=open` plus Python-side filtering on `metadata.ui_group_id`.
@@ -64,7 +65,7 @@ Deliverables:
 
 Tasks:
 1. keep exact-role attach preference inside the active `ui_group_id`
-2. keep `boss` as operator shell
+2. keep `boss` as the operator-facing AI pane and hardwire runtime relay to `president`
 3. if no match exists, spawn an agent-role session using the task client path
 4. start agent-role spawns in parallel
 5. enforce `60s` per-role timeout with visible progress state
@@ -76,6 +77,7 @@ Tasks:
    - session short id
    - attach/spawn mode
 8. export `MESH_UI_GROUP_ID` into every pane, including `boss`
+9. pass role-aware per-provider runtime settings into `boss` and `president` so routing does not depend only on prompt wording
 
 ### 3. UI Group Tracking
 
@@ -146,10 +148,11 @@ Tasks:
 ### E2E
 
 1. open `mesh ui` in `snake-game`
-2. verify `boss` remains an operator pane and the other default panes become mesh-backed sessions
+2. verify the canonical minimal `boss,president` layout opens as mesh-backed sessions
 3. verify pane labels show role identity clearly
-4. send a message from one role to another through the bus
-5. verify the target pane receives it
+4. submit an operator request in `boss` and verify it is relayed to `president` without manual `mesh send`
+   this must hold across the supported CLI frontends, not only Claude Code
+5. verify role-to-role bus delivery still works for direct mesh routing
 6. complete one role session and inspect the routed stop summary
 7. verify Matrix/operator controls still work on pane-backed sessions
 8. relaunch `mesh ui` and verify `ui_group_id` reuse only happens for live groups
@@ -161,6 +164,7 @@ Tasks:
 - ambiguous peer resolution when multiple live sessions exist for one role
 - UX confusion if `ui_group_id` is hidden too aggressively
 - provider/account mismatch if UI policy and provider runtime policy drift
+- provider-specific adapter drift if Claude/Gemini/Codex do not enforce the same canonical role policy
 - stale group reuse if router-authoritative liveness checks are incomplete
 
 ## Rollout Order

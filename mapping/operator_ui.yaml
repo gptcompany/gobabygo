@@ -1,10 +1,30 @@
 version: 1
 
+default_roles:
+  - boss
+  - president
+
 roles:
   boss:
     provider: gemini
+    relay:
+      enabled: true
+      mode: response_summary
+      target_role: president
+      ignore_slash_commands: true
+      message_prefix: "[boss summary] "
+      passthrough_to_child: true
+      local_ack: ""
   president:
     provider: gemini
+    relay:
+      enabled: true
+      mode: response_summary
+      target_role: boss
+      ignore_slash_commands: true
+      message_prefix: "[president summary] "
+      passthrough_to_child: true
+      local_ack: ""
   lead:
     provider: gemini
   worker-claude:
