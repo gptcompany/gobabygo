@@ -261,7 +261,8 @@ Done when:
 
 - `relay-last` completes without error on live panes for Claude, Codex, and Gemini providers
 - relay of content > 500 characters is delivered without truncation
-- `ensure_safe_target()` rejects panes with a foreground command active
+- `ensure_safe_target()` rejects panes whose foreground command is outside the
+  allowed safe target set
 
 Use:
 

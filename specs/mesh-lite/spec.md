@@ -209,7 +209,7 @@ Optional later:
 - `scripts/mesh_lite/spike.py`
   - keep as Slice 0 regression anchor
 
-### Current Internal Files To Archive Or Ignore
+### Current Internal Files To Keep Narrow
 
 - `scripts/mesh_lite/iterm.py`
   - keep as the active narrow live-session transport helper:
@@ -219,6 +219,9 @@ Optional later:
     - `ensure_safe_target()`
     - `dump_screen()`
   - the custom layout/spawn branch has already been archived
+
+### Archived Internal Files
+
 - `archived/mesh_lite_spawn_experiment.py`
   - archived custom layout/spawn branch
 - `archived/test_mesh_lite_spawn_experiment.py`

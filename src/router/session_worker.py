@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import uuid
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -108,14 +109,15 @@ def _build_claude_gbg_command() -> str:
         "  Route `<text>` to the default target.\n"
         "- `/gbg <role> <text>`\n"
         "  Route `<text>` to an explicit role when you have multiple peers.\n\n"
-        "Respond with at most one short acknowledgement. Do not explain the protocol.\n"
-        "If you print a machine-readable trailer, use only this final line format:\n\n"
-        "`GBG: {\"message\":\"...\"}`\n\n"
+        "Respond with exactly `OK.` and nothing else.\n"
+        "Do not repeat the routed content.\n"
+        "Do not explain the protocol.\n"
+        "Do not emit a machine-readable trailer unless explicitly asked for debugging.\n\n"
         "Rules:\n"
         "1. If the command already contains explicit text, the runtime will use that text directly.\n"
         "2. If the command has no text, the runtime will use your previous useful assistant response.\n"
         "3. Do not invent extra routing metadata in natural language.\n"
-        "4. Do not output anything after a `GBG: {...}` trailer.\n"
+        "4. Keep the acknowledgement minimal so the pane does not echo the routed payload.\n"
     )
 
 
@@ -129,8 +131,16 @@ def _ensure_claude_project_command(
     try:
         command_path.parent.mkdir(parents=True, exist_ok=True)
         command_path.write_text(content, encoding="utf-8")
+        persisted = command_path.read_text(encoding="utf-8")
     except OSError as exc:
         logger.warning("Failed to install Claude command %s in %s: %s", command_name, work_dir, exc)
+        return None
+    if persisted != content:
+        logger.warning(
+            "Claude command %s in %s did not persist expected content",
+            command_name,
+            work_dir,
+        )
         return None
     return str(command_path)
 
@@ -1643,6 +1653,17 @@ class MeshSessionWorker:
         with open(tty_path, "w", encoding="utf-8", errors="ignore") as fh:
             fh.write("\a")
 
+    def _tmux_set_badge(self, session_name: str, message: str) -> None:
+        tty_path = self._tmux_pane_tty(session_name)
+        if not tty_path:
+            raise subprocess.SubprocessError(f"missing pane tty for {session_name}")
+        rendered = str(message or "").strip()
+        if not rendered:
+            return
+        encoded = base64.b64encode(rendered.encode("utf-8")).decode("ascii")
+        with open(tty_path, "w", encoding="utf-8", errors="ignore") as fh:
+            fh.write(f"\033]1337;SetBadgeFormat={encoded}\a")
+
     def _append_boss_inbox_notice(self, session_name: str, message: str, *, source_role: str = "") -> str:
         log_path = self._tmux_environment_value(session_name, "MESH_BOSS_INBOX_LOG")
         if not log_path:
@@ -2411,6 +2432,10 @@ class MeshSessionWorker:
                         content,
                         source_role=source_role,
                     )
+                    self._tmux_set_badge(
+                        tmux_session,
+                        _format_inbound_notice(content, source_role=source_role),
+                    )
                     self._tmux_ring_bell(tmux_session)
                 else:
                     self._tmux_send_text(
@@ -2483,6 +2508,10 @@ class MeshSessionWorker:
                         tmux_session,
                         content,
                         source_role=source_role,
+                    )
+                    self._tmux_set_badge(
+                        tmux_session,
+                        _format_inbound_notice(content, source_role=source_role),
                     )
                     self._tmux_ring_bell(tmux_session)
                 else:

@@ -124,10 +124,11 @@ def test_ensure_claude_mesh_hook_settings_merges_existing_file(tmp_path) -> None
     assert any(_claude_router_hook_script_path() in command for command in stop_commands)
 
 
-def test_build_claude_gbg_command_mentions_structured_block() -> None:
+def test_build_claude_gbg_command_requires_minimal_ack_without_echoing_payload() -> None:
     content = _build_claude_gbg_command()
     assert "/gbg" in content
-    assert "GBG: {\"message\":\"...\"}" in content
+    assert "Respond with exactly `OK.` and nothing else." in content
+    assert "Do not repeat the routed content." in content
     assert "Route your last useful assistant response to the default target." in content
 
 
@@ -140,6 +141,27 @@ def test_ensure_claude_project_command_writes_command_file(tmp_path) -> None:
 
     assert written == _claude_command_path(str(tmp_path), "gbg")
     assert Path(written).read_text(encoding="utf-8") == "hello\n"
+
+
+def test_ensure_claude_project_command_returns_none_when_persisted_content_mismatches(
+    tmp_path, monkeypatch
+) -> None:
+    real_read_text = Path.read_text
+
+    def fake_read_text(self: Path, *args, **kwargs) -> str:
+        if self == Path(_claude_command_path(str(tmp_path), "gbg")):
+            return "stale\n"
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    written = _ensure_claude_project_command(
+        str(tmp_path),
+        command_name="gbg",
+        content="hello\n",
+    )
+
+    assert written is None
 
 
 def test_should_auto_exit_on_success_requires_marker_as_standalone_output_line() -> None:
@@ -2586,6 +2608,7 @@ class TestDeliverInboundMessages:
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
             patch.object(worker, "_append_boss_inbox_notice") as mock_notice,
+            patch.object(worker, "_tmux_set_badge") as mock_badge,
             patch.object(worker, "_tmux_ring_bell") as mock_bell,
         ):
             new_seq = worker._deliver_inbound_messages("sid", "tsess", 9, ui_role="boss")
@@ -2596,6 +2619,10 @@ class TestDeliverInboundMessages:
             "tsess",
             "reply from president",
             source_role="president",
+        )
+        mock_badge.assert_called_once_with(
+            "tsess",
+            _format_inbound_notice("reply from president", source_role="president"),
         )
         mock_bell.assert_called_once_with("tsess")
 
@@ -2622,6 +2649,7 @@ class TestDeliverInboundMessages:
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
             patch.object(worker, "_append_boss_inbox_notice") as mock_notice,
+            patch.object(worker, "_tmux_set_badge") as mock_badge,
             patch.object(worker, "_tmux_ring_bell") as mock_bell,
         ):
             new_seq = worker._deliver_inbound_messages("sid", "tsess", 11, ui_role="boss")
@@ -2629,6 +2657,7 @@ class TestDeliverInboundMessages:
         assert new_seq == 12
         mock_send.assert_not_called()
         mock_notice.assert_not_called()
+        mock_badge.assert_not_called()
         mock_bell.assert_not_called()
 
     def test_list_session_messages_raises_session_not_found(self) -> None:
@@ -2838,6 +2867,32 @@ class TestTmuxOperations:
         )
         mock_file.assert_called_once_with("/dev/pts/42", "w", encoding="utf-8", errors="ignore")
         mock_file().write.assert_called_once_with("\r\n[mesh][president] ok\r\n")
+
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("src.router.session_worker.subprocess.run")
+    def test_tmux_set_badge_writes_iterm_badge_escape(self, mock_run: Mock, mock_file: Mock) -> None:
+        worker = _make_worker()
+        mock_run.return_value = Mock(stdout="/dev/pts/42\n")
+
+        worker._tmux_set_badge("mysess", "[mesh][president] ok")
+
+        mock_run.assert_called_once_with(
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                "mysess:0.0",
+                "#{pane_tty}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        mock_file.assert_called_once_with("/dev/pts/42", "w", encoding="utf-8", errors="ignore")
+        written = mock_file().write.call_args[0][0]
+        assert "SetBadgeFormat=" in written
+        assert written.endswith("\a")
 
     @patch("src.router.session_worker.time.sleep")
     def test_ensure_prompt_submitted_retries_until_prompt_clears(self, mock_sleep: Mock) -> None:

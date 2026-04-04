@@ -190,45 +190,57 @@ Useful for:
 
 Not enough as the primary automation contract.
 
-## Research Questions
+## Research Findings
 
 ### Claude Code
 
-- Which hook events are reliable for:
-  - response finished
-  - waiting input
-  - approval prompt
-- Is transcript parsing enough to extract the final assistant summary safely?
-- Can a wrapper emit a custom iTerm2 escape marker at `Stop`?
+- **Native Hooks (Confirmed)**:
+  - `Stop`: deterministic signal for "response finished". Anthropic documents that it runs when the main Claude Code agent has finished responding, except for user interrupts.
+  - `UserPromptSubmit`: runs when the user submits a prompt, before Claude processes it.
+  - `PreToolUse`: runs before a tool call; can return `permissionDecision: "ask"` for approval flow.
+  - `PostToolUse`: runs after a tool completes successfully.
+  - `Notification`: runs for permission notifications and "Claude is waiting for your input".
+  - `SessionStart`, `SessionEnd`, `SubagentStop`, `PreCompact` also exist and may be useful, but they are secondary for this adapter.
+- **Transcript/Logs**:
+  - Found in `~/.claude/transcripts/` (session-specific JSON files).
+  - Contains full tool-use history and assistant responses.
+- **Deterministic Signals**:
+  - `Stop` event is the primary signal for "summary extraction".
+  - Hook logic can write a specific marker (e.g., `mesh:summary`) to a file or stdout.
+- **Recommended Adapter**:
+  - **Primary**: Use a dedicated `mesh-claude-adapter` that wires into `Stop` and `PreToolUse` hooks via `.claude/settings.json` or `hooks.json`.
+  - **Secondary**: Screen-scraping for prompts and `❯` markers as a universal fallback.
+- **Primary Sources**:
+  - Anthropic hooks reference: `https://docs.anthropic.com/en/docs/claude-code/hooks`
+  - Anthropic settings reference: `https://docs.anthropic.com/en/docs/claude-code/settings`
 
 ### Gemini / CCS Gemini
 
-- Is there any native event, transcript, or log file that indicates:
-  - reply finished
-  - waiting input
-  - permission/choice prompt
-- Is there any structured output mode we can enable?
-- Can we wrap Gemini to emit explicit control markers when it reaches known states?
+- **What Is Confirmed From CCS Docs/Repo**:
+  - CCS launches Claude CLI with alternative provider settings for `gemini`, `codex`, and other profiles.
+  - CCS documents shared `settings.json` behavior via `~/.ccs/shared/` symlinked to `~/.claude/`.
+  - CCS documents CLIProxy provider settings that point Claude-compatible traffic at provider-specific `ANTHROPIC_BASE_URL` endpoints.
+- **What Is Still Inference, Not Yet Proven Locally**:
+  - If `ccs gemini` / `ccs codex` really execute through the same Claude Code frontend and shared settings path, Claude hooks should still fire.
+  - We have not yet completed a local end-to-end proof that `Stop`, `Notification`, or `UserPromptSubmit` fire exactly the same way under `ccs gemini` and `ccs codex`.
+- **Structured Output**:
+  - No verified global interactive `--json` mode yet for CCS Gemini/Codex in this project.
+  - Hook payloads remain the strongest candidate if the Claude hook path is confirmed live.
+- **Recommended Adapter**:
+  - Preferred path: treat CCS Gemini/Codex as Claude-hook-capable, but verify with a local smoke before making it the canonical contract.
+  - Fallback path: PTY proxy or terminal parser if the hook path is missing or inconsistent under CCS.
+- **Primary Sources**:
+  - CCS README/repo: `https://github.com/kaitranntt/ccs`
+  - Especially the sections describing CLIProxy providers, shared `settings.json`, and `CCS_CLAUDE_PATH`
 
-### Shared
+### Failure Modes and Ambiguity
 
-- Can a thin wrapper emit iTerm2 custom escape sequences like:
-  - `mesh:response_finished`
-  - `mesh:waiting_input`
-  - `mesh:needs_choice`
-  - `mesh:summary:<payload>`
-- Can the same wrapper also emit plain router-side state if iTerm2 is not available?
+- **Hook Latency**: Hooks may have slight latency between tool completion and trigger.
+- **Concurrent Prompts**: If an operator types while a hook is running, the PTY proxy might capture it twice or cause race conditions.
+- **Transcripts**: Large sessions can lead to very big transcript files, making real-time parsing slow.
+- **Provider Disconnect**: `ccs` provider-side errors (like `500 auth_unavailable`) may not always trigger a clean `Stop` event.
+- **Ambiguity**: Distinguishing between an "interactive sub-shell" (e.g., inside `bash`) and the "main Claude agent" when relying solely on screen scraping.
 
-## Recommended Research Sequence
-
-1. Claude Code:
-   - confirm the strongest hook + transcript combination for `stop/summary/waiting_input`
-2. Gemini via CCS:
-   - search for logs, transcripts, structured mode, prompt-state hints
-3. shared wrapper design:
-   - define the smallest cross-CLI event contract
-4. iTerm2 integration:
-   - optionally map wrapper events to custom escape sequences and local attention signals
 
 ## Deliverables The Research Should Produce
 
