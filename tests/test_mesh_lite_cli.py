@@ -81,6 +81,96 @@ def test_select_jsonl_path_leaves_unmatched_role_unresolved(monkeypatch, tmp_pat
     assert selected == ""
 
 
+def test_select_jsonl_path_falls_back_to_unique_exact_cwd_candidate(monkeypatch, tmp_path: Path) -> None:
+    unique = tmp_path / "unique.jsonl"
+    unique.write_text("", encoding="utf-8")
+    candidate = TranscriptCandidate(
+        path=unique,
+        session_id="OTHER",
+        cwd="/tmp/repo",
+        last_modified=1.0,
+        assistant_text="usable",
+    )
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: [candidate])
+
+    selected = _select_jsonl_path(
+        project_path="/tmp/repo",
+        existing_jsonl_path="",
+        upstream_session_id=None,
+    )
+
+    assert selected == str(unique)
+
+
+def test_select_jsonl_path_leaves_ambiguous_project_candidates_unresolved(monkeypatch, tmp_path: Path) -> None:
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.write_text("", encoding="utf-8")
+    second.write_text("", encoding="utf-8")
+
+    candidates = [
+        TranscriptCandidate(
+            path=first,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=1.0,
+            assistant_text="reply one",
+        ),
+        TranscriptCandidate(
+            path=second,
+            session_id="TWO",
+            cwd="/tmp/repo",
+            last_modified=2.0,
+            assistant_text="reply two",
+        ),
+    ]
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: candidates)
+
+    selected = _select_jsonl_path(
+        project_path="/tmp/repo",
+        existing_jsonl_path="",
+        upstream_session_id=None,
+    )
+
+    assert selected == ""
+
+
+def test_select_jsonl_path_leaves_ambiguous_prefix_matches_unresolved(monkeypatch, tmp_path: Path) -> None:
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    first.write_text("", encoding="utf-8")
+    second.write_text("", encoding="utf-8")
+
+    candidates = [
+        TranscriptCandidate(
+            path=first,
+            session_id="UP-1234567890AAAA",
+            cwd="/tmp/repo",
+            last_modified=1.0,
+            assistant_text="reply one",
+        ),
+        TranscriptCandidate(
+            path=second,
+            session_id="UP-1234567890BBBB",
+            cwd="/tmp/repo",
+            last_modified=2.0,
+            assistant_text="reply two",
+        ),
+    ]
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: candidates)
+
+    selected = _select_jsonl_path(
+        project_path="/tmp/repo",
+        existing_jsonl_path="",
+        upstream_session_id="UP-1234567890",
+    )
+
+    assert selected == ""
+
+
 def test_cmd_status_renders_binding_focused_tree(capsys, tmp_path: Path) -> None:
     from scripts.mesh_lite.cli import _cmd_status
     from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
@@ -146,3 +236,137 @@ def test_cmd_status_empty(capsys, tmp_path: Path) -> None:
     
     captured = capsys.readouterr()
     assert "No mesh-lite roles registered." in captured.out
+
+
+import pytest
+
+def test_cmd_relay_last_fails_on_missing_source_role(tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last
+    from scripts.mesh_lite.registry import MeshLiteRegistry
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    
+    with pytest.raises(SystemExit, match="Source role not registered for project: missing"):
+        _cmd_relay_last(registry, "/tmp/repo", "missing", "target", False)
+
+
+def test_cmd_relay_last_fails_on_missing_target_role(tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
+    from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
+    registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="/path", project_path=repo_path))
+    
+    with pytest.raises(SystemExit, match="Target role not registered for project: missing"):
+        _cmd_relay_last(registry, "/tmp/repo", "source", "missing", False)
+
+
+def test_cmd_relay_last_fails_on_unresolved_transcript_binding(tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
+    from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
+    registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="", project_path=repo_path))
+    registry.upsert(build_entry(role="target", team_id="1", session_id="S2", tty="T2", title="", badge="", jsonl_path="", project_path=repo_path))
+
+    with pytest.raises(SystemExit, match="Source role has no transcript binding: source"):
+        _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
+
+
+def test_cmd_relay_last_fails_on_missing_assistant_reply(monkeypatch, tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
+    from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
+    registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="/path.jsonl", project_path=repo_path))
+    registry.upsert(build_entry(role="target", team_id="1", session_id="S2", tty="T2", title="", badge="", jsonl_path="", project_path=repo_path))
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.extract_last_assistant_msg", lambda _: "")
+
+    with pytest.raises(SystemExit, match="No assistant reply found in transcript: /path.jsonl"):
+        _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
+
+
+def test_cmd_relay_last_fails_on_missing_live_target(monkeypatch, tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
+    from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
+    registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="/path.jsonl", project_path=repo_path))
+    registry.upsert(build_entry(role="target", team_id="1", session_id="S2", tty="T2", title="", badge="", jsonl_path="", project_path=repo_path))
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.extract_last_assistant_msg", lambda _: "hello")
+    monkeypatch.setattr("scripts.mesh_lite.cli.get_session", lambda _: None)
+
+    with pytest.raises(SystemExit, match="Target live session not found: S2"):
+        _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
+
+
+def test_cmd_relay_last_fails_on_unsafe_target(monkeypatch, tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
+    from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+    from scripts.mesh_lite.iterm import SessionInfo
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
+    registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="/path.jsonl", project_path=repo_path))
+    registry.upsert(build_entry(role="target", team_id="1", session_id="S2", tty="T2", title="", badge="", jsonl_path="", project_path=repo_path))
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.extract_last_assistant_msg", lambda _: "hello")
+    monkeypatch.setattr("scripts.mesh_lite.cli.get_session", lambda _: SessionInfo(session_id="S2", window_index=1, tab_index=1, session_index=1, tty="T2", title="", badge="", command=""))
+    monkeypatch.setattr("scripts.mesh_lite.cli.ensure_safe_target", lambda _: (False, "unsafe command: vim"))
+
+    with pytest.raises(SystemExit, match="Refusing injection into target S2: unsafe command: vim"):
+        _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
+
+
+def test_cmd_relay_last_dry_run_does_not_inject(capsys, monkeypatch, tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
+    from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+    from scripts.mesh_lite.iterm import SessionInfo
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
+    registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="/path.jsonl", project_path=repo_path))
+    registry.upsert(build_entry(role="target", team_id="1", session_id="S2", tty="T2", title="", badge="", jsonl_path="", project_path=repo_path))
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.extract_last_assistant_msg", lambda _: "hello world")
+    monkeypatch.setattr("scripts.mesh_lite.cli.get_session", lambda _: SessionInfo(session_id="S2", window_index=1, tab_index=1, session_index=1, tty="T2", title="", badge="", command=""))
+    monkeypatch.setattr("scripts.mesh_lite.cli.ensure_safe_target", lambda _: (True, "bash"))
+    
+    injected = []
+    monkeypatch.setattr("scripts.mesh_lite.iterm.send_line", lambda s, t: injected.append((s, t)))
+
+    _cmd_relay_last(registry, "/tmp/repo", "source", "target", True)
+
+    assert not injected
+    captured = capsys.readouterr()
+    assert "hello world" in captured.out
+
+
+def test_cmd_relay_last_success(capsys, monkeypatch, tmp_path: Path) -> None:
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
+    from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+    from scripts.mesh_lite.iterm import SessionInfo
+
+    registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
+    registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="/path.jsonl", project_path=repo_path))
+    registry.upsert(build_entry(role="target", team_id="1", session_id="S2", tty="T2", title="", badge="", jsonl_path="", project_path=repo_path))
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.extract_last_assistant_msg", lambda _: "hello world")
+    monkeypatch.setattr("scripts.mesh_lite.cli.get_session", lambda _: SessionInfo(session_id="S2", window_index=1, tab_index=1, session_index=1, tty="T2", title="", badge="", command=""))
+    monkeypatch.setattr("scripts.mesh_lite.cli.ensure_safe_target", lambda _: (True, "bash"))
+    
+    injected = []
+    monkeypatch.setattr("scripts.mesh_lite.iterm.send_line", lambda s, t: injected.append((s, t)))
+
+    _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
+
+    assert injected == [("S2", "hello world")]
+    captured = capsys.readouterr()
+    assert "Relayed 11 chars from source to target" in captured.out
