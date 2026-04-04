@@ -46,7 +46,7 @@ def _clean(text: Any) -> str:
     return str(text or "").replace("\x00", "").strip()
 
 
-def _osascript(script: str) -> str:
+def _osascript_raw(script: str) -> str:
     script_lines = [line for line in str(script).splitlines() if line.strip()]
     args = ["osascript"]
     if script_lines:
@@ -62,7 +62,11 @@ def _osascript(script: str) -> str:
     )
     if proc.returncode != 0:
         return ""
-    return _clean(proc.stdout)
+    return str(proc.stdout or "").replace("\x00", "")
+
+
+def _osascript(script: str) -> str:
+    return _clean(_osascript_raw(script))
 
 
 def _apple_quote(text: str) -> str:
@@ -144,7 +148,7 @@ tell application "iTerm2"
   return joinedRows
 end tell
 '''
-    raw = _osascript(script)
+    raw = _osascript_raw(script)
     if not raw:
         return []
 
@@ -153,6 +157,8 @@ end tell
         if not row:
             continue
         parts = row.split(field_delim)
+        if len(parts) == 4:
+            parts.append("")
         if len(parts) != 5:
             continue
         session_id, window_index, tab_index, session_index, tty = parts
