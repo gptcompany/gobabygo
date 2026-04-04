@@ -66,7 +66,7 @@ def _parse_title_metadata(title: str) -> tuple[str | None, str | None, str | Non
 
 def _select_jsonl_path(
     *,
-    project_path: str,
+    candidates: list,
     existing_jsonl_path: str,
     upstream_session_id: str | None,
 ) -> str:
@@ -74,7 +74,6 @@ def _select_jsonl_path(
     if existing_path:
         return existing_path
 
-    candidates = transcript_candidates(project_path)
     if upstream_session_id:
         session_prefix = upstream_session_id.strip()
         matched = []
@@ -86,10 +85,68 @@ def _select_jsonl_path(
             return str(matched[0].path)
         return ""
 
-    if len(candidates) == 1:
-        return str(candidates[0].path)
+    return ""
+
+
+def _select_fallback_jsonl_path(
+    *,
+    project_path: str,
+    candidates: list,
+    claimed_paths: set[str],
+) -> str:
+    available = [candidate for candidate in candidates if str(candidate.path) not in claimed_paths]
+    if not available:
+        return ""
+
+    exact_cwd_candidates = [candidate for candidate in available if candidate.cwd == project_path]
+    if len(exact_cwd_candidates) == 1 and exact_cwd_candidates[0].assistant_text:
+        return str(exact_cwd_candidates[0].path)
+
+    replied_candidates = [candidate for candidate in available if candidate.assistant_text]
+    if len(replied_candidates) == 1 and len(available) == 1:
+        return str(replied_candidates[0].path)
+
+    if len(available) == 1:
+        return str(available[0].path)
 
     return ""
+
+
+def _apply_fallback_binding(
+    *,
+    project_path: str,
+    discovered_entries: list,
+    pending_fallback_indices: list[int],
+    candidates: list,
+    claimed_paths: set[str],
+) -> None:
+    if len(pending_fallback_indices) != 1:
+        return
+
+    fallback_path = _select_fallback_jsonl_path(
+        project_path=project_path,
+        candidates=candidates,
+        claimed_paths=claimed_paths,
+    )
+    if not fallback_path:
+        return
+
+    pending_index = pending_fallback_indices[0]
+    pending_entry = discovered_entries[pending_index]
+    discovered_entries[pending_index] = build_entry(
+        role=pending_entry.role,
+        team_id=pending_entry.team_id,
+        session_id=pending_entry.session_id,
+        tty=pending_entry.tty,
+        title=pending_entry.title,
+        badge=pending_entry.badge,
+        jsonl_path=fallback_path,
+        project_path=pending_entry.project_path,
+        backend_id=pending_entry.backend_id,
+        provider=pending_entry.provider,
+        launch_mode=pending_entry.launch_mode,
+        upstream_session_id=pending_entry.upstream_session_id,
+    )
 
 
 def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
@@ -108,6 +165,7 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             raise RuntimeError("iTerm2 app not available")
 
         panes = await _mesh_sessions(app, project_path)
+        candidates = transcript_candidates(project_path)
         existing_payload = ((registry.load().get("projects") or {}).get(project_path) or {})
         team_id = str(existing_payload.get("team_id") or "").strip()
 
@@ -117,6 +175,8 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             return
 
         discovered_entries = []
+        pending_fallback_indices: list[int] = []
+        claimed_paths: set[str] = set()
 
         for pane in panes:
             title = ""
@@ -140,7 +200,7 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
 
             existing = registry.get(project_path, pane.role)
             jsonl_path = _select_jsonl_path(
-                project_path=project_path,
+                candidates=candidates,
                 existing_jsonl_path=existing.jsonl_path if existing else "",
                 upstream_session_id=upstream_session_id,
             )
@@ -159,7 +219,19 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
                 upstream_session_id=upstream_session_id,
             )
             discovered_entries.append(entry)
+            if jsonl_path:
+                claimed_paths.add(jsonl_path)
+            elif not upstream_session_id:
+                pending_fallback_indices.append(len(discovered_entries) - 1)
             print(f"Discovered role={pane.role} session={pane.session.session_id} tty={tty} provider={provider or '-'} launch={launch_mode or '-'}")
+
+        _apply_fallback_binding(
+            project_path=project_path,
+            discovered_entries=discovered_entries,
+            pending_fallback_indices=pending_fallback_indices,
+            candidates=candidates,
+            claimed_paths=claimed_paths,
+        )
 
         registry.replace_project_roles(project_path, discovered_entries, team_id=team_id)
 

@@ -1,7 +1,13 @@
 from pathlib import Path
 
-from scripts.mesh_lite.cli import _parse_title_metadata, _select_jsonl_path
+from scripts.mesh_lite.cli import (
+    _apply_fallback_binding,
+    _parse_title_metadata,
+    _select_fallback_jsonl_path,
+    _select_jsonl_path,
+)
 from scripts.mesh_lite.jsonl import TranscriptCandidate
+from scripts.mesh_lite.registry import build_entry
 
 
 def test_parse_title_metadata_extracts_provider_launch_and_upstream() -> None:
@@ -17,7 +23,7 @@ def test_select_jsonl_path_prefers_existing_binding(tmp_path: Path) -> None:
     existing.write_text("", encoding="utf-8")
 
     selected = _select_jsonl_path(
-        project_path="/tmp/repo",
+        candidates=[],
         existing_jsonl_path=str(existing),
         upstream_session_id=None,
     )
@@ -49,9 +55,8 @@ def test_select_jsonl_path_prefers_upstream_session_match(monkeypatch, tmp_path:
     ]
 
     monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: candidates)
-
     selected = _select_jsonl_path(
-        project_path="/tmp/repo",
+        candidates=candidates,
         existing_jsonl_path="",
         upstream_session_id="UP-123",
     )
@@ -70,10 +75,8 @@ def test_select_jsonl_path_leaves_unmatched_role_unresolved(monkeypatch, tmp_pat
         assistant_text="fallback",
     )
 
-    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: [candidate])
-
     selected = _select_jsonl_path(
-        project_path="/tmp/repo",
+        candidates=[candidate],
         existing_jsonl_path="",
         upstream_session_id="UP-123",
     )
@@ -81,7 +84,7 @@ def test_select_jsonl_path_leaves_unmatched_role_unresolved(monkeypatch, tmp_pat
     assert selected == ""
 
 
-def test_select_jsonl_path_falls_back_to_unique_exact_cwd_candidate(monkeypatch, tmp_path: Path) -> None:
+def test_select_fallback_jsonl_path_uses_unique_exact_cwd_replied_candidate(tmp_path: Path) -> None:
     unique = tmp_path / "unique.jsonl"
     unique.write_text("", encoding="utf-8")
     candidate = TranscriptCandidate(
@@ -92,18 +95,48 @@ def test_select_jsonl_path_falls_back_to_unique_exact_cwd_candidate(monkeypatch,
         assistant_text="usable",
     )
 
-    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: [candidate])
-
-    selected = _select_jsonl_path(
+    selected = _select_fallback_jsonl_path(
         project_path="/tmp/repo",
-        existing_jsonl_path="",
-        upstream_session_id=None,
+        candidates=[candidate],
+        claimed_paths=set(),
     )
 
     assert selected == str(unique)
 
 
-def test_select_jsonl_path_leaves_multiple_candidates_with_single_reply_unresolved(monkeypatch, tmp_path: Path) -> None:
+def test_select_fallback_jsonl_path_ignores_used_candidates_and_binds_unique_remaining_one(tmp_path: Path) -> None:
+    claimed = tmp_path / "claimed.jsonl"
+    remaining = tmp_path / "remaining.jsonl"
+    claimed.write_text("", encoding="utf-8")
+    remaining.write_text("", encoding="utf-8")
+
+    candidates = [
+        TranscriptCandidate(
+            path=claimed,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=2.0,
+            assistant_text="reply one",
+        ),
+        TranscriptCandidate(
+            path=remaining,
+            session_id="TWO",
+            cwd="",
+            last_modified=1.0,
+            assistant_text="reply two",
+        ),
+    ]
+
+    selected = _select_fallback_jsonl_path(
+        project_path="/tmp/repo",
+        candidates=candidates,
+        claimed_paths={str(claimed)},
+    )
+
+    assert selected == str(remaining)
+
+
+def test_select_fallback_jsonl_path_leaves_multiple_candidates_with_single_reply_unresolved(tmp_path: Path) -> None:
     replied = tmp_path / "replied.jsonl"
     pending = tmp_path / "pending.jsonl"
     replied.write_text("", encoding="utf-8")
@@ -126,18 +159,16 @@ def test_select_jsonl_path_leaves_multiple_candidates_with_single_reply_unresolv
         ),
     ]
 
-    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: candidates)
-
-    selected = _select_jsonl_path(
+    selected = _select_fallback_jsonl_path(
         project_path="/tmp/repo",
-        existing_jsonl_path="",
-        upstream_session_id=None,
+        candidates=candidates,
+        claimed_paths=set(),
     )
 
     assert selected == ""
 
 
-def test_select_jsonl_path_leaves_ambiguous_project_candidates_unresolved(monkeypatch, tmp_path: Path) -> None:
+def test_select_fallback_jsonl_path_leaves_ambiguous_project_candidates_unresolved(tmp_path: Path) -> None:
     first = tmp_path / "first.jsonl"
     second = tmp_path / "second.jsonl"
     first.write_text("", encoding="utf-8")
@@ -160,15 +191,96 @@ def test_select_jsonl_path_leaves_ambiguous_project_candidates_unresolved(monkey
         ),
     ]
 
-    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: candidates)
-
-    selected = _select_jsonl_path(
+    selected = _select_fallback_jsonl_path(
         project_path="/tmp/repo",
-        existing_jsonl_path="",
-        upstream_session_id=None,
+        candidates=candidates,
+        claimed_paths=set(),
     )
 
     assert selected == ""
+
+
+def test_apply_fallback_binding_assigns_unique_candidate_to_single_pending_role(tmp_path: Path) -> None:
+    candidate_path = tmp_path / "candidate.jsonl"
+    candidate_path.write_text("", encoding="utf-8")
+    candidates = [
+        TranscriptCandidate(
+            path=candidate_path,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=1.0,
+            assistant_text="reply one",
+        )
+    ]
+    entries = [
+        build_entry(
+            role="boss",
+            team_id="team-1",
+            session_id="S1",
+            tty="/dev/ttys001",
+            title="boss",
+            badge="boss",
+            jsonl_path="",
+            project_path="/tmp/repo",
+        )
+    ]
+
+    _apply_fallback_binding(
+        project_path="/tmp/repo",
+        discovered_entries=entries,
+        pending_fallback_indices=[0],
+        candidates=candidates,
+        claimed_paths=set(),
+    )
+
+    assert entries[0].jsonl_path == str(candidate_path)
+
+
+def test_apply_fallback_binding_leaves_multiple_pending_roles_unresolved(tmp_path: Path) -> None:
+    candidate_path = tmp_path / "candidate.jsonl"
+    candidate_path.write_text("", encoding="utf-8")
+    candidates = [
+        TranscriptCandidate(
+            path=candidate_path,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=1.0,
+            assistant_text="reply one",
+        )
+    ]
+    entries = [
+        build_entry(
+            role="boss",
+            team_id="team-1",
+            session_id="S1",
+            tty="/dev/ttys001",
+            title="boss",
+            badge="boss",
+            jsonl_path="",
+            project_path="/tmp/repo",
+        ),
+        build_entry(
+            role="president",
+            team_id="team-1",
+            session_id="S2",
+            tty="/dev/ttys002",
+            title="president",
+            badge="president",
+            jsonl_path="",
+            project_path="/tmp/repo",
+        ),
+    ]
+
+    _apply_fallback_binding(
+        project_path="/tmp/repo",
+        discovered_entries=entries,
+        pending_fallback_indices=[0, 1],
+        candidates=candidates,
+        claimed_paths=set(),
+    )
+
+    assert entries[0].jsonl_path == ""
+    assert entries[1].jsonl_path == ""
 
 
 def test_select_jsonl_path_leaves_ambiguous_prefix_matches_unresolved(monkeypatch, tmp_path: Path) -> None:
@@ -194,10 +306,8 @@ def test_select_jsonl_path_leaves_ambiguous_prefix_matches_unresolved(monkeypatc
         ),
     ]
 
-    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: candidates)
-
     selected = _select_jsonl_path(
-        project_path="/tmp/repo",
+        candidates=candidates,
         existing_jsonl_path="",
         upstream_session_id="UP-1234567890",
     )
