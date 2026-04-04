@@ -1,5 +1,7 @@
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from scripts.mesh_lite.cli import (
     _apply_fallback_binding,
     _parse_title_metadata,
@@ -7,7 +9,7 @@ from scripts.mesh_lite.cli import (
     _select_jsonl_path,
 )
 from scripts.mesh_lite.jsonl import TranscriptCandidate
-from scripts.mesh_lite.registry import build_entry
+from scripts.mesh_lite.registry import MeshLiteRegistryError, build_entry
 
 
 def test_parse_title_metadata_extracts_provider_launch_and_upstream() -> None:
@@ -461,9 +463,6 @@ def test_cmd_status_empty(capsys, tmp_path: Path) -> None:
     captured = capsys.readouterr()
     assert "No mesh-lite roles registered." in captured.out
 
-
-import pytest
-
 def test_cmd_relay_last_fails_on_missing_source_role(tmp_path: Path) -> None:
     from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
     from scripts.mesh_lite.registry import MeshLiteRegistry
@@ -595,3 +594,47 @@ def test_cmd_relay_last_success(capsys, monkeypatch, tmp_path: Path) -> None:
     assert injected == [("S2", "hello world")]
     captured = capsys.readouterr()
     assert "Relayed 11 chars from source to target" in captured.out
+
+
+def test_main_converts_registry_load_failure_to_status_cli_error(monkeypatch) -> None:
+    from scripts.mesh_lite.cli import main
+
+    class BrokenRegistry:
+        def load(self):
+            raise MeshLiteRegistryError("Unable to load registry: /tmp/broken.json")
+
+    monkeypatch.setattr(
+        "scripts.mesh_lite.cli._parse_args",
+        lambda: SimpleNamespace(cmd="status", registry="", project=""),
+    )
+    monkeypatch.setattr("scripts.mesh_lite.cli._registry", lambda _path: BrokenRegistry())
+
+    with pytest.raises(SystemExit, match=r"Error: Unable to load registry: /tmp/broken.json"):
+        main()
+
+
+def test_main_converts_registry_load_failure_to_relay_cli_error(monkeypatch) -> None:
+    from scripts.mesh_lite.cli import main
+
+    class BrokenRegistry:
+        def project_roles(self, _project_path):
+            raise MeshLiteRegistryError("Unable to load registry: /tmp/broken.json")
+
+        def get(self, project_path, role):
+            return self.project_roles(project_path).get(role)
+
+    monkeypatch.setattr(
+        "scripts.mesh_lite.cli._parse_args",
+        lambda: SimpleNamespace(
+            cmd="relay-last",
+            registry="",
+            project="/tmp/repo",
+            source_role="source",
+            target_role="target",
+            dry_run=False,
+        ),
+    )
+    monkeypatch.setattr("scripts.mesh_lite.cli._registry", lambda _path: BrokenRegistry())
+
+    with pytest.raises(SystemExit, match=r"Error: Unable to load registry: /tmp/broken.json"):
+        main()

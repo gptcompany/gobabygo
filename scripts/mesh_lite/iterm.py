@@ -69,6 +69,14 @@ def _apple_quote(text: str) -> str:
     return str(text or "").replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _apple_string_expr(text: str) -> str:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    parts = normalized.split("\n")
+    if not parts:
+        return '""'
+    return " & linefeed & ".join(f'"{_apple_quote(part)}"' for part in parts)
+
+
 def _tty_via_osascript(session_id: str) -> str:
     script = f'''
 tell application "iTerm2"
@@ -87,14 +95,14 @@ end tell
 
 
 def _send_line_via_osascript(session_id: str, text: str) -> None:
-    safe_text = _apple_quote(text)
+    safe_text = _apple_string_expr(text)
     script = f'''
 tell application "iTerm2"
   repeat with aWindow in windows
     repeat with aTab in tabs of aWindow
       repeat with aSession in sessions of aTab
         if id of aSession is "{session_id}" then
-          tell aSession to write text "{safe_text}"
+          tell aSession to write text {safe_text}
           return
         end if
       end repeat

@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.mesh_lite.iterm import ensure_safe_target, get_session
 from scripts.mesh_lite.jsonl import extract_last_assistant_msg, transcript_candidates
-from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
+from scripts.mesh_lite.registry import MeshLiteRegistry, MeshLiteRegistryError, build_entry
 
 
 def _project_path(raw: str) -> str:
@@ -348,23 +348,26 @@ def main() -> int:
     args = _parse_args()
     registry = _registry(args.registry)
 
-    if args.cmd == "discover":
-        return _cmd_discover(
-            registry,
-            project=args.project,
-        )
-    if args.cmd == "status":
-        return _cmd_status(registry, project=args.project)
-    if args.cmd == "probe":
-        return _cmd_probe(project=args.project)
-    if args.cmd == "relay-last":
-        return _cmd_relay_last(
-            registry,
-            project=args.project,
-            source_role=args.source_role,
-            target_role=args.target_role,
-            dry_run=args.dry_run,
-        )
+    try:
+        if args.cmd == "discover":
+            return _cmd_discover(
+                registry,
+                project=args.project,
+            )
+        if args.cmd == "status":
+            return _cmd_status(registry, project=args.project)
+        if args.cmd == "probe":
+            return _cmd_probe(project=args.project)
+        if args.cmd == "relay-last":
+            return _cmd_relay_last(
+                registry,
+                project=args.project,
+                source_role=args.source_role,
+                target_role=args.target_role,
+                dry_run=args.dry_run,
+            )
+    except MeshLiteRegistryError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     raise SystemExit(f"Unsupported command: {args.cmd}")
 
 
