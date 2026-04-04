@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.mesh_lite.iterm import ensure_safe_target, get_session
-from scripts.mesh_lite.jsonl import extract_last_assistant_msg, resolve_best_candidate, transcript_candidates
+from scripts.mesh_lite.jsonl import extract_last_assistant_msg, transcript_candidates
 from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
 
 
@@ -76,12 +76,13 @@ def _select_jsonl_path(
 
     candidates = transcript_candidates(project_path)
     if upstream_session_id:
+        session_prefix = upstream_session_id.strip()
         for candidate in candidates:
-            if candidate.session_id == upstream_session_id:
+            candidate_session_id = str(candidate.session_id or "").strip()
+            if candidate_session_id and candidate_session_id.startswith(session_prefix):
                 return str(candidate.path)
 
-    best = resolve_best_candidate(project_path)
-    return str(best.path) if best else ""
+    return ""
 
 
 def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
@@ -191,7 +192,7 @@ def _cmd_status(registry: MeshLiteRegistry, project: str) -> int:
             launch_mode = item.get("launch_mode") or "-"
             upstream_session_id = item.get("upstream_session_id") or "-"
             
-            status_text = "bound" if jsonl_path else "unresolved"
+            status_text = "bound (relay ready)" if jsonl_path else "unresolved (relay disabled)"
             
             print(f"  {role:<12} [{status_text}]")
             print(f"    ├─ session_id:  {session_id}")
