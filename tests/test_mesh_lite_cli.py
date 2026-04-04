@@ -103,6 +103,40 @@ def test_select_jsonl_path_falls_back_to_unique_exact_cwd_candidate(monkeypatch,
     assert selected == str(unique)
 
 
+def test_select_jsonl_path_leaves_multiple_candidates_with_single_reply_unresolved(monkeypatch, tmp_path: Path) -> None:
+    replied = tmp_path / "replied.jsonl"
+    pending = tmp_path / "pending.jsonl"
+    replied.write_text("", encoding="utf-8")
+    pending.write_text("", encoding="utf-8")
+
+    candidates = [
+        TranscriptCandidate(
+            path=replied,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=2.0,
+            assistant_text="reply one",
+        ),
+        TranscriptCandidate(
+            path=pending,
+            session_id="TWO",
+            cwd="/tmp/repo",
+            last_modified=1.0,
+            assistant_text=None,
+        ),
+    ]
+
+    monkeypatch.setattr("scripts.mesh_lite.cli.transcript_candidates", lambda _project: candidates)
+
+    selected = _select_jsonl_path(
+        project_path="/tmp/repo",
+        existing_jsonl_path="",
+        upstream_session_id=None,
+    )
+
+    assert selected == ""
+
+
 def test_select_jsonl_path_leaves_ambiguous_project_candidates_unresolved(monkeypatch, tmp_path: Path) -> None:
     first = tmp_path / "first.jsonl"
     second = tmp_path / "second.jsonl"

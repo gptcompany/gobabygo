@@ -86,17 +86,8 @@ def _select_jsonl_path(
             return str(matched[0].path)
         return ""
 
-    exact_cwd_with_reply = [
-        candidate
-        for candidate in candidates
-        if candidate.cwd == project_path and candidate.assistant_text
-    ]
-    if len(exact_cwd_with_reply) == 1:
-        return str(exact_cwd_with_reply[0].path)
-
-    any_reply = [candidate for candidate in candidates if candidate.assistant_text]
-    if len(any_reply) == 1:
-        return str(any_reply[0].path)
+    if len(candidates) == 1:
+        return str(candidates[0].path)
 
     return ""
 
