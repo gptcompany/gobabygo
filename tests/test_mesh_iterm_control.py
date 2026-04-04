@@ -71,7 +71,7 @@ class _FakeWindow:
 def test_key_text_maps_common_keys():
     module = _load_module()
 
-    assert module._key_text("enter") == "\n"
+    assert module._key_text("enter") == "\r"
     assert module._key_text("up") == "\x1b[A"
     assert module._key_text("ctrl-c") == "\x03"
 
@@ -180,7 +180,7 @@ def test_run_send_key_activates_pane_before_sending():
 
     assert asyncio.run(_wrapped()) == 0
     assert president.activated is True
-    assert president.sent == ["\n"]
+    assert president.sent == ["\r"]
 
 
 def test_run_send_line_appends_newline_and_activates():
@@ -212,4 +212,4 @@ def test_run_send_line_appends_newline_and_activates():
 
     assert asyncio.run(_wrapped()) == 0
     assert boss.activated is True
-    assert boss.sent == ["/GBG status\n"]
+    assert boss.sent == ["/GBG status", "\r"]

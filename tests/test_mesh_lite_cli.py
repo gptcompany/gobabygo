@@ -136,6 +136,38 @@ def test_select_fallback_jsonl_path_ignores_used_candidates_and_binds_unique_rem
     assert selected == str(remaining)
 
 
+def test_select_fallback_jsonl_path_requires_reply_for_last_remaining_candidate(tmp_path: Path) -> None:
+    claimed = tmp_path / "claimed.jsonl"
+    remaining = tmp_path / "remaining.jsonl"
+    claimed.write_text("", encoding="utf-8")
+    remaining.write_text("", encoding="utf-8")
+
+    candidates = [
+        TranscriptCandidate(
+            path=claimed,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=2.0,
+            assistant_text="reply one",
+        ),
+        TranscriptCandidate(
+            path=remaining,
+            session_id="TWO",
+            cwd="",
+            last_modified=1.0,
+            assistant_text=None,
+        ),
+    ]
+
+    selected = _select_fallback_jsonl_path(
+        project_path="/tmp/repo",
+        candidates=candidates,
+        claimed_paths={str(claimed)},
+    )
+
+    assert selected == ""
+
+
 def test_select_fallback_jsonl_path_leaves_multiple_candidates_with_single_reply_unresolved(tmp_path: Path) -> None:
     replied = tmp_path / "replied.jsonl"
     pending = tmp_path / "pending.jsonl"
@@ -258,6 +290,54 @@ def test_apply_fallback_binding_leaves_multiple_pending_roles_unresolved(tmp_pat
             badge="boss",
             jsonl_path="",
             project_path="/tmp/repo",
+        ),
+        build_entry(
+            role="president",
+            team_id="team-1",
+            session_id="S2",
+            tty="/dev/ttys002",
+            title="president",
+            badge="president",
+            jsonl_path="",
+            project_path="/tmp/repo",
+        ),
+    ]
+
+    _apply_fallback_binding(
+        project_path="/tmp/repo",
+        discovered_entries=entries,
+        pending_fallback_indices=[0, 1],
+        candidates=candidates,
+        claimed_paths=set(),
+    )
+
+    assert entries[0].jsonl_path == ""
+    assert entries[1].jsonl_path == ""
+
+
+def test_apply_fallback_binding_treats_unmatched_upstream_role_as_contender(tmp_path: Path) -> None:
+    candidate_path = tmp_path / "candidate.jsonl"
+    candidate_path.write_text("", encoding="utf-8")
+    candidates = [
+        TranscriptCandidate(
+            path=candidate_path,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=1.0,
+            assistant_text="reply one",
+        )
+    ]
+    entries = [
+        build_entry(
+            role="boss",
+            team_id="team-1",
+            session_id="S1",
+            tty="/dev/ttys001",
+            title="boss",
+            badge="boss",
+            jsonl_path="",
+            project_path="/tmp/repo",
+            upstream_session_id="UP-UNMATCHED",
         ),
         build_entry(
             role="president",

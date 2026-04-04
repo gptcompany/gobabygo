@@ -93,8 +93,8 @@ async def _find_mesh_pane(app, repo: str, role: str) -> MeshPane:
 def _key_text(key: str) -> str:
     normalized = str(key or "").strip().lower()
     mapping = {
-        "enter": "\n",
-        "return": "\n",
+        "enter": "\r",
+        "return": "\r",
         "up": "\x1b[A",
         "down": "\x1b[B",
         "right": "\x1b[C",
@@ -155,7 +155,9 @@ async def _run(connection, args: argparse.Namespace) -> int:
         return 0
     if args.cmd == "send-line":
         await pane.session.async_activate()
-        await pane.session.async_send_text(f"{args.text}\n")
+        await pane.session.async_send_text(args.text)
+        await asyncio.sleep(0.08)
+        await pane.session.async_send_text("\r")
         print(f"sent line to role={pane.role} repo={pane.repo}")
         return 0
     if args.cmd == "send-key":

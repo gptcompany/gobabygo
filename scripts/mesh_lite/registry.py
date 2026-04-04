@@ -9,6 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+class MeshLiteRegistryError(RuntimeError):
+    """Raised when the on-disk registry cannot be read safely."""
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -40,8 +44,8 @@ class MeshLiteRegistry:
             return {"version": 1, "projects": {}}
         try:
             return json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"version": 1, "projects": {}}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise MeshLiteRegistryError(f"Unable to load registry: {self.path}") from exc
 
     def save(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +66,46 @@ class MeshLiteRegistry:
         )
         project["team_id"] = entry.team_id
         project["updated_at"] = entry.updated_at
-        project.setdefault("roles", {})[entry.role] = asdict(entry)
+        roles = project.setdefault("roles", {})
+        existing_role = roles.get(entry.role)
+        merged_role = dict(existing_role) if isinstance(existing_role, dict) else {}
+        merged_role.update(asdict(entry))
+        roles[entry.role] = merged_role
+        self.save(data)
+
+    def replace_project_roles(self, project_path: str, entries: list[RoleSession], *, team_id: str = "") -> None:
+        data = self.load()
+        projects = data.setdefault("projects", {})
+
+        if not entries:
+            projects.pop(project_path, None)
+            self.save(data)
+            return
+
+        existing_project = projects.get(project_path)
+        project = dict(existing_project) if isinstance(existing_project, dict) else {}
+        existing_roles = project.get("roles")
+        if not isinstance(existing_roles, dict):
+            existing_roles = {}
+
+        project_name = Path(project_path).name
+        updated_at = max((entry.updated_at for entry in entries), default=_now_iso())
+        resolved_team_id = team_id or str(project.get("team_id") or "").strip()
+
+        project["team_id"] = resolved_team_id
+        project["project_path"] = project_path
+        project["project_name"] = project_name
+        project["updated_at"] = updated_at
+
+        synced_roles: dict[str, dict] = {}
+        for entry in entries:
+            existing_role = existing_roles.get(entry.role)
+            merged_role = dict(existing_role) if isinstance(existing_role, dict) else {}
+            merged_role.update(asdict(entry))
+            synced_roles[entry.role] = merged_role
+
+        project["roles"] = synced_roles
+        projects[project_path] = project
         self.save(data)
 
     def project_roles(self, project_path: str) -> dict[str, RoleSession]:

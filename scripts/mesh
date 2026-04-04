@@ -481,6 +481,7 @@ Usage:
   ./scripts/mesh term exec <repo-path> <role> <text>
   ./scripts/mesh term key <repo-path> <role> <key>
   ./scripts/mesh term dump <repo-path> <role> [--lines N]
+  ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
   ./scripts/mesh bootstrap
@@ -515,6 +516,10 @@ Examples:
   ./scripts/mesh term exec /media/sam/1TB/snake-game boss "/GBG status?"
   ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
   ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
+  ./scripts/mesh lite probe --project /Users/sam/gobabygo
+  ./scripts/mesh lite discover --project /Users/sam/gobabygo
+  ./scripts/mesh lite status --project /Users/sam/gobabygo
+  ./scripts/mesh lite relay-last --project /Users/sam/gobabygo boss president --dry-run
   ./scripts/mesh ui close snake-game
   ./scripts/mesh ui attach snake-game
   ./scripts/mesh bootstrap
@@ -533,6 +538,20 @@ Compatibility aliases:
   ./scripts/mesh session manage [--all] [repo|session|role]
   ./scripts/mesh attach [repo|session|role]
   ./scripts/mesh ui resume <repo-name|repo-path>
+EOF
+}
+
+lite_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh lite probe --project <repo-path>
+  ./scripts/mesh lite discover --project <repo-path>
+  ./scripts/mesh lite status [--project <repo-path>]
+  ./scripts/mesh lite relay-last --project <repo-path> <source-role> <target-role> [--dry-run]
+
+Behavior:
+  mesh lite is the iTerm2-first manual control path built on the validated attached bridge spike.
+  It keeps a small local registry and does not talk to the router.
 EOF
 }
 
@@ -611,6 +630,34 @@ run_iterm_control() {
     exit 1
   fi
   exec "$py_bin" "$ui_script" "$@"
+}
+
+run_mesh_lite() {
+  local py_bin cli_script uv_bin
+  py_bin="$(detect_python)" || exit $?
+  cli_script="${REPO_ROOT}/scripts/mesh_lite/cli.py"
+  if [[ ! -f "$cli_script" ]]; then
+    echo "Error: missing mesh lite CLI at $cli_script" >&2
+    exit 1
+  fi
+  if [[ -n "${MESH_LITE_PYTHON:-}" && -x "${MESH_LITE_PYTHON:-}" ]]; then
+    exec "${MESH_LITE_PYTHON}" "$cli_script" "$@"
+  fi
+  case "${1:-}" in
+    probe|status)
+      exec "$py_bin" "$cli_script" "$@"
+      ;;
+  esac
+  if ! python_has_module "$py_bin" iterm2; then
+    if uv_bin="$(detect_uv)"; then
+      export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
+      exec "$uv_bin" run --with iterm2 -- python "$cli_script" "$@"
+    fi
+    echo "Error: Python package 'iterm2' not found for live iTerm commands." >&2
+    echo "Set MESH_LITE_PYTHON=/path/to/python-with-iterm2 or use: uv run --with iterm2 -- python scripts/mesh_lite/cli.py ..." >&2
+    exit 1
+  fi
+  exec "$py_bin" "$cli_script" "$@"
 }
 
 resolve_repo_path_and_name() {
@@ -953,6 +1000,19 @@ PY
         echo "Error: unsupported term subcommand '$term_cmd'" >&2
         term_usage
         exit 2
+        ;;
+    esac
+    ;;
+  lite)
+    shift
+    lite_cmd="${1:-}"
+    case "$lite_cmd" in
+      ""|-h|--help)
+        lite_usage
+        exit 0
+        ;;
+      *)
+        run_mesh_lite "$@"
         ;;
     esac
     ;;

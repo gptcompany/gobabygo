@@ -106,9 +106,6 @@ def _select_fallback_jsonl_path(
     if len(replied_candidates) == 1 and len(available) == 1:
         return str(replied_candidates[0].path)
 
-    if len(available) == 1:
-        return str(available[0].path)
-
     return ""
 
 
@@ -175,7 +172,7 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             return
 
         discovered_entries = []
-        pending_fallback_indices: list[int] = []
+        unresolved_indices: list[int] = []
         claimed_paths: set[str] = set()
 
         for pane in panes:
@@ -221,14 +218,14 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             discovered_entries.append(entry)
             if jsonl_path:
                 claimed_paths.add(jsonl_path)
-            elif not upstream_session_id:
-                pending_fallback_indices.append(len(discovered_entries) - 1)
+            else:
+                unresolved_indices.append(len(discovered_entries) - 1)
             print(f"Discovered role={pane.role} session={pane.session.session_id} tty={tty} provider={provider or '-'} launch={launch_mode or '-'}")
 
         _apply_fallback_binding(
             project_path=project_path,
             discovered_entries=discovered_entries,
-            pending_fallback_indices=pending_fallback_indices,
+            pending_fallback_indices=unresolved_indices,
             candidates=candidates,
             claimed_paths=claimed_paths,
         )
