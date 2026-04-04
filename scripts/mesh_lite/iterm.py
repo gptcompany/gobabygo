@@ -113,6 +113,64 @@ end tell
     _osascript(script)
 
 
+def _list_sessions_via_osascript() -> list[SessionInfo]:
+    field_delim = chr(31)
+    record_delim = chr(30)
+    script = f'''
+tell application "iTerm2"
+  set fieldDelim to character id 31
+  set recordDelim to character id 30
+  set sessionRows to {{}}
+  set windowIndex to 0
+  repeat with aWindow in windows
+    set windowIndex to windowIndex + 1
+    set tabIndex to 0
+    repeat with aTab in tabs of aWindow
+      set tabIndex to tabIndex + 1
+      set sessionIndex to 0
+      repeat with aSession in sessions of aTab
+        set sessionIndex to sessionIndex + 1
+        set sessionTTY to ""
+        try
+          set sessionTTY to tty of aSession
+        end try
+        set end of sessionRows to ((id of aSession as text) & fieldDelim & (windowIndex as text) & fieldDelim & (tabIndex as text) & fieldDelim & (sessionIndex as text) & fieldDelim & sessionTTY)
+      end repeat
+    end repeat
+  end repeat
+  set AppleScript's text item delimiters to recordDelim
+  set joinedRows to sessionRows as text
+  set AppleScript's text item delimiters to ""
+  return joinedRows
+end tell
+'''
+    raw = _osascript(script)
+    if not raw:
+        return []
+
+    sessions: list[SessionInfo] = []
+    for row in raw.split(record_delim):
+        if not row:
+            continue
+        parts = row.split(field_delim)
+        if len(parts) != 5:
+            continue
+        session_id, window_index, tab_index, session_index, tty = parts
+        sessions.append(
+            SessionInfo(
+                session_id=_clean(session_id),
+                window_index=int(window_index or 0),
+                tab_index=int(tab_index or 0),
+                session_index=int(session_index or 0),
+                tty=_clean(tty),
+                title="",
+                badge="",
+                command="",
+            )
+        )
+    return sessions
+
+
 async def _list_sessions(connection) -> list[SessionInfo]:
     import iterm2
 
@@ -157,16 +215,19 @@ async def _list_sessions(connection) -> list[SessionInfo]:
 
 
 def list_sessions() -> list[SessionInfo]:
-    import iterm2
+    try:
+        import iterm2
 
-    result: list[SessionInfo] = []
+        result: list[SessionInfo] = []
 
-    async def _run(connection):
-        nonlocal result
-        result = await _list_sessions(connection)
+        async def _run(connection):
+            nonlocal result
+            result = await _list_sessions(connection)
 
-    iterm2.run_until_complete(_run, retry=False)
-    return result
+        iterm2.run_until_complete(_run, retry=False)
+        return result
+    except Exception:
+        return _list_sessions_via_osascript()
 
 
 def get_session(session_id: str) -> SessionInfo | None:
