@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.mesh_lite.iterm import ensure_safe_target, get_session
-from scripts.mesh_lite.jsonl import extract_last_assistant_msg, transcript_candidates
+from scripts.mesh_lite.jsonl import extract_last_assistant_msg, resolve_best_candidate, transcript_candidates
 from scripts.mesh_lite.registry import MeshLiteRegistry, build_entry
 
 
@@ -51,6 +51,39 @@ def _registry(path_override: str) -> MeshLiteRegistry:
     return MeshLiteRegistry(Path(path_override).expanduser()) if path_override else MeshLiteRegistry()
 
 
+def _parse_title_metadata(title: str) -> tuple[str | None, str | None, str | None]:
+    if not title or " (" not in title or ") | " not in title:
+        return None, None, None
+    parts = title.split(" (", 1)[1].split(") | ", 1)[0]
+    if not parts or parts == "operator":
+        return None, None, None
+    subparts = parts.split(":")
+    launch_mode = subparts[0] if len(subparts) >= 1 and subparts[0] else None
+    provider = subparts[1] if len(subparts) >= 2 and subparts[1] else None
+    upstream_session_id = subparts[2] if len(subparts) >= 3 and subparts[2] else None
+    return provider, launch_mode, upstream_session_id
+
+
+def _select_jsonl_path(
+    *,
+    project_path: str,
+    existing_jsonl_path: str,
+    upstream_session_id: str | None,
+) -> str:
+    existing_path = str(existing_jsonl_path or "").strip()
+    if existing_path:
+        return existing_path
+
+    candidates = transcript_candidates(project_path)
+    if upstream_session_id:
+        for candidate in candidates:
+            if candidate.session_id == upstream_session_id:
+                return str(candidate.path)
+
+    best = resolve_best_candidate(project_path)
+    return str(best.path) if best else ""
+
+
 def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
     project_path = _project_path(project)
     
@@ -67,11 +100,15 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             raise RuntimeError("iTerm2 app not available")
 
         panes = await _mesh_sessions(app, project_path)
+        existing_payload = ((registry.load().get("projects") or {}).get(project_path) or {})
+        team_id = str(existing_payload.get("team_id") or "").strip()
+
         if not panes:
+            registry.replace_project_roles(project_path, [], team_id=team_id)
             print(f"No live mesh UI panes found for project: {project_path}")
             return
 
-        team_id = ((registry.load().get("projects") or {}).get(project_path) or {}).get("team_id", "")
+        discovered_entries = []
 
         for pane in panes:
             title = ""
@@ -79,21 +116,8 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
                 title = str(await pane.session.async_get_variable("session.name") or "")
             except Exception:
                 pass
-            
-            provider = None
-            launch_mode = None
-            upstream_session_id = None
-            
-            if title and " (" in title and ") | " in title:
-                parts = title.split(" (", 1)[1].split(") | ", 1)[0]
-                if parts and parts != "operator":
-                    subparts = parts.split(":")
-                    if len(subparts) >= 1:
-                        launch_mode = subparts[0]
-                    if len(subparts) >= 2:
-                        provider = subparts[1]
-                    if len(subparts) >= 3:
-                        upstream_session_id = subparts[2]
+
+            provider, launch_mode, upstream_session_id = _parse_title_metadata(title)
 
             try:
                 tty = str(pane.session.tty or "")
@@ -107,7 +131,11 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
                 pass
 
             existing = registry.get(project_path, pane.role)
-            jsonl_path = existing.jsonl_path if existing else ""
+            jsonl_path = _select_jsonl_path(
+                project_path=project_path,
+                existing_jsonl_path=existing.jsonl_path if existing else "",
+                upstream_session_id=upstream_session_id,
+            )
 
             entry = build_entry(
                 role=pane.role,
@@ -122,8 +150,10 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
                 launch_mode=launch_mode,
                 upstream_session_id=upstream_session_id,
             )
-            registry.upsert(entry)
+            discovered_entries.append(entry)
             print(f"Discovered role={pane.role} session={pane.session.session_id} tty={tty} provider={provider or '-'} launch={launch_mode or '-'}")
+
+        registry.replace_project_roles(project_path, discovered_entries, team_id=team_id)
 
     try:
         iterm2.run_until_complete(_run, retry=False)
@@ -153,10 +183,23 @@ def _cmd_status(registry: MeshLiteRegistry, project: str) -> int:
         roles = payload.get("roles") or {}
         for role in sorted(roles):
             item = roles[role]
-            print(
-                f"  {role:<12} session={item.get('session_id')} tty={item.get('tty') or '-'} "
-                f"jsonl={item.get('jsonl_path') or '-'}"
-            )
+            
+            session_id = item.get("session_id") or "-"
+            tty = item.get("tty") or "-"
+            jsonl_path = item.get("jsonl_path")
+            provider = item.get("provider") or "-"
+            launch_mode = item.get("launch_mode") or "-"
+            upstream_session_id = item.get("upstream_session_id") or "-"
+            
+            status_text = "bound" if jsonl_path else "unresolved"
+            
+            print(f"  {role:<12} [{status_text}]")
+            print(f"    ├─ session_id:  {session_id}")
+            print(f"    ├─ tty:         {tty}")
+            print(f"    ├─ provider:    {provider}")
+            print(f"    ├─ launch_mode: {launch_mode}")
+            print(f"    ├─ upstream_id: {upstream_session_id}")
+            print(f"    └─ jsonl_path:  {jsonl_path or '(missing)'}")
     return 0
 
 
@@ -194,6 +237,9 @@ def _cmd_relay_last(
     target = registry.get(project_path, target_role)
     if target is None:
         raise SystemExit(f"Target role not registered for project: {target_role}")
+
+    if not source.jsonl_path:
+        raise SystemExit(f"Source role has no transcript binding: {source_role}")
 
     reply = extract_last_assistant_msg(Path(source.jsonl_path))
     if not reply:
