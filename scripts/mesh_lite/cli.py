@@ -77,10 +77,26 @@ def _select_jsonl_path(
     candidates = transcript_candidates(project_path)
     if upstream_session_id:
         session_prefix = upstream_session_id.strip()
+        matched = []
         for candidate in candidates:
             candidate_session_id = str(candidate.session_id or "").strip()
             if candidate_session_id and candidate_session_id.startswith(session_prefix):
-                return str(candidate.path)
+                matched.append(candidate)
+        if len(matched) == 1:
+            return str(matched[0].path)
+        return ""
+
+    exact_cwd_with_reply = [
+        candidate
+        for candidate in candidates
+        if candidate.cwd == project_path and candidate.assistant_text
+    ]
+    if len(exact_cwd_with_reply) == 1:
+        return str(exact_cwd_with_reply[0].path)
+
+    any_reply = [candidate for candidate in candidates if candidate.assistant_text]
+    if len(any_reply) == 1:
+        return str(any_reply[0].path)
 
     return ""
 
@@ -234,25 +250,25 @@ def _cmd_relay_last(
     project_path = _project_path(project)
     source = registry.get(project_path, source_role)
     if source is None:
-        raise SystemExit(f"Source role not registered for project: {source_role}")
+        raise SystemExit(f"Error: Source role '{source_role}' not registered for project: {project_path}")
     target = registry.get(project_path, target_role)
     if target is None:
-        raise SystemExit(f"Target role not registered for project: {target_role}")
+        raise SystemExit(f"Error: Target role '{target_role}' not registered for project: {project_path}")
 
     if not source.jsonl_path:
-        raise SystemExit(f"Source role has no transcript binding: {source_role}")
+        raise SystemExit(f"Error: Source role '{source_role}' has no valid transcript binding.")
 
     reply = extract_last_assistant_msg(Path(source.jsonl_path))
     if not reply:
-        raise SystemExit(f"No assistant reply found in transcript: {source.jsonl_path}")
+        raise SystemExit(f"Error: No assistant reply found in transcript: {source.jsonl_path}")
 
     live_target = get_session(target.session_id)
     if live_target is None:
-        raise SystemExit(f"Target live session not found: {target.session_id}")
+        raise SystemExit(f"Error: Target live session not found in iTerm2: {target.session_id}")
 
     safe, reason = ensure_safe_target(live_target.tty)
     if not safe:
-        raise SystemExit(f"Refusing injection into target {target.session_id}: {reason}")
+        raise SystemExit(f"Error: Refusing injection into target {target.session_id} ({live_target.tty}): {reason}")
 
     print(f"Source transcript: {source.jsonl_path}")
     print(f"Target tty: {live_target.tty} foreground={reason}")

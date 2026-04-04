@@ -241,12 +241,13 @@ def test_cmd_status_empty(capsys, tmp_path: Path) -> None:
 import pytest
 
 def test_cmd_relay_last_fails_on_missing_source_role(tmp_path: Path) -> None:
-    from scripts.mesh_lite.cli import _cmd_relay_last
+    from scripts.mesh_lite.cli import _cmd_relay_last, _project_path
     from scripts.mesh_lite.registry import MeshLiteRegistry
 
     registry = MeshLiteRegistry(tmp_path / "registry.json")
+    repo_path = _project_path("/tmp/repo")
     
-    with pytest.raises(SystemExit, match="Source role not registered for project: missing"):
+    with pytest.raises(SystemExit, match=f"Error: Source role 'missing' not registered for project: {repo_path}"):
         _cmd_relay_last(registry, "/tmp/repo", "missing", "target", False)
 
 
@@ -258,7 +259,7 @@ def test_cmd_relay_last_fails_on_missing_target_role(tmp_path: Path) -> None:
     repo_path = _project_path("/tmp/repo")
     registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="/path", project_path=repo_path))
     
-    with pytest.raises(SystemExit, match="Target role not registered for project: missing"):
+    with pytest.raises(SystemExit, match=f"Error: Target role 'missing' not registered for project: {repo_path}"):
         _cmd_relay_last(registry, "/tmp/repo", "source", "missing", False)
 
 
@@ -271,7 +272,7 @@ def test_cmd_relay_last_fails_on_unresolved_transcript_binding(tmp_path: Path) -
     registry.upsert(build_entry(role="source", team_id="1", session_id="S1", tty="T1", title="", badge="", jsonl_path="", project_path=repo_path))
     registry.upsert(build_entry(role="target", team_id="1", session_id="S2", tty="T2", title="", badge="", jsonl_path="", project_path=repo_path))
 
-    with pytest.raises(SystemExit, match="Source role has no transcript binding: source"):
+    with pytest.raises(SystemExit, match="Error: Source role 'source' has no valid transcript binding."):
         _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
 
 
@@ -286,7 +287,7 @@ def test_cmd_relay_last_fails_on_missing_assistant_reply(monkeypatch, tmp_path: 
 
     monkeypatch.setattr("scripts.mesh_lite.cli.extract_last_assistant_msg", lambda _: "")
 
-    with pytest.raises(SystemExit, match="No assistant reply found in transcript: /path.jsonl"):
+    with pytest.raises(SystemExit, match="Error: No assistant reply found in transcript: /path.jsonl"):
         _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
 
 
@@ -302,7 +303,7 @@ def test_cmd_relay_last_fails_on_missing_live_target(monkeypatch, tmp_path: Path
     monkeypatch.setattr("scripts.mesh_lite.cli.extract_last_assistant_msg", lambda _: "hello")
     monkeypatch.setattr("scripts.mesh_lite.cli.get_session", lambda _: None)
 
-    with pytest.raises(SystemExit, match="Target live session not found: S2"):
+    with pytest.raises(SystemExit, match="Error: Target live session not found in iTerm2: S2"):
         _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
 
 
@@ -320,7 +321,7 @@ def test_cmd_relay_last_fails_on_unsafe_target(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr("scripts.mesh_lite.cli.get_session", lambda _: SessionInfo(session_id="S2", window_index=1, tab_index=1, session_index=1, tty="T2", title="", badge="", command=""))
     monkeypatch.setattr("scripts.mesh_lite.cli.ensure_safe_target", lambda _: (False, "unsafe command: vim"))
 
-    with pytest.raises(SystemExit, match="Refusing injection into target S2: unsafe command: vim"):
+    with pytest.raises(SystemExit, match=r"Error: Refusing injection into target S2 \(T2\): unsafe command: vim"):
         _cmd_relay_last(registry, "/tmp/repo", "source", "target", False)
 
 
