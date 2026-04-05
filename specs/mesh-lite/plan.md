@@ -43,7 +43,6 @@ As of April 5, 2026:
   - `relay-last` close-out and final review loop
   - future attached bridge design slice
   - full E2E validation script (requires interactive run)
-- not started as final acceptance:
 
 ## Design Decisions
 
