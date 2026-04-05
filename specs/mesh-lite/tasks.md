@@ -390,6 +390,10 @@ Done when:
 
 ### T010. E2E validation
 
+Status:
+
+- done (Script implemented in `tests/smoke/test_mesh_lite_e2e_live.py`, requires manual interactive execution due to iTerm2 API requirements)
+
 Scope:
 
 - run the full operator flow described in plan.md validation plan
