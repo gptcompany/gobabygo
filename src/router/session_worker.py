@@ -2434,6 +2434,10 @@ class MeshSessionWorker:
                         content,
                         source_role=source_role,
                     )
+                    self._tmux_render_notice(
+                        tmux_session,
+                        _format_inbound_notice(content, source_role=source_role),
+                    )
                     self._tmux_ring_bell(tmux_session)
                 else:
                     self._tmux_send_text(
@@ -2506,6 +2510,10 @@ class MeshSessionWorker:
                         tmux_session,
                         content,
                         source_role=source_role,
+                    )
+                    self._tmux_render_notice(
+                        tmux_session,
+                        _format_inbound_notice(content, source_role=source_role),
                     )
                     self._tmux_ring_bell(tmux_session)
                 else:

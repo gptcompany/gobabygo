@@ -2609,6 +2609,7 @@ class TestDeliverInboundMessages:
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
             patch.object(worker, "_append_boss_inbox_notice") as mock_notice,
+            patch.object(worker, "_tmux_render_notice") as mock_render,
             patch.object(worker, "_tmux_set_badge") as mock_badge,
             patch.object(worker, "_tmux_ring_bell") as mock_bell,
         ):
@@ -2620,6 +2621,59 @@ class TestDeliverInboundMessages:
             "tsess",
             "reply from president",
             source_role="president",
+        )
+        mock_render.assert_called_once_with(
+            "tsess",
+            _format_inbound_notice("reply from president", source_role="president"),
+        )
+        mock_badge.assert_not_called()
+        mock_bell.assert_called_once_with("tsess")
+
+    def test_boss_group_relay_is_logged_rendered_and_rings_bell(self) -> None:
+        worker = _make_worker()
+        worker._list_group_messages = Mock(  # type: ignore[method-assign]
+            return_value=[
+                {
+                    "seq": 21,
+                    "role": "president",
+                    "content": "reply from president",
+                    "session_id": "sid-other",
+                    "metadata": {
+                        "source_role": "president",
+                        "envelope": {
+                            "msg_type": "relay",
+                            "sender_role": "president",
+                        },
+                    },
+                }
+            ]
+        )
+
+        with (
+            patch.object(worker, "_tmux_send_text") as mock_send,
+            patch.object(worker, "_append_boss_inbox_notice") as mock_notice,
+            patch.object(worker, "_tmux_render_notice") as mock_render,
+            patch.object(worker, "_tmux_set_badge") as mock_badge,
+            patch.object(worker, "_tmux_ring_bell") as mock_bell,
+        ):
+            new_seq = worker._deliver_group_messages(
+                session_id="sid",
+                tmux_session="tsess",
+                after_seq=20,
+                ui_group_id="group-1",
+                ui_role="boss",
+            )
+
+        assert new_seq == 21
+        mock_send.assert_not_called()
+        mock_notice.assert_called_once_with(
+            "tsess",
+            "reply from president",
+            source_role="president",
+        )
+        mock_render.assert_called_once_with(
+            "tsess",
+            _format_inbound_notice("reply from president", source_role="president"),
         )
         mock_badge.assert_not_called()
         mock_bell.assert_called_once_with("tsess")
@@ -2647,6 +2701,7 @@ class TestDeliverInboundMessages:
         with (
             patch.object(worker, "_tmux_send_text") as mock_send,
             patch.object(worker, "_append_boss_inbox_notice") as mock_notice,
+            patch.object(worker, "_tmux_render_notice") as mock_render,
             patch.object(worker, "_tmux_set_badge") as mock_badge,
             patch.object(worker, "_tmux_ring_bell") as mock_bell,
         ):
@@ -2655,6 +2710,7 @@ class TestDeliverInboundMessages:
         assert new_seq == 12
         mock_send.assert_not_called()
         mock_notice.assert_not_called()
+        mock_render.assert_not_called()
         mock_badge.assert_not_called()
         mock_bell.assert_not_called()
 
