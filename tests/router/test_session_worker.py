@@ -127,7 +127,8 @@ def test_ensure_claude_mesh_hook_settings_merges_existing_file(tmp_path) -> None
 def test_build_claude_gbg_command_requires_minimal_ack_without_echoing_payload() -> None:
     content = _build_claude_gbg_command()
     assert "/gbg" in content
-    assert "Respond with exactly `OK.` and nothing else." in content
+    assert "Respond with `OK.` on the first line." in content
+    assert 'Then emit a final machine-readable trailer line in the form `GBG: {"message":"..."}`.' in content
     assert "Do not repeat the routed content." in content
     assert "Route your last useful assistant response to the default target." in content
 
@@ -2620,10 +2621,7 @@ class TestDeliverInboundMessages:
             "reply from president",
             source_role="president",
         )
-        mock_badge.assert_called_once_with(
-            "tsess",
-            _format_inbound_notice("reply from president", source_role="president"),
-        )
+        mock_badge.assert_not_called()
         mock_bell.assert_called_once_with("tsess")
 
     def test_inbound_relay_messages_are_skipped_because_group_delivery_handles_them(self) -> None:

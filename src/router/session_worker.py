@@ -109,10 +109,12 @@ def _build_claude_gbg_command() -> str:
         "  Route `<text>` to the default target.\n"
         "- `/gbg <role> <text>`\n"
         "  Route `<text>` to an explicit role when you have multiple peers.\n\n"
-        "Respond with exactly `OK.` and nothing else.\n"
+        "Respond with `OK.` on the first line.\n"
+        "Then emit a final machine-readable trailer line in the form `GBG: {\"message\":\"...\"}`.\n"
+        "Include `target` in the trailer only when an explicit role was provided.\n"
         "Do not repeat the routed content.\n"
         "Do not explain the protocol.\n"
-        "Do not emit a machine-readable trailer unless explicitly asked for debugging.\n\n"
+        "Do not add any extra prose after the trailer.\n\n"
         "Rules:\n"
         "1. If the command already contains explicit text, the runtime will use that text directly.\n"
         "2. If the command has no text, the runtime will use your previous useful assistant response.\n"
@@ -2432,10 +2434,6 @@ class MeshSessionWorker:
                         content,
                         source_role=source_role,
                     )
-                    self._tmux_set_badge(
-                        tmux_session,
-                        _format_inbound_notice(content, source_role=source_role),
-                    )
                     self._tmux_ring_bell(tmux_session)
                 else:
                     self._tmux_send_text(
@@ -2508,10 +2506,6 @@ class MeshSessionWorker:
                         tmux_session,
                         content,
                         source_role=source_role,
-                    )
-                    self._tmux_set_badge(
-                        tmux_session,
-                        _format_inbound_notice(content, source_role=source_role),
                     )
                     self._tmux_ring_bell(tmux_session)
                 else:
