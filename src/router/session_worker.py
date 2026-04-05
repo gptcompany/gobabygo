@@ -633,6 +633,14 @@ def _format_inbound_notice(content: str, *, source_role: str, max_chars: int = 2
     return f"[mesh][{role}] {clean}" if clean else f"[mesh][{role}]"
 
 
+def _sanitize_terminal_notice(text: str) -> str:
+    value = str(text or "")
+    value = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", value)
+    value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+    value = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", value)
+    return value.strip()
+
+
 def _detect_role_state(captured: str) -> RoleState:
     body = str(captured or "")
     if not body.strip():
@@ -1682,7 +1690,7 @@ class MeshSessionWorker:
         tty_path = self._tmux_pane_tty(session_name)
         if not tty_path:
             raise subprocess.SubprocessError(f"missing pane tty for {session_name}")
-        rendered = str(message or "").strip()
+        rendered = _sanitize_terminal_notice(message)
         if not rendered:
             return
         with open(tty_path, "w", encoding="utf-8", errors="ignore") as fh:
