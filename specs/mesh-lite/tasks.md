@@ -309,6 +309,10 @@ Reference only:
 
 ### T008. Future attached bridge design slice
 
+Status:
+
+- done
+
 Scope:
 
 - define what comes after the manual relay path
@@ -355,6 +359,10 @@ Goal:
   PAL-style attached runner, without introducing PAL as a runtime dependency now
 
 ### T009. Lifecycle regression smoke test
+
+Status:
+
+- done
 
 Scope:
 

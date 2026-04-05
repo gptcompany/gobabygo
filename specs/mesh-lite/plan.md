@@ -41,6 +41,7 @@ As of April 5, 2026:
   - conservative transcript binding
   - binding-focused status view
   - `relay-last` close-out and final review loop
+  - future attached bridge design slice
 - not started as final acceptance:
   - full E2E validation pass
 
