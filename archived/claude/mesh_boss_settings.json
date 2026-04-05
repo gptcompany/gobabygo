@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"$MESH_HOME/scripts/mesh_boss_prompt_hook.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

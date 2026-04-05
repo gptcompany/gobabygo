@@ -30,6 +30,20 @@ Out of scope:
 - MCP critical path
 - automatic orchestration
 
+## Current Status
+
+As of April 5, 2026:
+
+- completed:
+  - boundary narrowing
+  - local binding registry
+  - live pane discovery
+  - conservative transcript binding
+  - binding-focused status view
+  - `relay-last` close-out and final review loop
+- not started as final acceptance:
+  - full E2E validation pass
+
 ## Design Decisions
 
 - `mesh ui` is the lifecycle owner.
@@ -141,7 +155,8 @@ Deliverables:
 Tasks:
 
 1. resolve transcript candidates for the project
-2. assign best-effort transcript path per role
+2. assign transcript path only when the match is provable or otherwise
+   non-ambiguous
 3. record known ambiguity explicitly
 4. harden the binding incrementally later
 5. keep `probe` aligned with the same discovery/binding logic
@@ -192,6 +207,7 @@ Tasks:
 2. read the latest assistant message from the source transcript
 3. send that text to the target live pane
 4. fail clearly if transcript binding is missing or ambiguous
+5. keep the transport robust across both Python iTerm and AppleScript fallback
 
 Primary files to use:
 
@@ -258,6 +274,15 @@ Reference-only files:
 ## Validation Plan
 
 ### Unit / Integration
+
+Current unit/integration baseline:
+
+- mesh-lite:
+  - registry/jsonl/cli/iterm targeted tests passing
+- router/session-worker compatibility fixes:
+  - targeted worker + Claude router-hook tests passing
+
+Full live E2E remains a separate final validation step after `T006`.
 
 - registry persistence
 - transcript parsing

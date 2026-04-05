@@ -126,11 +126,13 @@ an alternate control plane.
      - live session id
      - tty
      - repo
-     - best-effort transcript path
+     - transcript path only when the binding is provable or non-ambiguous
+     - otherwise an explicit unresolved state
 
 2. `status`
    - show the local binding registry
    - not a replacement for `mesh sessions`
+   - make clear whether a role is relay-ready or unresolved
 
 3. `relay-last`
    - read last assistant message from the source transcript
@@ -218,6 +220,31 @@ Optional later:
     - `send_line()`
     - `ensure_safe_target()`
     - `dump_screen()`
+  - fallback behavior may use AppleScript, but it must stay transport-scoped and
+    must not become a second lifecycle/session manager
+
+## Current Implementation Alignment
+
+As of April 5, 2026, the intended v1 behavior is:
+
+- `discover`
+  - reuses the live panes already opened by `mesh ui`
+  - prunes stale role bindings on repeat discovery
+  - preserves an existing transcript binding when it is still valid
+  - only auto-binds transcripts when the match is provable or otherwise
+    non-ambiguous
+  - leaves roles explicitly unresolved when transcript identity is ambiguous
+
+- `status`
+  - is binding-focused only
+  - reflects the local registry
+  - distinguishes relay-ready vs unresolved roles
+
+- `relay-last`
+  - is registry-driven
+  - does not perform fresh transcript discovery during relay
+  - must fail clearly on missing binding, missing reply, missing target session,
+    or unsafe injection target
   - the custom layout/spawn branch has already been archived
 
 ### Archived Internal Files

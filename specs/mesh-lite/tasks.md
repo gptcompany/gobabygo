@@ -31,6 +31,10 @@ Done when:
 
 ### T001. Correct the boundary
 
+Status:
+
+- done
+
 Scope:
 
 - remove ambiguity between existing mesh lifecycle and new mesh-lite work
@@ -54,6 +58,10 @@ Done when:
 - custom `spawn-team` and `list-live` are no longer in the active CLI path
 
 ### T002. Implement local binding registry
+
+Status:
+
+- done
 
 Scope:
 
@@ -96,6 +104,10 @@ Reference only:
 
 ### T003. Discover live mesh UI panes
 
+Status:
+
+- done
+
 Scope:
 
 - scan panes already opened by `mesh ui`
@@ -119,6 +131,7 @@ Done when:
 - `mesh lite discover --project <repo>` finds live role panes
 - registry gets populated from those live panes
 - repeated discover does not duplicate bindings
+- repeated discover prunes stale bindings that are no longer live
 - when available from the live session context, registry best-effort captures:
   - `provider`
   - `launch_mode`
@@ -140,6 +153,10 @@ Do not use:
 
 ### T004. Best-effort transcript binding
 
+Status:
+
+- done
+
 Scope:
 
 - resolve transcript candidates for the discovered project
@@ -160,7 +177,7 @@ Depends on:
 Done when:
 
 - each discovered role gets either:
-  - a transcript path
+  - a transcript path when the match is provable or non-ambiguous
   - or an explicit unresolved state
 - `mesh lite probe --project <repo>` reports the same candidate/binding view used
   by `discover` and `relay-last`
@@ -169,7 +186,6 @@ Use:
 
 - `scripts/mesh_lite/jsonl.py`
   - `transcript_candidates(...)`
-  - `resolve_best_candidate(...)`
   - `extract_last_assistant_msg(...)`
 - `scripts/mesh_lite/registry.py`
 - `scripts/mesh_lite/cli.py`
@@ -182,6 +198,10 @@ Reference only:
 - `/tmp/maniple/src/maniple_mcp/session_state.py`
 
 ### T005. Binding status
+
+Status:
+
+- done
 
 Scope:
 
@@ -200,6 +220,7 @@ Depends on:
 Done when:
 
 - `mesh lite status --project <repo>` shows role/session/tty/transcript binding
+- output makes relay-ready vs unresolved state explicit
 - output stays scoped to bindings, not generic session inventory
 
 Use:
@@ -208,6 +229,10 @@ Use:
 - `scripts/mesh_lite/registry.py`
 
 ### T006. Relay-last
+
+Status:
+
+- done
 
 Scope:
 
@@ -228,6 +253,9 @@ Done when:
 
 - `mesh lite relay-last --project <repo> boss president` works on live panes
 - failure is explicit when source transcript is missing or ambiguous
+- `--dry-run` is reliable and side-effect free
+- transport remains robust when the Python iTerm path is unavailable and the
+  AppleScript fallback is used
 
 Use:
 
@@ -240,6 +268,10 @@ Reference only:
 - `/tmp/maniple/src/maniple_mcp/iterm_utils.py`
 
 ### T007. Send/focus hardening
+
+Status:
+
+- done
 
 Scope:
 
