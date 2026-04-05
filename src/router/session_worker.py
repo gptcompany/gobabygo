@@ -637,7 +637,10 @@ def _sanitize_terminal_notice(text: str) -> str:
     value = str(text or "")
     value = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", value)
     value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+    value = re.sub(r"\x9d[^\x07\x1b]*(?:\x07|\x1b\\)?", "", value)
+    value = re.sub(r"\x9b[0-?]*[ -/]*[@-~]", "", value)
     value = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", value)
+    value = re.sub(r"[\x80-\x9f]", "", value)
     return value.strip()
 
 

@@ -2938,6 +2938,20 @@ class TestTmuxOperations:
 
     @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.run")
+    def test_tmux_render_notice_strips_c1_terminal_escape_sequences(self, mock_run: Mock, mock_file: Mock) -> None:
+        worker = _make_worker()
+        mock_run.return_value = Mock(stdout="/dev/pts/42\n")
+
+        worker._tmux_render_notice(
+            "mysess",
+            "[mesh][president] hello\u009b2J\u009d52;c;YmFk\u0007world",
+        )
+
+        mock_file.assert_called_once_with("/dev/pts/42", "w", encoding="utf-8", errors="ignore")
+        mock_file().write.assert_called_once_with("\r\n[mesh][president] helloworld\r\n")
+
+    @patch("builtins.open", new_callable=mock_open)
+    @patch("src.router.session_worker.subprocess.run")
     def test_tmux_set_badge_writes_iterm_badge_escape(self, mock_run: Mock, mock_file: Mock) -> None:
         worker = _make_worker()
         mock_run.return_value = Mock(stdout="/dev/pts/42\n")
