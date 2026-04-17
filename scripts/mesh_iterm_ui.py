@@ -142,6 +142,15 @@ def _should_avoid_split_panes(version: str | None = None) -> bool:
     return resolved.startswith("3.6.9")
 
 
+def _iterm_retry_enabled() -> bool:
+    return str(os.environ.get("MESH_ITERM_RETRY", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _cache_repo_path(repo_path: str) -> str:
     candidate = str(repo_path or "").strip()
     if not candidate:
@@ -1714,7 +1723,7 @@ def main() -> int:
 
     socket_path = os.path.expanduser("~/Library/Application Support/iTerm2/private/socket")
     try:
-        iterm2.run_until_complete(lambda conn: _launch_layout(conn, cfg), retry=False)
+        iterm2.run_until_complete(lambda conn: _launch_layout(conn, cfg), retry=_iterm_retry_enabled())
     except Exception as exc:
         if not os.path.exists(socket_path):
             print(

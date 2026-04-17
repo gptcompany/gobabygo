@@ -38,6 +38,16 @@ def test_mesh_ui_role_shell_marks_repo_safe_for_git():
     assert 'git config --global --add safe.directory "$target_dir"' in content
 
 
+def test_iterm_retry_enabled_reads_env(monkeypatch):
+    module = _load_module()
+
+    monkeypatch.delenv("MESH_ITERM_RETRY", raising=False)
+    assert module._iterm_retry_enabled() is False
+
+    monkeypatch.setenv("MESH_ITERM_RETRY", "1")
+    assert module._iterm_retry_enabled() is True
+
+
 def test_mesh_ui_role_shell_sets_role_label_and_badge():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
     content = script_path.read_text(encoding="utf-8")

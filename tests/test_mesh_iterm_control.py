@@ -76,6 +76,25 @@ def test_key_text_maps_common_keys():
     assert module._key_text("ctrl-c") == "\x03"
 
 
+def test_iterm_retry_enabled_reads_env(monkeypatch):
+    module = _load_module()
+
+    monkeypatch.delenv("MESH_ITERM_RETRY", raising=False)
+    assert module._iterm_retry_enabled() is False
+
+    monkeypatch.setenv("MESH_ITERM_RETRY", "yes")
+    assert module._iterm_retry_enabled() is True
+
+
+def test_emit_writes_output_file(tmp_path):
+    module = _load_module()
+    target = tmp_path / "term.txt"
+
+    module._emit("one", str(target))
+
+    assert target.read_text(encoding="utf-8") == "one\n"
+
+
 def test_mesh_sessions_filters_marked_repo_and_role():
     module = _load_module()
     target = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True)
