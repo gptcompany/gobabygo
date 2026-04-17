@@ -487,6 +487,7 @@ Usage:
   ./scripts/mesh term team-e2e <repo-path> [--keep-open]
   ./scripts/mesh term speckit-team-e2e <repo-path> [--feature text] [--keep-open]
   ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write] [--auto-approve-prompts] [--no-handoff]
+  ./scripts/mesh speckit run <repo-path> --feature text [--auto] [--allow-edit path]
   ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
@@ -522,6 +523,7 @@ Examples:
   ./scripts/mesh term exec /media/sam/1TB/snake-game boss "/GBG status?"
   ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
   ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
+  ./scripts/mesh speckit run /tmp/snake-game --feature "add score counter" --auto
   ./scripts/mesh lite probe --project /Users/sam/gobabygo
   ./scripts/mesh lite discover --project /Users/sam/gobabygo
   ./scripts/mesh lite status --project /Users/sam/gobabygo
@@ -624,6 +626,222 @@ Examples:
   ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
   ./scripts/mesh term close /media/sam/1TB/snake-game
 EOF
+}
+
+speckit_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
+
+Options:
+  --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.
+  --write, --allow-write         Allow the worker to edit files. No commit is made.
+  --team local-codex-gemini      Use Codex boss, Codex president, Gemini worker. Default.
+  --team claude-codex-gemini     Use Claude boss, Codex president, Gemini worker.
+  --team env                     Defer CLI commands to MESH_TEAM_* env vars / controller defaults.
+  --test-command <cmd>           Test command to run after worker returns. Defaults to ./test.sh if executable.
+  --no-test                      Do not run a test command.
+  --allow-edit <path>            With auto-approval, approve edit prompts only for this repo-relative path. Repeatable.
+  --print-command                Print the expanded controller command without running it.
+
+Behavior:
+  This is a short wrapper around:
+    ./scripts/mesh term speckit-team-run <repo> ...
+EOF
+}
+
+run_speckit_short() {
+  local subcmd="${1:-}"
+  if [[ "$subcmd" == "" || "$subcmd" == "-h" || "$subcmd" == "--help" ]]; then
+    speckit_usage
+    exit 0
+  fi
+  if [[ "$subcmd" != "run" ]]; then
+    echo "Error: unsupported speckit subcommand '$subcmd'" >&2
+    speckit_usage
+    exit 2
+  fi
+  shift
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    speckit_usage
+    exit 0
+  fi
+
+  local repo="" feature="" task="" team="${MESH_SPECKIT_TEAM:-local-codex-gemini}"
+  local boss_cmd="" president_cmd="" worker_cmd=""
+  local allow_write=0 auto_mode=0 auto_approve=0 print_command=0
+  local test_command="" test_command_set=0 max_turns="${MESH_SPECKIT_MAX_TURNS:-1}"
+  local passthrough=() allow_edits=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --feature)
+        [[ $# -ge 2 ]] || { echo "Error: --feature requires a value" >&2; exit 2; }
+        feature="$2"
+        shift 2
+        ;;
+      --feature=*)
+        feature="${1#*=}"
+        shift
+        ;;
+      --task)
+        [[ $# -ge 2 ]] || { echo "Error: --task requires a value" >&2; exit 2; }
+        task="$2"
+        shift 2
+        ;;
+      --task=*)
+        task="${1#*=}"
+        shift
+        ;;
+      --team)
+        [[ $# -ge 2 ]] || { echo "Error: --team requires a value" >&2; exit 2; }
+        team="$2"
+        shift 2
+        ;;
+      --team=*)
+        team="${1#*=}"
+        shift
+        ;;
+      --boss-cmd)
+        [[ $# -ge 2 ]] || { echo "Error: --boss-cmd requires a value" >&2; exit 2; }
+        boss_cmd="$2"
+        shift 2
+        ;;
+      --president-cmd)
+        [[ $# -ge 2 ]] || { echo "Error: --president-cmd requires a value" >&2; exit 2; }
+        president_cmd="$2"
+        shift 2
+        ;;
+      --worker-cmd)
+        [[ $# -ge 2 ]] || { echo "Error: --worker-cmd requires a value" >&2; exit 2; }
+        worker_cmd="$2"
+        shift 2
+        ;;
+      --write|--allow-write)
+        allow_write=1
+        shift
+        ;;
+      --auto)
+        auto_mode=1
+        shift
+        ;;
+      --auto-approve-prompts)
+        auto_approve=1
+        shift
+        ;;
+      --allow-edit|--auto-approve-edit-path)
+        [[ $# -ge 2 ]] || { echo "Error: $1 requires a value" >&2; exit 2; }
+        allow_edits+=("$2")
+        shift 2
+        ;;
+      --max-turns)
+        [[ $# -ge 2 ]] || { echo "Error: --max-turns requires a value" >&2; exit 2; }
+        max_turns="$2"
+        shift 2
+        ;;
+      --test-command)
+        [[ $# -ge 2 ]] || { echo "Error: --test-command requires a value" >&2; exit 2; }
+        test_command="$2"
+        test_command_set=1
+        shift 2
+        ;;
+      --no-test)
+        test_command=""
+        test_command_set=1
+        shift
+        ;;
+      --print-command)
+        print_command=1
+        shift
+        ;;
+      --)
+        shift
+        passthrough+=("$@")
+        break
+        ;;
+      -*)
+        passthrough+=("$1")
+        shift
+        ;;
+      *)
+        if [[ -z "$repo" ]]; then
+          repo="$1"
+        else
+          passthrough+=("$1")
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$repo" ]]; then
+    echo "Error: missing repo path" >&2
+    speckit_usage
+    exit 2
+  fi
+  if [[ -z "$feature" ]]; then
+    echo "Error: missing --feature text" >&2
+    speckit_usage
+    exit 2
+  fi
+
+  if [[ "$auto_mode" -eq 1 ]]; then
+    allow_write=1
+    auto_approve=1
+    max_turns="${max_turns:-1}"
+  fi
+  if [[ "$auto_approve" -eq 1 && "$allow_write" -ne 1 ]]; then
+    echo "Error: --auto-approve-prompts requires --write or --auto" >&2
+    exit 2
+  fi
+
+  resolve_repo_path_and_name "$repo"
+  local repo_path="$RESOLVED_REPO_PATH"
+  if [[ "$test_command_set" -eq 0 && -x "$repo_path/test.sh" ]]; then
+    test_command="./test.sh"
+  fi
+
+  case "$team" in
+    local-codex-gemini)
+      boss_cmd="${boss_cmd:-codex}"
+      president_cmd="${president_cmd:-codex}"
+      worker_cmd="${worker_cmd:-gemini}"
+      ;;
+    claude-codex-gemini)
+      boss_cmd="${boss_cmd:-claude}"
+      president_cmd="${president_cmd:-codex}"
+      worker_cmd="${worker_cmd:-gemini}"
+      ;;
+    env)
+      ;;
+    *)
+      echo "Error: unsupported speckit team '$team'" >&2
+      speckit_usage
+      exit 2
+      ;;
+  esac
+
+  local args=(speckit-team-run --repo "$repo_path" --feature "$feature" --max-turns "$max_turns")
+  [[ -n "$task" ]] && args+=(--task "$task")
+  [[ -n "$boss_cmd" ]] && args+=(--boss-cmd "$boss_cmd")
+  [[ -n "$president_cmd" ]] && args+=(--president-cmd "$president_cmd")
+  [[ -n "$worker_cmd" ]] && args+=(--worker-cmd "$worker_cmd")
+  [[ "$allow_write" -eq 1 ]] && args+=(--allow-write)
+  [[ "$auto_approve" -eq 1 ]] && args+=(--auto-approve-prompts)
+  for edit_path in "${allow_edits[@]}"; do
+    args+=(--auto-approve-edit-path "$edit_path")
+  done
+  [[ -n "$test_command" ]] && args+=(--test-command "$test_command")
+  args+=("${passthrough[@]}")
+
+  if [[ "$print_command" -eq 1 ]]; then
+    printf 'python scripts/mesh_iterm_control.py'
+    printf ' %q' "${args[@]}"
+    printf '\n'
+    exit 0
+  fi
+
+  run_iterm_control "${args[@]}"
 }
 
 run_iterm_control() {
@@ -1075,6 +1293,10 @@ PY
         exit 2
         ;;
     esac
+    ;;
+  speckit)
+    shift
+    run_speckit_short "$@"
     ;;
   lite)
     shift

@@ -1682,10 +1682,12 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
             banner = f"printf \"\\033[3J\\033[H\\033[2J\"; clear; echo '[mesh:{role}] repo={cfg.repo_name}'; "
             try:
                 await sess.async_activate()
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.25)
+                await sess.async_send_text("\x03")
+                await asyncio.sleep(0.05)
             except Exception:
                 pass
-            await sess.async_send_text(f"{banner}{cmd}\n")
+            await sess.async_send_text(f"{banner}{cmd}\r")
 
 
 def main() -> int:

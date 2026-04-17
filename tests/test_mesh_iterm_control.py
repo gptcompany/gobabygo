@@ -103,12 +103,30 @@ def test_ui_command_env_key_normalizes_role():
     assert module._ui_command_env_key("worker-gemini") == "MESH_UI_CMD_WORKER_GEMINI"
 
 
-def test_role_launch_command_quotes_repo_path():
+def test_role_launch_command_quotes_repo_path(monkeypatch):
     module = _load_module()
+    monkeypatch.setenv("PATH", "/nonexistent")
 
     command = module._role_launch_command("/tmp/demo repo", "gemini")
 
-    assert command == "cd '/tmp/demo repo' && exec gemini"
+    assert command.startswith("exec /bin/zsh -lc ")
+    assert "/tmp/demo repo" in command
+    assert "source ~/.zshrc" in command
+    assert "exec gemini" in command
+
+
+def test_role_launch_command_uses_zsh_from_path(tmp_path, monkeypatch):
+    module = _load_module()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    zsh = bin_dir / "zsh"
+    zsh.write_text("#!/bin/sh\n", encoding="utf-8")
+    zsh.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    command = module._role_launch_command("/tmp/demo", "codex --model test")
+
+    assert command == f"exec {zsh} -lc 'source ~/.zshrc >/dev/null 2>&1; cd /tmp/demo && exec codex --model test'"
 
 
 def test_format_mesh_msg_is_single_line_and_quoted():
@@ -194,6 +212,55 @@ def test_auto_approval_choice_ignores_plain_screen():
     module = _load_module()
 
     assert module._auto_approval_choice("Type your message") == ("", "")
+
+
+def test_auto_approval_signature_distinguishes_edit_files():
+    module = _load_module()
+
+    index_prompt = "Action Required\n?  Edit index.html: <p> => <p>\nApply this change?\n1. Allow once"
+    style_prompt = "Action Required\n?  Edit style.css: * { => * {\nApply this change?\n1. Allow once"
+    snake_reset_prompt = "Action Required\n?  Edit snake.js: function reset() {... => function reset() {...\nApply this change?\n1. Allow once"
+    snake_apple_prompt = "Action Required\n?  Edit snake.js: if (head.x === apple.x) => if (head.x === apple.x)\nApply this change?\n1. Allow once"
+
+    assert module._auto_approval_signature(index_prompt, "1", "apply change once") != module._auto_approval_signature(
+        style_prompt,
+        "1",
+        "apply change once",
+    )
+    assert module._auto_approval_signature(
+        snake_reset_prompt,
+        "1",
+        "apply change once",
+    ) != module._auto_approval_signature(snake_apple_prompt, "1", "apply change once")
+
+
+def test_auto_approval_edit_path_allowlist():
+    module = _load_module()
+    prompt = "Action Required\n?  Edit style.css: * { => * {\nApply this change?\n1. Allow once"
+
+    assert module._auto_approval_edit_path(prompt) == "style.css"
+    assert module._edit_path_allowed("style.css", ("style.css",)) is True
+    assert module._edit_path_allowed("style.css", ("index.html", "snake.js")) is False
+
+
+def test_maybe_auto_approve_rejects_edit_outside_allowlist():
+    module = _load_module()
+    session = _FakeSession(role="worker-gemini", repo="/media/sam/1TB/demo", marked=True)
+    prompt = "Action Required\n?  Edit style.css: * { => * {\nApply this change?\n1. Allow once\n4. No, suggest changes"
+
+    changed = asyncio.run(
+        module._maybe_auto_approve_prompt(
+            session,
+            prompt,
+            role="worker-gemini",
+            enabled=True,
+            seen=set(),
+            allowed_edit_paths=("index.html", "snake.js"),
+        )
+    )
+
+    assert changed is True
+    assert session.sent == ["4", "\r"]
 
 
 def test_wait_for_screen_any_auto_approves_before_broad_marker():

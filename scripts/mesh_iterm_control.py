@@ -132,6 +132,12 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Auto-answer known CLI trust/write prompts during this run; requires --allow-write.",
     )
+    speckit_run_parser.add_argument(
+        "--auto-approve-edit-path",
+        action="append",
+        default=[],
+        help="When auto-approving edit prompts, allow only this repo-relative path. Repeatable.",
+    )
     speckit_run_parser.add_argument("--test-command", default="", help="Optional local test command to run after worker returns.")
     speckit_run_parser.add_argument("--test-timeout", type=float, default=180.0, help="Seconds for the optional test command.")
     speckit_run_parser.add_argument("--max-turns", type=int, default=1, help="Maximum response turns per role in this controlled cycle.")
@@ -254,7 +260,9 @@ def _ui_command_env_key(role: str) -> str:
 
 
 def _role_launch_command(repo: str, command_text: str) -> str:
-    return f"cd {shlex.quote(str(repo or ''))} && exec {command_text}"
+    zsh = shutil.which("zsh") or "/bin/zsh"
+    inner = f"source ~/.zshrc >/dev/null 2>&1; cd {shlex.quote(str(repo or ''))} && exec {command_text}"
+    return f"exec {shlex.quote(zsh)} -lc {shlex.quote(inner)}"
 
 
 def _clean_one_line(value: object) -> str:
@@ -462,9 +470,49 @@ def _auto_approval_choice(screen_text: str) -> tuple[str, str]:
     return "", ""
 
 
+def _auto_approval_edit_path(screen_text: str) -> str:
+    for line in screen_text.splitlines():
+        lowered = line.lower()
+        idx = lowered.find("edit ")
+        if idx < 0 or ":" not in line[idx:]:
+            continue
+        value = line[idx + len("edit ") :].split(":", 1)[0]
+        return value.strip().strip("'\"`")
+    return ""
+
+
+def _normalize_edit_path(path: str) -> str:
+    value = str(path or "").strip().strip("'\"`")
+    while value.startswith("./"):
+        value = value[2:]
+    return value
+
+
+def _edit_path_allowed(path: str, allowed_paths: tuple[str, ...]) -> bool:
+    if not allowed_paths:
+        return True
+    normalized = _normalize_edit_path(path)
+    for allowed in allowed_paths:
+        item = _normalize_edit_path(allowed)
+        if not item:
+            continue
+        if normalized == item:
+            return True
+        if item.endswith("/") and normalized.startswith(item):
+            return True
+    return False
+
+
 def _auto_approval_signature(screen_text: str, choice: str, reason: str) -> str:
     if reason == "trust folder":
         return f"{choice}:{reason}"
+    if reason.startswith("reject edit outside allowlist:"):
+        return f"{choice}:{reason}"
+    if reason == "apply change once":
+        edit_path = _auto_approval_edit_path(screen_text)
+        if edit_path:
+            prompt_tail = "\n".join(screen_text.splitlines()[-80:])
+            return f"{choice}:{reason}:{_normalize_edit_path(edit_path).lower()}:{prompt_tail}"
     if reason == "allow command for session":
         for line in reversed(screen_text.splitlines()):
             if "allow execution of" in line.lower():
@@ -480,12 +528,18 @@ async def _maybe_auto_approve_prompt(
     role: str,
     enabled: bool,
     seen: set[str],
+    allowed_edit_paths: tuple[str, ...] = (),
 ) -> bool:
     if not enabled:
         return False
     choice, reason = _auto_approval_choice(screen_text)
     if not choice:
         return False
+    if reason == "apply change once":
+        edit_path = _auto_approval_edit_path(screen_text)
+        if edit_path and not _edit_path_allowed(edit_path, allowed_edit_paths):
+            choice = "4"
+            reason = f"reject edit outside allowlist: {_normalize_edit_path(edit_path)}"
     signature = _auto_approval_signature(screen_text, choice, reason)
     if signature in seen:
         return False
@@ -504,6 +558,7 @@ async def _wait_for_screen_marker(
     timeout: float,
     poll_interval: float,
     auto_approve_prompts: bool = False,
+    allowed_edit_paths: tuple[str, ...] = (),
 ) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(1.0, float(timeout))
@@ -519,6 +574,7 @@ async def _wait_for_screen_marker(
             role=role,
             enabled=auto_approve_prompts,
             seen=seen_auto_approvals,
+            allowed_edit_paths=allowed_edit_paths,
         ):
             continue
         await asyncio.sleep(max(0.5, float(poll_interval)))
@@ -536,6 +592,7 @@ async def _wait_for_screen_any(
     poll_interval: float,
     description: str,
     auto_approve_prompts: bool = False,
+    allowed_edit_paths: tuple[str, ...] = (),
 ) -> str:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(1.0, float(timeout))
@@ -550,6 +607,7 @@ async def _wait_for_screen_any(
                 role=role,
                 enabled=True,
                 seen=seen_auto_approvals,
+                allowed_edit_paths=allowed_edit_paths,
             )
             await asyncio.sleep(max(0.5, float(poll_interval)))
             continue
@@ -570,6 +628,7 @@ async def _wait_for_cli_ready(
     timeout: float,
     poll_interval: float,
     auto_approve_prompts: bool = False,
+    allowed_edit_paths: tuple[str, ...] = (),
 ) -> None:
     command_name = str(command_text or "").strip().split(" ", 1)[0]
     if command_name == "gemini":
@@ -581,6 +640,7 @@ async def _wait_for_cli_ready(
             poll_interval=poll_interval,
             description="Gemini prompt",
             auto_approve_prompts=auto_approve_prompts,
+            allowed_edit_paths=allowed_edit_paths,
         )
     elif command_name == "codex":
         await _wait_for_screen_any(
@@ -591,6 +651,7 @@ async def _wait_for_cli_ready(
             poll_interval=poll_interval,
             description="Codex prompt",
             auto_approve_prompts=auto_approve_prompts,
+            allowed_edit_paths=allowed_edit_paths,
         )
     elif command_name == "claude":
         await _wait_for_screen_any(
@@ -601,6 +662,7 @@ async def _wait_for_cli_ready(
             poll_interval=poll_interval,
             description="Claude prompt",
             auto_approve_prompts=auto_approve_prompts,
+            allowed_edit_paths=allowed_edit_paths,
         )
 
 
@@ -1095,6 +1157,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     turn_limit = _turn_limit_text(args.max_turns)
     write_allowed = "true" if bool(args.allow_write) else "false"
     auto_approve_prompts = bool(getattr(args, "auto_approve_prompts", False))
+    allowed_edit_paths = tuple(str(item) for item in (getattr(args, "auto_approve_edit_path", None) or []))
     handoff_enabled = not bool(getattr(args, "no_handoff", False))
     handoff_dir = str(getattr(args, "handoff_dir", ".mesh/runs") or ".mesh/runs")
 
@@ -1178,6 +1241,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
+        allowed_edit_paths=allowed_edit_paths,
     )
     boss_tail = await _screen_tail(boss.session, lines=120)
     discuss_handoff = _write_handoff_json(
@@ -1230,6 +1294,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
+        allowed_edit_paths=allowed_edit_paths,
     )
     president_tail = await _screen_tail(president.session, lines=120)
     analyze_handoff = _write_handoff_json(
@@ -1288,6 +1353,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
+        allowed_edit_paths=allowed_edit_paths,
     )
 
     status_after_worker = _git_status_short(args.repo)
@@ -1353,6 +1419,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
+        allowed_edit_paths=allowed_edit_paths,
     )
     review_tail = await _screen_tail(president.session, lines=120)
     verify_handoff = _write_handoff_json(
@@ -1412,6 +1479,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
+        allowed_edit_paths=allowed_edit_paths,
     )
     report_tail = await _screen_tail(boss.session, lines=120)
     report_handoff = _write_handoff_json(
@@ -1501,6 +1569,7 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
                 timeout=args.startup_timeout,
                 poll_interval=args.poll_interval,
                 auto_approve_prompts=args.auto_approve_prompts,
+                allowed_edit_paths=tuple(str(item) for item in (args.auto_approve_edit_path or [])),
             )
         cycle_args = argparse.Namespace(
             repo=repo,
@@ -1520,6 +1589,7 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
             response_timeout=args.response_timeout,
             poll_interval=args.poll_interval,
             auto_approve_prompts=args.auto_approve_prompts,
+            auto_approve_edit_path=args.auto_approve_edit_path,
         )
         return await _run_speckit_team_cycle(app, cycle_args)
     finally:
