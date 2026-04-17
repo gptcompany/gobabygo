@@ -17,6 +17,7 @@ Templates support {repo} and {repo_name}.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
@@ -1679,6 +1680,11 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
             except Exception:
                 pass
             banner = f"printf \"\\033[3J\\033[H\\033[2J\"; clear; echo '[mesh:{role}] repo={cfg.repo_name}'; "
+            try:
+                await sess.async_activate()
+                await asyncio.sleep(0.1)
+            except Exception:
+                pass
             await sess.async_send_text(f"{banner}{cmd}\n")
 
 

@@ -132,6 +132,58 @@ def test_turn_limit_text_uses_minimum_one_turn():
     assert "massimo 1 risposta" in module._turn_limit_text(0)
 
 
+def test_auto_approval_choice_handles_known_prompts():
+    module = _load_module()
+
+    assert module._auto_approval_choice("Apply this change?\n1. Yes, allow once") == ("1", "apply change once")
+    assert module._auto_approval_choice("Allow execution of 'ls'?\n2. Allow for this session") == (
+        "2",
+        "allow command for session",
+    )
+    assert module._auto_approval_choice("Do you trust the files in this folder?\n1. Yes\n2. No") == (
+        "1",
+        "trust folder",
+    )
+    assert module._auto_approval_choice("Doyoutrustthecontentsofthisdirectory?\n› 1. Yes, continue") == (
+        "1",
+        "trust folder",
+    )
+
+
+def test_auto_approval_choice_ignores_plain_screen():
+    module = _load_module()
+
+    assert module._auto_approval_choice("Type your message") == ("", "")
+
+
+def test_wait_for_screen_any_auto_approves_before_broad_marker():
+    module = _load_module()
+    session = _FakeSession(role="president", repo="/media/sam/1TB/demo", marked=True)
+    session.screen = _FakeScreen(["Doyoutrustthecontentsofthisdirectory?", "› 1. Yes, continue"])
+
+    async def _send_text(text: str):
+        session.sent.append(text)
+        if text == "\r":
+            session.screen = _FakeScreen(["Codex ready", "›"])
+
+    session.async_send_text = _send_text
+
+    marker = asyncio.run(
+        module._wait_for_screen_any(
+            session,
+            role="president",
+            markers=("›",),
+            timeout=3.0,
+            poll_interval=0.1,
+            description="Codex prompt",
+            auto_approve_prompts=True,
+        )
+    )
+
+    assert marker == "›"
+    assert session.sent == ["1", "\r"]
+
+
 def test_mesh_sessions_filters_marked_repo_and_role():
     module = _load_module()
     target = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True)

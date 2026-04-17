@@ -120,6 +120,11 @@ def _parse_args() -> argparse.Namespace:
     speckit_run_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
     speckit_run_parser.add_argument("--allow-write", action="store_true", help="Allow the worker to edit files.")
     speckit_run_parser.add_argument("--allow-dirty", action="store_true", help="Run even if the repo is already dirty.")
+    speckit_run_parser.add_argument(
+        "--auto-approve-prompts",
+        action="store_true",
+        help="Auto-answer known CLI trust/write prompts during this run; requires --allow-write.",
+    )
     speckit_run_parser.add_argument("--test-command", default="", help="Optional local test command to run after worker returns.")
     speckit_run_parser.add_argument("--test-timeout", type=float, default=180.0, help="Seconds for the optional test command.")
     speckit_run_parser.add_argument("--max-turns", type=int, default=1, help="Maximum response turns per role in this controlled cycle.")
@@ -391,6 +396,61 @@ async def _send_line(session: Any, text: str) -> None:
     await session.async_send_text("\r")
 
 
+def _auto_approval_choice(screen_text: str) -> tuple[str, str]:
+    lower = screen_text.lower()
+    compact = "".join(ch for ch in lower if ch.isalnum())
+    if "apply this change?" in lower:
+        return "1", "apply change once"
+    if "allow execution of" in lower:
+        return "2", "allow command for session"
+    if (
+        (
+            "do you trust" in lower
+            or "trust this folder" in lower
+            or "trust the files" in lower
+            or "doyoutrust" in compact
+            or "trustthecontentsofthisdirectory" in compact
+        )
+        and ("1." in screen_text or "1 " in screen_text)
+    ):
+        return "1", "trust folder"
+    return "", ""
+
+
+def _auto_approval_signature(screen_text: str, choice: str, reason: str) -> str:
+    if reason == "trust folder":
+        return f"{choice}:{reason}"
+    if reason == "allow command for session":
+        for line in reversed(screen_text.splitlines()):
+            if "allow execution of" in line.lower():
+                return f"{choice}:{reason}:{line.strip().lower()}"
+        return f"{choice}:{reason}"
+    return f"{choice}:{reason}:{chr(10).join(screen_text.splitlines()[-12:])}"
+
+
+async def _maybe_auto_approve_prompt(
+    session: Any,
+    screen_text: str,
+    *,
+    role: str,
+    enabled: bool,
+    seen: set[str],
+) -> bool:
+    if not enabled:
+        return False
+    choice, reason = _auto_approval_choice(screen_text)
+    if not choice:
+        return False
+    signature = _auto_approval_signature(screen_text, choice, reason)
+    if signature in seen:
+        return False
+    seen.add(signature)
+    print(f"auto-approve {role}: {reason} -> {choice}")
+    await _send_line(session, choice)
+    await asyncio.sleep(1.0)
+    return True
+
+
 async def _wait_for_screen_marker(
     session: Any,
     *,
@@ -398,14 +458,24 @@ async def _wait_for_screen_marker(
     marker: str,
     timeout: float,
     poll_interval: float,
+    auto_approve_prompts: bool = False,
 ) -> None:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(1.0, float(timeout))
     last_dump = ""
+    seen_auto_approvals: set[str] = set()
     while loop.time() < deadline:
         last_dump = await _screen_tail(session, lines=360)
         if marker in last_dump:
             return
+        if await _maybe_auto_approve_prompt(
+            session,
+            last_dump,
+            role=role,
+            enabled=auto_approve_prompts,
+            seen=seen_auto_approvals,
+        ):
+            continue
         await asyncio.sleep(max(0.5, float(poll_interval)))
     print(f"--- last dump for {role} ---")
     print(last_dump)
@@ -420,12 +490,24 @@ async def _wait_for_screen_any(
     timeout: float,
     poll_interval: float,
     description: str,
+    auto_approve_prompts: bool = False,
 ) -> str:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(1.0, float(timeout))
     last_dump = ""
+    seen_auto_approvals: set[str] = set()
     while loop.time() < deadline:
         last_dump = await _screen_tail(session, lines=360)
+        if auto_approve_prompts and _auto_approval_choice(last_dump)[0]:
+            await _maybe_auto_approve_prompt(
+                session,
+                last_dump,
+                role=role,
+                enabled=True,
+                seen=seen_auto_approvals,
+            )
+            await asyncio.sleep(max(0.5, float(poll_interval)))
+            continue
         for marker in markers:
             if marker and marker in last_dump:
                 return marker
@@ -435,7 +517,15 @@ async def _wait_for_screen_any(
     raise RuntimeError(f"timed out waiting for {description} in role={role}")
 
 
-async def _wait_for_cli_ready(session: Any, *, role: str, command_text: str, timeout: float, poll_interval: float) -> None:
+async def _wait_for_cli_ready(
+    session: Any,
+    *,
+    role: str,
+    command_text: str,
+    timeout: float,
+    poll_interval: float,
+    auto_approve_prompts: bool = False,
+) -> None:
     command_name = str(command_text or "").strip().split(" ", 1)[0]
     if command_name == "gemini":
         await _wait_for_screen_any(
@@ -445,6 +535,7 @@ async def _wait_for_cli_ready(session: Any, *, role: str, command_text: str, tim
             timeout=timeout,
             poll_interval=poll_interval,
             description="Gemini prompt",
+            auto_approve_prompts=auto_approve_prompts,
         )
     elif command_name == "codex":
         await _wait_for_screen_any(
@@ -454,6 +545,7 @@ async def _wait_for_cli_ready(session: Any, *, role: str, command_text: str, tim
             timeout=timeout,
             poll_interval=poll_interval,
             description="Codex prompt",
+            auto_approve_prompts=auto_approve_prompts,
         )
     elif command_name == "claude":
         await _wait_for_screen_any(
@@ -463,6 +555,7 @@ async def _wait_for_cli_ready(session: Any, *, role: str, command_text: str, tim
             timeout=timeout,
             poll_interval=poll_interval,
             description="Claude prompt",
+            auto_approve_prompts=auto_approve_prompts,
         )
 
 
@@ -956,6 +1049,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     task = _clean_one_line(args.task) or feature
     turn_limit = _turn_limit_text(args.max_turns)
     write_allowed = "true" if bool(args.allow_write) else "false"
+    auto_approve_prompts = bool(getattr(args, "auto_approve_prompts", False))
 
     boss_delegated = f"SPECKIT_RUN_BOSS_DELEGATED_{run_id}"
     president_assigned = f"SPECKIT_RUN_PRESIDENT_ASSIGNED_{run_id}"
@@ -1000,6 +1094,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         marker=boss_delegated,
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
+        auto_approve_prompts=auto_approve_prompts,
     )
 
     president_msg = _format_mesh_msg(
@@ -1030,6 +1125,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         marker=president_assigned,
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
+        auto_approve_prompts=auto_approve_prompts,
     )
 
     worker_msg = _format_mesh_msg(
@@ -1065,6 +1161,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         marker=worker_done,
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
+        auto_approve_prompts=auto_approve_prompts,
     )
 
     status_after_worker = _git_status_short(args.repo)
@@ -1102,6 +1199,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         marker=president_reviewed,
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
+        auto_approve_prompts=auto_approve_prompts,
     )
 
     final_msg = _format_mesh_msg(
@@ -1135,6 +1233,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         marker=boss_reported,
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
+        auto_approve_prompts=auto_approve_prompts,
     )
 
     print("success:")
@@ -1158,6 +1257,8 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
     _ensure_command(args.boss_cmd)
     _ensure_command(args.president_cmd)
     _ensure_command(args.worker_cmd)
+    if args.auto_approve_prompts and not args.allow_write:
+        raise RuntimeError("--auto-approve-prompts requires --allow-write")
 
     repo = str(args.repo or "").strip()
     repo_path = Path(repo)
@@ -1197,6 +1298,7 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
                 command_text=command,
                 timeout=args.startup_timeout,
                 poll_interval=args.poll_interval,
+                auto_approve_prompts=args.auto_approve_prompts,
             )
         cycle_args = argparse.Namespace(
             repo=repo,
@@ -1213,6 +1315,7 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
             run_id="",
             response_timeout=args.response_timeout,
             poll_interval=args.poll_interval,
+            auto_approve_prompts=args.auto_approve_prompts,
         )
         return await _run_speckit_team_cycle(app, cycle_args)
     finally:

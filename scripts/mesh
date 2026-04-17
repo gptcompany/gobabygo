@@ -486,7 +486,7 @@ Usage:
   ./scripts/mesh term two-cli-e2e <repo-path> [--keep-open]
   ./scripts/mesh term team-e2e <repo-path> [--keep-open]
   ./scripts/mesh term speckit-team-e2e <repo-path> [--feature text] [--keep-open]
-  ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write]
+  ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write] [--auto-approve-prompts]
   ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
@@ -609,7 +609,7 @@ Usage:
   ./scripts/mesh term two-cli-e2e <repo-path> [--keep-open]
   ./scripts/mesh term team-e2e <repo-path> [--keep-open]
   ./scripts/mesh term speckit-team-e2e <repo-path> [--feature text] [--keep-open]
-  ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write]
+  ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write] [--auto-approve-prompts]
 
 Behavior:
   mesh term is a thin iTerm2 control helper for mesh-marked panes.
