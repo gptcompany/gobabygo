@@ -19,6 +19,7 @@ import importlib.util
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
@@ -105,6 +106,28 @@ def _parse_args() -> argparse.Namespace:
     speckit_parser.add_argument("--response-timeout", type=float, default=120.0, help="Seconds to wait for each marker.")
     speckit_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
     speckit_parser.add_argument("--keep-open", action="store_true", help="Leave the test layout open after completion.")
+
+    speckit_run_parser = sub.add_parser("speckit-team-run", help="Run one controlled Speckit team cycle.")
+    speckit_run_parser.add_argument("--repo", required=True, help="Exact repo path.")
+    speckit_run_parser.add_argument("--feature", required=True, help="Feature or change request.")
+    speckit_run_parser.add_argument("--task", default="", help="Optional narrower implementation task.")
+    speckit_run_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TEAM_BOSS_CMD", "claude"))
+    speckit_run_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TEAM_PRESIDENT_CMD", "codex"))
+    speckit_run_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "gemini"))
+    speckit_run_parser.add_argument("--boss-role", default="boss")
+    speckit_run_parser.add_argument("--president-role", default="president")
+    speckit_run_parser.add_argument("--worker-role", default="worker-gemini")
+    speckit_run_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
+    speckit_run_parser.add_argument("--allow-write", action="store_true", help="Allow the worker to edit files.")
+    speckit_run_parser.add_argument("--allow-dirty", action="store_true", help="Run even if the repo is already dirty.")
+    speckit_run_parser.add_argument("--test-command", default="", help="Optional local test command to run after worker returns.")
+    speckit_run_parser.add_argument("--test-timeout", type=float, default=180.0, help="Seconds for the optional test command.")
+    speckit_run_parser.add_argument("--max-turns", type=int, default=1, help="Maximum response turns per role in this controlled cycle.")
+    speckit_run_parser.add_argument("--startup-wait", type=float, default=12.0, help="Seconds to wait after launching panes.")
+    speckit_run_parser.add_argument("--startup-timeout", type=float, default=120.0, help="Seconds to wait for CLI prompts.")
+    speckit_run_parser.add_argument("--response-timeout", type=float, default=300.0, help="Seconds to wait for each role response.")
+    speckit_run_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
+    speckit_run_parser.add_argument("--keep-open", action="store_true", help="Leave the run layout open after completion.")
 
     for name in ("focus", "dump", "send-text", "send-line", "send-key"):
         cmd = sub.add_parser(name)
@@ -220,6 +243,64 @@ def _ui_command_env_key(role: str) -> str:
 
 def _role_launch_command(repo: str, command_text: str) -> str:
     return f"cd {shlex.quote(str(repo or ''))} && exec {command_text}"
+
+
+def _clean_one_line(value: object) -> str:
+    text = str(value or "").replace("\r", " ").replace("\n", " ")
+    return " ".join(text.split())
+
+
+def _format_mesh_msg(**fields: object) -> str:
+    parts = ["MESH_MSG"]
+    for key, value in fields.items():
+        parts.append(f"{key}={shlex.quote(_clean_one_line(value))}")
+    parts.append("END_MESH_MSG")
+    return " ".join(parts)
+
+
+def _turn_limit_text(max_turns: int) -> str:
+    turns = max(1, int(max_turns or 1))
+    return (
+        f"Turn budget: massimo {turns} risposta/e per questo ruolo in questo ciclo. "
+        "Non aprire sotto-dialoghi; chiudi la tua risposta con il marker richiesto."
+    )
+
+
+def _run_local_capture(args: list[str], *, cwd: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        args,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=max(1.0, float(timeout)),
+    )
+
+
+def _git_status_short(repo: str) -> str:
+    proc = _run_local_capture(["git", "status", "--short"], cwd=repo)
+    if proc.returncode != 0:
+        return f"[git status failed]\n{proc.stderr.strip() or proc.stdout.strip()}"
+    return proc.stdout.strip()
+
+
+def _git_diff_stat(repo: str) -> str:
+    proc = _run_local_capture(["git", "diff", "--stat"], cwd=repo)
+    if proc.returncode != 0:
+        return f"[git diff --stat failed]\n{proc.stderr.strip() or proc.stdout.strip()}"
+    return proc.stdout.strip()
+
+
+def _run_optional_test_command(repo: str, command_text: str, timeout: float) -> tuple[str, str]:
+    command = str(command_text or "").strip()
+    if not command:
+        return "skipped", ""
+    try:
+        proc = _run_local_capture(shlex.split(command), cwd=repo, timeout=timeout)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return "failed", str(exc)
+    output = "\n".join(part for part in (proc.stdout.strip(), proc.stderr.strip()) if part)
+    return ("passed" if proc.returncode == 0 else "failed"), output[-4000:]
 
 
 def _load_mesh_iterm_ui():
@@ -864,6 +945,282 @@ async def _run_speckit_team_e2e(connection: Any, app: Any, args: argparse.Namesp
             print(f"closed {closed} test tab(s) group={ui_group_id}")
 
 
+async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
+    ui_group_id = str(getattr(args, "ui_group_id", "") or "").strip()
+    boss = await _find_mesh_pane(app, args.repo, args.boss_role, ui_group_id)
+    president = await _find_mesh_pane(app, args.repo, args.president_role, ui_group_id)
+    worker = await _find_mesh_pane(app, args.repo, args.worker_role, ui_group_id)
+
+    run_id = str(args.run_id or uuid.uuid4().hex[:8]).upper().replace("-", "_")
+    feature = _clean_one_line(args.feature)
+    task = _clean_one_line(args.task) or feature
+    turn_limit = _turn_limit_text(args.max_turns)
+    write_allowed = "true" if bool(args.allow_write) else "false"
+
+    boss_delegated = f"SPECKIT_RUN_BOSS_DELEGATED_{run_id}"
+    president_assigned = f"SPECKIT_RUN_PRESIDENT_ASSIGNED_{run_id}"
+    worker_done = f"SPECKIT_RUN_WORKER_DONE_{run_id}"
+    president_reviewed = f"SPECKIT_RUN_PRESIDENT_REVIEWED_{run_id}"
+    boss_reported = f"SPECKIT_RUN_BOSS_REPORTED_{run_id}"
+
+    print(
+        f"panes: boss=W{boss.window_index} T{boss.tab_index} S{boss.session_index} "
+        f"president=W{president.window_index} T{president.tab_index} S{president.session_index} "
+        f"worker=W{worker.window_index} T{worker.tab_index} S{worker.session_index}"
+    )
+    print(f"feature: {feature}")
+    print(f"task: {task}")
+    print(f"run_id: {run_id}")
+    print(f"write_allowed: {write_allowed}")
+
+    operator_msg = _format_mesh_msg(
+        id=f"operator-{run_id}",
+        from_role="operator",
+        to_role=args.boss_role,
+        phase="speckit.discuss",
+        feature=feature,
+        task=task,
+        write_allowed=write_allowed,
+        done_criteria="one controlled Speckit cycle; no commit",
+    )
+
+    print("1. Boss discusses and delegates to president")
+    await _send_line(
+        boss.session,
+        (
+            f"{turn_limit} You are boss for a controlled Speckit run. "
+            f"Input: {operator_msg}. "
+            "Produce a concise routing decision for president. "
+            f'End with only the concatenation of "SPECKIT_RUN_BOSS_DELEGATED_" and "{run_id}" on its own final line.'
+        ),
+    )
+    await _wait_for_screen_marker(
+        boss.session,
+        role=args.boss_role,
+        marker=boss_delegated,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    president_msg = _format_mesh_msg(
+        id=f"boss-{run_id}",
+        from_role=args.boss_role,
+        to_role=args.president_role,
+        phase="speckit.analyze",
+        feature=feature,
+        task=task,
+        write_allowed=write_allowed,
+        upstream_marker=boss_delegated,
+        done_criteria="assign exactly one worker task",
+    )
+
+    print("2. President analyzes and assigns worker")
+    await _send_line(
+        president.session,
+        (
+            f"{turn_limit} You are president for a controlled Speckit run. "
+            f"Input: {president_msg}. "
+            "Analyze the request and assign exactly one scoped task to worker-gemini. "
+            f'End with only the concatenation of "SPECKIT_RUN_PRESIDENT_ASSIGNED_" and "{run_id}" on its own final line.'
+        ),
+    )
+    await _wait_for_screen_marker(
+        president.session,
+        role=args.president_role,
+        marker=president_assigned,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    worker_msg = _format_mesh_msg(
+        id=f"president-{run_id}",
+        from_role=args.president_role,
+        to_role=args.worker_role,
+        phase="speckit.implement",
+        feature=feature,
+        task=task,
+        write_allowed=write_allowed,
+        upstream_marker=president_assigned,
+        done_criteria="single implementation pass; summarize files/tests/risks; no commit",
+    )
+    write_policy = (
+        "File edits are allowed for this one task. Do not commit."
+        if args.allow_write
+        else "Do not edit files. Produce an implementation plan and risk note only."
+    )
+
+    print("3. Worker executes one bounded implementation pass")
+    await _send_line(
+        worker.session,
+        (
+            f"{turn_limit} You are worker-gemini for a controlled Speckit run. "
+            f"{write_policy} Input: {worker_msg}. "
+            "When done, summarize changed files or planned files, tests run or skipped, and residual risks. "
+            f'End with only the concatenation of "SPECKIT_RUN_WORKER_DONE_" and "{run_id}" on its own final line.'
+        ),
+    )
+    await _wait_for_screen_marker(
+        worker.session,
+        role=args.worker_role,
+        marker=worker_done,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    status_after_worker = _git_status_short(args.repo)
+    diff_stat_after_worker = _git_diff_stat(args.repo)
+    test_status, test_output = _run_optional_test_command(args.repo, args.test_command, args.test_timeout)
+
+    review_msg = _format_mesh_msg(
+        id=f"worker-{run_id}",
+        from_role=args.worker_role,
+        to_role=args.president_role,
+        phase="speckit.verify-work",
+        feature=feature,
+        task=task,
+        write_allowed=write_allowed,
+        upstream_marker=worker_done,
+        git_status=status_after_worker or "clean",
+        diff_stat=diff_stat_after_worker or "empty",
+        test_status=test_status,
+        done_criteria="adjudicate ready_or_blocked",
+    )
+
+    print("4. President reviews worker result")
+    await _send_line(
+        president.session,
+        (
+            f"{turn_limit} You are president reviewing a controlled Speckit run. "
+            f"Input: {review_msg}. "
+            "Adjudicate whether the cycle is ready or blocked based only on the provided status. "
+            f'End with only the concatenation of "SPECKIT_RUN_PRESIDENT_REVIEWED_" and "{run_id}" on its own final line.'
+        ),
+    )
+    await _wait_for_screen_marker(
+        president.session,
+        role=args.president_role,
+        marker=president_reviewed,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    final_msg = _format_mesh_msg(
+        id=f"president-review-{run_id}",
+        from_role=args.president_role,
+        to_role=args.boss_role,
+        phase="speckit.report",
+        feature=feature,
+        task=task,
+        write_allowed=write_allowed,
+        upstream_marker=president_reviewed,
+        git_status=status_after_worker or "clean",
+        diff_stat=diff_stat_after_worker or "empty",
+        test_status=test_status,
+        done_criteria="operator-facing summary",
+    )
+
+    print("5. Boss reports final controlled-cycle status")
+    await _send_line(
+        boss.session,
+        (
+            f"{turn_limit} You are boss closing a controlled Speckit run. "
+            f"Input: {final_msg}. "
+            "Give a concise operator-facing summary. Do not claim a commit was made. "
+            f'End with only the concatenation of "SPECKIT_RUN_BOSS_REPORTED_" and "{run_id}" on its own final line.'
+        ),
+    )
+    await _wait_for_screen_marker(
+        boss.session,
+        role=args.boss_role,
+        marker=boss_reported,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("success:")
+    print(f"  {boss_delegated}")
+    print(f"  {president_assigned}")
+    print(f"  {worker_done}")
+    print(f"  {president_reviewed}")
+    print(f"  {boss_reported}")
+    print("git_status_after:")
+    print(status_after_worker or "clean")
+    print("diff_stat_after:")
+    print(diff_stat_after_worker or "empty")
+    print(f"test_status: {test_status}")
+    if test_output:
+        print("test_output_tail:")
+        print(test_output)
+    return 0
+
+
+async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namespace) -> int:
+    _ensure_command(args.boss_cmd)
+    _ensure_command(args.president_cmd)
+    _ensure_command(args.worker_cmd)
+
+    repo = str(args.repo or "").strip()
+    repo_path = Path(repo)
+    if not repo_path.is_dir():
+        raise RuntimeError(f"repo path does not exist or is not a directory: {repo}")
+    status_before = _git_status_short(repo)
+    if status_before and not args.allow_dirty:
+        raise RuntimeError(
+            "target repo is dirty; commit/stash changes or pass --allow-dirty\n"
+            f"{status_before}"
+        )
+
+    repo_name = _repo_name(repo)
+    ui_group_id = str(args.ui_group_id or f"{repo_name}-speckit-run-{uuid.uuid4().hex[:8]}").strip()
+    roles = [args.boss_role, args.president_role, args.worker_role]
+    commands = {
+        args.boss_role: args.boss_cmd,
+        args.president_role: args.president_cmd,
+        args.worker_role: args.worker_cmd,
+    }
+    print(f"opening speckit team run layout group={ui_group_id}")
+    print("git_status_before:")
+    print(status_before or "clean")
+    try:
+        await _launch_role_layout(connection, repo=repo, roles=roles, commands=commands, ui_group_id=ui_group_id)
+        await asyncio.sleep(max(0.0, float(args.startup_wait)))
+        panes = {
+            args.boss_role: await _find_mesh_pane(app, repo, args.boss_role, ui_group_id),
+            args.president_role: await _find_mesh_pane(app, repo, args.president_role, ui_group_id),
+            args.worker_role: await _find_mesh_pane(app, repo, args.worker_role, ui_group_id),
+        }
+        print("waiting for CLI prompts")
+        for role, command in commands.items():
+            await _wait_for_cli_ready(
+                panes[role].session,
+                role=role,
+                command_text=command,
+                timeout=args.startup_timeout,
+                poll_interval=args.poll_interval,
+            )
+        cycle_args = argparse.Namespace(
+            repo=repo,
+            ui_group_id=ui_group_id,
+            boss_role=args.boss_role,
+            president_role=args.president_role,
+            worker_role=args.worker_role,
+            feature=args.feature,
+            task=args.task,
+            allow_write=args.allow_write,
+            test_command=args.test_command,
+            test_timeout=args.test_timeout,
+            max_turns=args.max_turns,
+            run_id="",
+            response_timeout=args.response_timeout,
+            poll_interval=args.poll_interval,
+        )
+        return await _run_speckit_team_cycle(app, cycle_args)
+    finally:
+        if not args.keep_open:
+            closed = await _close_mesh_tabs(app, repo, ui_group_id)
+            print(f"closed {closed} run tab(s) group={ui_group_id}")
+
+
 async def _run(connection, args: argparse.Namespace) -> int:
     import iterm2
 
@@ -900,6 +1257,9 @@ async def _run(connection, args: argparse.Namespace) -> int:
 
     if args.cmd == "speckit-team-e2e":
         return await _run_speckit_team_e2e(connection, app, args)
+
+    if args.cmd == "speckit-team-run":
+        return await _run_speckit_team_run(connection, app, args)
 
     pane = await _find_mesh_pane(app, args.repo, args.role, getattr(args, "ui_group_id", ""))
 

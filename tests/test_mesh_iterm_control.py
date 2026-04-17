@@ -110,6 +110,28 @@ def test_role_launch_command_quotes_repo_path():
     assert command == "cd '/tmp/demo repo' && exec gemini"
 
 
+def test_format_mesh_msg_is_single_line_and_quoted():
+    module = _load_module()
+
+    message = module._format_mesh_msg(
+        id="m1",
+        from_role="boss",
+        task="line one\nline two",
+        write_allowed="false",
+    )
+
+    assert "\n" not in message
+    assert message.startswith("MESH_MSG ")
+    assert "task='line one line two'" in message
+    assert message.endswith(" END_MESH_MSG")
+
+
+def test_turn_limit_text_uses_minimum_one_turn():
+    module = _load_module()
+
+    assert "massimo 1 risposta" in module._turn_limit_text(0)
+
+
 def test_mesh_sessions_filters_marked_repo_and_role():
     module = _load_module()
     target = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True)

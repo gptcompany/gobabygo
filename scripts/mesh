@@ -486,6 +486,7 @@ Usage:
   ./scripts/mesh term two-cli-e2e <repo-path> [--keep-open]
   ./scripts/mesh term team-e2e <repo-path> [--keep-open]
   ./scripts/mesh term speckit-team-e2e <repo-path> [--feature text] [--keep-open]
+  ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write]
   ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
@@ -608,6 +609,7 @@ Usage:
   ./scripts/mesh term two-cli-e2e <repo-path> [--keep-open]
   ./scripts/mesh term team-e2e <repo-path> [--keep-open]
   ./scripts/mesh term speckit-team-e2e <repo-path> [--feature text] [--keep-open]
+  ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write]
 
 Behavior:
   mesh term is a thin iTerm2 control helper for mesh-marked panes.
@@ -1056,6 +1058,16 @@ PY
         repo="$1"
         shift
         run_iterm_control speckit-team-e2e --repo "$repo" "$@"
+        ;;
+      speckit-team-run)
+        if [[ $# -lt 2 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        shift
+        run_iterm_control speckit-team-run --repo "$repo" "$@"
         ;;
       *)
         echo "Error: unsupported term subcommand '$term_cmd'" >&2
