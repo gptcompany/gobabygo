@@ -90,6 +90,22 @@ def _parse_args() -> argparse.Namespace:
     team_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
     team_parser.add_argument("--keep-open", action="store_true", help="Leave the test layout open after completion.")
 
+    speckit_parser = sub.add_parser("speckit-team-e2e", help="Open and verify a dry-run Speckit role-routing chain.")
+    speckit_parser.add_argument("--repo", required=True, help="Exact repo path.")
+    speckit_parser.add_argument("--feature", default=os.environ.get("MESH_SPECKIT_FEATURE", "snake-game-demo"))
+    speckit_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TEAM_BOSS_CMD", "claude"))
+    speckit_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TEAM_PRESIDENT_CMD", "codex"))
+    speckit_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "gemini"))
+    speckit_parser.add_argument("--boss-role", default="boss")
+    speckit_parser.add_argument("--president-role", default="president")
+    speckit_parser.add_argument("--worker-role", default="worker-gemini")
+    speckit_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
+    speckit_parser.add_argument("--startup-wait", type=float, default=12.0, help="Seconds to wait after launching panes.")
+    speckit_parser.add_argument("--startup-timeout", type=float, default=120.0, help="Seconds to wait for CLI prompts.")
+    speckit_parser.add_argument("--response-timeout", type=float, default=120.0, help="Seconds to wait for each marker.")
+    speckit_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
+    speckit_parser.add_argument("--keep-open", action="store_true", help="Leave the test layout open after completion.")
+
     for name in ("focus", "dump", "send-text", "send-line", "send-key"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--repo", required=True, help="Exact mesh repo path.")
@@ -677,6 +693,177 @@ async def _run_team_e2e(connection: Any, app: Any, args: argparse.Namespace) -> 
             print(f"closed {closed} test tab(s) group={ui_group_id}")
 
 
+async def _run_speckit_team_smoke(app: Any, args: argparse.Namespace) -> int:
+    ui_group_id = str(getattr(args, "ui_group_id", "") or "").strip()
+    boss = await _find_mesh_pane(app, args.repo, args.boss_role, ui_group_id)
+    president = await _find_mesh_pane(app, args.repo, args.president_role, ui_group_id)
+    worker = await _find_mesh_pane(app, args.repo, args.worker_role, ui_group_id)
+
+    run_id = str(args.run_id or uuid.uuid4().hex[:8]).upper().replace("-", "_")
+    feature = str(getattr(args, "feature", "") or "feature").strip()
+    discuss = f"SPECKIT_DISCUSS_TO_PRESIDENT_{run_id}"
+    analyze = f"SPECKIT_ANALYZE_TO_WORKER_{run_id}"
+    implement = f"SPECKIT_IMPLEMENT_RESULT_{run_id}"
+    adjudicate = f"SPECKIT_PRESIDENT_READY_{run_id}"
+    done = f"SPECKIT_BOSS_DONE_{run_id}"
+
+    print(
+        f"panes: boss=W{boss.window_index} T{boss.tab_index} S{boss.session_index} "
+        f"president=W{president.window_index} T{president.tab_index} S{president.session_index} "
+        f"worker=W{worker.window_index} T{worker.tab_index} S{worker.session_index}"
+    )
+    print(f"feature: {feature}")
+    print(f"run_id: {run_id}")
+
+    print("1. Boss maps /speckit.discuss to president handoff")
+    await _send_line(
+        boss.session,
+        (
+            "Dry-run routing smoke only: do not inspect files and do not edit files. "
+            f"For feature '{feature}', treat this as /speckit.discuss. "
+            "Your role is boss. If the next role should be president for analysis coordination, "
+            f'rispondi solo con la concatenazione esatta di "SPECKIT_DISCUSS_TO_PRESIDENT_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        boss.session,
+        role=args.boss_role,
+        marker=discuss,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("2. President maps speckit.analyze to worker handoff")
+    await _send_line(
+        president.session,
+        (
+            "Dry-run routing smoke only: do not inspect files and do not edit files. "
+            f"Boss handoff received for feature '{feature}': {discuss}. "
+            "Your role is president. Treat this as speckit.analyze and hand work to worker-gemini. "
+            f'Rispondi solo con la concatenazione esatta di "SPECKIT_ANALYZE_TO_WORKER_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        president.session,
+        role=args.president_role,
+        marker=analyze,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("3. Worker maps speckit.implement to implementation result")
+    await _send_line(
+        worker.session,
+        (
+            "Dry-run routing smoke only: do not inspect files and do not edit files. "
+            f"President handoff received for feature '{feature}': {analyze}. "
+            "Your role is worker-gemini. Treat this as speckit.implement dry-run execution. "
+            f'Rispondi solo con la concatenazione esatta di "SPECKIT_IMPLEMENT_RESULT_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        worker.session,
+        role=args.worker_role,
+        marker=implement,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("4. President adjudicates worker result")
+    await _send_line(
+        president.session,
+        (
+            "Dry-run routing smoke only. "
+            f"Worker result received for feature '{feature}': {implement}. "
+            "Your role is president. Treat this as Speckit readiness adjudication. "
+            f'Rispondi solo con la concatenazione esatta di "SPECKIT_PRESIDENT_READY_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        president.session,
+        role=args.president_role,
+        marker=adjudicate,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("5. Boss closes Speckit routing loop")
+    await _send_line(
+        boss.session,
+        (
+            "Dry-run routing smoke only. "
+            f"President readiness received for feature '{feature}': {adjudicate}. "
+            "Your role is boss. Close the Speckit routing loop. "
+            f'Rispondi solo con la concatenazione esatta di "SPECKIT_BOSS_DONE_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        boss.session,
+        role=args.boss_role,
+        marker=done,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("success:")
+    print(f"  {discuss}")
+    print(f"  {analyze}")
+    print(f"  {implement}")
+    print(f"  {adjudicate}")
+    print(f"  {done}")
+    return 0
+
+
+async def _run_speckit_team_e2e(connection: Any, app: Any, args: argparse.Namespace) -> int:
+    _ensure_command(args.boss_cmd)
+    _ensure_command(args.president_cmd)
+    _ensure_command(args.worker_cmd)
+
+    repo = str(args.repo or "").strip()
+    repo_name = _repo_name(repo)
+    ui_group_id = str(args.ui_group_id or f"{repo_name}-speckit-{uuid.uuid4().hex[:8]}").strip()
+    roles = [args.boss_role, args.president_role, args.worker_role]
+    commands = {
+        args.boss_role: args.boss_cmd,
+        args.president_role: args.president_cmd,
+        args.worker_role: args.worker_cmd,
+    }
+    print(f"opening speckit team test layout group={ui_group_id}")
+    try:
+        await _launch_role_layout(connection, repo=repo, roles=roles, commands=commands, ui_group_id=ui_group_id)
+        await asyncio.sleep(max(0.0, float(args.startup_wait)))
+        panes = {
+            args.boss_role: await _find_mesh_pane(app, repo, args.boss_role, ui_group_id),
+            args.president_role: await _find_mesh_pane(app, repo, args.president_role, ui_group_id),
+            args.worker_role: await _find_mesh_pane(app, repo, args.worker_role, ui_group_id),
+        }
+        print("waiting for CLI prompts")
+        for role, command in commands.items():
+            await _wait_for_cli_ready(
+                panes[role].session,
+                role=role,
+                command_text=command,
+                timeout=args.startup_timeout,
+                poll_interval=args.poll_interval,
+            )
+        smoke_args = argparse.Namespace(
+            repo=repo,
+            ui_group_id=ui_group_id,
+            boss_role=args.boss_role,
+            president_role=args.president_role,
+            worker_role=args.worker_role,
+            feature=args.feature,
+            run_id="",
+            response_timeout=args.response_timeout,
+            poll_interval=args.poll_interval,
+        )
+        return await _run_speckit_team_smoke(app, smoke_args)
+    finally:
+        if not args.keep_open:
+            closed = await _close_mesh_tabs(app, repo, ui_group_id)
+            print(f"closed {closed} test tab(s) group={ui_group_id}")
+
+
 async def _run(connection, args: argparse.Namespace) -> int:
     import iterm2
 
@@ -710,6 +897,9 @@ async def _run(connection, args: argparse.Namespace) -> int:
 
     if args.cmd == "team-e2e":
         return await _run_team_e2e(connection, app, args)
+
+    if args.cmd == "speckit-team-e2e":
+        return await _run_speckit_team_e2e(connection, app, args)
 
     pane = await _find_mesh_pane(app, args.repo, args.role, getattr(args, "ui_group_id", ""))
 
