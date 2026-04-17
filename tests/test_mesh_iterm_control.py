@@ -35,11 +35,12 @@ class _FakeScreen:
 
 
 class _FakeSession:
-    def __init__(self, *, role: str = "", repo: str = "", marked: bool = False):
+    def __init__(self, *, role: str = "", repo: str = "", marked: bool = False, ui_group_id: str = ""):
         self.variables = {
             "user.mesh_ui_tab": "1" if marked else "",
             "user.mesh_repo": repo,
             "user.mesh_role": role,
+            "user.mesh_ui_group_id": ui_group_id,
         }
         self.sent: list[str] = []
         self.activated = False
@@ -110,6 +111,21 @@ def test_mesh_sessions_filters_marked_repo_and_role():
     panes = asyncio.run(module._mesh_sessions(app, "/media/sam/1TB/demo"))
 
     assert [pane.role for pane in panes] == ["boss", "president"]
+
+
+def test_mesh_sessions_filters_ui_group_id():
+    module = _load_module()
+    target = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True, ui_group_id="group-1")
+    other_group = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True, ui_group_id="group-2")
+    app = type(
+        "App",
+        (),
+        {"windows": [type("Window", (), {"tabs": [_FakeTab([target, other_group])]})()]},
+    )()
+
+    panes = asyncio.run(module._mesh_sessions(app, "/media/sam/1TB/demo", "group-1"))
+
+    assert [pane.ui_group_id for pane in panes] == ["group-1"]
 
 
 def test_find_mesh_pane_returns_unique_match():

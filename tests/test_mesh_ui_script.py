@@ -2040,6 +2040,7 @@ def test_mark_mesh_ui_sessions_marks_all_sessions():
     assert [s.variables["user.mesh_ui_tab"] for s in sessions] == ["1", "1", "1"]
     assert [s.variables["user.mesh_repo"] for s in sessions] == [cfg.repo, cfg.repo, cfg.repo]
     assert [s.variables["user.mesh_role"] for s in sessions] == ["boss", "lead", "verifier"]
+    assert [s.variables["user.mesh_ui_group_id"] for s in sessions] == [cfg.ui_group_id, cfg.ui_group_id, cfg.ui_group_id]
 
 
 def test_cleanup_existing_mesh_tabs_closes_marked_tab_even_if_current_session_unmarked():

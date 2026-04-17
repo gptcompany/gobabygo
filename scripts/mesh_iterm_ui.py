@@ -1592,6 +1592,7 @@ async def _mark_mesh_ui_sessions(sessions: list[Any], cfg: UiConfig, roles: list
             await session.async_set_variable("user.mesh_ui_tab", "1")
             await session.async_set_variable("user.mesh_repo", cfg.repo)
             await session.async_set_variable("user.mesh_role", role)
+            await session.async_set_variable("user.mesh_ui_group_id", cfg.ui_group_id)
         except Exception:
             continue
 

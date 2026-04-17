@@ -15,10 +15,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.util
 import os
+import shlex
+import shutil
 import sys
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -29,6 +33,7 @@ class MeshPane:
     session_index: int
     repo: str
     role: str
+    ui_group_id: str
     tab: Any
     session: Any
 
@@ -39,13 +44,16 @@ def _parse_args() -> argparse.Namespace:
 
     list_parser = sub.add_parser("list", help="List mesh-marked panes.")
     list_parser.add_argument("--repo", default="", help="Filter by repo path.")
+    list_parser.add_argument("--ui-group-id", default="", help="Filter by mesh UI group id.")
     list_parser.add_argument("--output", default="", help="Write output to this file instead of stdout.")
 
     close_parser = sub.add_parser("close", help="Close mesh-marked tabs for a repo.")
     close_parser.add_argument("--repo", required=True, help="Exact mesh repo path.")
+    close_parser.add_argument("--ui-group-id", default="", help="Close only tabs in this mesh UI group id.")
 
     smoke_parser = sub.add_parser("two-cli-smoke", help="Run a bidirectional live smoke between boss and president panes.")
     smoke_parser.add_argument("--repo", required=True, help="Exact mesh repo path.")
+    smoke_parser.add_argument("--ui-group-id", default="", help="Target a specific mesh UI group id.")
     smoke_parser.add_argument("--boss-role", default="boss", help="Source Gemini role.")
     smoke_parser.add_argument("--president-role", default="president", help="Source Codex role.")
     smoke_parser.add_argument("--gemini-model", default="", help="Optional model command sent to the boss pane before testing.")
@@ -53,10 +61,25 @@ def _parse_args() -> argparse.Namespace:
     smoke_parser.add_argument("--response-timeout", type=float, default=120.0, help="Seconds to wait for each marker.")
     smoke_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
 
+    e2e_parser = sub.add_parser("two-cli-e2e", help="Open, verify, and optionally close a local Gemini/Codex layout.")
+    e2e_parser.add_argument("--repo", required=True, help="Exact repo path.")
+    e2e_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TWO_CLI_BOSS_CMD", "gemini"))
+    e2e_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TWO_CLI_PRESIDENT_CMD", "codex"))
+    e2e_parser.add_argument("--boss-role", default="boss")
+    e2e_parser.add_argument("--president-role", default="president")
+    e2e_parser.add_argument("--gemini-model", default="", help="Optional model command sent to the boss pane before testing.")
+    e2e_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
+    e2e_parser.add_argument("--startup-wait", type=float, default=12.0, help="Seconds to wait for CLIs after launch.")
+    e2e_parser.add_argument("--startup-timeout", type=float, default=90.0, help="Seconds to wait for CLI prompts.")
+    e2e_parser.add_argument("--response-timeout", type=float, default=120.0, help="Seconds to wait for each marker.")
+    e2e_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
+    e2e_parser.add_argument("--keep-open", action="store_true", help="Leave the test layout open after completion.")
+
     for name in ("focus", "dump", "send-text", "send-line", "send-key"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--repo", required=True, help="Exact mesh repo path.")
         cmd.add_argument("--role", required=True, help="Exact mesh role.")
+        cmd.add_argument("--ui-group-id", default="", help="Target a specific mesh UI group id.")
         if name == "dump":
             cmd.add_argument("--lines", type=int, default=20, help="Trailing non-empty lines to print.")
             cmd.add_argument("--output", default="", help="Write output to this file instead of stdout.")
@@ -68,9 +91,10 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def _mesh_sessions(app, repo_filter: str = "") -> list[MeshPane]:
+async def _mesh_sessions(app, repo_filter: str = "", ui_group_filter: str = "") -> list[MeshPane]:
     panes: list[MeshPane] = []
     repo_filter = str(repo_filter or "").strip()
+    ui_group_filter = str(ui_group_filter or "").strip()
     for wi, window in enumerate(getattr(app, "windows", []), 1):
         for ti, tab in enumerate(getattr(window, "tabs", []), 1):
             for si, session in enumerate(getattr(tab, "sessions", []), 1):
@@ -78,11 +102,14 @@ async def _mesh_sessions(app, repo_filter: str = "") -> list[MeshPane]:
                     marker = await session.async_get_variable("user.mesh_ui_tab")
                     repo = str(await session.async_get_variable("user.mesh_repo") or "").strip()
                     role = str(await session.async_get_variable("user.mesh_role") or "").strip()
+                    ui_group_id = str(await session.async_get_variable("user.mesh_ui_group_id") or "").strip()
                 except Exception:
                     continue
                 if str(marker) != "1" or not repo or not role:
                     continue
                 if repo_filter and repo != repo_filter:
+                    continue
+                if ui_group_filter and ui_group_id != ui_group_filter:
                     continue
                 panes.append(
                     MeshPane(
@@ -91,6 +118,7 @@ async def _mesh_sessions(app, repo_filter: str = "") -> list[MeshPane]:
                         session_index=si,
                         repo=repo,
                         role=role,
+                        ui_group_id=ui_group_id,
                         tab=tab,
                         session=session,
                     )
@@ -98,14 +126,15 @@ async def _mesh_sessions(app, repo_filter: str = "") -> list[MeshPane]:
     return panes
 
 
-async def _find_mesh_pane(app, repo: str, role: str) -> MeshPane:
+async def _find_mesh_pane(app, repo: str, role: str, ui_group_id: str = "") -> MeshPane:
     repo = str(repo or "").strip()
     role = str(role or "").strip()
-    matches = [pane for pane in await _mesh_sessions(app, repo) if pane.role == role]
+    ui_group_id = str(ui_group_id or "").strip()
+    matches = [pane for pane in await _mesh_sessions(app, repo, ui_group_id) if pane.role == role]
     if not matches:
-        raise RuntimeError(f"no pane matched repo={repo!r} role={role!r}")
+        raise RuntimeError(f"no pane matched repo={repo!r} role={role!r} ui_group_id={ui_group_id!r}")
     if len(matches) > 1:
-        raise RuntimeError(f"multiple panes matched repo={repo!r} role={role!r}")
+        raise RuntimeError(f"multiple panes matched repo={repo!r} role={role!r} ui_group_id={ui_group_id!r}")
     return matches[0]
 
 
@@ -150,6 +179,45 @@ def _emit(text: str, output_path: str = "") -> None:
     print(text)
 
 
+def _repo_name(repo: str) -> str:
+    return os.path.basename(str(repo or "").rstrip("/")) or "repo"
+
+
+def _load_mesh_iterm_ui():
+    script_path = Path(__file__).resolve().with_name("mesh_iterm_ui.py")
+    spec = importlib.util.spec_from_file_location("mesh_iterm_ui_for_control", script_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load mesh UI module at {script_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ensure_command(command_text: str) -> None:
+    executable = str(command_text or "").strip().split(" ", 1)[0]
+    if not executable:
+        raise RuntimeError("empty CLI command")
+    if shutil.which(executable) is None:
+        raise RuntimeError(f"required command not found in PATH: {executable}")
+
+
+def _set_env_temporarily(values: dict[str, str]) -> dict[str, str | None]:
+    previous: dict[str, str | None] = {}
+    for key, value in values.items():
+        previous[key] = os.environ.get(key)
+        os.environ[key] = value
+    return previous
+
+
+def _restore_env(previous: dict[str, str | None]) -> None:
+    for key, value in previous.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 async def _screen_tail(session: Any, lines: int = 20) -> str:
     screen = await session.async_get_screen_contents()
     collected: list[str] = []
@@ -163,6 +231,7 @@ async def _screen_tail(session: Any, lines: int = 20) -> str:
 
 async def _send_line(session: Any, text: str) -> None:
     await session.async_activate()
+    await asyncio.sleep(0.25)
     await session.async_send_text(text)
     await asyncio.sleep(0.08)
     await session.async_send_text("\r")
@@ -189,9 +258,70 @@ async def _wait_for_screen_marker(
     raise RuntimeError(f"timed out waiting for marker {marker!r} in role={role}")
 
 
+async def _wait_for_screen_any(
+    session: Any,
+    *,
+    role: str,
+    markers: tuple[str, ...],
+    timeout: float,
+    poll_interval: float,
+    description: str,
+) -> str:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(1.0, float(timeout))
+    last_dump = ""
+    while loop.time() < deadline:
+        last_dump = await _screen_tail(session, lines=360)
+        for marker in markers:
+            if marker and marker in last_dump:
+                return marker
+        await asyncio.sleep(max(0.5, float(poll_interval)))
+    print(f"--- last dump for {role} ---")
+    print(last_dump)
+    raise RuntimeError(f"timed out waiting for {description} in role={role}")
+
+
+async def _wait_for_cli_ready(session: Any, *, role: str, command_text: str, timeout: float, poll_interval: float) -> None:
+    command_name = str(command_text or "").strip().split(" ", 1)[0]
+    if command_name == "gemini":
+        await _wait_for_screen_any(
+            session,
+            role=role,
+            markers=("Type your message",),
+            timeout=timeout,
+            poll_interval=poll_interval,
+            description="Gemini prompt",
+        )
+    elif command_name == "codex":
+        await _wait_for_screen_any(
+            session,
+            role=role,
+            markers=("Write tests for", "›"),
+            timeout=timeout,
+            poll_interval=poll_interval,
+            description="Codex prompt",
+        )
+
+
+async def _close_mesh_tabs(app: Any, repo: str, ui_group_id: str = "") -> int:
+    tabs: dict[int, Any] = {}
+    for pane in await _mesh_sessions(app, repo, ui_group_id):
+        tabs[id(pane.tab)] = pane.tab
+    for tab in tabs.values():
+        close_fn = getattr(tab, "async_close", None)
+        if close_fn is None:
+            continue
+        try:
+            await close_fn(force=True)
+        except TypeError:
+            await close_fn()
+    return len(tabs)
+
+
 async def _run_two_cli_smoke(app: Any, args: argparse.Namespace) -> int:
-    boss = await _find_mesh_pane(app, args.repo, args.boss_role)
-    president = await _find_mesh_pane(app, args.repo, args.president_role)
+    ui_group_id = str(getattr(args, "ui_group_id", "") or "").strip()
+    boss = await _find_mesh_pane(app, args.repo, args.boss_role, ui_group_id)
+    president = await _find_mesh_pane(app, args.repo, args.president_role, ui_group_id)
 
     run_id = str(args.run_id or uuid.uuid4().hex[:8]).upper().replace("-", "_")
     gemini_marker = f"GEMINI_TO_CODEX_{run_id}"
@@ -276,6 +406,73 @@ async def _run_two_cli_smoke(app: Any, args: argparse.Namespace) -> int:
     return 0
 
 
+async def _run_two_cli_e2e(connection: Any, app: Any, args: argparse.Namespace) -> int:
+    _ensure_command(args.boss_cmd)
+    _ensure_command(args.president_cmd)
+
+    ui = _load_mesh_iterm_ui()
+    repo = str(args.repo or "").strip()
+    repo_name = _repo_name(repo)
+    ui_group_id = str(args.ui_group_id or f"{repo_name}-two-cli-{uuid.uuid4().hex[:8]}").strip()
+    roles = [args.boss_role, args.president_role]
+    env_previous = _set_env_temporarily(
+        {
+            "MESH_UI_ROLES": ",".join(roles),
+            "MESH_UI_MAX_PANES_PER_TAB": "2",
+            "MESH_UI_CMD_BOSS": f"cd {{repo}} && exec {args.boss_cmd}",
+            "MESH_UI_CMD_PRESIDENT": f"cd {{repo}} && exec {args.president_cmd}",
+        }
+    )
+    cfg = ui.UiConfig(
+        repo=repo,
+        repo_name=repo_name,
+        roles=roles,
+        max_panes_per_tab=2,
+        single_tab=False,
+        replace_tabs=False,
+        preset="auto",
+        attach_live=False,
+        ui_group_id=ui_group_id,
+    )
+    print(f"opening two-cli test layout group={ui_group_id}")
+    try:
+        await ui._launch_layout(connection, cfg)
+        await asyncio.sleep(max(0.0, float(args.startup_wait)))
+        boss = await _find_mesh_pane(app, repo, args.boss_role, ui_group_id)
+        president = await _find_mesh_pane(app, repo, args.president_role, ui_group_id)
+        print("waiting for CLI prompts")
+        await _wait_for_cli_ready(
+            boss.session,
+            role=args.boss_role,
+            command_text=args.boss_cmd,
+            timeout=args.startup_timeout,
+            poll_interval=args.poll_interval,
+        )
+        await _wait_for_cli_ready(
+            president.session,
+            role=args.president_role,
+            command_text=args.president_cmd,
+            timeout=args.startup_timeout,
+            poll_interval=args.poll_interval,
+        )
+        smoke_args = argparse.Namespace(
+            repo=repo,
+            ui_group_id=ui_group_id,
+            boss_role=args.boss_role,
+            president_role=args.president_role,
+            gemini_model=args.gemini_model,
+            run_id="",
+            response_timeout=args.response_timeout,
+            poll_interval=args.poll_interval,
+        )
+        return await _run_two_cli_smoke(app, smoke_args)
+    finally:
+        _restore_env(env_previous)
+        if not args.keep_open:
+            closed = await _close_mesh_tabs(app, repo, ui_group_id)
+            print(f"closed {closed} test tab(s) group={ui_group_id}")
+
+
 async def _run(connection, args: argparse.Namespace) -> int:
     import iterm2
 
@@ -284,7 +481,7 @@ async def _run(connection, args: argparse.Namespace) -> int:
         raise RuntimeError("iTerm2 app not available")
 
     if args.cmd == "list":
-        panes = await _mesh_sessions(app, args.repo)
+        panes = await _mesh_sessions(app, args.repo, getattr(args, "ui_group_id", ""))
         lines = []
         for pane in panes:
             lines.append(
@@ -295,25 +492,19 @@ async def _run(connection, args: argparse.Namespace) -> int:
         return 0
 
     if args.cmd == "close":
-        panes = await _mesh_sessions(app, args.repo)
-        tabs: dict[int, Any] = {}
-        for pane in panes:
-            tabs[id(pane.tab)] = pane.tab
-        for tab in tabs.values():
-            close_fn = getattr(tab, "async_close", None)
-            if close_fn is None:
-                continue
-            try:
-                await close_fn(force=True)
-            except TypeError:
-                await close_fn()
-        print(f"closed {len(tabs)} mesh tab(s) for repo={args.repo}")
+        ui_group_id = getattr(args, "ui_group_id", "")
+        closed = await _close_mesh_tabs(app, args.repo, ui_group_id)
+        suffix = f" ui_group_id={ui_group_id}" if ui_group_id else ""
+        print(f"closed {closed} mesh tab(s) for repo={args.repo}{suffix}")
         return 0
 
     if args.cmd == "two-cli-smoke":
         return await _run_two_cli_smoke(app, args)
 
-    pane = await _find_mesh_pane(app, args.repo, args.role)
+    if args.cmd == "two-cli-e2e":
+        return await _run_two_cli_e2e(connection, app, args)
+
+    pane = await _find_mesh_pane(app, args.repo, args.role, getattr(args, "ui_group_id", ""))
 
     if args.cmd == "focus":
         await pane.session.async_activate()

@@ -483,6 +483,7 @@ Usage:
   ./scripts/mesh term dump <repo-path> <role> [--lines N] [--output <file>]
   ./scripts/mesh term close <repo-path>
   ./scripts/mesh term two-cli-smoke <repo-path> [--response-timeout N]
+  ./scripts/mesh term two-cli-e2e <repo-path> [--keep-open]
   ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
@@ -602,6 +603,7 @@ Usage:
   ./scripts/mesh term dump <repo-path> <role> [--lines N] [--output <file>]
   ./scripts/mesh term close <repo-path>
   ./scripts/mesh term two-cli-smoke <repo-path> [--response-timeout N]
+  ./scripts/mesh term two-cli-e2e <repo-path> [--keep-open]
 
 Behavior:
   mesh term is a thin iTerm2 control helper for mesh-marked panes.
@@ -1020,6 +1022,16 @@ PY
         repo="$1"
         shift
         run_iterm_control two-cli-smoke --repo "$repo" "$@"
+        ;;
+      two-cli-e2e)
+        if [[ $# -lt 2 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        shift
+        run_iterm_control two-cli-e2e --repo "$repo" "$@"
         ;;
       *)
         echo "Error: unsupported term subcommand '$term_cmd'" >&2
