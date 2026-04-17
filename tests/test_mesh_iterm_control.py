@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -124,6 +125,45 @@ def test_format_mesh_msg_is_single_line_and_quoted():
     assert message.startswith("MESH_MSG ")
     assert "task='line one line two'" in message
     assert message.endswith(" END_MESH_MSG")
+
+
+def test_write_handoff_json_creates_repo_relative_artifact(tmp_path):
+    module = _load_module()
+    repo = tmp_path / "demo"
+    repo.mkdir()
+
+    rel_path = module._write_handoff_json(
+        str(repo),
+        ".mesh/runs",
+        "ABC123",
+        "01-discuss.json",
+        {"phase": "speckit.discuss", "marker": "DONE"},
+    )
+
+    assert rel_path == ".mesh/runs/ABC123/01-discuss.json"
+    data = json.loads((repo / rel_path).read_text(encoding="utf-8"))
+    assert data["schema"] == "mesh.speckit.handoff.v1"
+    assert data["run_id"] == "ABC123"
+    assert data["phase"] == "speckit.discuss"
+    assert data["marker"] == "DONE"
+
+
+def test_write_handoff_json_can_be_disabled(tmp_path):
+    module = _load_module()
+    repo = tmp_path / "demo"
+    repo.mkdir()
+
+    rel_path = module._write_handoff_json(
+        str(repo),
+        ".mesh/runs",
+        "ABC123",
+        "01-discuss.json",
+        {"phase": "speckit.discuss"},
+        enabled=False,
+    )
+
+    assert rel_path == ""
+    assert not (repo / ".mesh").exists()
 
 
 def test_turn_limit_text_uses_minimum_one_turn():

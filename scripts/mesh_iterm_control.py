@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.util
+import json
 import os
 import shlex
 import shutil
@@ -120,6 +121,12 @@ def _parse_args() -> argparse.Namespace:
     speckit_run_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
     speckit_run_parser.add_argument("--allow-write", action="store_true", help="Allow the worker to edit files.")
     speckit_run_parser.add_argument("--allow-dirty", action="store_true", help="Run even if the repo is already dirty.")
+    speckit_run_parser.add_argument(
+        "--handoff-dir",
+        default=".mesh/runs",
+        help="Repo-relative directory for persistent Speckit handoff JSON files.",
+    )
+    speckit_run_parser.add_argument("--no-handoff", action="store_true", help="Do not write persistent handoff JSON files.")
     speckit_run_parser.add_argument(
         "--auto-approve-prompts",
         action="store_true",
@@ -261,6 +268,44 @@ def _format_mesh_msg(**fields: object) -> str:
         parts.append(f"{key}={shlex.quote(_clean_one_line(value))}")
     parts.append("END_MESH_MSG")
     return " ".join(parts)
+
+
+def _repo_relative_path(repo: str, path: Path) -> str:
+    repo_path = Path(repo).resolve()
+    try:
+        return str(path.resolve().relative_to(repo_path))
+    except ValueError:
+        return str(path)
+
+
+def _handoff_run_dir(repo: str, handoff_dir: str, run_id: str) -> Path:
+    base = Path(str(handoff_dir or ".mesh/runs"))
+    if not base.is_absolute():
+        base = Path(repo) / base
+    return base / run_id
+
+
+def _write_handoff_json(
+    repo: str,
+    handoff_dir: str,
+    run_id: str,
+    filename: str,
+    payload: dict[str, object],
+    *,
+    enabled: bool = True,
+) -> str:
+    if not enabled:
+        return ""
+    run_dir = _handoff_run_dir(repo, handoff_dir, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    target = run_dir / filename
+    data = {
+        "schema": "mesh.speckit.handoff.v1",
+        "run_id": run_id,
+        **payload,
+    }
+    target.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return _repo_relative_path(repo, target)
 
 
 def _turn_limit_text(max_turns: int) -> str:
@@ -1050,12 +1095,22 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     turn_limit = _turn_limit_text(args.max_turns)
     write_allowed = "true" if bool(args.allow_write) else "false"
     auto_approve_prompts = bool(getattr(args, "auto_approve_prompts", False))
+    handoff_enabled = not bool(getattr(args, "no_handoff", False))
+    handoff_dir = str(getattr(args, "handoff_dir", ".mesh/runs") or ".mesh/runs")
 
     boss_delegated = f"SPECKIT_RUN_BOSS_DELEGATED_{run_id}"
     president_assigned = f"SPECKIT_RUN_PRESIDENT_ASSIGNED_{run_id}"
     worker_done = f"SPECKIT_RUN_WORKER_DONE_{run_id}"
     president_reviewed = f"SPECKIT_RUN_PRESIDENT_REVIEWED_{run_id}"
     boss_reported = f"SPECKIT_RUN_BOSS_REPORTED_{run_id}"
+    handoff_files = {
+        "operator": "00-operator.json",
+        "discuss": "01-discuss.json",
+        "analyze": "02-analyze.json",
+        "implement": "03-implement.json",
+        "verify": "04-verify.json",
+        "report": "05-report.json",
+    }
 
     print(
         f"panes: boss=W{boss.window_index} T{boss.tab_index} S{boss.session_index} "
@@ -1066,6 +1121,32 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     print(f"task: {task}")
     print(f"run_id: {run_id}")
     print(f"write_allowed: {write_allowed}")
+    if handoff_enabled:
+        print(f"handoff_dir: {_repo_relative_path(args.repo, _handoff_run_dir(args.repo, handoff_dir, run_id))}")
+
+    operator_handoff = _write_handoff_json(
+        args.repo,
+        handoff_dir,
+        run_id,
+        handoff_files["operator"],
+        {
+            "phase": "speckit.request",
+            "from_role": "operator",
+            "to_role": args.boss_role,
+            "feature": feature,
+            "task": task,
+            "write_allowed": bool(args.allow_write),
+            "test_command": args.test_command,
+            "max_turns": max(1, int(args.max_turns or 1)),
+            "roles": {
+                "boss": args.boss_role,
+                "president": args.president_role,
+                "worker": args.worker_role,
+            },
+            "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["discuss"]),
+        },
+        enabled=handoff_enabled,
+    )
 
     operator_msg = _format_mesh_msg(
         id=f"operator-{run_id}",
@@ -1075,6 +1156,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         feature=feature,
         task=task,
         write_allowed=write_allowed,
+        handoff_in=operator_handoff,
+        handoff_out=str(Path(handoff_dir) / run_id / handoff_files["discuss"]) if handoff_enabled else "",
         done_criteria="one controlled Speckit cycle; no commit",
     )
 
@@ -1096,6 +1179,25 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
     )
+    boss_tail = await _screen_tail(boss.session, lines=120)
+    discuss_handoff = _write_handoff_json(
+        args.repo,
+        handoff_dir,
+        run_id,
+        handoff_files["discuss"],
+        {
+            "phase": "speckit.discuss",
+            "from_role": args.boss_role,
+            "to_role": args.president_role,
+            "feature": feature,
+            "task": task,
+            "marker": boss_delegated,
+            "handoff_in": operator_handoff,
+            "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["analyze"]),
+            "screen_tail": boss_tail,
+        },
+        enabled=handoff_enabled,
+    )
 
     president_msg = _format_mesh_msg(
         id=f"boss-{run_id}",
@@ -1106,6 +1208,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         task=task,
         write_allowed=write_allowed,
         upstream_marker=boss_delegated,
+        handoff_in=discuss_handoff,
+        handoff_out=str(Path(handoff_dir) / run_id / handoff_files["analyze"]) if handoff_enabled else "",
         done_criteria="assign exactly one worker task",
     )
 
@@ -1127,6 +1231,26 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
     )
+    president_tail = await _screen_tail(president.session, lines=120)
+    analyze_handoff = _write_handoff_json(
+        args.repo,
+        handoff_dir,
+        run_id,
+        handoff_files["analyze"],
+        {
+            "phase": "speckit.analyze",
+            "from_role": args.president_role,
+            "to_role": args.worker_role,
+            "feature": feature,
+            "task": task,
+            "marker": president_assigned,
+            "upstream_marker": boss_delegated,
+            "handoff_in": discuss_handoff,
+            "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["implement"]),
+            "screen_tail": president_tail,
+        },
+        enabled=handoff_enabled,
+    )
 
     worker_msg = _format_mesh_msg(
         id=f"president-{run_id}",
@@ -1137,6 +1261,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         task=task,
         write_allowed=write_allowed,
         upstream_marker=president_assigned,
+        handoff_in=analyze_handoff,
+        handoff_out=str(Path(handoff_dir) / run_id / handoff_files["implement"]) if handoff_enabled else "",
         done_criteria="single implementation pass; summarize files/tests/risks; no commit",
     )
     write_policy = (
@@ -1167,6 +1293,31 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     status_after_worker = _git_status_short(args.repo)
     diff_stat_after_worker = _git_diff_stat(args.repo)
     test_status, test_output = _run_optional_test_command(args.repo, args.test_command, args.test_timeout)
+    worker_tail = await _screen_tail(worker.session, lines=120)
+    implement_handoff = _write_handoff_json(
+        args.repo,
+        handoff_dir,
+        run_id,
+        handoff_files["implement"],
+        {
+            "phase": "speckit.implement",
+            "from_role": args.worker_role,
+            "to_role": args.president_role,
+            "feature": feature,
+            "task": task,
+            "write_allowed": bool(args.allow_write),
+            "marker": worker_done,
+            "upstream_marker": president_assigned,
+            "handoff_in": analyze_handoff,
+            "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["verify"]),
+            "git_status": status_after_worker or "clean",
+            "diff_stat": diff_stat_after_worker or "empty",
+            "test_status": test_status,
+            "test_output_tail": test_output,
+            "screen_tail": worker_tail,
+        },
+        enabled=handoff_enabled,
+    )
 
     review_msg = _format_mesh_msg(
         id=f"worker-{run_id}",
@@ -1180,6 +1331,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         git_status=status_after_worker or "clean",
         diff_stat=diff_stat_after_worker or "empty",
         test_status=test_status,
+        handoff_in=implement_handoff,
+        handoff_out=str(Path(handoff_dir) / run_id / handoff_files["verify"]) if handoff_enabled else "",
         done_criteria="adjudicate ready_or_blocked",
     )
 
@@ -1201,6 +1354,29 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
     )
+    review_tail = await _screen_tail(president.session, lines=120)
+    verify_handoff = _write_handoff_json(
+        args.repo,
+        handoff_dir,
+        run_id,
+        handoff_files["verify"],
+        {
+            "phase": "speckit.verify-work",
+            "from_role": args.president_role,
+            "to_role": args.boss_role,
+            "feature": feature,
+            "task": task,
+            "marker": president_reviewed,
+            "upstream_marker": worker_done,
+            "handoff_in": implement_handoff,
+            "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["report"]),
+            "git_status": status_after_worker or "clean",
+            "diff_stat": diff_stat_after_worker or "empty",
+            "test_status": test_status,
+            "screen_tail": review_tail,
+        },
+        enabled=handoff_enabled,
+    )
 
     final_msg = _format_mesh_msg(
         id=f"president-review-{run_id}",
@@ -1214,6 +1390,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         git_status=status_after_worker or "clean",
         diff_stat=diff_stat_after_worker or "empty",
         test_status=test_status,
+        handoff_in=verify_handoff,
+        handoff_out=str(Path(handoff_dir) / run_id / handoff_files["report"]) if handoff_enabled else "",
         done_criteria="operator-facing summary",
     )
 
@@ -1235,6 +1413,28 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
     )
+    report_tail = await _screen_tail(boss.session, lines=120)
+    report_handoff = _write_handoff_json(
+        args.repo,
+        handoff_dir,
+        run_id,
+        handoff_files["report"],
+        {
+            "phase": "speckit.report",
+            "from_role": args.boss_role,
+            "to_role": "operator",
+            "feature": feature,
+            "task": task,
+            "marker": boss_reported,
+            "upstream_marker": president_reviewed,
+            "handoff_in": verify_handoff,
+            "git_status": status_after_worker or "clean",
+            "diff_stat": diff_stat_after_worker or "empty",
+            "test_status": test_status,
+            "screen_tail": report_tail,
+        },
+        enabled=handoff_enabled,
+    )
 
     print("success:")
     print(f"  {boss_delegated}")
@@ -1247,6 +1447,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     print("diff_stat_after:")
     print(diff_stat_after_worker or "empty")
     print(f"test_status: {test_status}")
+    if report_handoff:
+        print(f"handoff_report: {report_handoff}")
     if test_output:
         print("test_output_tail:")
         print(test_output)
@@ -1312,6 +1514,8 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
             test_command=args.test_command,
             test_timeout=args.test_timeout,
             max_turns=args.max_turns,
+            handoff_dir=args.handoff_dir,
+            no_handoff=args.no_handoff,
             run_id="",
             response_timeout=args.response_timeout,
             poll_interval=args.poll_interval,
