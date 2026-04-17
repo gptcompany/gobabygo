@@ -96,6 +96,20 @@ def test_emit_writes_output_file(tmp_path):
     assert target.read_text(encoding="utf-8") == "one\n"
 
 
+def test_ui_command_env_key_normalizes_role():
+    module = _load_module()
+
+    assert module._ui_command_env_key("worker-gemini") == "MESH_UI_CMD_WORKER_GEMINI"
+
+
+def test_role_launch_command_quotes_repo_path():
+    module = _load_module()
+
+    command = module._role_launch_command("/tmp/demo repo", "gemini")
+
+    assert command == "cd '/tmp/demo repo' && exec gemini"
+
+
 def test_mesh_sessions_filters_marked_repo_and_role():
     module = _load_module()
     target = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True)

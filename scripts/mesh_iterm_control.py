@@ -75,6 +75,21 @@ def _parse_args() -> argparse.Namespace:
     e2e_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
     e2e_parser.add_argument("--keep-open", action="store_true", help="Leave the test layout open after completion.")
 
+    team_parser = sub.add_parser("team-e2e", help="Open and verify a local boss/president/worker CLI chain.")
+    team_parser.add_argument("--repo", required=True, help="Exact repo path.")
+    team_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TEAM_BOSS_CMD", "claude"))
+    team_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TEAM_PRESIDENT_CMD", "codex"))
+    team_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "gemini"))
+    team_parser.add_argument("--boss-role", default="boss")
+    team_parser.add_argument("--president-role", default="president")
+    team_parser.add_argument("--worker-role", default="worker-gemini")
+    team_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
+    team_parser.add_argument("--startup-wait", type=float, default=12.0, help="Seconds to wait after launching panes.")
+    team_parser.add_argument("--startup-timeout", type=float, default=120.0, help="Seconds to wait for CLI prompts.")
+    team_parser.add_argument("--response-timeout", type=float, default=120.0, help="Seconds to wait for each marker.")
+    team_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
+    team_parser.add_argument("--keep-open", action="store_true", help="Leave the test layout open after completion.")
+
     for name in ("focus", "dump", "send-text", "send-line", "send-key"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--repo", required=True, help="Exact mesh repo path.")
@@ -183,6 +198,14 @@ def _repo_name(repo: str) -> str:
     return os.path.basename(str(repo or "").rstrip("/")) or "repo"
 
 
+def _ui_command_env_key(role: str) -> str:
+    return "MESH_UI_CMD_" + str(role or "").upper().replace("-", "_")
+
+
+def _role_launch_command(repo: str, command_text: str) -> str:
+    return f"cd {shlex.quote(str(repo or ''))} && exec {command_text}"
+
+
 def _load_mesh_iterm_ui():
     script_path = Path(__file__).resolve().with_name("mesh_iterm_ui.py")
     spec = importlib.util.spec_from_file_location("mesh_iterm_ui_for_control", script_path)
@@ -216,6 +239,40 @@ def _restore_env(previous: dict[str, str | None]) -> None:
             os.environ.pop(key, None)
         else:
             os.environ[key] = value
+
+
+async def _launch_role_layout(
+    connection: Any,
+    *,
+    repo: str,
+    roles: list[str],
+    commands: dict[str, str],
+    ui_group_id: str,
+) -> None:
+    ui = _load_mesh_iterm_ui()
+    repo_name = _repo_name(repo)
+    env_values = {
+        "MESH_UI_ROLES": ",".join(roles),
+        "MESH_UI_MAX_PANES_PER_TAB": str(max(1, len(roles))),
+    }
+    for role in roles:
+        env_values[_ui_command_env_key(role)] = _role_launch_command(repo, commands[role])
+    env_previous = _set_env_temporarily(env_values)
+    try:
+        cfg = ui.UiConfig(
+            repo=repo,
+            repo_name=repo_name,
+            roles=roles,
+            max_panes_per_tab=max(1, len(roles)),
+            single_tab=False,
+            replace_tabs=False,
+            preset="auto",
+            attach_live=False,
+            ui_group_id=ui_group_id,
+        )
+        await ui._launch_layout(connection, cfg)
+    finally:
+        _restore_env(env_previous)
 
 
 async def _screen_tail(session: Any, lines: int = 20) -> str:
@@ -300,6 +357,15 @@ async def _wait_for_cli_ready(session: Any, *, role: str, command_text: str, tim
             timeout=timeout,
             poll_interval=poll_interval,
             description="Codex prompt",
+        )
+    elif command_name == "claude":
+        await _wait_for_screen_any(
+            session,
+            role=role,
+            markers=("cwd:", "cwd", "Claude", ">"),
+            timeout=timeout,
+            poll_interval=poll_interval,
+            description="Claude prompt",
         )
 
 
@@ -410,33 +476,17 @@ async def _run_two_cli_e2e(connection: Any, app: Any, args: argparse.Namespace) 
     _ensure_command(args.boss_cmd)
     _ensure_command(args.president_cmd)
 
-    ui = _load_mesh_iterm_ui()
     repo = str(args.repo or "").strip()
     repo_name = _repo_name(repo)
     ui_group_id = str(args.ui_group_id or f"{repo_name}-two-cli-{uuid.uuid4().hex[:8]}").strip()
     roles = [args.boss_role, args.president_role]
-    env_previous = _set_env_temporarily(
-        {
-            "MESH_UI_ROLES": ",".join(roles),
-            "MESH_UI_MAX_PANES_PER_TAB": "2",
-            "MESH_UI_CMD_BOSS": f"cd {{repo}} && exec {args.boss_cmd}",
-            "MESH_UI_CMD_PRESIDENT": f"cd {{repo}} && exec {args.president_cmd}",
-        }
-    )
-    cfg = ui.UiConfig(
-        repo=repo,
-        repo_name=repo_name,
-        roles=roles,
-        max_panes_per_tab=2,
-        single_tab=False,
-        replace_tabs=False,
-        preset="auto",
-        attach_live=False,
-        ui_group_id=ui_group_id,
-    )
+    commands = {
+        args.boss_role: args.boss_cmd,
+        args.president_role: args.president_cmd,
+    }
     print(f"opening two-cli test layout group={ui_group_id}")
     try:
-        await ui._launch_layout(connection, cfg)
+        await _launch_role_layout(connection, repo=repo, roles=roles, commands=commands, ui_group_id=ui_group_id)
         await asyncio.sleep(max(0.0, float(args.startup_wait)))
         boss = await _find_mesh_pane(app, repo, args.boss_role, ui_group_id)
         president = await _find_mesh_pane(app, repo, args.president_role, ui_group_id)
@@ -467,7 +517,161 @@ async def _run_two_cli_e2e(connection: Any, app: Any, args: argparse.Namespace) 
         )
         return await _run_two_cli_smoke(app, smoke_args)
     finally:
-        _restore_env(env_previous)
+        if not args.keep_open:
+            closed = await _close_mesh_tabs(app, repo, ui_group_id)
+            print(f"closed {closed} test tab(s) group={ui_group_id}")
+
+
+async def _run_team_smoke(app: Any, args: argparse.Namespace) -> int:
+    ui_group_id = str(getattr(args, "ui_group_id", "") or "").strip()
+    boss = await _find_mesh_pane(app, args.repo, args.boss_role, ui_group_id)
+    president = await _find_mesh_pane(app, args.repo, args.president_role, ui_group_id)
+    worker = await _find_mesh_pane(app, args.repo, args.worker_role, ui_group_id)
+
+    run_id = str(args.run_id or uuid.uuid4().hex[:8]).upper().replace("-", "_")
+    boss_task = f"BOSS_TASK_{run_id}"
+    president_to_worker = f"PRESIDENT_TO_WORKER_{run_id}"
+    worker_result = f"WORKER_RESULT_{run_id}"
+    president_ack = f"PRESIDENT_SAW_WORKER_{run_id}"
+    boss_done = f"BOSS_SAW_PRESIDENT_{run_id}"
+
+    print(
+        f"panes: boss=W{boss.window_index} T{boss.tab_index} S{boss.session_index} "
+        f"president=W{president.window_index} T{president.tab_index} S{president.session_index} "
+        f"worker=W{worker.window_index} T{worker.tab_index} S{worker.session_index}"
+    )
+    print(f"run_id: {run_id}")
+
+    print("1. Boss emits a task marker")
+    await _send_line(
+        boss.session,
+        f'Rispondi solo con la concatenazione esatta di "BOSS_TASK_" e "{run_id}".',
+    )
+    await _wait_for_screen_marker(
+        boss.session,
+        role=args.boss_role,
+        marker=boss_task,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("2. President receives boss task and emits worker handoff")
+    await _send_line(
+        president.session,
+        (
+            f"Task ricevuto da boss: {boss_task}. "
+            f'Rispondi solo con la concatenazione esatta di "PRESIDENT_TO_WORKER_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        president.session,
+        role=args.president_role,
+        marker=president_to_worker,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("3. Worker receives president handoff and emits result")
+    await _send_line(
+        worker.session,
+        (
+            f"Task ricevuto da president: {president_to_worker}. "
+            f'Rispondi solo con la concatenazione esatta di "WORKER_RESULT_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        worker.session,
+        role=args.worker_role,
+        marker=worker_result,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("4. President receives worker result and acknowledges")
+    await _send_line(
+        president.session,
+        (
+            f"Risultato ricevuto da worker: {worker_result}. "
+            f'Rispondi solo con la concatenazione esatta di "PRESIDENT_SAW_WORKER_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        president.session,
+        role=args.president_role,
+        marker=president_ack,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("5. Boss receives president acknowledgement and closes loop")
+    await _send_line(
+        boss.session,
+        (
+            f"Ack ricevuto da president: {president_ack}. "
+            f'Rispondi solo con la concatenazione esatta di "BOSS_SAW_PRESIDENT_" e "{run_id}".'
+        ),
+    )
+    await _wait_for_screen_marker(
+        boss.session,
+        role=args.boss_role,
+        marker=boss_done,
+        timeout=args.response_timeout,
+        poll_interval=args.poll_interval,
+    )
+
+    print("success:")
+    print(f"  {boss_task}")
+    print(f"  {president_to_worker}")
+    print(f"  {worker_result}")
+    print(f"  {president_ack}")
+    print(f"  {boss_done}")
+    return 0
+
+
+async def _run_team_e2e(connection: Any, app: Any, args: argparse.Namespace) -> int:
+    _ensure_command(args.boss_cmd)
+    _ensure_command(args.president_cmd)
+    _ensure_command(args.worker_cmd)
+
+    repo = str(args.repo or "").strip()
+    repo_name = _repo_name(repo)
+    ui_group_id = str(args.ui_group_id or f"{repo_name}-team-{uuid.uuid4().hex[:8]}").strip()
+    roles = [args.boss_role, args.president_role, args.worker_role]
+    commands = {
+        args.boss_role: args.boss_cmd,
+        args.president_role: args.president_cmd,
+        args.worker_role: args.worker_cmd,
+    }
+    print(f"opening team test layout group={ui_group_id}")
+    try:
+        await _launch_role_layout(connection, repo=repo, roles=roles, commands=commands, ui_group_id=ui_group_id)
+        await asyncio.sleep(max(0.0, float(args.startup_wait)))
+        panes = {
+            args.boss_role: await _find_mesh_pane(app, repo, args.boss_role, ui_group_id),
+            args.president_role: await _find_mesh_pane(app, repo, args.president_role, ui_group_id),
+            args.worker_role: await _find_mesh_pane(app, repo, args.worker_role, ui_group_id),
+        }
+        print("waiting for CLI prompts")
+        for role, command in commands.items():
+            await _wait_for_cli_ready(
+                panes[role].session,
+                role=role,
+                command_text=command,
+                timeout=args.startup_timeout,
+                poll_interval=args.poll_interval,
+            )
+        smoke_args = argparse.Namespace(
+            repo=repo,
+            ui_group_id=ui_group_id,
+            boss_role=args.boss_role,
+            president_role=args.president_role,
+            worker_role=args.worker_role,
+            run_id="",
+            response_timeout=args.response_timeout,
+            poll_interval=args.poll_interval,
+        )
+        return await _run_team_smoke(app, smoke_args)
+    finally:
         if not args.keep_open:
             closed = await _close_mesh_tabs(app, repo, ui_group_id)
             print(f"closed {closed} test tab(s) group={ui_group_id}")
@@ -503,6 +707,9 @@ async def _run(connection, args: argparse.Namespace) -> int:
 
     if args.cmd == "two-cli-e2e":
         return await _run_two_cli_e2e(connection, app, args)
+
+    if args.cmd == "team-e2e":
+        return await _run_team_e2e(connection, app, args)
 
     pane = await _find_mesh_pane(app, args.repo, args.role, getattr(args, "ui_group_id", ""))
 
