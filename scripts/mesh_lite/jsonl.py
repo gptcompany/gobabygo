@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,6 +13,13 @@ from typing import Iterable
 
 
 CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+
+
+def _claude_projects_dir() -> Path:
+    override = os.environ.get("MESH_LITE_CLAUDE_PROJECTS_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return CLAUDE_PROJECTS_DIR
 
 
 @dataclass
@@ -38,7 +46,7 @@ def _project_slug(project_path: str) -> str:
 
 
 def candidate_jsonl_paths(project_path: str) -> list[Path]:
-    project_dir = CLAUDE_PROJECTS_DIR / _project_slug(project_path)
+    project_dir = _claude_projects_dir() / _project_slug(project_path)
     if not project_dir.exists():
         return []
     paths = [p for p in project_dir.glob("*.jsonl") if p.is_file() and not p.name.startswith("agent-")]

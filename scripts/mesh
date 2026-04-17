@@ -481,6 +481,7 @@ Usage:
   ./scripts/mesh term exec <repo-path> <role> <text>
   ./scripts/mesh term key <repo-path> <role> <key>
   ./scripts/mesh term dump <repo-path> <role> [--lines N]
+  ./scripts/mesh term close <repo-path>
   ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
@@ -598,6 +599,7 @@ Usage:
   ./scripts/mesh term exec <repo-path> <role> <text>
   ./scripts/mesh term key <repo-path> <role> <key>
   ./scripts/mesh term dump <repo-path> <role> [--lines N]
+  ./scripts/mesh term close <repo-path>
 
 Behavior:
   mesh term is a thin iTerm2 control helper for mesh-marked panes.
@@ -610,6 +612,7 @@ Examples:
   ./scripts/mesh term exec /media/sam/1TB/snake-game boss "/GBG status?"
   ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
   ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
+  ./scripts/mesh term close /media/sam/1TB/snake-game
 EOF
 }
 
@@ -995,6 +998,16 @@ PY
         role="$2"
         shift 2
         run_iterm_control dump --repo "$repo" --role "$role" "$@"
+        ;;
+      close)
+        if [[ $# -lt 2 ]]; then
+          term_usage
+          exit 2
+        fi
+        shift
+        repo="$1"
+        shift
+        run_iterm_control close --repo "$repo" "$@"
         ;;
       *)
         echo "Error: unsupported term subcommand '$term_cmd'" >&2

@@ -68,14 +68,15 @@ def _select_jsonl_path(
     *,
     candidates: list,
     existing_jsonl_path: str,
+    pane_session_id: str | None = None,
     upstream_session_id: str | None,
 ) -> str:
     existing_path = str(existing_jsonl_path or "").strip()
     if existing_path:
         return existing_path
 
-    if upstream_session_id:
-        session_prefix = upstream_session_id.strip()
+    session_prefix = str(upstream_session_id or pane_session_id or "").strip()
+    if session_prefix:
         matched = []
         for candidate in candidates:
             candidate_session_id = str(candidate.session_id or "").strip()
@@ -199,6 +200,7 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             jsonl_path = _select_jsonl_path(
                 candidates=candidates,
                 existing_jsonl_path=existing.jsonl_path if existing else "",
+                pane_session_id=pane.session.session_id,
                 upstream_session_id=upstream_session_id,
             )
 

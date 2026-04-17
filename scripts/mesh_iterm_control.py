@@ -26,6 +26,7 @@ class MeshPane:
     session_index: int
     repo: str
     role: str
+    tab: Any
     session: Any
 
 
@@ -35,6 +36,9 @@ def _parse_args() -> argparse.Namespace:
 
     list_parser = sub.add_parser("list", help="List mesh-marked panes.")
     list_parser.add_argument("--repo", default="", help="Filter by repo path.")
+
+    close_parser = sub.add_parser("close", help="Close mesh-marked tabs for a repo.")
+    close_parser.add_argument("--repo", required=True, help="Exact mesh repo path.")
 
     for name in ("focus", "dump", "send-text", "send-line", "send-key"):
         cmd = sub.add_parser(name)
@@ -73,6 +77,7 @@ async def _mesh_sessions(app, repo_filter: str = "") -> list[MeshPane]:
                         session_index=si,
                         repo=repo,
                         role=role,
+                        tab=tab,
                         session=session,
                     )
                 )
@@ -137,6 +142,22 @@ async def _run(connection, args: argparse.Namespace) -> int:
                 f"W{pane.window_index} T{pane.tab_index} S{pane.session_index} "
                 f"role={pane.role} repo={pane.repo}"
             )
+        return 0
+
+    if args.cmd == "close":
+        panes = await _mesh_sessions(app, args.repo)
+        tabs: dict[int, Any] = {}
+        for pane in panes:
+            tabs[id(pane.tab)] = pane.tab
+        for tab in tabs.values():
+            close_fn = getattr(tab, "async_close", None)
+            if close_fn is None:
+                continue
+            try:
+                await close_fn(force=True)
+            except TypeError:
+                await close_fn()
+        print(f"closed {len(tabs)} mesh tab(s) for repo={args.repo}")
         return 0
 
     pane = await _find_mesh_pane(app, args.repo, args.role)
