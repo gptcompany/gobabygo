@@ -243,6 +243,25 @@ def test_auto_approval_edit_path_allowlist():
     assert module._edit_path_allowed("style.css", ("index.html", "snake.js")) is False
 
 
+def test_parse_allowed_edit_paths_from_president_output():
+    module = _load_module()
+
+    text = (
+        "Include one line exactly like ALLOWED_EDIT_PATHS: path1, path2 for repo-relative files.\n"
+        "Plan:\nALLOWED_EDIT_PATHS: index.html, ./snake.js\nSPECKIT_RUN_PRESIDENT_ASSIGNED_ABC"
+    )
+
+    assert module._parse_allowed_edit_paths(text) == ("index.html", "snake.js")
+
+
+def test_effective_edit_allowlist_intersects_operator_and_president_paths():
+    module = _load_module()
+
+    assert module._effective_edit_allowlist(("index.html", "snake.js"), ("snake.js", "style.css")) == ("snake.js",)
+    assert module._effective_edit_allowlist((), ("index.html",)) == ("index.html",)
+    assert module._effective_edit_allowlist(("index.html",), ()) == ("index.html",)
+
+
 def test_maybe_auto_approve_rejects_edit_outside_allowlist():
     module = _load_module()
     session = _FakeSession(role="worker-gemini", repo="/media/sam/1TB/demo", marked=True)
@@ -256,6 +275,26 @@ def test_maybe_auto_approve_rejects_edit_outside_allowlist():
             enabled=True,
             seen=set(),
             allowed_edit_paths=("index.html", "snake.js"),
+        )
+    )
+
+    assert changed is True
+    assert session.sent == ["4", "\r"]
+
+
+def test_maybe_auto_approve_rejects_edit_in_non_worker_role():
+    module = _load_module()
+    session = _FakeSession(role="boss", repo="/media/sam/1TB/demo", marked=True)
+    prompt = "Action Required\n?  Edit index.html: <p> => <p>\nApply this change?\n1. Allow once\n4. No, suggest changes"
+
+    changed = asyncio.run(
+        module._maybe_auto_approve_prompt(
+            session,
+            prompt,
+            role="boss",
+            enabled=True,
+            seen=set(),
+            allowed_edit_paths=module.NO_AUTO_EDIT_PATHS,
         )
     )
 

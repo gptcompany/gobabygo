@@ -1643,8 +1643,10 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
         groups = [[role] for role_group in groups for role in role_group]
 
     tab_surfaces: list[tuple[list[Any], list[str]]] = []
-    for roles in groups:
-        tab = await window.async_create_tab()
+    for idx, roles in enumerate(groups):
+        tab = getattr(window, "current_tab", None) if idx == 0 else None
+        if tab is None:
+            tab = await window.async_create_tab()
         sessions = await _create_panes_for_roles(tab, roles)
         await _mark_mesh_ui_sessions(sessions, cfg, roles)
         tab_surfaces.append((sessions, roles))

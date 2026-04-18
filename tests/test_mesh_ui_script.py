@@ -2140,8 +2140,8 @@ def test_launch_layout_creates_tabs_for_each_group(monkeypatch):
 
     asyncio.run(module._launch_layout(None, cfg))
 
-    assert len(fake_window.created_tabs) == 2
-    assert create_calls == fake_window.created_tabs
+    assert len(fake_window.created_tabs) == 1
+    assert create_calls == [fake_window.current_tab, *fake_window.created_tabs]
 
 
 def test_launch_layout_avoids_split_panes_in_safe_tabs_mode(monkeypatch):
@@ -2193,8 +2193,9 @@ def test_launch_layout_avoids_split_panes_in_safe_tabs_mode(monkeypatch):
 
     asyncio.run(module._launch_layout(None, cfg))
 
-    assert len(fake_window.created_tabs) == 2
+    assert len(fake_window.created_tabs) == 1
     assert [roles for _, roles in create_calls] == [["boss"], ["president"]]
+    assert [tab for tab, _ in create_calls] == [fake_window.current_tab, *fake_window.created_tabs]
 
 
 def test_launch_layout_creates_surfaces_before_spawning_sessions(monkeypatch):

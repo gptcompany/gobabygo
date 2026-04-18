@@ -40,6 +40,9 @@ class MeshPane:
     session: Any
 
 
+NO_AUTO_EDIT_PATHS = ("__mesh_no_auto_edit_prompts__",)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Control mesh-marked iTerm2 panes.")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -115,9 +118,12 @@ def _parse_args() -> argparse.Namespace:
     speckit_run_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TEAM_BOSS_CMD", "claude"))
     speckit_run_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TEAM_PRESIDENT_CMD", "codex"))
     speckit_run_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "gemini"))
+    speckit_run_parser.add_argument("--reviewer-cmd", default=os.environ.get("MESH_TEAM_REVIEWER_CMD", "gemini"))
     speckit_run_parser.add_argument("--boss-role", default="boss")
     speckit_run_parser.add_argument("--president-role", default="president")
     speckit_run_parser.add_argument("--worker-role", default="worker-gemini")
+    speckit_run_parser.add_argument("--reviewer-role", default="reviewer")
+    speckit_run_parser.add_argument("--with-reviewer", action="store_true", help="Add a reviewer role before the final boss report.")
     speckit_run_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
     speckit_run_parser.add_argument("--allow-write", action="store_true", help="Allow the worker to edit files.")
     speckit_run_parser.add_argument("--allow-dirty", action="store_true", help="Run even if the repo is already dirty.")
@@ -140,6 +146,7 @@ def _parse_args() -> argparse.Namespace:
     )
     speckit_run_parser.add_argument("--test-command", default="", help="Optional local test command to run after worker returns.")
     speckit_run_parser.add_argument("--test-timeout", type=float, default=180.0, help="Seconds for the optional test command.")
+    speckit_run_parser.add_argument("--allow-test-failure", action="store_true", help="Return success even if --test-command fails.")
     speckit_run_parser.add_argument("--max-turns", type=int, default=1, help="Maximum response turns per role in this controlled cycle.")
     speckit_run_parser.add_argument("--startup-wait", type=float, default=12.0, help="Seconds to wait after launching panes.")
     speckit_run_parser.add_argument("--startup-timeout", type=float, default=120.0, help="Seconds to wait for CLI prompts.")
@@ -324,6 +331,10 @@ def _turn_limit_text(max_turns: int) -> str:
     )
 
 
+def _marker_instruction(marker: str) -> str:
+    return f"REQUIRED_FINAL_MARKER: {marker}. End with that exact marker on its own final line."
+
+
 def _run_local_capture(args: list[str], *, cwd: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
     return subprocess.run(
         args,
@@ -503,10 +514,61 @@ def _edit_path_allowed(path: str, allowed_paths: tuple[str, ...]) -> bool:
     return False
 
 
+def _parse_allowed_edit_paths(text: str) -> tuple[str, ...]:
+    for raw_line in reversed(text.splitlines()):
+        line = raw_line.strip()
+        lowered = line.lower()
+        if "allowed_edit_paths" not in lowered and "allowed edit paths" not in lowered:
+            continue
+        if "path1" in lowered or "path2" in lowered or "for repo-relative files" in lowered:
+            continue
+        if ":" not in line:
+            continue
+        value = line.split(":", 1)[1].strip()
+        if not value:
+            return ()
+        if value.startswith("["):
+            try:
+                loaded = json.loads(value)
+            except json.JSONDecodeError:
+                loaded = None
+            if isinstance(loaded, list):
+                return tuple(
+                    _normalize_edit_path(str(item))
+                    for item in loaded
+                    if _normalize_edit_path(str(item)).lower() not in {"", "any", "none", "n/a", "unknown"}
+                )
+        paths: list[str] = []
+        for item in value.replace(";", ",").split(","):
+            normalized = _normalize_edit_path(item)
+            if normalized.lower() in {"", "any", "none", "n/a", "unknown"}:
+                continue
+            if normalized.lower() in {"path1", "path2"} or "repo-relative" in normalized.lower():
+                continue
+            paths.append(normalized)
+        return tuple(paths)
+    return ()
+
+
+def _effective_edit_allowlist(
+    operator_paths: tuple[str, ...],
+    president_paths: tuple[str, ...],
+) -> tuple[str, ...]:
+    if operator_paths and president_paths:
+        return tuple(path for path in president_paths if _edit_path_allowed(path, operator_paths))
+    if president_paths:
+        return president_paths
+    return operator_paths
+
+
+def _edit_prompt_allowed_paths_for_role(role: str, worker_role: str, allowed_paths: tuple[str, ...]) -> tuple[str, ...]:
+    return allowed_paths if role == worker_role else NO_AUTO_EDIT_PATHS
+
+
 def _auto_approval_signature(screen_text: str, choice: str, reason: str) -> str:
     if reason == "trust folder":
         return f"{choice}:{reason}"
-    if reason.startswith("reject edit outside allowlist:"):
+    if reason.startswith("reject edit"):
         return f"{choice}:{reason}"
     if reason == "apply change once":
         edit_path = _auto_approval_edit_path(screen_text)
@@ -537,7 +599,12 @@ async def _maybe_auto_approve_prompt(
         return False
     if reason == "apply change once":
         edit_path = _auto_approval_edit_path(screen_text)
-        if edit_path and not _edit_path_allowed(edit_path, allowed_edit_paths):
+        if allowed_edit_paths == NO_AUTO_EDIT_PATHS:
+            choice = "4"
+            reason = f"reject edit in non-worker role: {_normalize_edit_path(edit_path) or 'unknown'}"
+        elif not edit_path:
+            return False
+        elif not _edit_path_allowed(edit_path, allowed_edit_paths):
             choice = "4"
             reason = f"reject edit outside allowlist: {_normalize_edit_path(edit_path)}"
     signature = _auto_approval_signature(screen_text, choice, reason)
@@ -944,9 +1011,8 @@ async def _run_team_e2e(connection: Any, app: Any, args: argparse.Namespace) -> 
         await _launch_role_layout(connection, repo=repo, roles=roles, commands=commands, ui_group_id=ui_group_id)
         await asyncio.sleep(max(0.0, float(args.startup_wait)))
         panes = {
-            args.boss_role: await _find_mesh_pane(app, repo, args.boss_role, ui_group_id),
-            args.president_role: await _find_mesh_pane(app, repo, args.president_role, ui_group_id),
-            args.worker_role: await _find_mesh_pane(app, repo, args.worker_role, ui_group_id),
+            role: await _find_mesh_pane(app, repo, role, ui_group_id)
+            for role in roles
         }
         print("waiting for CLI prompts")
         for role, command in commands.items():
@@ -1114,9 +1180,8 @@ async def _run_speckit_team_e2e(connection: Any, app: Any, args: argparse.Namesp
         await _launch_role_layout(connection, repo=repo, roles=roles, commands=commands, ui_group_id=ui_group_id)
         await asyncio.sleep(max(0.0, float(args.startup_wait)))
         panes = {
-            args.boss_role: await _find_mesh_pane(app, repo, args.boss_role, ui_group_id),
-            args.president_role: await _find_mesh_pane(app, repo, args.president_role, ui_group_id),
-            args.worker_role: await _find_mesh_pane(app, repo, args.worker_role, ui_group_id),
+            role: await _find_mesh_pane(app, repo, role, ui_group_id)
+            for role in roles
         }
         print("waiting for CLI prompts")
         for role, command in commands.items():
@@ -1150,6 +1215,12 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     boss = await _find_mesh_pane(app, args.repo, args.boss_role, ui_group_id)
     president = await _find_mesh_pane(app, args.repo, args.president_role, ui_group_id)
     worker = await _find_mesh_pane(app, args.repo, args.worker_role, ui_group_id)
+    reviewer_enabled = bool(getattr(args, "with_reviewer", False))
+    reviewer = (
+        await _find_mesh_pane(app, args.repo, args.reviewer_role, ui_group_id)
+        if reviewer_enabled
+        else None
+    )
 
     run_id = str(args.run_id or uuid.uuid4().hex[:8]).upper().replace("-", "_")
     feature = _clean_one_line(args.feature)
@@ -1157,7 +1228,10 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     turn_limit = _turn_limit_text(args.max_turns)
     write_allowed = "true" if bool(args.allow_write) else "false"
     auto_approve_prompts = bool(getattr(args, "auto_approve_prompts", False))
-    allowed_edit_paths = tuple(str(item) for item in (getattr(args, "auto_approve_edit_path", None) or []))
+    operator_allowed_edit_paths = tuple(
+        _normalize_edit_path(str(item)) for item in (getattr(args, "auto_approve_edit_path", None) or [])
+    )
+    effective_allowed_edit_paths = operator_allowed_edit_paths
     handoff_enabled = not bool(getattr(args, "no_handoff", False))
     handoff_dir = str(getattr(args, "handoff_dir", ".mesh/runs") or ".mesh/runs")
 
@@ -1165,6 +1239,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     president_assigned = f"SPECKIT_RUN_PRESIDENT_ASSIGNED_{run_id}"
     worker_done = f"SPECKIT_RUN_WORKER_DONE_{run_id}"
     president_reviewed = f"SPECKIT_RUN_PRESIDENT_REVIEWED_{run_id}"
+    reviewer_done = f"SPECKIT_RUN_REVIEWER_DONE_{run_id}"
     boss_reported = f"SPECKIT_RUN_BOSS_REPORTED_{run_id}"
     handoff_files = {
         "operator": "00-operator.json",
@@ -1172,18 +1247,26 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         "analyze": "02-analyze.json",
         "implement": "03-implement.json",
         "verify": "04-verify.json",
-        "report": "05-report.json",
+        "reviewer": "05-reviewer.json",
+        "report": "06-report.json" if reviewer_enabled else "05-report.json",
     }
 
     print(
         f"panes: boss=W{boss.window_index} T{boss.tab_index} S{boss.session_index} "
         f"president=W{president.window_index} T{president.tab_index} S{president.session_index} "
         f"worker=W{worker.window_index} T{worker.tab_index} S{worker.session_index}"
+        + (
+            f" reviewer=W{reviewer.window_index} T{reviewer.tab_index} S{reviewer.session_index}"
+            if reviewer is not None
+            else ""
+        )
     )
     print(f"feature: {feature}")
     print(f"task: {task}")
     print(f"run_id: {run_id}")
     print(f"write_allowed: {write_allowed}")
+    if operator_allowed_edit_paths:
+        print(f"operator_allowed_edit_paths: {', '.join(operator_allowed_edit_paths)}")
     if handoff_enabled:
         print(f"handoff_dir: {_repo_relative_path(args.repo, _handoff_run_dir(args.repo, handoff_dir, run_id))}")
 
@@ -1199,12 +1282,14 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
             "feature": feature,
             "task": task,
             "write_allowed": bool(args.allow_write),
+            "operator_allowed_edit_paths": list(operator_allowed_edit_paths),
             "test_command": args.test_command,
             "max_turns": max(1, int(args.max_turns or 1)),
             "roles": {
                 "boss": args.boss_role,
                 "president": args.president_role,
                 "worker": args.worker_role,
+                "reviewer": args.reviewer_role if reviewer_enabled else "",
             },
             "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["discuss"]),
         },
@@ -1228,10 +1313,9 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     await _send_line(
         boss.session,
         (
-            f"{turn_limit} You are boss for a controlled Speckit run. "
+            f"{_marker_instruction(boss_delegated)} {turn_limit} You are boss for a controlled Speckit run. "
             f"Input: {operator_msg}. "
-            "Produce a concise routing decision for president. "
-            f'End with only the concatenation of "SPECKIT_RUN_BOSS_DELEGATED_" and "{run_id}" on its own final line.'
+            "Do not edit files or run implementation. Produce a concise routing decision for president. "
         ),
     )
     await _wait_for_screen_marker(
@@ -1241,7 +1325,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
-        allowed_edit_paths=allowed_edit_paths,
+        allowed_edit_paths=_edit_prompt_allowed_paths_for_role(args.boss_role, args.worker_role, effective_allowed_edit_paths),
     )
     boss_tail = await _screen_tail(boss.session, lines=120)
     discuss_handoff = _write_handoff_json(
@@ -1281,10 +1365,11 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     await _send_line(
         president.session,
         (
-            f"{turn_limit} You are president for a controlled Speckit run. "
+            f"{_marker_instruction(president_assigned)} {turn_limit} You are president for a controlled Speckit run. "
             f"Input: {president_msg}. "
-            "Analyze the request and assign exactly one scoped task to worker-gemini. "
-            f'End with only the concatenation of "SPECKIT_RUN_PRESIDENT_ASSIGNED_" and "{run_id}" on its own final line.'
+            "Do not edit files or run implementation. Analyze the request and assign exactly one scoped task to worker-gemini. "
+            "Include one line exactly like ALLOWED_EDIT_PATHS: path1, path2 for repo-relative files the worker may edit; "
+            "use ALLOWED_EDIT_PATHS: ANY only if no narrower edit scope is safe. "
         ),
     )
     await _wait_for_screen_marker(
@@ -1294,9 +1379,18 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
-        allowed_edit_paths=allowed_edit_paths,
+        allowed_edit_paths=_edit_prompt_allowed_paths_for_role(args.president_role, args.worker_role, effective_allowed_edit_paths),
     )
     president_tail = await _screen_tail(president.session, lines=120)
+    president_allowed_edit_paths = _parse_allowed_edit_paths(president_tail)
+    effective_allowed_edit_paths = _effective_edit_allowlist(
+        operator_allowed_edit_paths,
+        president_allowed_edit_paths,
+    )
+    if president_allowed_edit_paths:
+        print(f"president_allowed_edit_paths: {', '.join(president_allowed_edit_paths)}")
+    if effective_allowed_edit_paths:
+        print(f"effective_allowed_edit_paths: {', '.join(effective_allowed_edit_paths)}")
     analyze_handoff = _write_handoff_json(
         args.repo,
         handoff_dir,
@@ -1312,6 +1406,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
             "upstream_marker": boss_delegated,
             "handoff_in": discuss_handoff,
             "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["implement"]),
+            "president_allowed_edit_paths": list(president_allowed_edit_paths),
+            "effective_allowed_edit_paths": list(effective_allowed_edit_paths),
             "screen_tail": president_tail,
         },
         enabled=handoff_enabled,
@@ -1328,6 +1424,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         upstream_marker=president_assigned,
         handoff_in=analyze_handoff,
         handoff_out=str(Path(handoff_dir) / run_id / handoff_files["implement"]) if handoff_enabled else "",
+        allowed_edit_paths=", ".join(effective_allowed_edit_paths) if effective_allowed_edit_paths else "unrestricted",
         done_criteria="single implementation pass; summarize files/tests/risks; no commit",
     )
     write_policy = (
@@ -1340,10 +1437,9 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     await _send_line(
         worker.session,
         (
-            f"{turn_limit} You are worker-gemini for a controlled Speckit run. "
+            f"{_marker_instruction(worker_done)} {turn_limit} You are worker-gemini for a controlled Speckit run. "
             f"{write_policy} Input: {worker_msg}. "
             "When done, summarize changed files or planned files, tests run or skipped, and residual risks. "
-            f'End with only the concatenation of "SPECKIT_RUN_WORKER_DONE_" and "{run_id}" on its own final line.'
         ),
     )
     await _wait_for_screen_marker(
@@ -1353,7 +1449,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
-        allowed_edit_paths=allowed_edit_paths,
+        allowed_edit_paths=_edit_prompt_allowed_paths_for_role(args.worker_role, args.worker_role, effective_allowed_edit_paths),
     )
 
     status_after_worker = _git_status_short(args.repo)
@@ -1372,6 +1468,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
             "feature": feature,
             "task": task,
             "write_allowed": bool(args.allow_write),
+            "allowed_edit_paths": list(effective_allowed_edit_paths),
             "marker": worker_done,
             "upstream_marker": president_assigned,
             "handoff_in": analyze_handoff,
@@ -1406,10 +1503,9 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     await _send_line(
         president.session,
         (
-            f"{turn_limit} You are president reviewing a controlled Speckit run. "
+            f"{_marker_instruction(president_reviewed)} {turn_limit} You are president reviewing a controlled Speckit run. "
             f"Input: {review_msg}. "
-            "Adjudicate whether the cycle is ready or blocked based only on the provided status. "
-            f'End with only the concatenation of "SPECKIT_RUN_PRESIDENT_REVIEWED_" and "{run_id}" on its own final line.'
+            "Do not edit files. Adjudicate whether the cycle is ready or blocked based only on the provided status. "
         ),
     )
     await _wait_for_screen_marker(
@@ -1419,7 +1515,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
-        allowed_edit_paths=allowed_edit_paths,
+        allowed_edit_paths=_edit_prompt_allowed_paths_for_role(args.president_role, args.worker_role, effective_allowed_edit_paths),
     )
     review_tail = await _screen_tail(president.session, lines=120)
     verify_handoff = _write_handoff_json(
@@ -1445,31 +1541,100 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         enabled=handoff_enabled,
     )
 
+    upstream_for_final = president_reviewed
+    handoff_for_final = verify_handoff
+    if reviewer is not None:
+        reviewer_msg = _format_mesh_msg(
+            id=f"president-reviewer-{run_id}",
+            from_role=args.president_role,
+            to_role=args.reviewer_role,
+            phase="speckit.review",
+            feature=feature,
+            task=task,
+            write_allowed=write_allowed,
+            upstream_marker=president_reviewed,
+            handoff_in=verify_handoff,
+            handoff_out=str(Path(handoff_dir) / run_id / handoff_files["reviewer"]) if handoff_enabled else "",
+            git_status=status_after_worker or "clean",
+            diff_stat=diff_stat_after_worker or "empty",
+            test_status=test_status,
+            allowed_edit_paths=", ".join(effective_allowed_edit_paths) if effective_allowed_edit_paths else "unrestricted",
+            done_criteria="independent reviewer verdict on work and controller policy",
+        )
+
+        print("5. Reviewer validates work and controller policy")
+        await _send_line(
+            reviewer.session,
+            (
+                f"{_marker_instruction(reviewer_done)} {turn_limit} You are reviewer for a controlled Speckit run. "
+                f"Input: {reviewer_msg}. "
+                "Do not edit files. Validate the worker result, test status, handoff chain, and controller policy. "
+                "Call out whether edits stayed inside allowed_edit_paths and whether the cycle is ready_or_blocked. "
+            ),
+        )
+        await _wait_for_screen_marker(
+            reviewer.session,
+            role=args.reviewer_role,
+            marker=reviewer_done,
+            timeout=args.response_timeout,
+            poll_interval=args.poll_interval,
+            auto_approve_prompts=auto_approve_prompts,
+            allowed_edit_paths=_edit_prompt_allowed_paths_for_role(
+                args.reviewer_role,
+                args.worker_role,
+                effective_allowed_edit_paths,
+            ),
+        )
+        reviewer_tail = await _screen_tail(reviewer.session, lines=120)
+        handoff_for_final = _write_handoff_json(
+            args.repo,
+            handoff_dir,
+            run_id,
+            handoff_files["reviewer"],
+            {
+                "phase": "speckit.review",
+                "from_role": args.reviewer_role,
+                "to_role": args.boss_role,
+                "feature": feature,
+                "task": task,
+                "marker": reviewer_done,
+                "upstream_marker": president_reviewed,
+                "handoff_in": verify_handoff,
+                "next_handoff": str(Path(handoff_dir) / run_id / handoff_files["report"]),
+                "git_status": status_after_worker or "clean",
+                "diff_stat": diff_stat_after_worker or "empty",
+                "test_status": test_status,
+                "allowed_edit_paths": list(effective_allowed_edit_paths),
+                "screen_tail": reviewer_tail,
+            },
+            enabled=handoff_enabled,
+        )
+        upstream_for_final = reviewer_done
+
     final_msg = _format_mesh_msg(
-        id=f"president-review-{run_id}",
-        from_role=args.president_role,
+        id=f"final-review-{run_id}",
+        from_role=args.reviewer_role if reviewer is not None else args.president_role,
         to_role=args.boss_role,
         phase="speckit.report",
         feature=feature,
         task=task,
         write_allowed=write_allowed,
-        upstream_marker=president_reviewed,
+        upstream_marker=upstream_for_final,
         git_status=status_after_worker or "clean",
         diff_stat=diff_stat_after_worker or "empty",
         test_status=test_status,
-        handoff_in=verify_handoff,
+        handoff_in=handoff_for_final,
         handoff_out=str(Path(handoff_dir) / run_id / handoff_files["report"]) if handoff_enabled else "",
         done_criteria="operator-facing summary",
     )
 
-    print("5. Boss reports final controlled-cycle status")
+    print(f"{'6' if reviewer is not None else '5'}. Boss reports final controlled-cycle status")
     await _send_line(
         boss.session,
         (
-            f"{turn_limit} You are boss closing a controlled Speckit run. "
+            f"{_marker_instruction(boss_reported)} {turn_limit} You are boss closing a controlled Speckit run. "
             f"Input: {final_msg}. "
-            "Give a concise operator-facing summary. Do not claim a commit was made. "
-            f'End with only the concatenation of "SPECKIT_RUN_BOSS_REPORTED_" and "{run_id}" on its own final line.'
+            "Do not edit files. Give a concise operator-facing summary. Do not claim a commit was made. "
         ),
     )
     await _wait_for_screen_marker(
@@ -1479,7 +1644,7 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
         timeout=args.response_timeout,
         poll_interval=args.poll_interval,
         auto_approve_prompts=auto_approve_prompts,
-        allowed_edit_paths=allowed_edit_paths,
+        allowed_edit_paths=_edit_prompt_allowed_paths_for_role(args.boss_role, args.worker_role, effective_allowed_edit_paths),
     )
     report_tail = await _screen_tail(boss.session, lines=120)
     report_handoff = _write_handoff_json(
@@ -1494,8 +1659,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
             "feature": feature,
             "task": task,
             "marker": boss_reported,
-            "upstream_marker": president_reviewed,
-            "handoff_in": verify_handoff,
+            "upstream_marker": upstream_for_final,
+            "handoff_in": handoff_for_final,
             "git_status": status_after_worker or "clean",
             "diff_stat": diff_stat_after_worker or "empty",
             "test_status": test_status,
@@ -1509,6 +1674,8 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     print(f"  {president_assigned}")
     print(f"  {worker_done}")
     print(f"  {president_reviewed}")
+    if reviewer is not None:
+        print(f"  {reviewer_done}")
     print(f"  {boss_reported}")
     print("git_status_after:")
     print(status_after_worker or "clean")
@@ -1520,6 +1687,9 @@ async def _run_speckit_team_cycle(app: Any, args: argparse.Namespace) -> int:
     if test_output:
         print("test_output_tail:")
         print(test_output)
+    if test_status == "failed" and not bool(getattr(args, "allow_test_failure", False)):
+        print("run_status: failed")
+        return 1
     return 0
 
 
@@ -1527,6 +1697,8 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
     _ensure_command(args.boss_cmd)
     _ensure_command(args.president_cmd)
     _ensure_command(args.worker_cmd)
+    if args.with_reviewer:
+        _ensure_command(args.reviewer_cmd)
     if args.auto_approve_prompts and not args.allow_write:
         raise RuntimeError("--auto-approve-prompts requires --allow-write")
 
@@ -1544,22 +1716,24 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
     repo_name = _repo_name(repo)
     ui_group_id = str(args.ui_group_id or f"{repo_name}-speckit-run-{uuid.uuid4().hex[:8]}").strip()
     roles = [args.boss_role, args.president_role, args.worker_role]
+    if args.with_reviewer:
+        roles.append(args.reviewer_role)
     commands = {
         args.boss_role: args.boss_cmd,
         args.president_role: args.president_cmd,
         args.worker_role: args.worker_cmd,
     }
+    if args.with_reviewer:
+        commands[args.reviewer_role] = args.reviewer_cmd
     print(f"opening speckit team run layout group={ui_group_id}")
     print("git_status_before:")
     print(status_before or "clean")
     try:
         await _launch_role_layout(connection, repo=repo, roles=roles, commands=commands, ui_group_id=ui_group_id)
         await asyncio.sleep(max(0.0, float(args.startup_wait)))
-        panes = {
-            args.boss_role: await _find_mesh_pane(app, repo, args.boss_role, ui_group_id),
-            args.president_role: await _find_mesh_pane(app, repo, args.president_role, ui_group_id),
-            args.worker_role: await _find_mesh_pane(app, repo, args.worker_role, ui_group_id),
-        }
+        panes = {}
+        for role in roles:
+            panes[role] = await _find_mesh_pane(app, repo, role, ui_group_id)
         print("waiting for CLI prompts")
         for role, command in commands.items():
             await _wait_for_cli_ready(
@@ -1569,7 +1743,11 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
                 timeout=args.startup_timeout,
                 poll_interval=args.poll_interval,
                 auto_approve_prompts=args.auto_approve_prompts,
-                allowed_edit_paths=tuple(str(item) for item in (args.auto_approve_edit_path or [])),
+                allowed_edit_paths=_edit_prompt_allowed_paths_for_role(
+                    role,
+                    args.worker_role,
+                    tuple(str(item) for item in (args.auto_approve_edit_path or [])),
+                ),
             )
         cycle_args = argparse.Namespace(
             repo=repo,
@@ -1577,11 +1755,14 @@ async def _run_speckit_team_run(connection: Any, app: Any, args: argparse.Namesp
             boss_role=args.boss_role,
             president_role=args.president_role,
             worker_role=args.worker_role,
+            reviewer_role=args.reviewer_role,
+            with_reviewer=args.with_reviewer,
             feature=args.feature,
             task=args.task,
             allow_write=args.allow_write,
             test_command=args.test_command,
             test_timeout=args.test_timeout,
+            allow_test_failure=args.allow_test_failure,
             max_turns=args.max_turns,
             handoff_dir=args.handoff_dir,
             no_handoff=args.no_handoff,
