@@ -488,6 +488,7 @@ Usage:
   ./scripts/mesh term speckit-team-e2e <repo-path> [--feature text] [--keep-open]
   ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write] [--auto-approve-prompts] [--no-handoff]
   ./scripts/mesh speckit run <repo-path> --feature text [--auto] [--allow-edit path]
+  ./scripts/mesh speckit smoke <repo-path> [--print-command]
   ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
@@ -524,6 +525,7 @@ Examples:
   ./scripts/mesh term key /media/sam/1TB/snake-game boss enter
   ./scripts/mesh term dump /media/sam/1TB/snake-game president --lines 30
   ./scripts/mesh speckit run /tmp/snake-game --feature "add score counter" --auto
+  ./scripts/mesh speckit smoke /tmp/snake-game
   ./scripts/mesh lite probe --project /Users/sam/gobabygo
   ./scripts/mesh lite discover --project /Users/sam/gobabygo
   ./scripts/mesh lite status --project /Users/sam/gobabygo
@@ -632,6 +634,7 @@ speckit_usage() {
   cat <<'EOF'
 Usage:
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
+  ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
 Options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.
@@ -643,13 +646,24 @@ Options:
   --test-command <cmd>           Test command to run after worker returns. Defaults to ./test.sh if executable.
   --no-test                      Do not run a test command.
   --allow-test-failure           Do not fail the run when the test command fails.
+  --quality off|quick            Write deterministic quality evidence. Default: off.
+  --product-quality              Require reviewer PRODUCT_REVIEW score gate.
+  --min-product-score N          Minimum product score. Default: 7.
+  --max-quality-retries N        Maximum worker retries for product quality. Default: 0.
   --allow-edit <path>            With auto-approval, approve edit prompts only for this repo-relative path. Repeatable.
+  --claude-config <path>         claude-config root for command/gate policy metadata.
+  --boss-contract <name>         claude-config contract name to reserve for boss prompts.
+  --president-contract <name>    claude-config contract name to reserve for president prompts.
+  --worker-contract <name>       claude-config contract name to reserve for worker prompts.
+  --reviewer-contract <name>     claude-config contract name to reserve for reviewer prompts.
   --with-reviewer, --reviewer    Add a reviewer AI role before the final boss report.
   --print-command                Print the expanded controller command without running it.
 
 Behavior:
   This is a short wrapper around:
     ./scripts/mesh term speckit-team-run <repo> ...
+  The smoke variant uses the validated local regression defaults:
+    --allow-write --auto-approve-prompts --allow-dirty --max-turns 1 --no-handoff
 EOF
 }
 
@@ -660,6 +674,199 @@ run_speckit_short() {
     exit 0
   fi
   if [[ "$subcmd" != "run" ]]; then
+    if [[ "$subcmd" == "smoke" ]]; then
+      shift
+      if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+        speckit_usage
+        exit 0
+      fi
+
+      local repo="" team="${MESH_SPECKIT_TEAM:-local-codex-gemini}"
+      local feature="${MESH_SPECKIT_SMOKE_FEATURE:-speckit-controller-smoke}"
+      local task="${MESH_SPECKIT_SMOKE_TASK:-Verify local speckit team startup and fallback handling.}"
+      local boss_cmd="" president_cmd="" worker_cmd="" reviewer_cmd=""
+      local claude_config="" boss_contract="" president_contract="" worker_contract="" reviewer_contract=""
+      local print_command=0
+      local passthrough=()
+
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --team)
+            [[ $# -ge 2 ]] || { echo "Error: --team requires a value" >&2; exit 2; }
+            team="$2"
+            shift 2
+            ;;
+          --team=*)
+            team="${1#*=}"
+            shift
+            ;;
+          --feature)
+            [[ $# -ge 2 ]] || { echo "Error: --feature requires a value" >&2; exit 2; }
+            feature="$2"
+            shift 2
+            ;;
+          --feature=*)
+            feature="${1#*=}"
+            shift
+            ;;
+          --task)
+            [[ $# -ge 2 ]] || { echo "Error: --task requires a value" >&2; exit 2; }
+            task="$2"
+            shift 2
+            ;;
+          --task=*)
+            task="${1#*=}"
+            shift
+            ;;
+          --boss-cmd)
+            [[ $# -ge 2 ]] || { echo "Error: --boss-cmd requires a value" >&2; exit 2; }
+            boss_cmd="$2"
+            shift 2
+            ;;
+          --president-cmd)
+            [[ $# -ge 2 ]] || { echo "Error: --president-cmd requires a value" >&2; exit 2; }
+            president_cmd="$2"
+            shift 2
+            ;;
+          --worker-cmd)
+            [[ $# -ge 2 ]] || { echo "Error: --worker-cmd requires a value" >&2; exit 2; }
+            worker_cmd="$2"
+            shift 2
+            ;;
+          --reviewer-cmd)
+            [[ $# -ge 2 ]] || { echo "Error: --reviewer-cmd requires a value" >&2; exit 2; }
+            reviewer_cmd="$2"
+            shift 2
+            ;;
+          --claude-config)
+            [[ $# -ge 2 ]] || { echo "Error: --claude-config requires a value" >&2; exit 2; }
+            claude_config="$2"
+            shift 2
+            ;;
+          --claude-config=*)
+            claude_config="${1#*=}"
+            shift
+            ;;
+          --boss-contract)
+            [[ $# -ge 2 ]] || { echo "Error: --boss-contract requires a value" >&2; exit 2; }
+            boss_contract="$2"
+            shift 2
+            ;;
+          --boss-contract=*)
+            boss_contract="${1#*=}"
+            shift
+            ;;
+          --president-contract)
+            [[ $# -ge 2 ]] || { echo "Error: --president-contract requires a value" >&2; exit 2; }
+            president_contract="$2"
+            shift 2
+            ;;
+          --president-contract=*)
+            president_contract="${1#*=}"
+            shift
+            ;;
+          --worker-contract)
+            [[ $# -ge 2 ]] || { echo "Error: --worker-contract requires a value" >&2; exit 2; }
+            worker_contract="$2"
+            shift 2
+            ;;
+          --worker-contract=*)
+            worker_contract="${1#*=}"
+            shift
+            ;;
+          --reviewer-contract)
+            [[ $# -ge 2 ]] || { echo "Error: --reviewer-contract requires a value" >&2; exit 2; }
+            reviewer_contract="$2"
+            shift 2
+            ;;
+          --reviewer-contract=*)
+            reviewer_contract="${1#*=}"
+            shift
+            ;;
+          --print-command)
+            print_command=1
+            shift
+            ;;
+          --)
+            shift
+            passthrough+=("$@")
+            break
+            ;;
+          -*)
+            passthrough+=("$1")
+            shift
+            ;;
+          *)
+            if [[ -z "$repo" ]]; then
+              repo="$1"
+            else
+              passthrough+=("$1")
+            fi
+            shift
+            ;;
+        esac
+      done
+
+      if [[ -z "$repo" ]]; then
+        echo "Error: missing repo path" >&2
+        speckit_usage
+        exit 2
+      fi
+
+      resolve_repo_path_and_name "$repo"
+      local repo_path="$RESOLVED_REPO_PATH"
+
+      case "$team" in
+        local-codex-gemini)
+          boss_cmd="${boss_cmd:-codex}"
+          president_cmd="${president_cmd:-codex}"
+          worker_cmd="${worker_cmd:-gemini}"
+          reviewer_cmd="${reviewer_cmd:-gemini}"
+          ;;
+        local-gemini|gemini)
+          boss_cmd="${boss_cmd:-gemini}"
+          president_cmd="${president_cmd:-gemini}"
+          worker_cmd="${worker_cmd:-gemini}"
+          reviewer_cmd="${reviewer_cmd:-gemini}"
+          ;;
+        claude-codex-gemini)
+          boss_cmd="${boss_cmd:-claude}"
+          president_cmd="${president_cmd:-codex}"
+          worker_cmd="${worker_cmd:-gemini}"
+          reviewer_cmd="${reviewer_cmd:-gemini}"
+          ;;
+        env)
+          ;;
+        *)
+          echo "Error: unsupported speckit team '$team'" >&2
+          speckit_usage
+          exit 2
+          ;;
+      esac
+
+      local args=(speckit-team-run --repo "$repo_path" --feature "$feature" --task "$task" --max-turns 1 --allow-write --auto-approve-prompts --allow-dirty)
+      [[ -n "$boss_cmd" ]] && args+=(--boss-cmd "$boss_cmd")
+      [[ -n "$president_cmd" ]] && args+=(--president-cmd "$president_cmd")
+      [[ -n "$worker_cmd" ]] && args+=(--worker-cmd "$worker_cmd")
+      [[ -n "$reviewer_cmd" ]] && args+=(--reviewer-cmd "$reviewer_cmd")
+      [[ -n "$claude_config" ]] && args+=(--claude-config "$claude_config")
+      [[ -n "$boss_contract" ]] && args+=(--boss-contract "$boss_contract")
+      [[ -n "$president_contract" ]] && args+=(--president-contract "$president_contract")
+      [[ -n "$worker_contract" ]] && args+=(--worker-contract "$worker_contract")
+      [[ -n "$reviewer_contract" ]] && args+=(--reviewer-contract "$reviewer_contract")
+      args+=(--no-handoff)
+      args+=("${passthrough[@]}")
+
+      if [[ "$print_command" -eq 1 ]]; then
+        printf 'python scripts/mesh_iterm_control.py'
+        printf ' %q' "${args[@]}"
+        printf '\n'
+        exit 0
+      fi
+
+      run_iterm_control "${args[@]}"
+      exit $?
+    fi
     echo "Error: unsupported speckit subcommand '$subcmd'" >&2
     speckit_usage
     exit 2
@@ -672,9 +879,11 @@ run_speckit_short() {
 
   local repo="" feature="" task="" team="${MESH_SPECKIT_TEAM:-local-codex-gemini}"
   local boss_cmd="" president_cmd="" worker_cmd="" reviewer_cmd=""
+  local claude_config="" boss_contract="" president_contract="" worker_contract="" reviewer_contract=""
   local allow_write=0 auto_mode=0 auto_approve=0 print_command=0
   local with_reviewer=0
-  local test_command="" test_command_set=0 max_turns="${MESH_SPECKIT_MAX_TURNS:-1}"
+  local test_command="" test_command_set=0 max_turns="${MESH_SPECKIT_MAX_TURNS:-1}" quality="${MESH_SPECKIT_QUALITY:-off}"
+  local product_quality=0 min_product_score="${MESH_MIN_PRODUCT_SCORE:-7}" max_quality_retries="${MESH_MAX_QUALITY_RETRIES:-0}"
   local passthrough=() allow_edits=()
 
   while [[ $# -gt 0 ]]; do
@@ -726,6 +935,51 @@ run_speckit_short() {
         reviewer_cmd="$2"
         shift 2
         ;;
+      --claude-config)
+        [[ $# -ge 2 ]] || { echo "Error: --claude-config requires a value" >&2; exit 2; }
+        claude_config="$2"
+        shift 2
+        ;;
+      --claude-config=*)
+        claude_config="${1#*=}"
+        shift
+        ;;
+      --boss-contract)
+        [[ $# -ge 2 ]] || { echo "Error: --boss-contract requires a value" >&2; exit 2; }
+        boss_contract="$2"
+        shift 2
+        ;;
+      --boss-contract=*)
+        boss_contract="${1#*=}"
+        shift
+        ;;
+      --president-contract)
+        [[ $# -ge 2 ]] || { echo "Error: --president-contract requires a value" >&2; exit 2; }
+        president_contract="$2"
+        shift 2
+        ;;
+      --president-contract=*)
+        president_contract="${1#*=}"
+        shift
+        ;;
+      --worker-contract)
+        [[ $# -ge 2 ]] || { echo "Error: --worker-contract requires a value" >&2; exit 2; }
+        worker_contract="$2"
+        shift 2
+        ;;
+      --worker-contract=*)
+        worker_contract="${1#*=}"
+        shift
+        ;;
+      --reviewer-contract)
+        [[ $# -ge 2 ]] || { echo "Error: --reviewer-contract requires a value" >&2; exit 2; }
+        reviewer_contract="$2"
+        shift 2
+        ;;
+      --reviewer-contract=*)
+        reviewer_contract="${1#*=}"
+        shift
+        ;;
       --with-reviewer|--reviewer)
         with_reviewer=1
         shift
@@ -761,6 +1015,38 @@ run_speckit_short() {
       --no-test)
         test_command=""
         test_command_set=1
+        shift
+        ;;
+      --quality)
+        [[ $# -ge 2 ]] || { echo "Error: --quality requires a value" >&2; exit 2; }
+        quality="$2"
+        shift 2
+        ;;
+      --quality=*)
+        quality="${1#*=}"
+        shift
+        ;;
+      --product-quality)
+        product_quality=1
+        with_reviewer=1
+        shift
+        ;;
+      --min-product-score)
+        [[ $# -ge 2 ]] || { echo "Error: --min-product-score requires a value" >&2; exit 2; }
+        min_product_score="$2"
+        shift 2
+        ;;
+      --min-product-score=*)
+        min_product_score="${1#*=}"
+        shift
+        ;;
+      --max-quality-retries)
+        [[ $# -ge 2 ]] || { echo "Error: --max-quality-retries requires a value" >&2; exit 2; }
+        max_quality_retries="$2"
+        shift 2
+        ;;
+      --max-quality-retries=*)
+        max_quality_retries="${1#*=}"
         shift
         ;;
       --print-command)
@@ -807,6 +1093,14 @@ run_speckit_short() {
     echo "Error: --auto-approve-prompts requires --write or --auto" >&2
     exit 2
   fi
+  case "$quality" in
+    off|quick)
+      ;;
+    *)
+      echo "Error: unsupported --quality '$quality' (expected off|quick)" >&2
+      exit 2
+      ;;
+  esac
 
   resolve_repo_path_and_name "$repo"
   local repo_path="$RESOLVED_REPO_PATH"
@@ -848,13 +1142,20 @@ run_speckit_short() {
   [[ -n "$president_cmd" ]] && args+=(--president-cmd "$president_cmd")
   [[ -n "$worker_cmd" ]] && args+=(--worker-cmd "$worker_cmd")
   [[ -n "$reviewer_cmd" ]] && args+=(--reviewer-cmd "$reviewer_cmd")
+  [[ -n "$claude_config" ]] && args+=(--claude-config "$claude_config")
+  [[ -n "$boss_contract" ]] && args+=(--boss-contract "$boss_contract")
+  [[ -n "$president_contract" ]] && args+=(--president-contract "$president_contract")
+  [[ -n "$worker_contract" ]] && args+=(--worker-contract "$worker_contract")
+  [[ -n "$reviewer_contract" ]] && args+=(--reviewer-contract "$reviewer_contract")
   [[ "$with_reviewer" -eq 1 ]] && args+=(--with-reviewer)
+  [[ "$product_quality" -eq 1 ]] && args+=(--product-quality --min-product-score "$min_product_score" --max-quality-retries "$max_quality_retries")
   [[ "$allow_write" -eq 1 ]] && args+=(--allow-write)
   [[ "$auto_approve" -eq 1 ]] && args+=(--auto-approve-prompts)
   for edit_path in "${allow_edits[@]}"; do
     args+=(--auto-approve-edit-path "$edit_path")
   done
   [[ -n "$test_command" ]] && args+=(--test-command "$test_command")
+  [[ "$quality" != "off" ]] && args+=(--quality "$quality")
   args+=("${passthrough[@]}")
 
   if [[ "$print_command" -eq 1 ]]; then
