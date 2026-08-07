@@ -892,6 +892,14 @@ def _split_uri_trailing_brackets(rest: str) -> tuple[str, str]:
     return rest[:-trailing_count], rest[-trailing_count:]
 
 
+def _uri_path_suggests_malformed_userinfo(rest: str, first_delimiter: int) -> bool:
+    if first_delimiter >= len(rest) or rest[first_delimiter] != "/":
+        return False
+    segment_start = first_delimiter + 1
+    segment_end = _authority_end(rest[segment_start:]) + segment_start
+    return rest.count("@", segment_start, segment_end) >= 2
+
+
 def _redact_uri_token(match: re.Match[str]) -> str:
     scheme = match.group(1)
     rest, trailing = _split_uri_trailing_brackets(match.group(2))
@@ -899,8 +907,11 @@ def _redact_uri_token(match: re.Match[str]) -> str:
     first_at = rest.find("@")
     if 0 <= first_at < first_delimiter:
         host = _uri_host_after_at(rest, first_at)
-        later_at = rest.find("@", first_at + 1) >= 0
-        if _authority_host_is_valid(host) and (_authority_host_is_strong(host) or not later_at):
+        recover_malformed = (
+            not _authority_host_is_strong(host)
+            and _uri_path_suggests_malformed_userinfo(rest, first_delimiter)
+        )
+        if _authority_host_is_valid(host) and not recover_malformed:
             redacted = _redact_uri_at(scheme, rest, first_at)
             if redacted is not None:
                 return f"{redacted}{trailing}"

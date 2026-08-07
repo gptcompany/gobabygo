@@ -717,6 +717,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
             "FRAGMENT_URL=https://alice:fragment-secret@db.internal/app#owner=a@example.com",
             "PATH_URL=https://alice:path-secret@db.internal/users/a@example.com",
             "SINGLE_HOST=redis://:single-secret@redis/0",
+            "SINGLE_HOST_PATH=redis://alice:single-path-secret@redis/users/a@example.com",
+            "SINGLE_HOST_QUERY=redis://alice:single-query-secret@redis/0?email=a@example.com",
             "NO_CREDS_PORT_PATH=https://example.com:443/path/a@example.com",
             "NO_CREDS_QUERY=https://example.com/path?email=a@example.com",
             "WRAPPED=[postgres://alice:bracket-secret@db.internal]",
@@ -741,6 +743,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
         "fragment-secret",
         "path-secret",
         "single-secret",
+        "single-path-secret",
+        "single-query-secret",
         "bracket-secret",
         "wrapped-zone-secret",
         "semicolon-secret",
@@ -760,6 +764,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
     assert "https://alice:[REDACTED]@db.internal/app#owner=a@example.com" in redacted
     assert "https://alice:[REDACTED]@db.internal/users/a@example.com" in redacted
     assert "redis://:[REDACTED]@redis/0" in redacted
+    assert "redis://alice:[REDACTED]@redis/users/a@example.com" in redacted
+    assert "redis://alice:[REDACTED]@redis/0?email=a@example.com" in redacted
     assert "https://example.com:443/path/a@example.com" in redacted
     assert "https://example.com/path?email=a@example.com" in redacted
     assert "[postgres://alice:[REDACTED]@db.internal]" in redacted
