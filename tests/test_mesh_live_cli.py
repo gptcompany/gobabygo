@@ -256,7 +256,7 @@ def test_remote_request_keeps_payload_out_of_ssh_arguments(monkeypatch) -> None:
         observed["input"] = kwargs["input"]
         return _completed(args, stdout='{"sessions":[],"warnings":[]}\n')
 
-    monkeypatch.setattr(module, "_ssh_options", lambda: [])
+    monkeypatch.setattr(module, "_ssh_options", lambda host="": [])
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
 
@@ -277,6 +277,22 @@ def test_default_users_are_valid_and_deduplicated(monkeypatch) -> None:
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
 
     assert module._default_users("sam@10.0.0.2") == ("sam", "mesh-worker", "mesh")
+
+
+def test_ssh_options_disable_multiplexing_for_proxy_hosts(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    monkeypatch.setenv("MESH_SSH_CONTROL_DIR", str(tmp_path / "control"))
+    monkeypatch.delenv("MESH_SSH_CONTROL_MASTER", raising=False)
+    monkeypatch.setattr(module, "ssh_host_uses_proxy", lambda host: host == "dell7670")
+
+    proxy_options = module._ssh_options("dell7670")
+    direct_options = module._ssh_options("sam@10.0.0.2")
+
+    assert "ControlMaster=no" in proxy_options
+    assert "ControlPath=none" in proxy_options
+    assert "ControlPersist=30m" not in proxy_options
+    assert "ControlMaster=auto" in direct_options
+    assert "ControlPersist=30m" in direct_options
 
 
 def test_send_rejects_empty_multiline_control_and_oversized_text() -> None:
@@ -417,7 +433,7 @@ def test_attach_auto_uses_ssh_for_cloudflare_or_jump_alias(monkeypatch) -> None:
     monkeypatch.setattr(module.shutil, "which", lambda name: "/opt/local/bin/mosh")
     monkeypatch.setattr(module, "ssh_host_uses_proxy", lambda host: True)
     monkeypatch.setattr(module, "_remote_login_user", lambda host: "sam")
-    monkeypatch.setattr(module, "_ssh_options", lambda: ["-o", "ConnectTimeout=10"])
+    monkeypatch.setattr(module, "_ssh_options", lambda host="": ["-o", "ConnectTimeout=10"])
 
     plan = module.build_attach_plan(endpoint, session)
 
@@ -437,7 +453,7 @@ def test_attach_cross_user_uses_noninteractive_sudo_and_shell_quoting(monkeypatc
     endpoint = module.LiveEndpoint(host="dell7670", local=False, users=("mesh-worker",))
     session = module.LiveSession(owner="mesh-worker", name="codex odd'name")
     monkeypatch.setattr(module, "_remote_login_user", lambda host: "sam")
-    monkeypatch.setattr(module, "_ssh_options", lambda: [])
+    monkeypatch.setattr(module, "_ssh_options", lambda host="": [])
 
     plan = module.build_attach_plan(endpoint, session, transport="ssh")
 

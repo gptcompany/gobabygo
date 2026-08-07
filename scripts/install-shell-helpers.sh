@@ -31,6 +31,10 @@ _mesh_resolve_home() {
     printf '%s' "${MESH_HOME}"
     return 0
   fi
+  if [[ -n "${MESH_WS_REPO_BASE:-}" && -d "${MESH_WS_REPO_BASE}/gobabygo/scripts" ]]; then
+    printf '%s' "${MESH_WS_REPO_BASE}/gobabygo"
+    return 0
+  fi
   if [[ -d "/media/sam/1TB/gobabygo/scripts" ]]; then
     printf '%s' "/media/sam/1TB/gobabygo"
     return 0
@@ -48,21 +52,17 @@ if [[ -z "${MESH_HOME:-}" && -d "/media/sam/1TB/gobabygo/scripts" ]]; then
 fi
 
 _mesh_ssh_opts() {
-  local ctl_dir interval count persist
-  ctl_dir="${MESH_SSH_CONTROL_DIR:-$HOME/.ssh/cm}"
-  interval="${MESH_SSH_SERVER_ALIVE_INTERVAL:-15}"
-  count="${MESH_SSH_SERVER_ALIVE_COUNT_MAX:-12}"
-  persist="${MESH_SSH_CONTROL_PERSIST:-30m}"
-  mkdir -p "$ctl_dir" 2>/dev/null || true
+  local interval count
+  interval="${MESH_SSH_SERVER_ALIVE_INTERVAL:-10}"
+  count="${MESH_SSH_SERVER_ALIVE_COUNT_MAX:-18}"
   printf '%s\n' \
     -o "ServerAliveInterval=${interval}" \
     -o "ServerAliveCountMax=${count}" \
     -o "TCPKeepAlive=yes" \
     -o "ConnectTimeout=10" \
     -o "ConnectionAttempts=3" \
-    -o "ControlMaster=auto" \
-    -o "ControlPersist=${persist}" \
-    -o "ControlPath=${ctl_dir}/%C" \
+    -o "ControlMaster=no" \
+    -o "ControlPath=none" \
     -o "IPQoS=none"
 }
 
@@ -180,27 +180,6 @@ wss() {
   command ssh "${ssh_opts[@]}" -t "$ws_host" "if [[ -d '$target_dir' ]]; then cd '$target_dir'; else echo '[wss] missing repo: $target_dir'; cd '$repo_base'; fi; exec \$SHELL -l"
 }
 
-# wsattach: attach to tmux session on WS, auto-detecting effective service user.
-unalias wsattach >/dev/null 2>&1 || true
-wsattach() {
-  local ws_host session
-  local -a ssh_opts=()
-  ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
-  session="${1:-}"
-  if [[ -z "$session" ]]; then
-    echo "Usage: wsattach <tmux-session>"
-    return 1
-  fi
-  while IFS= read -r -d '' opt; do
-    ssh_opts+=("$opt")
-  done < <(_mesh_collect_ssh_opts)
-  command ssh "${ssh_opts[@]}" -t "$ws_host" "bash -lc '
-if id mesh-worker >/dev/null 2>&1; then exec sudo -u mesh-worker tmux attach -t \"$session\"; fi
-if id mesh >/dev/null 2>&1; then exec sudo -u mesh tmux attach -t \"$session\"; fi
-exec tmux attach -t \"$session\"
-'"
-}
-
 # mesh: wrapper globale al launcher gobabygo/scripts/mesh (funziona da qualsiasi cartella).
 unalias mesh >/dev/null 2>&1 || true
 mesh() {
@@ -213,6 +192,14 @@ mesh() {
   fi
   command "$mesh_script" "$@"
 }
+
+mesh_live_helpers="$(_mesh_resolve_home 2>/dev/null || true)/scripts/mesh_live_shell_helpers.sh"
+if [[ -r "$mesh_live_helpers" ]]; then
+  source "$mesh_live_helpers"
+else
+  echo "Warning: mesh live shell helpers not found at $mesh_live_helpers" >&2
+fi
+unset mesh_live_helpers
 
 # Convenience aliases: keep native command names but use cd-aware wrappers.
 if command -v yazi >/dev/null 2>&1; then
@@ -230,7 +217,7 @@ EOF
 install_block "$TARGET_ZSHRC"
 install_block "$TARGET_BASHRC"
 
-echo "Installed/updated lfcd + yazicd (+safe wss) in:"
+echo "Installed/updated mesh live + persistent tmux shell helpers in:"
 echo "  - $TARGET_ZSHRC"
 echo "  - $TARGET_BASHRC"
 echo "Run one of:"

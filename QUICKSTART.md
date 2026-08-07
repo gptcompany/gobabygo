@@ -209,7 +209,11 @@ source ~/.zshrc   # or source ~/.bashrc on bash hosts
 
 This enables:
 - `wss` / `wss <repo>` (quick SSH to WS)
-- `wsattach <tmux-session>` (attach robusto: auto-detect utente tmux service)
+- `wboard [query] [lines]` (live tmux board via `mesh live`, router/iTerm2 independent)
+- `wpeek <tmux-session> [lines]` (read one live tmux pane)
+- `wsend <tmux-session> [text] [--enter]` (literal send; Enter is always explicit)
+- `wsattach <tmux-session>` (persistent attach: direct mosh on VPN/LAN, SSH fallback)
+- `mclaude` / `mcodex` / `mtmux` (create-or-attach persistent named tmux sessions over mosh when a direct host is reachable)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh` with no args (interactive current-repo-root launcher: `attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` (comando canonico: apre il layout iTerm2 del repo; default minimale `boss,president`)
@@ -243,18 +247,29 @@ mesh term focus /media/sam/1TB/rektslug boss
 mesh term send /media/sam/1TB/rektslug boss "status?"
 mesh term key /media/sam/1TB/rektslug boss enter
 mesh term dump /media/sam/1TB/rektslug president --lines 30
+mesh live board rektslug --lines 40
+mesh live peek claude-rektslug 120
+mesh live send claude-rektslug "status?" --enter
+mesh live attach claude-rektslug
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
 python -m src.meshctl task cancel <task-id> --reason "stuck queued"
 python -m src.meshctl task fail <task-id> --reason "stuck review"
 wss <repo>
+wboard 40
+wpeek claude-rektslug 120
+wsend claude-rektslug "status?" --enter
 wsattach <tmux-session>
 ```
 
 `mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach`, `mesh session manage`, and `mesh ui resume` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
 
 `mesh term` is intentionally separate from `mesh sessions`: it is a local Mac/iTerm helper for already-open mesh panes and can `focus`, `send`, `key`, or `dump` by exact `repo + role`. It does not query the router or make layout decisions.
+
+`mesh live` targets tmux directly. `board`, `peek`, and `send` use short SSH control calls and work through VPN, LAN, ProxyJump, or a Cloudflare SSH alias. `attach` uses mosh only when `MESH_MOSH_HOST` or the selected SSH host is directly reachable without `ProxyJump`/`ProxyCommand`; otherwise it attaches through SSH. tmux, not mosh, owns session persistence.
+
+The installed `w*` helpers select the control path in this order: `MESH_WS_CONTROL_HOST`, reachable `MESH_WS_VPN_HOST`, reachable `MESH_WS_LAN_HOST`, explicit `MESH_WS_HOST`, then configured `MESH_WS_CLOUDFLARE_HOST`. Defaults for the current Dell setup are `sam@10.0.0.2`, `sam@172.23.0.42`, and SSH alias `dell7670` respectively.
 
 Current canonical UI slice:
 
@@ -582,7 +597,7 @@ Note:
 
 - `mesh ui` is operator UX plus live attach when available; it is not the source of truth for orchestration state.
 - router DB/task/thread state still wins over what a pane appears to show.
-- `wss` / `wsattach` now enable more aggressive SSH keepalive + control persist by default (`15s`, `count=12`, `ControlPersist=30m`) to reduce idle pane freezes in iTerm2.
+- `mesh live` uses `10s`/`count=18` SSH keepalive. Direct VPN/LAN control calls may use `ControlPersist=30m`; ProxyJump and Cloudflare paths disable multiplexing. Persistent interactive attach prefers direct mosh and falls back to SSH for proxy paths.
 - `mesh status` hides historical stale/offline worker rows by default; use `mesh status --all` when you need the full audit-heavy view.
 - If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.
 - If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.

@@ -449,26 +449,38 @@ def host_is_local(host: str) -> bool:
     return len(connection) >= 3 and target == connection[2].lower()
 
 
-def _ssh_options() -> list[str]:
+def _ssh_options(host: str = "") -> list[str]:
     control_dir = Path(os.environ.get("MESH_SSH_CONTROL_DIR", "~/.ssh/cm")).expanduser()
     try:
         control_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
-    interval = os.environ.get("MESH_SSH_SERVER_ALIVE_INTERVAL", "15")
-    count = os.environ.get("MESH_SSH_SERVER_ALIVE_COUNT_MAX", "12")
+    interval = os.environ.get("MESH_SSH_SERVER_ALIVE_INTERVAL", "10")
+    count = os.environ.get("MESH_SSH_SERVER_ALIVE_COUNT_MAX", "18")
     persist = os.environ.get("MESH_SSH_CONTROL_PERSIST", "30m")
+    configured_master = os.environ.get("MESH_SSH_CONTROL_MASTER", "").strip().lower()
+    if configured_master:
+        control_master = configured_master
+    else:
+        control_master = "no" if host and ssh_host_uses_proxy(host) else "auto"
     values = [
         f"ServerAliveInterval={interval}",
         f"ServerAliveCountMax={count}",
         "TCPKeepAlive=yes",
         "ConnectTimeout=10",
         "ConnectionAttempts=3",
-        "ControlMaster=auto",
-        f"ControlPersist={persist}",
-        f"ControlPath={control_dir}/%C",
         "IPQoS=none",
     ]
+    if control_master == "no":
+        values.extend(["ControlMaster=no", "ControlPath=none"])
+    else:
+        values.extend(
+            [
+                f"ControlMaster={control_master}",
+                f"ControlPersist={persist}",
+                f"ControlPath={control_dir}/%C",
+            ]
+        )
     result: list[str] = []
     for value in values:
         result.extend(["-o", value])
@@ -606,7 +618,7 @@ def build_attach_plan(
     return AttachPlan(
         transport="ssh",
         host=endpoint.host,
-        argv=("ssh", *_ssh_options(), "-t", endpoint.host, remote_command),
+        argv=("ssh", *_ssh_options(endpoint.host), "-t", endpoint.host, remote_command),
     )
 
 
@@ -638,7 +650,7 @@ def request_endpoint(endpoint: LiveEndpoint, payload: dict[str, Any]) -> dict[st
     remote_source = f"_MESH_LIVE_REMOTE_PAYLOAD = {payload!r}\n{source}"
     try:
         proc = subprocess.run(
-            ["ssh", *_ssh_options(), endpoint.host, "python3", "-"],
+            ["ssh", *_ssh_options(endpoint.host), endpoint.host, "python3", "-"],
             input=remote_source,
             check=False,
             capture_output=True,
