@@ -332,6 +332,38 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB 'claude --name claude
 
 
 @pytest.mark.parametrize("shell", _shells())
+def test_persistent_cli_helpers_start_in_repo_directory(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+MESH_WS_REPO_BASE=/data/sata/1TB
+_ws_ssh_attach_or_start() {{ printf 'ssh:<%s>\n' "$@"; }}
+_ws_mosh_attach_or_start() {{ printf 'mosh:<%s>\n' "$@"; }}
+wclaude rektslug
+wcodex rektslug
+mclaude rektslug
+mcodex rektslug
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [
+        "ssh:<claude-rektslug>",
+        "ssh:</data/sata/1TB/rektslug>",
+        "ssh:<>",
+        "ssh:<codex-rektslug>",
+        "ssh:</data/sata/1TB/rektslug>",
+        "ssh:<>",
+        "mosh:<claude-rektslug>",
+        "mosh:</data/sata/1TB/rektslug>",
+        "mosh:<codex-rektslug>",
+        "mosh:</data/sata/1TB/rektslug>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_mcoordinator_rejects_unsafe_session_override(shell: str) -> None:
     helper = shlex.quote(str(HELPERS))
     proc = _run_shell(

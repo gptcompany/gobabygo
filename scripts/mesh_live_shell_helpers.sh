@@ -264,39 +264,45 @@ exec tmux attach -t \"\$SESSION\"
 }
 
 wtmux() {
-  local session
-  session="$(_ws_tmux_session_name ws "${1:-main}")"
-  _ws_ssh_attach_or_start "$session" "$(_ws_tmux_target_dir)" ""
+  local label session
+  label="${1:-}"
+  session="$(_ws_tmux_session_name ws "${label:-main}")"
+  _ws_ssh_attach_or_start "$session" "$(_ws_tmux_target_dir "$label")" ""
 }
 
 wclaude() {
-  local session
-  session="$(_ws_tmux_session_name claude "${1:-main}")"
-  _ws_ssh_attach_or_start "$session" "$(_ws_tmux_target_dir)" ""
+  local label session
+  label="${1:-}"
+  session="$(_ws_tmux_session_name claude "${label:-main}")"
+  _ws_ssh_attach_or_start "$session" "$(_ws_tmux_target_dir "$label")" ""
 }
 
 wcodex() {
-  local session
-  session="$(_ws_tmux_session_name codex "${1:-main}")"
-  _ws_ssh_attach_or_start "$session" "$(_ws_tmux_target_dir)" ""
+  local label session
+  label="${1:-}"
+  session="$(_ws_tmux_session_name codex "${label:-main}")"
+  _ws_ssh_attach_or_start "$session" "$(_ws_tmux_target_dir "$label")" ""
 }
 
 mtmux() {
-  local session
-  session="$(_ws_tmux_session_name ws "${1:-main}")"
-  _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir)"
+  local label session
+  label="${1:-}"
+  session="$(_ws_tmux_session_name ws "${label:-main}")"
+  _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir "$label")"
 }
 
 mclaude() {
-  local session
-  session="$(_ws_tmux_session_name claude "${1:-main}")"
-  _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir)"
+  local label session
+  label="${1:-}"
+  session="$(_ws_tmux_session_name claude "${label:-main}")"
+  _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir "$label")"
 }
 
 mcodex() {
-  local session
-  session="$(_ws_tmux_session_name codex "${1:-main}")"
-  _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir)"
+  local label session
+  label="${1:-}"
+  session="$(_ws_tmux_session_name codex "${label:-main}")"
+  _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir "$label")"
 }
 
 mcoordinator() {
