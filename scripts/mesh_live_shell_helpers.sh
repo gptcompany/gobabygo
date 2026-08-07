@@ -2,7 +2,7 @@
 # Shell helpers for direct tmux operations on the workstation.
 
 unalias wboard wpeek wsend wbrief wsattach wsessions 2>/dev/null || true
-unalias wtmux wclaude wcodex mtmux mclaude mcodex 2>/dev/null || true
+unalias wtmux wclaude wcodex mtmux mclaude mcodex mcoordinator 2>/dev/null || true
 
 _mesh_live_run() {
   if command -v mesh >/dev/null 2>&1; then
@@ -230,16 +230,18 @@ _ws_ssh_attach_or_start() {
 }
 
 _ws_mosh_attach_or_start() {
-  local session target_dir direct_host remote_command
+  local session target_dir startup direct_host remote_command
   session="$1"
   target_dir="$2"
+  startup="${3:-}"
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -z "$direct_host" || -z "$(command -v mosh 2>/dev/null)" ]]; then
-    _ws_ssh_attach_or_start "$session" "$target_dir" ""
+    _ws_ssh_attach_or_start "$session" "$target_dir" "$startup"
     return $?
   fi
   remote_command="SESSION=$(printf '%q' "$session")
 TARGET_DIR=$(printf '%q' "$target_dir")
+STARTUP=$(printf '%q' "$startup")
 set -e
 if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing dir: \$TARGET_DIR\"
@@ -248,7 +250,11 @@ fi
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   exec tmux attach -t \"\$SESSION\"
 fi
-tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\"
+if [[ -n \"\$STARTUP\" ]]; then
+  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$STARTUP; exec \\$SHELL -l\"
+else
+  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\"
+fi
 exec tmux attach -t \"\$SESSION\"
 "
   LANG="${MESH_MOSH_LANG:-en_US.UTF-8}" LC_ALL="${MESH_MOSH_LOCALE:-en_US.UTF-8}" \
@@ -291,4 +297,60 @@ mcodex() {
   local session
   session="$(_ws_tmux_session_name codex "${1:-main}")"
   _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir)"
+}
+
+mcoordinator() {
+  local repo worker session target_dir repo_base remote_mesh prompt claude_cmd startup
+  local -a prompt_args=()
+  repo=""
+  worker=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all)
+        repo=""
+        shift
+        ;;
+      --worker)
+        if [[ $# -lt 2 || -z "$2" ]]; then
+          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>]" >&2
+          return 2
+        fi
+        worker="$2"
+        shift 2
+        ;;
+      -h|--help)
+        echo "Usage: mcoordinator [<repo>|--all] [--worker <session>]"
+        return 0
+        ;;
+      -* )
+        echo "Unknown mcoordinator option: $1" >&2
+        return 2
+        ;;
+      *)
+        if [[ -n "$repo" ]]; then
+          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>]" >&2
+          return 2
+        fi
+        repo="$1"
+        shift
+        ;;
+    esac
+  done
+
+  repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
+  remote_mesh="${MESH_COORDINATOR_MESH_SCRIPT:-${repo_base}/gobabygo/scripts/mesh}"
+  if [[ -n "$repo" ]]; then
+    session="$(_ws_tmux_session_name claude "${repo##*/}-coordinator")"
+    target_dir="$(_ws_tmux_target_dir "$repo")"
+    prompt_args=(live coordinator-prompt --repo "$repo" --session "$session" --mesh-script "$remote_mesh")
+  else
+    session="claude-coordinator"
+    target_dir="$(_ws_tmux_target_dir)"
+    prompt_args=(live coordinator-prompt --all --session "$session" --mesh-script "$remote_mesh")
+  fi
+  [[ -n "$worker" ]] && prompt_args+=(--worker "$worker")
+  prompt="$(_mesh_live_run "${prompt_args[@]}")" || return $?
+  claude_cmd="${MESH_COORDINATOR_CLAUDE_CMD:-claude}"
+  startup="${claude_cmd} --name $(printf '%q' "$session") --append-system-prompt $(printf '%q' "$prompt")"
+  _ws_mosh_attach_or_start "$session" "$target_dir" "$startup"
 }

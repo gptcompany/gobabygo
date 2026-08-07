@@ -224,7 +224,108 @@ def test_installed_block_loads_live_and_persistent_helpers(shell: str, tmp_path:
         f"MESH_HOME={shlex.quote(str(ROOT))}; source {shlex.quote(str(rc_file))}; "
         "type wboard >/dev/null && type wsend >/dev/null && type wbrief >/dev/null && "
         "type wsattach >/dev/null && "
-        "type mclaude >/dev/null && type mcodex >/dev/null && type mtmux >/dev/null",
+        "type mclaude >/dev/null && type mcodex >/dev/null && type mtmux >/dev/null && "
+        "type mcoordinator >/dev/null",
     )
 
     assert proc.returncode == 0, proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_bootstraps_repo_coordinator(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    prompt_args_file = tmp_path / "prompt-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'AUTONOMOUS PROMPT'; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
+mcoordinator rektslug --worker codex-rektslug-worker
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert lines[:2] == [
+        "session=claude-rektslug-coordinator",
+        "dir=/data/sata/1TB/rektslug",
+    ]
+    assert lines[2].startswith(
+        "startup=claude --name claude-rektslug-coordinator --append-system-prompt "
+    )
+    assert "AUTONOMOUS" in lines[2]
+    assert prompt_args_file.read_text(encoding="utf-8").splitlines() == [
+        "<live>",
+        "<coordinator-prompt>",
+        "<--repo>",
+        "<rektslug>",
+        "<--session>",
+        "<claude-rektslug-coordinator>",
+        "<--mesh-script>",
+        "</data/sata/1TB/gobabygo/scripts/mesh>",
+        "<--worker>",
+        "<codex-rektslug-worker>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_bootstraps_multi_repo_coordinator(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    prompt_args_file = tmp_path / "prompt-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'MULTI PROMPT'; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
+mcoordinator --all
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert lines[:2] == [
+        "session=claude-coordinator",
+        "dir=/data/sata/1TB",
+    ]
+    assert lines[2].startswith(
+        "startup=claude --name claude-coordinator --append-system-prompt "
+    )
+    assert "MULTI" in lines[2]
+    assert prompt_args_file.read_text(encoding="utf-8").splitlines() == [
+        "<live>",
+        "<coordinator-prompt>",
+        "<--all>",
+        "<--session>",
+        "<claude-coordinator>",
+        "<--mesh-script>",
+        "</data/sata/1TB/gobabygo/scripts/mesh>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_fallback_forwards_coordinator_startup_to_ssh(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_ws_mosh_host() {{ return 1; }}
+_ws_ssh_attach_or_start() {{ printf '<%s>\n' "$@"; }}
+_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB 'claude --name claude-coordinator'
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [
+        "<claude-coordinator>",
+        "</data/sata/1TB>",
+        "<claude --name claude-coordinator>",
+    ]
