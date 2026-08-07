@@ -794,7 +794,7 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
 
 
 _URI_STRONG_HOST = (
-    r"(?:\[[0-9a-f:.%]+\](?::\d+)?|localhost(?::\d+)?|"
+    r"(?:\[[a-z0-9_.:%-]+\](?::\d+)?|localhost(?::\d+)?|"
     r"(?:[a-z0-9_-]+\.)+[a-z0-9_-]+(?::\d+)?|[a-z0-9_-]+:\d+)"
 )
 _URI_TOKEN = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s\"'<>),}]+)")
@@ -848,7 +848,7 @@ def _authority_host_is_valid(authority: str) -> bool:
             if not remainder.startswith(":"):
                 return False
             port = remainder[1:]
-        host_valid = bool(re.fullmatch(r"[a-f0-9:.%]+", host))
+        host_valid = bool(re.fullmatch(r"[a-z0-9_.:%-]+", host))
     else:
         if value.count(":") > 1:
             return False

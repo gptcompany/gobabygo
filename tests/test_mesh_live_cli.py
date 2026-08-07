@@ -712,6 +712,7 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
             "MYSQL_URL=mysql://alice:p@ss/w@rd@db.internal/app",
             "BROKEN_SINGLE=http://user:p@ss/w@rd@redis/path",
             "PG_IPV6=postgres://alice:ipv6-secret@[2001:db8::1]:5432/app",
+            "PG_IPV6_ZONE=postgres://alice:zone-secret@[fe80::1%25eth0]:5432/app",
             "QUERY_URL=https://alice:query-secret@db.internal/app?email=a@example.com",
             "FRAGMENT_URL=https://alice:fragment-secret@db.internal/app#owner=a@example.com",
             "PATH_URL=https://alice:path-secret@db.internal/users/a@example.com",
@@ -732,6 +733,7 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
         "redis-secret",
         "p@ss/w@rd",
         "ipv6-secret",
+        "zone-secret",
         "query-secret",
         "fragment-secret",
         "path-secret",
@@ -747,6 +749,7 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
     assert "mysql://alice:[REDACTED]@db.internal/app" in redacted
     assert "http://user:[REDACTED]@redis/path" in redacted
     assert "postgres://alice:[REDACTED]@[2001:db8::1]:5432/app" in redacted
+    assert "postgres://alice:[REDACTED]@[fe80::1%25eth0]:5432/app" in redacted
     assert "https://alice:[REDACTED]@db.internal/app?email=a@example.com" in redacted
     assert "https://alice:[REDACTED]@db.internal/app#owner=a@example.com" in redacted
     assert "https://alice:[REDACTED]@db.internal/users/a@example.com" in redacted
