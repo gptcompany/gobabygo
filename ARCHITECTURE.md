@@ -38,13 +38,14 @@ Example current downstream target:
 
 ## Core Principles
 
-1. Source of truth is router DB + task/thread/session records.
-2. Runtime execution is done by workers, not by iTerm2.
-3. `tmux` is the terminal runtime for interactive sessions.
-4. `iTerm2` is operator UX only: observe, attach, split panes, manage tabs.
-5. Session-first is the default operating mode.
-6. Batch is fallback or special-purpose only, not the primary path.
-7. UI roles and runtime roles are related, but not identical.
+1. Router-managed orchestration is authoritative in router DB task/thread/session records.
+2. Existing manual session liveness, pane output, and attachment state are authoritative in `tmux`.
+3. Runtime execution is done by workers or existing terminal processes, not by iTerm2.
+4. `tmux` is the terminal runtime for interactive sessions.
+5. `iTerm2` is operator UX only: observe, attach, split panes, manage tabs.
+6. Session-first is the default router-managed operating mode.
+7. Batch is fallback or special-purpose only, not the primary path.
+8. UI roles and runtime roles are related, but not identical.
 
 ## Runtime Topology
 
@@ -84,7 +85,8 @@ Operator UI layout:
 Important boundary:
 
 - these panes are operator affordances
-- orchestration truth still lives in router DB + worker/session records
+- router-managed orchestration truth lives in router DB + worker/session records
+- manual live-session truth lives in tmux and does not require a router row
 - when live attach is unavailable, `worker-*` and `verifier` panes are detached control shells on the WS, not the live worker runtime
 ```
 

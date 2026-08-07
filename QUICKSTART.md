@@ -271,87 +271,15 @@ wsattach <tmux-session>
 
 `mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach`, `mesh session manage`, and `mesh ui resume` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
 
-### KISS operator model
+### Direct live tmux workflow
 
-Use one authority per concern:
+The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 
-| Concern | Source of truth | Operator path |
-| --- | --- | --- |
-| Current live process, pane output, attached state | tmux on the workstation | `mesh live`, `wboard`, `wpeek`, `wsattach` |
-| Durable tasks, dependencies, results, handoffs, history | router database | `mesh thread`, `mesh sessions` |
-| Window/tab/pane arrangement | iTerm2 local state | `mesh ui`, `mesh term` |
-
-These layers may describe the same work but are not interchangeable. A manual tmux session can be healthy without a router row. A router task can exist before or without an operator layout. iTerm2 is an optional view and must not decide whether a live tmux session or durable task exists.
-
-### Live coordination and durable handoff
-
-Keep the two delegation paths explicit:
-
-- Existing manual tmux session: inspect with `mesh live`, then use a reviewed `mesh live send` proposal. This path does not use the router, provider runtime, or account manager.
-- Durable/new managed work: create a router thread and add approved steps with `mesh thread create` and `mesh thread add-step`. This persists tasks and history and may select an account and create a new managed worker/session.
-
-`mesh live brief` can propose both forms, but it never executes either. Do not pipe model-generated commands into `eval` or a shell. Review repository paths, target CLI/account, payload, acceptance criteria, and dependencies first.
-
-Generate a fresh coordinator prompt from the live state each time the scope changes:
-
-```bash
-wbrief --repo rektslug --lines 40                   # intra-repo
-wbrief --all --lines 30                             # multi-repo
-wbrief --all --coordinator claude-coordinator       # explicit coordinator
-wsattach claude-coordinator                         # paste only after reviewing the brief
-```
-
-The brief is intentionally not auto-delivered. This keeps the final paste/submit action visible to the operator and prevents stale or malicious pane output from becoming an instruction without review.
-
-For an intra-repo durable task, keep acceptance criteria and live provenance in the existing task payload:
-
-```bash
-mesh thread create --name rektslug-live-delegation
-mesh thread add-step \
-  --thread rektslug-live-delegation \
-  --title "Implement approved freshness fix" \
-  --step-index 0 \
-  --repo /data/sata/1TB/rektslug \
-  --cli codex \
-  --account work \
-  --payload '{"prompt":"Implement only the approved freshness fix.","acceptance_criteria":["targeted tests pass","no unrelated files changed"],"origin":{"kind":"mesh_live","sessions":["sam/codex-progressive"]}}'
-```
-
-For a cross-repo handoff, reuse the router's existing `handoff` packet. Cross-repo packets require role `PRESIDENT_GLOBAL`, and `handoff.target_repo` must match `--repo` and the configured topology:
-
-```bash
-mesh thread add-step \
-  --thread multi-repo-delegation \
-  --title "Apply approved consumer update" \
-  --step-index 1 \
-  --repo consumer-repo \
-  --role PRESIDENT_GLOBAL \
-  --cli claude \
-  --payload '{"prompt":"Apply the approved consumer-side update.","handoff":{"source_repo":"producer-repo","target_repo":"consumer-repo","summary":"Producer contract changed after review.","decisions":["Keep backward compatibility"],"open_risks":["Mixed-version rollout"]}}'
-```
-
-Do not use a router step merely to address a tmux session that is already alive. Router tasks are scheduler inputs, not aliases for manual tmux sessions.
-
-`mesh term` is intentionally separate from `mesh sessions`: it is a local Mac/iTerm helper for already-open mesh panes and can `focus`, `send`, `key`, or `dump` by exact `repo + role`. It does not query the router or make layout decisions.
-
-`mesh live` targets tmux directly. `board`, `peek`, and `send` use short SSH control calls and work through VPN, LAN, ProxyJump, or a Cloudflare SSH alias. `attach` uses mosh only when `MESH_MOSH_HOST` or the selected SSH host is directly reachable without `ProxyJump`/`ProxyCommand`; otherwise it attaches through SSH. tmux, not mosh, owns session persistence.
-
-The installed `w*` helpers select the control path in this order: `MESH_WS_CONTROL_HOST`, reachable `MESH_WS_VPN_HOST`, reachable `MESH_WS_LAN_HOST`, explicit `MESH_WS_HOST`, then configured `MESH_WS_CLOUDFLARE_HOST`. Defaults for the current Dell setup are `sam@10.0.0.2`, `sam@172.23.0.42`, and SSH alias `dell7670` respectively.
-
-Use mosh only over a trusted direct LAN/VPN path with appropriate host firewall rules. Mosh cannot traverse the configured `ProxyJump` or Cloudflare SSH transport, so those paths deliberately fall back to SSH. Losing mosh or SSH does not terminate the work: reconnect to the same tmux session.
-
-### Live send safety
-
-Treat `mesh live send` and `wsend` as remote keyboard access, not messaging APIs:
-
-- `--enter` can execute a shell command, approve a model action, answer a destructive prompt, or submit text to the wrong application state.
-- A pane can change after `peek` and before `send`; exact session/pane resolution prevents name ambiguity but cannot prevent this time-of-check/time-of-use race.
-- Literal send and the separate Enter action block shell interpolation in `mesh live` itself, but they cannot make the receiving CLI interpret the text safely.
-- Never send untrusted pane/model output automatically, never use `eval`, and omit `--enter` unless immediate submission is intended.
-- Re-run `wpeek <session>` immediately before a sensitive send and verify owner, session, repository, prompt state, and proposed text.
-- `mesh live brief` strips common terminal escapes, credentials, and private-key blocks on a best-effort basis; it is not a DLP boundary. Review captured content before sharing it outside the workstation.
-
-Prefer read-only `board`/`peek` for coordination. Use direct send only for a specific approved action, and use the router path when audit history and managed execution are actually required.
+- tmux is authoritative for existing live sessions
+- router DB is authoritative for durable managed orchestration
+- iTerm2 is optional layout/UX
+- `wbrief --repo <repo>` is intra-repo; `wbrief --all` is multi-repo
+- review with `wpeek` before every sensitive `wsend`; `--enter` is explicit execution
 
 Current canonical UI slice:
 

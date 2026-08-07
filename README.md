@@ -20,11 +20,12 @@ This repository contains the session-first mesh router, worker coordination logi
 
 Read in this order:
 
-1. [README.md](/media/sam/1TB/gobabygo/README.md) — entrypoint and current live state
-2. [ARCHITECTURE.md](/media/sam/1TB/gobabygo/ARCHITECTURE.md) — canonical architecture and runtime topology
-3. [CLAUDE.md](/media/sam/1TB/gobabygo/CLAUDE.md) — operator/BOSS playbook and current orchestration snapshot
-4. [QUICKSTART.md](/media/sam/1TB/gobabygo/QUICKSTART.md) — commands, env, bootstrap, troubleshooting
-5. [HANDOFF.md](/media/sam/1TB/gobabygo/HANDOFF.md) — session-specific continuation notes
+1. [README.md](README.md) - repository entrypoint
+2. [MESH_LIVE.md](MESH_LIVE.md) - concise operator runbook for existing tmux sessions
+3. [ARCHITECTURE.md](ARCHITECTURE.md) - canonical architecture and runtime topology
+4. [CLAUDE.md](CLAUDE.md) - router-managed operator/BOSS playbook
+5. [QUICKSTART.md](QUICKSTART.md) - extended commands, env, bootstrap, troubleshooting
+6. [HANDOFF.md](HANDOFF.md) - session-specific continuation notes
 
 ## What is here
 
@@ -40,7 +41,11 @@ python -m pip install '.[dev]'
 pytest -q
 ```
 
-## Current Live State
+## Historical Runtime Snapshot (March 2026)
+
+This section is retained as recovery evidence. It is not authoritative for the
+current workstation state. Use `wboard`, `mesh status`, and `mesh sessions` for
+current live and router-managed state.
 
 This repo is the control-plane for `rektslug`, not the target feature repo itself.
 
@@ -71,9 +76,10 @@ Meaning:
 - the old `spec-016` run is historical evidence, not the run to continue in place
 - the next correct move is a clean rerun of `spec-016` using the current centralized Claude account pool
 
-## Resume Checklist
+## Historical Recovery Checklist
 
-Use this repo to resume work precisely:
+These checks document the March 2026 recovery path; do not use the recorded IDs
+as a current runbook:
 
 1. verify router/thread state from here
 2. verify worker/session health from here
@@ -107,7 +113,8 @@ Current expectation:
 - For Claude, use isolated CCS account profiles such as `claude-samuele` and launch them from the target repo directory with `ccs <profile>`.
 - Claude account autoswitch is router-driven, not CCS-provider-driven: worker failures tagged as `account_exhausted` rotate the next task attempt to the next isolated profile from `mapping/account_pools.yaml`.
 - `ccs codex` and `ccs gemini` keep the Claude Code frontend and route inference through a provider bridge. MCP, memory, slash commands, and session UX stay Claude Code-native.
-- `mesh ui <repo>` is part of the intended operator flow and opens panels for `boss`, `president`, `lead`, `worker-claude`, `worker-codex`, `worker-gemini`, and `verifier`. It now boots each pane through a central role policy that starts a real role CLI by default, and auto-attaches to a live tmux session first when the router already has a matching open session for that repo/role. The runtime source of truth is still the router DB, not iTerm2.
+- For existing manual sessions, use `mesh live`; tmux is authoritative for live pane/process state. For router-managed tasks and sessions, the router DB remains authoritative. iTerm2 is only an optional view.
+- `mesh ui <repo>` is part of the router-managed operator flow and opens role panels. It boots each pane through central role policy and may attach to a matching router-backed tmux session.
 - `mesh ui` now defaults to a repo-centric `2 tabs x 3 panes` operator layout (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened only when you ask for it explicitly.
 - `mesh` with no arguments now opens a small interactive launcher for the current repo root (`attach`, `sessions`, `ui`, `start`, plus `attach --all`).
 - For a simpler one-session workflow, `mesh sessions` and `mesh attach` are router-backed operator commands: they default to live sessions for the current repo, support `--all` for cross-repo selection, and only use tmux at the final attach step.
@@ -120,5 +127,5 @@ Current expectation:
 - Account exhaustion rotation now applies to `claude`, `codex`, and `gemini` when their failure output matches configured quota/rate-limit signatures.
 - Scheduler dispatch now requires a fresh worker heartbeat before leasing work, reducing 5-minute blackholes on recently-dead workers.
 - Historical architecture notes remain in [kiss_mesh/README.md](kiss_mesh/README.md).
-- Canonical architecture for the current runtime is now in [ARCHITECTURE.md](/media/sam/1TB/gobabygo/ARCHITECTURE.md).
-- Quick operator guidance is in [QUICKSTART.md](/media/sam/1TB/gobabygo/QUICKSTART.md).
+- Canonical architecture is in [ARCHITECTURE.md](ARCHITECTURE.md).
+- Direct tmux operator guidance is in [MESH_LIVE.md](MESH_LIVE.md); extended setup and troubleshooting are in [QUICKSTART.md](QUICKSTART.md).
