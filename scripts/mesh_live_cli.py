@@ -798,7 +798,7 @@ _URI_STRONG_HOST = (
     r"(?:\[[0-9a-f:.%]+\](?::\d+)?|localhost(?::\d+)?|"
     r"(?:[a-z0-9_-]+\.)+[a-z0-9_-]+(?::\d+)?|[a-z0-9_-]+:\d+)"
 )
-_URI_ANY_HOST = r"(?:\[[0-9a-f:.%]+\]|[^@/\s:?#]+)(?::\d+)?"
+_URI_TOKEN = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s\"'<>),}]+)")
 
 
 def _looks_like_pem_body_line(line: str) -> bool:
@@ -829,6 +829,90 @@ def _pem_body_line_indexes(lines: Sequence[str]) -> set[int]:
     return redacted
 
 
+def _authority_end(value: str) -> int:
+    positions = [pos for pos in (value.find("/"), value.find("?"), value.find("#")) if pos >= 0]
+    return min(positions) if positions else len(value)
+
+
+def _authority_host_is_valid(authority: str) -> bool:
+    value = str(authority or "").strip().lower()
+    if not value or "@" in value:
+        return False
+    host = value
+    port = ""
+    if value.startswith("["):
+        end = value.find("]")
+        if end <= 1:
+            return False
+        host = value[1:end]
+        remainder = value[end + 1 :]
+        if remainder:
+            if not remainder.startswith(":"):
+                return False
+            port = remainder[1:]
+        host_valid = bool(re.fullmatch(r"[a-f0-9:.%]+", host))
+    else:
+        if value.count(":") > 1:
+            return False
+        if ":" in value:
+            host, port = value.rsplit(":", 1)
+        host_valid = bool(re.fullmatch(r"[a-z0-9_.%-]+", host))
+    if port and not port.isdigit():
+        return False
+    if not host:
+        return False
+    return host_valid
+
+
+def _authority_host_is_strong(authority: str) -> bool:
+    return bool(re.fullmatch(_URI_STRONG_HOST, str(authority or ""), flags=re.IGNORECASE))
+
+
+def _uri_host_after_at(rest: str, at_index: int) -> str:
+    host_end = _authority_end(rest[at_index + 1 :])
+    return rest[at_index + 1 : at_index + 1 + host_end]
+
+
+def _redact_uri_at(scheme: str, rest: str, at_index: int) -> str | None:
+    colon_index = rest.find(":", 0, at_index)
+    if colon_index < 0:
+        return None
+    return f"{scheme}{rest[: colon_index + 1]}[REDACTED]@{rest[at_index + 1:]}"
+
+
+def _redact_uri_token(match: re.Match[str]) -> str:
+    scheme = match.group(1)
+    rest = match.group(2)
+    first_delimiter = _authority_end(rest)
+    first_at = rest.find("@")
+    if 0 <= first_at < first_delimiter:
+        host = _uri_host_after_at(rest, first_at)
+        later_at = rest.find("@", first_at + 1) >= 0
+        if _authority_host_is_valid(host) and (_authority_host_is_strong(host) or not later_at):
+            redacted = _redact_uri_at(scheme, rest, first_at)
+            if redacted is not None:
+                return redacted
+
+    if first_delimiter < len(rest) and (first_at < 0 or first_at > first_delimiter):
+        if _authority_host_is_valid(rest[:first_delimiter]):
+            return match.group(0)
+
+    for at_index in range(len(rest) - 1, -1, -1):
+        if rest[at_index] != "@":
+            continue
+        host = _uri_host_after_at(rest, at_index)
+        if not _authority_host_is_valid(host):
+            continue
+        redacted = _redact_uri_at(scheme, rest, at_index)
+        if redacted is not None:
+            return redacted
+    return match.group(0)
+
+
+def _redact_uri_userinfo(value: str) -> str:
+    return _URI_TOKEN.sub(_redact_uri_token, value)
+
+
 def redact_capture(text: str) -> str:
     value = str(text or "")
     value = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "[redacted terminal metadata]", value)
@@ -854,18 +938,7 @@ def redact_capture(text: str) -> str:
         r"\1\2[REDACTED]",
         value,
     )
-    value = re.sub(
-        rf"(?i)\b([a-z][a-z0-9+.-]*://)([^@\s:/?#]*):([^\s?#]*?)@"
-        rf"(?={_URI_STRONG_HOST}(?:[/?#\s]|$))",
-        r"\1\2:[REDACTED]@",
-        value,
-    )
-    value = re.sub(
-        rf"(?i)\b([a-z][a-z0-9+.-]*://)([^@\s:/?#]*):([^@/\s?#]*)@"
-        rf"(?={_URI_ANY_HOST}(?:[/?#\s]|$))",
-        r"\1\2:[REDACTED]@",
-        value,
-    )
+    value = _redact_uri_userinfo(value)
     value = re.sub(
         r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|AKIA[A-Z0-9]{16}|"
         r"xox[abprs]-[A-Za-z0-9-]{16,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
