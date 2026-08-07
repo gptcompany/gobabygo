@@ -559,6 +559,9 @@ def test_build_coordinator_brief_requires_debate_decision_and_delegation() -> No
     assert "Recommended decision" in brief
     assert "Delegation plan" in brief
     assert "wait for explicit human confirmation" in brief
+    assert "mesh live send only for an existing tmux session" in brief
+    assert "mesh thread create/add-step" in brief
+    assert "Never imply that a router task targets an existing manual tmux session" in brief
 
 
 def test_main_brief_is_read_only_and_supports_repo_scope(monkeypatch, capsys) -> None:

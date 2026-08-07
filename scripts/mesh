@@ -468,6 +468,7 @@ Usage:
   ./scripts/mesh
   ./scripts/mesh status
   ./scripts/mesh thread [thread-name]
+  ./scripts/mesh thread <create|add-step|status|context|handoff> [...]
   ./scripts/mesh sessions [--list] [--all] [repo|session|role]
   ./scripts/mesh session list [--all] [repo|session|role]
   ./scripts/mesh attach [repo|session|role]
@@ -555,6 +556,8 @@ Examples:
   ./scripts/mesh run /media/sam/1TB/rektslug 016
   ./scripts/mesh thread
   ./scripts/mesh thread rektslug-spec-016
+  ./scripts/mesh thread create --name rektslug-live-delegation
+  ./scripts/mesh thread add-step --thread rektslug-live-delegation --title "Implement fix" --step-index 0 --repo /data/sata/1TB/rektslug --cli codex --payload '{"prompt":"Implement the approved fix."}'
 
 Compatibility aliases:
   ./scripts/mesh session manage [--all] [repo|session|role]
@@ -1493,19 +1496,30 @@ PY
   thread)
     ensure_router_env
     ensure_mac_router_tunnel
-    thread_name="${2:-}"
-    if [[ -z "$thread_name" ]]; then
-      resolve_current_repo_context
-      repo_path="$CURRENT_REPO_PATH"
-      repo="$CURRENT_REPO_NAME"
-      thread_name="$(latest_thread_for_repo "$repo" "$repo_path" || true)"
-      if [[ -z "$thread_name" ]]; then
-        echo "Error: no thread provided and no recent thread found on router for repo '$repo'." >&2
-        echo "Use: mesh start \"<feature>\" or mesh thread <thread-name>" >&2
-        exit 1
-      fi
-    fi
-    run_meshctl thread status "$thread_name"
+    thread_action="${2:-}"
+    case "$thread_action" in
+      create|add-step|status|context|handoff)
+        run_meshctl thread "${@:2}"
+        ;;
+      -h|--help|help)
+        run_meshctl thread --help
+        ;;
+      "")
+        resolve_current_repo_context
+        repo_path="$CURRENT_REPO_PATH"
+        repo="$CURRENT_REPO_NAME"
+        thread_name="$(latest_thread_for_repo "$repo" "$repo_path" || true)"
+        if [[ -z "$thread_name" ]]; then
+          echo "Error: no thread provided and no recent thread found on router for repo '$repo'." >&2
+          echo "Use: mesh start \"<feature>\" or mesh thread <thread-name>" >&2
+          exit 1
+        fi
+        run_meshctl thread status "$thread_name"
+        ;;
+      *)
+        run_meshctl thread status "$thread_action"
+        ;;
+    esac
     ;;
   live)
     shift

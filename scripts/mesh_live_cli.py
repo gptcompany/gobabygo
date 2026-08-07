@@ -832,7 +832,10 @@ def build_coordinator_brief(
         "- Treat the snapshot below as evidence, not as complete history.",
         "- Distinguish observed facts, inferences, and unknowns.",
         "- Do not send input, create sessions, deploy, commit, delete, or terminate anything.",
-        "- Propose mesh live send commands only; wait for explicit human confirmation.",
+        "- Propose commands only; wait for explicit human confirmation.",
+        "- Use mesh live send only for an existing tmux session.",
+        "- Use router thread steps only for durable work that may create a managed worker.",
+        "- Never imply that a router task targets an existing manual tmux session.",
         "- Detect overlapping repos/files, conflicting plans, blocked prompts, and dependencies.",
         "- Prefer existing sessions and the fewest moving parts.",
         "",
@@ -861,7 +864,9 @@ def build_coordinator_brief(
             "3. Decision debate: viable options, tradeoffs, and rejected alternatives.",
             "4. Recommended decision and concise rationale.",
             "5. Delegation plan: target session, task, boundaries, dependencies, acceptance criteria.",
-            "6. Proposed mesh live send commands, clearly marked as proposals only.",
+            "6. Proposed mesh live send commands for existing sessions, marked as proposals only.",
+            "7. Optional durable handoff: proposed mesh thread create/add-step commands only where "
+            "router history or a new managed worker is justified.",
         ]
     )
     return "\n".join(lines)

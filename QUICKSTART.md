@@ -254,6 +254,8 @@ mesh live send claude-rektslug "status?" --enter
 mesh live attach claude-rektslug
 mesh live brief --repo rektslug
 mesh live brief --all --coordinator claude-coordinator
+mesh thread create --name rektslug-live-delegation
+mesh thread add-step --thread rektslug-live-delegation --title "Implement fix" --step-index 0 --repo /data/sata/1TB/rektslug --cli codex --payload '{"prompt":"Implement the approved fix."}'
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
@@ -268,6 +270,44 @@ wsattach <tmux-session>
 ```
 
 `mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach`, `mesh session manage`, and `mesh ui resume` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
+
+### Live coordination and durable handoff
+
+Keep the two delegation paths explicit:
+
+- Existing manual tmux session: inspect with `mesh live`, then use a reviewed `mesh live send` proposal. This path does not use the router, provider runtime, or account manager.
+- Durable/new managed work: create a router thread and add approved steps with `mesh thread create` and `mesh thread add-step`. This persists tasks and history and may select an account and create a new managed worker/session.
+
+`mesh live brief` can propose both forms, but it never executes either. Do not pipe model-generated commands into `eval` or a shell. Review repository paths, target CLI/account, payload, acceptance criteria, and dependencies first.
+
+For an intra-repo durable task, keep acceptance criteria and live provenance in the existing task payload:
+
+```bash
+mesh thread create --name rektslug-live-delegation
+mesh thread add-step \
+  --thread rektslug-live-delegation \
+  --title "Implement approved freshness fix" \
+  --step-index 0 \
+  --repo /data/sata/1TB/rektslug \
+  --cli codex \
+  --account work \
+  --payload '{"prompt":"Implement only the approved freshness fix.","acceptance_criteria":["targeted tests pass","no unrelated files changed"],"origin":{"kind":"mesh_live","sessions":["sam/codex-progressive"]}}'
+```
+
+For a cross-repo handoff, reuse the router's existing `handoff` packet. Cross-repo packets require role `PRESIDENT_GLOBAL`, and `handoff.target_repo` must match `--repo` and the configured topology:
+
+```bash
+mesh thread add-step \
+  --thread multi-repo-delegation \
+  --title "Apply approved consumer update" \
+  --step-index 1 \
+  --repo consumer-repo \
+  --role PRESIDENT_GLOBAL \
+  --cli claude \
+  --payload '{"prompt":"Apply the approved consumer-side update.","handoff":{"source_repo":"producer-repo","target_repo":"consumer-repo","summary":"Producer contract changed after review.","decisions":["Keep backward compatibility"],"open_risks":["Mixed-version rollout"]}}'
+```
+
+Do not use a router step merely to address a tmux session that is already alive. Router tasks are scheduler inputs, not aliases for manual tmux sessions.
 
 `mesh term` is intentionally separate from `mesh sessions`: it is a local Mac/iTerm helper for already-open mesh panes and can `focus`, `send`, `key`, or `dump` by exact `repo + role`. It does not query the router or make layout decisions.
 
