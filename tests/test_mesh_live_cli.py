@@ -710,6 +710,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
             "DATABASE_URL=postgres://alice:database-secret@db.internal/app",
             "REDIS_URL=redis://:redis-secret@localhost:6379/0",
             "MYSQL_URL=mysql://alice:p@ss/w@rd@db.internal/app",
+            'escaped_password="foo\\"bar baz"',
+            "'quoted_token': 'alpha\\' beta gamma'",
         ]
     )
 
@@ -721,6 +723,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
         "database-secret",
         "redis-secret",
         "p@ss/w@rd",
+        'foo\\"bar baz',
+        "alpha\\' beta gamma",
     ):
         assert secret not in redacted
     assert 'password="[REDACTED]"' in redacted
@@ -728,6 +732,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
     assert "postgres://alice:[REDACTED]@db.internal/app" in redacted
     assert "redis://:[REDACTED]@localhost:6379/0" in redacted
     assert "mysql://alice:[REDACTED]@db.internal/app" in redacted
+    assert 'escaped_password="[REDACTED]"' in redacted
+    assert "'quoted_token': '[REDACTED]'" in redacted
 
     key_tail = "\n".join(
         [
