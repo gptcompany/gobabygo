@@ -844,6 +844,23 @@ def test_redacted_session_dict_does_not_expose_raw_capture_or_error() -> None:
     assert "[REDACTED]" in encoded
 
 
+def test_uri_redaction_bounds_host_checks_for_many_at_signs(monkeypatch) -> None:
+    module = _load_module()
+    original = module._authority_host_is_valid
+    checks = 0
+
+    def counted(authority: str) -> bool:
+        nonlocal checks
+        checks += 1
+        return original(authority)
+
+    monkeypatch.setattr(module, "_authority_host_is_valid", counted)
+    raw = "x://user:secret@" + ("x@" * 10_000) + "!"
+
+    assert module.redact_capture(raw) == raw
+    assert checks <= 2
+
+
 def test_build_coordinator_brief_requires_debate_decision_and_delegation() -> None:
     module = _load_module()
     coordinator = module.LiveSession(

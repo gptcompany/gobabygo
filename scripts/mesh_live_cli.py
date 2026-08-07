@@ -871,6 +871,23 @@ def _uri_host_after_at(rest: str, at_index: int) -> str:
     return rest[at_index + 1 : at_index + 1 + host_end]
 
 
+def _uri_at_candidates(rest: str) -> list[tuple[int, str]]:
+    candidates: list[tuple[int, str]] = []
+    next_delimiter = len(rest)
+    next_at = len(rest)
+    for index in range(len(rest) - 1, -1, -1):
+        char = rest[index]
+        if char in "/?#":
+            next_delimiter = index
+            continue
+        if char != "@":
+            continue
+        if next_at >= next_delimiter:
+            candidates.append((index, rest[index + 1 : next_delimiter]))
+        next_at = index
+    return candidates
+
+
 def _redact_uri_at(scheme: str, rest: str, at_index: int) -> str | None:
     colon_index = rest.find(":", 0, at_index)
     if colon_index < 0:
@@ -920,10 +937,7 @@ def _redact_uri_token(match: re.Match[str]) -> str:
         if _authority_host_is_valid(rest[:first_delimiter]):
             return match.group(0)
 
-    for at_index in range(len(rest) - 1, -1, -1):
-        if rest[at_index] != "@":
-            continue
-        host = _uri_host_after_at(rest, at_index)
+    for at_index, host in _uri_at_candidates(rest):
         if not _authority_host_is_valid(host):
             continue
         redacted = _redact_uri_at(scheme, rest, at_index)
