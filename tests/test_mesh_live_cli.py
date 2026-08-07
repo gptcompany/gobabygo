@@ -896,6 +896,49 @@ def test_build_coordinator_brief_requires_debate_decision_and_delegation() -> No
     assert "Never imply that a router task targets an existing manual tmux session" in brief
 
 
+def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks() -> None:
+    module = _load_module()
+
+    prompt = module.build_live_coordinator_system_prompt(
+        repo="rektslug",
+        coordinator_session="claude-rektslug-coordinator",
+        worker_session="codex-rektslug-worker",
+        mesh_script="/data/sata/1TB/gobabygo/scripts/mesh",
+    )
+
+    assert "persistent autonomous coordinator" in prompt
+    assert "repository rektslug" in prompt
+    assert "exactly codex-rektslug-worker" in prompt
+    assert "MESH_LIVE_LOCAL=1" in prompt
+    assert "DELEGATION_ID" in prompt
+    assert "WORKER_DONE <DELEGATION_ID>" in prompt
+    assert "does not prove the CLI accepted the task" in prompt
+    assert "Never resend blindly" in prompt
+    assert "context is nearly exhausted" in prompt
+    assert "must not edit source files" in prompt
+
+
+def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:
+    module = _load_module()
+
+    rc = module.main(
+        [
+            "coordinator-prompt",
+            "--all",
+            "--session",
+            "claude-coordinator",
+            "--mesh-script",
+            "/opt/gobabygo/scripts/mesh",
+        ]
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "all live repositories" in output
+    assert "/opt/gobabygo/scripts/mesh live board --lines 30" in output
+    assert "Discover worker candidates" in output
+
+
 def test_request_endpoint_supports_local_missing_host_ssh_failure_and_json_parsing(
     monkeypatch,
 ) -> None:
