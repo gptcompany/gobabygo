@@ -794,6 +794,11 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
 
 
 _PEM_BODY_PREFIXES = ("MII", "b3BlbnNzaC1rZXktdjE", "MHcCAQEE", "MHQCAQEE")
+_URI_STRONG_HOST = (
+    r"(?:\[[0-9a-f:.%]+\](?::\d+)?|localhost(?::\d+)?|"
+    r"(?:[a-z0-9_-]+\.)+[a-z0-9_-]+(?::\d+)?|[a-z0-9_-]+:\d+)"
+)
+_URI_ANY_HOST = r"(?:\[[0-9a-f:.%]+\]|[^@/\s:?#]+)(?::\d+)?"
 
 
 def _looks_like_pem_body_line(line: str) -> bool:
@@ -850,8 +855,14 @@ def redact_capture(text: str) -> str:
         value,
     )
     value = re.sub(
-        r"(?i)\b([a-z][a-z0-9+.-]*://)([^@\s:/?#]*):([^\s?#]*)@"
-        r"(?=(?:\[[0-9a-f:.%]+\]|[^@/\s:?#]+)(?::\d+)?(?:[/?#\s]|$))",
+        rf"(?i)\b([a-z][a-z0-9+.-]*://)([^@\s:/?#]*):([^\s?#]*?)@"
+        rf"(?={_URI_STRONG_HOST}(?:[/?#\s]|$))",
+        r"\1\2:[REDACTED]@",
+        value,
+    )
+    value = re.sub(
+        rf"(?i)\b([a-z][a-z0-9+.-]*://)([^@\s:/?#]*):([^@/\s?#]*)@"
+        rf"(?={_URI_ANY_HOST}(?:[/?#\s]|$))",
         r"\1\2:[REDACTED]@",
         value,
     )
