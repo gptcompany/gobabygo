@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -284,3 +285,53 @@ def test_read_only_module_contains_no_tmux_mutation_primitives() -> None:
 
     forbidden = ("send-keys", "kill-session", "new-session", "attach-session")
     assert all(token not in source for token in forbidden)
+
+
+def test_mesh_dispatcher_exposes_live_help() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+
+    proc = subprocess.run(
+        [str(repo_root / "scripts" / "mesh"), "live", "--help"],
+        cwd=repo_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0
+    assert "mesh live board" in proc.stdout
+    assert "mesh live peek" in proc.stdout
+    assert "does not require the router or iTerm2" in proc.stdout
+
+
+def test_mesh_dispatcher_runs_live_board_without_router_env() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("MESH_ROUTER_URL", None)
+    env.pop("MESH_AUTH_TOKEN", None)
+    env["MESH_LIVE_LOCAL"] = "1"
+    env["MESH_LIVE_USERS"] = "definitely-not-a-local-user"
+
+    proc = subprocess.run(
+        [str(repo_root / "scripts" / "mesh"), "live", "board", "--lines", "0"],
+        cwd=repo_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == "No live tmux sessions matched."
+    assert "router" not in proc.stderr.lower()
+
+
+def test_mesh_live_dispatch_branch_has_no_router_or_iterm_initialization() -> None:
+    mesh_script = Path(__file__).resolve().parents[1] / "scripts" / "mesh"
+    source = mesh_script.read_text(encoding="utf-8")
+    branch = source.split('  live)\n', 1)[1].split('  sessions)\n', 1)[0]
+
+    assert "mesh_live_cli.py" in branch
+    assert "ensure_router_env" not in branch
+    assert "ensure_mac_router_tunnel" not in branch
+    assert "run_iterm_control" not in branch

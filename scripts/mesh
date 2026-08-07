@@ -475,6 +475,8 @@ Usage:
   ./scripts/mesh enter <role>
   ./scripts/mesh interrupt <role>
   ./scripts/mesh summary <role>
+  ./scripts/mesh live board [query] [--lines N] [--json]
+  ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
   ./scripts/mesh term list [--repo <repo-path>] [--output <file>]
   ./scripts/mesh term focus <repo-path> <role>
   ./scripts/mesh term send <repo-path> <role> <text>
@@ -518,6 +520,9 @@ Examples:
   ./scripts/mesh enter lead
   ./scripts/mesh interrupt worker-gemini
   ./scripts/mesh summary lead
+  ./scripts/mesh live board
+  ./scripts/mesh live board rektslug --lines 40
+  ./scripts/mesh live peek claude-rektslug 120
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
   ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
@@ -562,6 +567,29 @@ Usage:
 Behavior:
   mesh lite is the iTerm2-first manual control path built on the validated attached bridge spike.
   It keeps a small local registry and does not talk to the router.
+EOF
+}
+
+live_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh live board [query] [--lines N] [--json]
+  ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
+
+Behavior:
+  mesh live reads tmux directly on the configured workstation.
+  It does not require the router or iTerm2 and is read-only in this release.
+
+Env:
+  MESH_WS_HOST       SSH target hosting tmux (default: sam@10.0.0.2)
+  MESH_LIVE_USERS    comma-separated tmux owners to inspect
+  MESH_LIVE_LOCAL    set to 1 to inspect tmux on this machine
+
+Examples:
+  ./scripts/mesh live board
+  ./scripts/mesh live board rektslug --lines 40
+  ./scripts/mesh live peek claude-rektslug 120
+  ./scripts/mesh live --host dell-vpn board --lines 0
 EOF
 }
 
@@ -1459,6 +1487,22 @@ PY
       fi
     fi
     run_meshctl thread status "$thread_name"
+    ;;
+  live)
+    shift
+    case "${1:-}" in
+      ""|-h|--help)
+        live_usage
+        exit 0
+        ;;
+    esac
+    py_bin="$(detect_python)" || exit $?
+    live_script="${REPO_ROOT}/scripts/mesh_live_cli.py"
+    if [[ ! -f "$live_script" ]]; then
+      echo "Error: missing live CLI script at $live_script" >&2
+      exit 1
+    fi
+    exec "$py_bin" "$live_script" "$@"
     ;;
   sessions)
     ensure_router_env
