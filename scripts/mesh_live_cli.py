@@ -793,6 +793,13 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
     return "\n\n".join(blocks)
 
 
+def _looks_like_pem_body_line(line: str) -> bool:
+    value = str(line or "").strip()
+    if len(value) < 48:
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9+/=]+", value))
+
+
 def redact_capture(text: str) -> str:
     value = str(text or "")
     value = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "[redacted terminal metadata]", value)
@@ -833,18 +840,27 @@ def redact_capture(text: str) -> str:
     )
     output: list[str] = []
     in_private_key = False
+    redacted_pem_body = False
     for line in value.splitlines():
         if "-----BEGIN " in line and "PRIVATE KEY-----" in line:
             output.append("[REDACTED PRIVATE KEY]")
             in_private_key = True
+            redacted_pem_body = False
             continue
         if "-----END " in line and "PRIVATE KEY-----" in line:
             if not in_private_key:
                 output = ["[REDACTED TRUNCATED PRIVATE KEY]"]
             in_private_key = False
+            redacted_pem_body = False
             continue
         if in_private_key:
             continue
+        if _looks_like_pem_body_line(line):
+            if not redacted_pem_body:
+                output.append("[REDACTED PRIVATE KEY BODY]")
+                redacted_pem_body = True
+            continue
+        redacted_pem_body = False
         output.append(line)
     return "\n".join(output)
 

@@ -750,6 +750,23 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
     assert "[REDACTED TRUNCATED PRIVATE KEY]" in redacted_tail
     assert "status after key" in redacted_tail
 
+    key_body_only = "\n".join(
+        [
+            "status before key",
+            "MIIE" + ("A" * 60),
+            "QWER" + ("B" * 60),
+            "status after body",
+        ]
+    )
+    redacted_body = module.redact_capture(key_body_only)
+
+    assert "status before key" in redacted_body
+    assert "MIIE" not in redacted_body
+    assert "QWER" not in redacted_body
+    assert "[REDACTED PRIVATE KEY BODY]" in redacted_body
+    assert redacted_body.count("[REDACTED PRIVATE KEY BODY]") == 1
+    assert "status after body" in redacted_body
+
 
 def test_redacted_session_dict_does_not_expose_raw_capture_or_error() -> None:
     module = _load_module()
