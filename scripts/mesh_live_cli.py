@@ -793,7 +793,6 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
     return "\n\n".join(blocks)
 
 
-_PEM_BODY_PREFIXES = ("MII", "b3BlbnNzaC1rZXktdjE", "MHcCAQEE", "MHQCAQEE")
 _URI_STRONG_HOST = (
     r"(?:\[[0-9a-f:.%]+\](?::\d+)?|localhost(?::\d+)?|"
     r"(?:[a-z0-9_-]+\.)+[a-z0-9_-]+(?::\d+)?|[a-z0-9_-]+:\d+)"
@@ -822,8 +821,7 @@ def _pem_body_line_indexes(lines: Sequence[str]) -> set[int]:
             end += 1
         values = [lines[item].strip() for item in range(index, end)]
         long_lines = sum(len(item) >= 48 for item in values)
-        known_prefix = values[0].startswith(_PEM_BODY_PREFIXES)
-        if long_lines >= 2 or (long_lines == 1 and known_prefix):
+        if long_lines >= 2:
             redacted.update(range(index, end))
         index = end
     return redacted

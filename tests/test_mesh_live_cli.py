@@ -796,6 +796,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
         ]
     )
     assert module.redact_capture(harmless_encoded_output) == harmless_encoded_output
+    isolated_known_prefix = "MIIE" + ("A" * 60)
+    assert module.redact_capture(isolated_known_prefix) == isolated_known_prefix
 
     key_body_with_short_tail = "\n".join(
         [
