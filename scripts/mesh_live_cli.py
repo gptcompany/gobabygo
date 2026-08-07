@@ -819,7 +819,8 @@ def redact_capture(text: str) -> str:
         value,
     )
     value = re.sub(
-        r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s:]+):([^/@\s]+)@",
+        r"(?i)\b([a-z][a-z0-9+.-]*://)([^@\s:/?#]*):([^\s]*)@"
+        r"(?=[^@/\s:]+(?::\d+)?(?:[/?#\s]|$))",
         r"\1\2:[REDACTED]@",
         value,
     )
