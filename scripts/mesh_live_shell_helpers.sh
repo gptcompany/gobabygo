@@ -300,10 +300,11 @@ mcodex() {
 }
 
 mcoordinator() {
-  local repo worker session target_dir repo_base remote_mesh prompt claude_cmd startup
+  local repo worker session_override session target_dir repo_base remote_mesh prompt claude_cmd startup
   local -a prompt_args=()
   repo=""
   worker=""
+  session_override=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --all)
@@ -312,14 +313,22 @@ mcoordinator() {
         ;;
       --worker)
         if [[ $# -lt 2 || -z "$2" ]]; then
-          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>]" >&2
+          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]" >&2
           return 2
         fi
         worker="$2"
         shift 2
         ;;
+      --session)
+        if [[ $# -lt 2 || -z "$2" || "$2" == *[^A-Za-z0-9_.-]* ]]; then
+          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]" >&2
+          return 2
+        fi
+        session_override="$2"
+        shift 2
+        ;;
       -h|--help)
-        echo "Usage: mcoordinator [<repo>|--all] [--worker <session>]"
+        echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]"
         return 0
         ;;
       -* )
@@ -328,7 +337,7 @@ mcoordinator() {
         ;;
       *)
         if [[ -n "$repo" ]]; then
-          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>]" >&2
+          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]" >&2
           return 2
         fi
         repo="$1"
@@ -340,11 +349,11 @@ mcoordinator() {
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
   remote_mesh="${MESH_COORDINATOR_MESH_SCRIPT:-${repo_base}/gobabygo/scripts/mesh}"
   if [[ -n "$repo" ]]; then
-    session="$(_ws_tmux_session_name claude "${repo##*/}-coordinator")"
+    session="${session_override:-$(_ws_tmux_session_name claude "${repo##*/}-coordinator")}"
     target_dir="$(_ws_tmux_target_dir "$repo")"
     prompt_args=(live coordinator-prompt --repo "$repo" --session "$session" --mesh-script "$remote_mesh")
   else
-    session="claude-coordinator"
+    session="${session_override:-claude-coordinator}"
     target_dir="$(_ws_tmux_target_dir)"
     prompt_args=(live coordinator-prompt --all --session "$session" --mesh-script "$remote_mesh")
   fi

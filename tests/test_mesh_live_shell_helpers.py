@@ -285,18 +285,18 @@ _mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'MUL
 _ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
-mcoordinator --all
+mcoordinator --all --session claude-live-coordinator
 """,
     )
 
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.splitlines()
     assert lines[:2] == [
-        "session=claude-coordinator",
+        "session=claude-live-coordinator",
         "dir=/data/sata/1TB",
     ]
     assert lines[2].startswith(
-        "startup=claude --name claude-coordinator --append-system-prompt "
+        "startup=claude --name claude-live-coordinator --append-system-prompt "
     )
     assert "MULTI" in lines[2]
     assert prompt_args_file.read_text(encoding="utf-8").splitlines() == [
@@ -304,7 +304,7 @@ mcoordinator --all
         "<coordinator-prompt>",
         "<--all>",
         "<--session>",
-        "<claude-coordinator>",
+        "<claude-live-coordinator>",
         "<--mesh-script>",
         "</data/sata/1TB/gobabygo/scripts/mesh>",
     ]
@@ -329,3 +329,15 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB 'claude --name claude
         "</data/sata/1TB>",
         "<claude --name claude-coordinator>",
     ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_rejects_unsafe_session_override(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"source {helper}; mcoordinator --all --session 'coordinator;rm'",
+    )
+
+    assert proc.returncode == 2
+    assert "Usage: mcoordinator" in proc.stderr
