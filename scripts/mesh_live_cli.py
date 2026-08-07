@@ -348,7 +348,8 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, str],
     if proc.returncode != 0:
         result["error"] = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
     else:
-        result["output"] = proc.stdout.rstrip("\n")
+        captured_lines = proc.stdout.rstrip("\n").splitlines()
+        result["output"] = "\n".join(captured_lines[-lines:])
     return result, []
 
 
@@ -733,6 +734,139 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
     return "\n\n".join(blocks)
 
 
+def redact_capture(text: str) -> str:
+    value = str(text or "")
+    value = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "[redacted terminal metadata]", value)
+    value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
+    value = re.sub(
+        r"(?i)\b(authorization\s*:\s*bearer)\s+\S+",
+        r"\1 [REDACTED]",
+        value,
+    )
+    value = re.sub(
+        r"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|password|secret)"
+        r"(\s*[:=]\s*)\S+",
+        r"\1\2[REDACTED]",
+        value,
+    )
+    value = re.sub(
+        r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|AKIA[A-Z0-9]{16})\b",
+        "[REDACTED TOKEN]",
+        value,
+    )
+    output: list[str] = []
+    in_private_key = False
+    for line in value.splitlines():
+        if "-----BEGIN " in line and "PRIVATE KEY-----" in line:
+            output.append("[REDACTED PRIVATE KEY]")
+            in_private_key = True
+            continue
+        if in_private_key:
+            if "-----END " in line and "PRIVATE KEY-----" in line:
+                in_private_key = False
+            continue
+        output.append(line)
+    return "\n".join(output)
+
+
+def redacted_session_dict(session: LiveSession) -> dict[str, Any]:
+    payload = asdict(session)
+    payload["output"] = redact_capture(session.output)
+    payload["capture_error"] = redact_capture(session.capture_error)
+    return payload
+
+
+def resolve_coordinator(
+    sessions: Sequence[LiveSession],
+    requested: str = "",
+    *,
+    owner: str = "",
+) -> LiveSession | None:
+    explicit = str(requested or "").strip()
+    if explicit:
+        return resolve_session(sessions, explicit, owner=owner)
+    candidates = [
+        session
+        for session in sessions
+        if "coordinator" in session.name.lower() or session.role.lower() == "coordinator"
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        labels = ", ".join(f"{item.owner}/{item.name}" for item in candidates)
+        raise SessionResolutionError(
+            f"multiple coordinator sessions found; use --coordinator and --coordinator-owner: {labels}"
+        )
+    return None
+
+
+def _indented_capture(session: LiveSession) -> str:
+    if session.capture_error:
+        body = f"[capture error] {session.capture_error}"
+    else:
+        body = redact_capture(session.output).strip() or "[no captured output]"
+    return "\n".join(f"    {line}" for line in body.splitlines())
+
+
+def build_coordinator_brief(
+    sessions: Sequence[LiveSession],
+    *,
+    scope: str,
+    coordinator: LiveSession | None,
+) -> str:
+    coordinator_label = (
+        f"{coordinator.owner}/{coordinator.name}" if coordinator is not None else "not selected"
+    )
+    lines = [
+        "You are coordinating existing AI sessions on the Dell workstation.",
+        "",
+        f"Scope: {scope}",
+        f"Coordinator session: {coordinator_label}",
+        "",
+        "Objective:",
+        "- create useful debate before decisions",
+        "- choose the smallest efficient next actions",
+        "- delegate non-overlapping tasks with explicit acceptance criteria",
+        "",
+        "Hard rules:",
+        "- Treat the snapshot below as evidence, not as complete history.",
+        "- Distinguish observed facts, inferences, and unknowns.",
+        "- Do not send input, create sessions, deploy, commit, delete, or terminate anything.",
+        "- Propose mesh live send commands only; wait for explicit human confirmation.",
+        "- Detect overlapping repos/files, conflicting plans, blocked prompts, and dependencies.",
+        "- Prefer existing sessions and the fewest moving parts.",
+        "",
+        "Live snapshot:",
+    ]
+    for session in sessions:
+        marker = " [COORDINATOR]" if coordinator is not None and session.key == coordinator.key else ""
+        state = f"attached:{session.attached}" if session.attached else "detached"
+        lines.extend(
+            [
+                "",
+                f"Session: {session.owner}/{session.name}{marker}",
+                f"State: {state}; command={session.pane_command or 'unknown'}; "
+                f"role={session.role or 'unknown'}",
+                f"Repo/path: {session.pane_path or session.repo_name or 'unknown'}",
+                "Recent pane output:",
+                _indented_capture(session),
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "Required response:",
+            "1. Situation table: session, repo, observed state, risk, next useful action.",
+            "2. Conflicts and dependencies across sessions or repos.",
+            "3. Decision debate: viable options, tradeoffs, and rejected alternatives.",
+            "4. Recommended decision and concise rationale.",
+            "5. Delegation plan: target session, task, boundaries, dependencies, acceptance criteria.",
+            "6. Proposed mesh live send commands, clearly marked as proposals only.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _default_users(host: str) -> tuple[str, ...]:
     configured = os.environ.get("MESH_LIVE_USERS", "").strip()
     raw_users: list[str] = []
@@ -802,6 +936,23 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="",
         help="Direct VPN/LAN host for mosh. Never use a Cloudflare or jump-host alias.",
     )
+
+    brief = sub.add_parser("brief", help="Build a read-only dynamic coordinator prompt.")
+    brief.add_argument("query", nargs="?", default="", help="Optional repo/session/path filter.")
+    brief.add_argument("--repo", default="", help="Explicit repo name or path filter.")
+    brief.add_argument("--all", action="store_true", help="Include sessions across all repos.")
+    brief.add_argument("--lines", type=int, default=40, help="Captured lines per session.")
+    brief.add_argument(
+        "--coordinator",
+        default=os.environ.get("MESH_LIVE_COORDINATOR", ""),
+        help="Coordinator session. Default: unique session containing 'coordinator'.",
+    )
+    brief.add_argument(
+        "--coordinator-owner",
+        default="",
+        help="Disambiguate coordinator sessions owned by different users.",
+    )
+    brief.add_argument("--json", action="store_true", help="Emit prompt and snapshot as JSON.")
     return parser.parse_args(argv)
 
 
@@ -839,7 +990,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.cmd == "board":
             lines = validate_capture_lines(args.lines, allow_zero=True)
-        elif args.cmd == "peek":
+        elif args.cmd in {"peek", "brief"}:
             lines = validate_capture_lines(args.lines, allow_zero=False)
         else:
             lines = 0
@@ -856,6 +1007,56 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 print(render_board(selected))
             return 1 if any(item.capture_error for item in selected) else 0
+
+        if args.cmd == "brief":
+            if args.all and (args.repo or args.query):
+                raise ValueError("brief --all cannot be combined with a repo or query filter")
+            if args.repo and args.query:
+                raise ValueError("brief accepts either --repo or a positional query, not both")
+            scope_query = args.repo or args.query
+            selected = filter_sessions(sessions, scope_query)
+            if not selected:
+                scope = scope_query or "all repos"
+                raise SessionResolutionError(f"no live sessions matched brief scope '{scope}'")
+            coordinator = resolve_coordinator(
+                sessions,
+                args.coordinator,
+                owner=args.coordinator_owner,
+            )
+            targets = list(selected)
+            if coordinator is not None and coordinator.key not in {item.key for item in targets}:
+                targets.append(coordinator)
+            captured, capture_warnings = client.capture(targets, lines)
+            _print_warnings(capture_warnings)
+            captured_by_key = {item.key: item for item in captured}
+            selected = [captured_by_key.get(item.key, item) for item in targets]
+            if coordinator is not None:
+                coordinator = captured_by_key.get(coordinator.key, coordinator)
+            scope = f"repo/query '{scope_query}'" if scope_query else "all live repos"
+            prompt = build_coordinator_brief(
+                selected,
+                scope=scope,
+                coordinator=coordinator,
+            )
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "scope": scope,
+                            "coordinator": (
+                                redacted_session_dict(coordinator)
+                                if coordinator is not None
+                                else None
+                            ),
+                            "sessions": [redacted_session_dict(item) for item in selected],
+                            "prompt": prompt,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print(prompt)
+            return 0
 
         selected = resolve_session(sessions, args.session, owner=args.owner)
         if args.cmd == "peek":

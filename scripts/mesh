@@ -479,6 +479,7 @@ Usage:
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
+  ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
   ./scripts/mesh term list [--repo <repo-path>] [--output <file>]
   ./scripts/mesh term focus <repo-path> <role>
   ./scripts/mesh term send <repo-path> <role> <text>
@@ -527,6 +528,8 @@ Examples:
   ./scripts/mesh live peek claude-rektslug 120
   ./scripts/mesh live send claude-rektslug "status?" --enter
   ./scripts/mesh live attach claude-rektslug
+  ./scripts/mesh live brief --repo rektslug
+  ./scripts/mesh live brief --all --coordinator claude-coordinator
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
   ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
@@ -581,12 +584,14 @@ Usage:
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
+  ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
 
 Behavior:
   mesh live reads tmux directly on the configured workstation.
   It does not require the router or iTerm2.
   send is literal and does not submit text unless --enter is explicit.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
+  brief builds a redacted read-only prompt for debate, decisions, and delegation.
 
 Env:
   MESH_WS_HOST       SSH target hosting tmux (default: sam@10.0.0.2)
@@ -600,6 +605,8 @@ Examples:
   ./scripts/mesh live peek claude-rektslug 120
   ./scripts/mesh live send claude-rektslug "status?" --enter
   ./scripts/mesh live attach claude-rektslug
+  ./scripts/mesh live brief --repo rektslug
+  ./scripts/mesh live brief --all --coordinator claude-coordinator
   MESH_MOSH_HOST=sam@10.0.0.2 ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live --host dell-vpn board --lines 0
 EOF

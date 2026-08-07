@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -120,7 +121,7 @@ def test_reader_captures_exact_pane_with_bounded_history(monkeypatch) -> None:
 
     def fake_run(args: list[str], *, timeout: float = 10.0):
         seen.extend(args)
-        return _completed(args, stdout="line one\nline two\n")
+        return _completed(args, stdout="line one\nline two\nline three\nline four\n")
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
@@ -128,13 +129,13 @@ def test_reader_captures_exact_pane_with_bounded_history(monkeypatch) -> None:
     result = module.handle_remote_request(
         {
             "op": "capture",
-            "lines": 80,
+            "lines": 2,
             "targets": [{"owner": "sam", "name": "claude-rektslug", "pane_id": "%7"}],
         }
     )
 
-    assert result["captures"][0]["output"] == "line one\nline two"
-    assert ["capture-pane", "-p", "-S", "-80", "-t", "%7"] == seen[-6:]
+    assert result["captures"][0]["output"] == "line three\nline four"
+    assert ["capture-pane", "-p", "-S", "-2", "-t", "%7"] == seen[-6:]
 
 
 def test_capture_line_bounds_are_enforced() -> None:
@@ -471,6 +472,155 @@ def test_forced_mosh_rejects_proxy_host(monkeypatch) -> None:
 
     with pytest.raises(module.LiveReadError, match="direct VPN/LAN"):
         module.build_attach_plan(endpoint, session, transport="mosh")
+
+
+def test_resolve_coordinator_auto_detects_unique_session_and_rejects_ambiguity() -> None:
+    module = _load_module()
+    sessions = [
+        module.LiveSession(owner="sam", name="claude-coordinator"),
+        module.LiveSession(owner="sam", name="codex-progressive"),
+    ]
+
+    assert module.resolve_coordinator(sessions).name == "claude-coordinator"
+
+    sessions.append(module.LiveSession(owner="mesh-worker", name="codex-coordinator"))
+    with pytest.raises(module.SessionResolutionError, match="multiple coordinator sessions"):
+        module.resolve_coordinator(sessions)
+
+
+def test_redact_capture_removes_credentials_private_keys_and_terminal_sequences() -> None:
+    module = _load_module()
+    raw = "\n".join(
+        [
+            "\x1b[31mstatus\x1b[0m",
+            "Authorization: Bearer very-secret-token",
+            "api_key=sk-abcdefghijklmnopqrstuvwxyz",
+            "github=ghp_abcdefghijklmnopqrstuvwxyz",
+            "-----BEGIN OPENSSH PRIVATE KEY-----",
+            "private-body",
+            "-----END OPENSSH PRIVATE KEY-----",
+        ]
+    )
+
+    redacted = module.redact_capture(raw)
+
+    assert "status" in redacted
+    assert "very-secret-token" not in redacted
+    assert "sk-abcdefghijklmnopqrstuvwxyz" not in redacted
+    assert "ghp_abcdefghijklmnopqrstuvwxyz" not in redacted
+    assert "private-body" not in redacted
+    assert "[REDACTED PRIVATE KEY]" in redacted
+    assert "\x1b" not in redacted
+
+
+def test_redacted_session_dict_does_not_expose_raw_capture_or_error() -> None:
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        output="api_key=secret-output",
+        capture_error="Authorization: Bearer secret-error",
+    )
+
+    encoded = json.dumps(module.redacted_session_dict(session))
+
+    assert "secret-output" not in encoded
+    assert "secret-error" not in encoded
+    assert "[REDACTED]" in encoded
+
+
+def test_build_coordinator_brief_requires_debate_decision_and_delegation() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_path="/data/sata/1TB",
+        pane_command="claude",
+        output="ready",
+    )
+    worker = module.LiveSession(
+        owner="sam",
+        name="codex-progressive",
+        pane_path="/data/sata/1TB/progressive-deploy",
+        pane_command="codex",
+        output="auth_token=secret-value\nwaiting for review",
+    )
+
+    brief = module.build_coordinator_brief(
+        [worker, coordinator],
+        scope="all live repos",
+        coordinator=coordinator,
+    )
+
+    assert "sam/claude-coordinator [COORDINATOR]" in brief
+    assert "sam/codex-progressive" in brief
+    assert "secret-value" not in brief
+    assert "Decision debate" in brief
+    assert "Recommended decision" in brief
+    assert "Delegation plan" in brief
+    assert "wait for explicit human confirmation" in brief
+
+
+def test_main_brief_is_read_only_and_supports_repo_scope(monkeypatch, capsys) -> None:
+    module = _load_module()
+    calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            calls.append("discover")
+            return (
+                [
+                    module.LiveSession(
+                        owner="sam",
+                        name="claude-coordinator",
+                        pane_path="/data/sata/1TB",
+                        pane_command="claude",
+                    ),
+                    module.LiveSession(
+                        owner="sam",
+                        name="claude-rektslug",
+                        pane_path="/data/sata/1TB/rektslug",
+                        pane_command="claude",
+                        repo_name="rektslug",
+                    ),
+                    module.LiveSession(
+                        owner="sam",
+                        name="codex-progressive",
+                        pane_path="/data/sata/1TB/progressive-deploy",
+                        pane_command="codex",
+                    ),
+                ],
+                [],
+            )
+
+        def capture(self, sessions, lines):
+            calls.append(f"capture:{lines}")
+            return [module.replace(item, output=f"tail for {item.name}") for item in sessions], []
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+
+    code = module.main(
+        [
+            "--local",
+            "--users",
+            "sam",
+            "brief",
+            "--repo",
+            "rektslug",
+            "--lines",
+            "12",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert calls == ["discover", "capture:12"]
+    assert "sam/claude-rektslug" in output
+    assert "sam/claude-coordinator [COORDINATOR]" in output
+    assert "codex-progressive" not in output
 
 
 def test_live_module_contains_no_tmux_lifecycle_mutation_primitives() -> None:

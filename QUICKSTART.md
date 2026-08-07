@@ -212,6 +212,7 @@ This enables:
 - `wboard [query] [lines]` (live tmux board via `mesh live`, router/iTerm2 independent)
 - `wpeek <tmux-session> [lines]` (read one live tmux pane)
 - `wsend <tmux-session> [text] [--enter]` (literal send; Enter is always explicit)
+- `wbrief [--repo <repo>|--all]` (redacted dynamic prompt for coordinator debate and delegation)
 - `wsattach <tmux-session>` (persistent attach: direct mosh on VPN/LAN, SSH fallback)
 - `mclaude` / `mcodex` / `mtmux` (create-or-attach persistent named tmux sessions over mosh when a direct host is reachable)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
@@ -251,6 +252,8 @@ mesh live board rektslug --lines 40
 mesh live peek claude-rektslug 120
 mesh live send claude-rektslug "status?" --enter
 mesh live attach claude-rektslug
+mesh live brief --repo rektslug
+mesh live brief --all --coordinator claude-coordinator
 mesh start                      # one-command start (feature label auto-generated)
 mesh run 016                    # existing spec/phase flow
 mesh thread                     # show last thread for current repo
@@ -260,6 +263,7 @@ wss <repo>
 wboard 40
 wpeek claude-rektslug 120
 wsend claude-rektslug "status?" --enter
+wbrief --repo rektslug
 wsattach <tmux-session>
 ```
 

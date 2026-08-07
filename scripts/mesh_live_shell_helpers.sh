@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shell helpers for direct tmux operations on the workstation.
 
-unalias wboard wpeek wsend wsattach wsessions 2>/dev/null || true
+unalias wboard wpeek wsend wbrief wsattach wsessions 2>/dev/null || true
 unalias wtmux wclaude wcodex mtmux mclaude mcodex 2>/dev/null || true
 
 _mesh_live_run() {
@@ -156,6 +156,10 @@ wsend() {
     return 2
   fi
   _mesh_live_control_run live send "$@"
+}
+
+wbrief() {
+  _mesh_live_control_run live brief "$@"
 }
 
 wsattach() {

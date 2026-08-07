@@ -41,6 +41,7 @@ wboard 40
 wboard rektslug 25
 wpeek claude-rektslug 80
 wsend claude-rektslug "status now" --enter
+wbrief --repo rektslug
 """,
     )
 
@@ -64,6 +65,10 @@ wsend claude-rektslug "status now" --enter
         "<claude-rektslug>",
         "<status now>",
         "<--enter>",
+        "<live>",
+        "<brief>",
+        "<--repo>",
+        "<rektslug>",
     ]
 
 
@@ -217,7 +222,8 @@ def test_installed_block_loads_live_and_persistent_helpers(shell: str, tmp_path:
     proc = _run_shell(
         shell,
         f"MESH_HOME={shlex.quote(str(ROOT))}; source {shlex.quote(str(rc_file))}; "
-        "type wboard >/dev/null && type wsend >/dev/null && type wsattach >/dev/null && "
+        "type wboard >/dev/null && type wsend >/dev/null && type wbrief >/dev/null && "
+        "type wsattach >/dev/null && "
         "type mclaude >/dev/null && type mcodex >/dev/null && type mtmux >/dev/null",
     )
 
