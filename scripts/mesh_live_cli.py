@@ -793,11 +793,35 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
     return "\n\n".join(blocks)
 
 
+_PEM_BODY_PREFIXES = ("MII", "b3BlbnNzaC1rZXktdjE", "MHcCAQEE", "MHQCAQEE")
+
+
 def _looks_like_pem_body_line(line: str) -> bool:
     value = str(line or "").strip()
-    if len(value) < 48:
+    if not 16 <= len(value) <= 76 or len(value) % 4:
         return False
-    return bool(re.fullmatch(r"[A-Za-z0-9+/=]+", value))
+    if re.fullmatch(r"[A-Fa-f0-9]+", value):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", value))
+
+
+def _pem_body_line_indexes(lines: Sequence[str]) -> set[int]:
+    redacted: set[int] = set()
+    index = 0
+    while index < len(lines):
+        if not _looks_like_pem_body_line(lines[index]):
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines) and _looks_like_pem_body_line(lines[end]):
+            end += 1
+        values = [lines[item].strip() for item in range(index, end)]
+        long_lines = sum(len(item) >= 48 for item in values)
+        known_prefix = values[0].startswith(_PEM_BODY_PREFIXES)
+        if long_lines >= 2 or (long_lines == 1 and known_prefix):
+            redacted.update(range(index, end))
+        index = end
+    return redacted
 
 
 def redact_capture(text: str) -> str:
@@ -838,10 +862,12 @@ def redact_capture(text: str) -> str:
         "[REDACTED TOKEN]",
         value,
     )
+    lines = value.splitlines()
+    pem_body_lines = _pem_body_line_indexes(lines)
     output: list[str] = []
     in_private_key = False
     redacted_pem_body = False
-    for line in value.splitlines():
+    for index, line in enumerate(lines):
         if "-----BEGIN " in line and "PRIVATE KEY-----" in line:
             output.append("[REDACTED PRIVATE KEY]")
             in_private_key = True
@@ -855,7 +881,7 @@ def redact_capture(text: str) -> str:
             continue
         if in_private_key:
             continue
-        if _looks_like_pem_body_line(line):
+        if index in pem_body_lines:
             if not redacted_pem_body:
                 output.append("[REDACTED PRIVATE KEY BODY]")
                 redacted_pem_body = True

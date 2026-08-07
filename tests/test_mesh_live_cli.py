@@ -776,6 +776,25 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
     assert redacted_body.count("[REDACTED PRIVATE KEY BODY]") == 1
     assert "status after body" in redacted_body
 
+    harmless_encoded_output = "\n".join(
+        [
+            "a" * 128,
+            "0123456789abcdef" * 4,
+            "QWER" + ("B" * 60),
+        ]
+    )
+    assert module.redact_capture(harmless_encoded_output) == harmless_encoded_output
+
+    key_body_with_short_tail = "\n".join(
+        [
+            "MIIE" + ("A" * 60),
+            "QWER" + ("B" * 60),
+            "QUJDREVGR0hJSktM",
+        ]
+    )
+    redacted_short_tail = module.redact_capture(key_body_with_short_tail)
+    assert redacted_short_tail == "[REDACTED PRIVATE KEY BODY]"
+
 
 def test_redacted_session_dict_does_not_expose_raw_capture_or_error() -> None:
     module = _load_module()

@@ -107,8 +107,9 @@ Treat `send` as remote keyboard access, not as a messaging API.
 
 The pane can change between `peek` and `send`. Exact pane selection prevents
 name ambiguity but cannot prevent that race. Redaction removes common terminal
-escapes, credentials, tokens, and private-key blocks on a best-effort basis; it
-is not a DLP boundary.
+escapes, credentials, tokens, marked private-key blocks, and consecutive
+PEM-like Base64 lines on a best-effort basis. Isolated Base64 is preserved, so
+this is not a DLP boundary.
 
 ## Code Map
 
