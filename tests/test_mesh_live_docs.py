@@ -22,6 +22,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "wsattach claude-coordinator",
         "wsend claude-rektslug",
         "tmux owns process/session persistence",
+        "MESH_LIVE_HOSTS",
         "router database",
         "iTerm2 local state",
         "Treat `send` as remote keyboard access",

@@ -138,11 +138,42 @@ def test_reader_captures_exact_pane_with_bounded_history(monkeypatch) -> None:
     assert ["capture-pane", "-p", "-S", "-2", "-t", "%7"] == seen[-6:]
 
 
+def test_reader_redacts_capture_before_returning_response(monkeypatch) -> None:
+    module = _load_module()
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        return _completed(
+            args,
+            stdout=(
+                "OPENAI_API_KEY=super-secret-token-123456\n"
+                "Authorization: Bearer another-secret-token-123456\n"
+            ),
+        )
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "capture",
+            "lines": 2,
+            "targets": [{"owner": "sam", "name": "claude-rektslug", "pane_id": "%7"}],
+        }
+    )
+    encoded = json.dumps(result)
+
+    assert "super-secret-token-123456" not in encoded
+    assert "another-secret-token-123456" not in encoded
+    assert "[REDACTED]" in encoded
+
+
 def test_capture_line_bounds_are_enforced() -> None:
     module = _load_module()
 
     assert module.validate_capture_lines(0, allow_zero=True) == 0
     assert module.validate_capture_lines(2000, allow_zero=False) == 2000
+    with pytest.raises(ValueError, match="integer"):
+        module.validate_capture_lines("many", allow_zero=False)
     with pytest.raises(ValueError, match="between 1 and 2000"):
         module.validate_capture_lines(0, allow_zero=False)
     with pytest.raises(ValueError, match="between 0 and 2000"):
@@ -247,6 +278,37 @@ def test_live_client_enriches_discovery_with_capture_results() -> None:
     ]
 
 
+def test_live_client_redacts_capture_payloads_from_request_function() -> None:
+    module = _load_module()
+
+    def fake_request(endpoint, payload):
+        if payload["op"] == "discover":
+            return {
+                "sessions": [{"owner": "sam", "name": "claude-rektslug", "pane_id": "%7"}],
+                "warnings": [],
+            }
+        return {
+            "captures": [
+                {
+                    "owner": "sam",
+                    "name": "claude-rektslug",
+                    "output": "CLOUDFLARE_API_TOKEN=cf-secret-token-123456",
+                    "error": "password=bad-secret-123456",
+                }
+            ],
+            "warnings": [],
+        }
+
+    endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
+    client = module.LiveClient(endpoint, request_fn=fake_request)
+
+    sessions, _ = client.discover()
+    captured, _ = client.capture(sessions, 40)
+
+    assert "cf-secret-token-123456" not in captured[0].output
+    assert "bad-secret-123456" not in captured[0].capture_error
+
+
 def test_remote_request_keeps_payload_out_of_ssh_arguments(monkeypatch) -> None:
     module = _load_module()
     observed: dict = {}
@@ -278,6 +340,57 @@ def test_default_users_are_valid_and_deduplicated(monkeypatch) -> None:
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
 
     assert module._default_users("sam@10.0.0.2") == ("sam", "mesh-worker", "mesh")
+
+
+def test_host_candidates_prefer_explicit_host_then_configured_fallbacks(monkeypatch) -> None:
+    module = _load_module()
+    args = module.argparse.Namespace(host="", local=False, users="")
+
+    monkeypatch.delenv("MESH_LIVE_HOSTS", raising=False)
+    monkeypatch.delenv("MESH_WS_HOST", raising=False)
+    monkeypatch.delenv("MESH_WS_VPN_HOST", raising=False)
+    monkeypatch.delenv("MESH_WS_LAN_HOST", raising=False)
+    monkeypatch.delenv("MESH_WS_CLOUDFLARE_HOST", raising=False)
+    assert module._host_candidates_from_args(args) == module.DEFAULT_WS_HOSTS
+
+    monkeypatch.setenv("MESH_WS_HOST", "sam@192.168.1.111")
+    assert module._host_candidates_from_args(args) == (
+        "sam@192.168.1.111",
+        *module.DEFAULT_WS_HOSTS,
+    )
+
+    monkeypatch.delenv("MESH_WS_HOST", raising=False)
+    monkeypatch.setenv("MESH_WS_VPN_HOST", "vpn-alias")
+    monkeypatch.setenv("MESH_WS_LAN_HOST", "lan-alias")
+    monkeypatch.setenv("MESH_WS_CLOUDFLARE_HOST", "cloudflare-alias")
+    assert module._host_candidates_from_args(args) == (
+        "vpn-alias",
+        "lan-alias",
+        "cloudflare-alias",
+    )
+
+    monkeypatch.setenv("MESH_LIVE_HOSTS", "first, second, first")
+    assert module._host_candidates_from_args(args) == ("first", "second")
+
+    args.host = "only-this-host"
+    assert module._host_candidates_from_args(args) == ("only-this-host",)
+
+
+def test_host_is_local_matches_configured_interface_ip(monkeypatch) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(module.socket, "gethostname", lambda: "sam7670")
+    monkeypatch.setattr(module.socket, "getfqdn", lambda: "sam7670.local")
+    monkeypatch.setattr(module, "_local_interface_addresses", lambda: {"10.0.0.2", "172.23.0.42"})
+    monkeypatch.setattr(
+        module,
+        "_resolve_host_addresses",
+        lambda host: {"10.0.0.2"} if host in {"dell-lan", "sam@dell-lan"} else {host},
+    )
+
+    assert module.host_is_local("sam@10.0.0.2") is True
+    assert module.host_is_local("dell-lan") is True
+    assert module.host_is_local("remote.example.com") is False
 
 
 def test_ssh_options_disable_multiplexing_for_proxy_hosts(monkeypatch, tmp_path: Path) -> None:
@@ -389,6 +502,20 @@ def test_live_client_send_uses_discovered_owner_and_pane() -> None:
     }
 
 
+def test_live_client_send_raises_reader_error() -> None:
+    module = _load_module()
+
+    def fake_request(endpoint, payload):
+        return {"error": "pane disappeared"}
+
+    endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
+    client = module.LiveClient(endpoint, request_fn=fake_request)
+    session = module.LiveSession(owner="sam", name="claude-rektslug", pane_id="%7")
+
+    with pytest.raises(module.LiveReadError, match="pane disappeared"):
+        client.send(session, "status?", enter=False)
+
+
 def test_attach_auto_uses_mosh_only_for_reachable_direct_host(monkeypatch) -> None:
     module = _load_module()
     endpoint = module.LiveEndpoint(host="sam@10.0.0.2", local=False, users=("sam",))
@@ -472,6 +599,46 @@ def test_forced_mosh_rejects_proxy_host(monkeypatch) -> None:
 
     with pytest.raises(module.LiveReadError, match="direct VPN/LAN"):
         module.build_attach_plan(endpoint, session, transport="mosh")
+
+
+def test_attach_rejects_invalid_transport_owner_missing_host_and_mosh_binary(monkeypatch) -> None:
+    module = _load_module()
+    session = module.LiveSession(owner="sam", name="claude-rektslug")
+    remote = module.LiveEndpoint(host="", local=False, users=("sam",))
+
+    with pytest.raises(ValueError, match="unsupported attach transport"):
+        module.build_attach_plan(remote, session, transport="telnet")
+
+    with pytest.raises(module.LiveReadError, match="mosh is not installed"):
+        monkeypatch.setattr(module.shutil, "which", lambda name: None)
+        module.build_attach_plan(
+            module.LiveEndpoint(host="sam@10.0.0.2", local=False, users=("sam",)),
+            session,
+            transport="mosh",
+        )
+
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/opt/local/bin/mosh")
+    with pytest.raises(module.LiveReadError, match="missing direct mosh host"):
+        module.build_attach_plan(remote, session, transport="mosh")
+
+    local = module.LiveEndpoint(host="localhost", local=True, users=("sam",))
+    with pytest.raises(ValueError, match="invalid tmux owner"):
+        module.build_attach_plan(local, module.LiveSession(owner="bad;user", name="x"))
+
+
+def test_tmux_attach_remote_command_validates_owner_and_session() -> None:
+    module = _load_module()
+
+    assert module._tmux_attach_remote_command("sam", "claude-main", "sam") == (
+        "exec tmux attach -t claude-main"
+    )
+    assert module._tmux_attach_remote_command("mesh-worker", "codex main", "sam") == (
+        "exec sudo -n -u mesh-worker tmux attach -t 'codex main'"
+    )
+    with pytest.raises(ValueError, match="invalid tmux owner"):
+        module._tmux_attach_remote_command("bad;user", "x", "sam")
+    with pytest.raises(ValueError, match="missing tmux session"):
+        module._tmux_attach_remote_command("sam", "", "sam")
 
 
 def test_resolve_coordinator_auto_detects_unique_session_and_rejects_ambiguity() -> None:
@@ -564,6 +731,86 @@ def test_build_coordinator_brief_requires_debate_decision_and_delegation() -> No
     assert "Never imply that a router task targets an existing manual tmux session" in brief
 
 
+def test_request_endpoint_supports_local_missing_host_ssh_failure_and_json_parsing(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(
+        module,
+        "handle_remote_request",
+        lambda payload: {"sessions": [{"owner": "sam", "name": "local"}], "warnings": []},
+    )
+    local = module.LiveEndpoint(host="localhost", local=True, users=("sam",))
+    assert module.request_endpoint(local, {"op": "discover"})["sessions"][0]["name"] == "local"
+
+    with pytest.raises(module.LiveReadError, match="missing remote host"):
+        module.request_endpoint(module.LiveEndpoint(host="", local=False, users=("sam",)), {})
+
+    assert module._parse_json_response("noise\n[]\n{\"ok\": true}\n") == {"ok": True}
+    with pytest.raises(module.LiveReadError, match="no JSON"):
+        module._parse_json_response("noise only")
+
+    def fake_run_failed(args, **kwargs):
+        return _completed(args, returncode=7, stderr="ssh failed")
+
+    monkeypatch.setattr(module, "_ssh_options", lambda host="": [])
+    monkeypatch.setattr(module.subprocess, "run", fake_run_failed)
+    with pytest.raises(module.LiveReadError, match="reader failed on dell-vpn: ssh failed"):
+        module.request_endpoint(module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",)), {})
+
+    def fake_run_raises(args, **kwargs):
+        raise OSError("network down")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run_raises)
+    with pytest.raises(module.LiveReadError, match="unable to run reader"):
+        module.request_endpoint(module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",)), {})
+
+
+def test_ssh_config_helpers_cover_proxy_login_and_reachability(monkeypatch) -> None:
+    module = _load_module()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        calls.append(args)
+        if args[:2] == ["ssh", "-G"]:
+            host = args[-1]
+            if host == "proxy":
+                return _completed(args, stdout="user sam\nhostname 10.0.0.2\nproxyjump jump\n")
+            if host == "direct":
+                return _completed(args, stdout="user dell\nhostname 172.23.0.42\nport 2222\n")
+            if host == "bad":
+                return _completed(args, returncode=1, stderr="bad host")
+            raise OSError("ssh missing")
+        raise AssertionError(f"unexpected command: {args}")
+
+    class FakeConnection:
+        def close(self):
+            calls.append(["closed"])
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(
+        module.socket,
+        "create_connection",
+        lambda address, timeout=1.0: FakeConnection(),
+    )
+
+    assert module.ssh_host_uses_proxy("proxy") is True
+    assert module.ssh_host_uses_proxy("direct") is False
+    assert module.ssh_host_uses_proxy("bad") is True
+    assert module._remote_login_user("direct") == "dell"
+    assert module._remote_login_user("sam@fallback") == "sam"
+    assert module._direct_host_reachable("direct") is True
+    assert ["closed"] in calls
+
+    monkeypatch.setattr(
+        module.socket,
+        "create_connection",
+        lambda address, timeout=1.0: (_ for _ in ()).throw(OSError("closed")),
+    )
+    assert module._direct_host_reachable("direct") is False
+
+
 def test_main_brief_is_read_only_and_supports_repo_scope(monkeypatch, capsys) -> None:
     module = _load_module()
     calls: list[str] = []
@@ -626,6 +873,136 @@ def test_main_brief_is_read_only_and_supports_repo_scope(monkeypatch, capsys) ->
     assert "codex-progressive" not in output
 
 
+def test_main_board_json_peek_send_and_attach_error_paths(monkeypatch, capsys) -> None:
+    module = _load_module()
+    sends: list[dict] = []
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            return (
+                [
+                    module.LiveSession(
+                        owner="sam",
+                        name="claude-rektslug",
+                        pane_id="%7",
+                        output="OPENAI_API_KEY=raw-secret",
+                    )
+                ],
+                ["discover warning"],
+            )
+
+        def capture(self, sessions, lines):
+            captured = [
+                module.replace(item, output="OPENAI_API_KEY=raw-secret", capture_error="")
+                for item in sessions
+            ]
+            return captured, ["capture warning"]
+
+        def send(self, session, text, *, enter):
+            sends.append({"session": session.name, "text": text, "enter": enter})
+            return {
+                "owner": session.owner,
+                "name": session.name,
+                "pane_id": session.pane_id,
+                "text_sent": bool(text),
+                "enter_sent": bool(enter),
+            }
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+    monkeypatch.setattr(module, "host_is_local", lambda host: True)
+
+    assert module.main(["--local", "board", "--lines", "2", "--json"]) == 0
+    output = capsys.readouterr()
+    assert "raw-secret" not in output.out
+    assert "discover warning" in output.err
+    assert "capture warning" in output.err
+
+    assert module.main(["--local", "peek", "claude-rektslug", "2", "--json"]) == 0
+    output = capsys.readouterr()
+    assert "raw-secret" not in output.out
+
+    assert module.main(["--local", "send", "claude-rektslug", "status?", "--enter"]) == 0
+    output = capsys.readouterr()
+    assert "target=sam/claude-rektslug pane=%7 text=yes enter=yes" in output.out
+    assert sends[-1] == {"session": "claude-rektslug", "text": "status?", "enter": True}
+
+    assert module.main(["--local", "attach", "claude-rektslug"]) == 2
+    output = capsys.readouterr()
+    assert "attach requires an interactive terminal" in output.err
+
+
+def test_main_brief_rejects_conflicting_or_empty_scope(monkeypatch, capsys) -> None:
+    module = _load_module()
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            return [module.LiveSession(owner="sam", name="claude-rektslug")], []
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+    monkeypatch.setattr(module, "host_is_local", lambda host: True)
+
+    assert module.main(["--local", "brief", "rektslug", "--repo", "other"]) == 2
+    assert "either --repo or a positional query" in capsys.readouterr().err
+
+    assert module.main(["--local", "brief", "--repo", "missing"]) == 2
+    assert "no live sessions matched" in capsys.readouterr().err
+
+    assert module.main(["--local", "brief", "rektslug", "--all"]) == 2
+    assert "--all cannot be combined" in capsys.readouterr().err
+
+
+def test_main_falls_back_to_second_live_host(monkeypatch, capsys) -> None:
+    module = _load_module()
+    attempts: list[str] = []
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            attempts.append(self.endpoint.host)
+            if self.endpoint.host == "sam@10.0.0.2":
+                raise module.LiveReadError("wireguard down")
+            return [module.LiveSession(owner="sam", name="claude-rektslug")], []
+
+        def capture(self, sessions, lines):
+            return list(sessions), []
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+    monkeypatch.setattr(module, "host_is_local", lambda host: False)
+    monkeypatch.setenv("MESH_LIVE_HOSTS", "sam@10.0.0.2,sam@172.23.0.42")
+
+    code = module.main(["board", "--lines", "0"])
+
+    output = capsys.readouterr()
+    assert code == 0
+    assert attempts == ["sam@10.0.0.2", "sam@172.23.0.42"]
+    assert "skipped failed live host sam@10.0.0.2: wireguard down" in output.err
+    assert "sam/claude-rektslug" in output.out
+
+
+def test_main_remote_payload_mode_success_and_error(monkeypatch, capsys) -> None:
+    module = _load_module()
+    module._REMOTE_PAYLOAD = {"op": "discover", "users": ["sam"]}
+    monkeypatch.setattr(module, "handle_remote_request", lambda payload: {"ok": True})
+
+    assert module.main([]) == 0
+    assert capsys.readouterr().out.strip() == '{"ok":true}'
+
+    module = _load_module()
+    module._REMOTE_PAYLOAD = {"op": "bogus"}
+
+    assert module.main([]) == 1
+    output = capsys.readouterr().out
+    assert "unsupported live operation" in output
+
+
 def test_live_module_contains_no_tmux_lifecycle_mutation_primitives() -> None:
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_live_cli.py"
     source = script_path.read_text(encoding="utf-8")
@@ -650,6 +1027,8 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert "mesh live peek" in proc.stdout
     assert "mesh live send" in proc.stdout
     assert "mesh live attach" in proc.stdout
+    assert "MESH_LIVE_HOSTS" in proc.stdout
+    assert "MESH_WS_CLOUDFLARE_HOST" in proc.stdout
     assert "does not require the router or iTerm2" in proc.stdout
 
 

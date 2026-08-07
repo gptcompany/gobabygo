@@ -17,6 +17,9 @@ from typing import Any, Callable, Sequence
 
 
 DEFAULT_WS_HOST = "sam@10.0.0.2"
+DEFAULT_WS_LAN_HOST = "sam@172.23.0.42"
+DEFAULT_WS_CLOUDFLARE_HOST = "dell7670"
+DEFAULT_WS_HOSTS = (DEFAULT_WS_HOST, DEFAULT_WS_LAN_HOST, DEFAULT_WS_CLOUDFLARE_HOST)
 DEFAULT_BOARD_LINES = 20
 DEFAULT_PEEK_LINES = 120
 MAX_CAPTURE_LINES = 2000
@@ -142,8 +145,8 @@ class LiveClient:
             enriched.append(
                 replace(
                     session,
-                    output=str(capture.get("output") or ""),
-                    capture_error=str(capture.get("error") or ""),
+                    output=redact_capture(str(capture.get("output") or "")),
+                    capture_error=redact_capture(str(capture.get("error") or "")),
                 )
             )
         warnings = [str(item) for item in response.get("warnings", []) if str(item).strip()]
@@ -346,10 +349,12 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, str],
         result["error"] = str(exc)
         return result, []
     if proc.returncode != 0:
-        result["error"] = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+        result["error"] = redact_capture(
+            (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+        )
     else:
         captured_lines = proc.stdout.rstrip("\n").splitlines()
-        result["output"] = "\n".join(captured_lines[-lines:])
+        result["output"] = redact_capture("\n".join(captured_lines[-lines:]))
     return result, []
 
 
@@ -439,6 +444,41 @@ def _host_without_user(host: str) -> str:
     return value.split(":", 1)[0]
 
 
+def _resolve_host_addresses(host: str) -> set[str]:
+    target = _host_without_user(host).strip()
+    if not target:
+        return set()
+    try:
+        infos = socket.getaddrinfo(target, None)
+    except OSError:
+        return {target}
+    addresses = {str(info[4][0]).lower() for info in infos if info and info[4]}
+    return addresses or {target.lower()}
+
+
+def _local_interface_addresses() -> set[str]:
+    addresses = {"127.0.0.1", "::1"}
+    connection = os.environ.get("SSH_CONNECTION", "").split()
+    if len(connection) >= 3:
+        addresses.add(connection[2].lower())
+    for name in {socket.gethostname(), socket.getfqdn()}:
+        if name:
+            addresses.update(_resolve_host_addresses(name))
+
+    commands = (["ip", "-o", "addr", "show"], ["ifconfig"])
+    for command in commands:
+        try:
+            proc = _run_command(command, timeout=2.0)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode != 0:
+            continue
+        for match in re.finditer(r"\binet6?\s+(?:addr:)?([0-9A-Fa-f:.]+)", proc.stdout):
+            addresses.add(match.group(1).split("/", 1)[0].lower())
+        break
+    return {item for item in addresses if item}
+
+
 def host_is_local(host: str) -> bool:
     target = _host_without_user(host).lower()
     if target in {"", "localhost", "127.0.0.1", "::1"}:
@@ -447,7 +487,12 @@ def host_is_local(host: str) -> bool:
     if target in local_names:
         return True
     connection = os.environ.get("SSH_CONNECTION", "").split()
-    return len(connection) >= 3 and target == connection[2].lower()
+    if len(connection) >= 3 and target == connection[2].lower():
+        return True
+    local_addresses = _local_interface_addresses()
+    if target in local_addresses:
+        return True
+    return bool(_resolve_host_addresses(target) & local_addresses)
 
 
 def _ssh_options(host: str = "") -> list[str]:
@@ -726,9 +771,9 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
             f"| cmd={command}{role} | {location} ==="
         )
         if session.capture_error:
-            blocks.append(f"[capture error] {session.capture_error}")
+            blocks.append(f"[capture error] {redact_capture(session.capture_error)}")
         elif session.output:
-            blocks.append(session.output)
+            blocks.append(redact_capture(session.output))
         else:
             blocks.append("[no captured output]")
     return "\n\n".join(blocks)
@@ -750,7 +795,17 @@ def redact_capture(text: str) -> str:
         value,
     )
     value = re.sub(
-        r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|AKIA[A-Z0-9]{16})\b",
+        r"(?i)\b([A-Z0-9_.-]*(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|"
+        r"AUTH[_-]?TOKEN|CLIENT[_-]?SECRET|PRIVATE[_-]?KEY|PASSWORD|PASS|SECRET|TOKEN)"
+        r"[A-Z0-9_.-]*)"
+        r"(\s*[:=]\s*)(['\"]?)[^'\"\s,}]{6,}(['\"]?)",
+        r"\1\2\3[REDACTED]\4",
+        value,
+    )
+    value = re.sub(
+        r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|AKIA[A-Z0-9]{16}|"
+        r"xox[abprs]-[A-Za-z0-9-]{16,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+        r"\.[A-Za-z0-9_-]+)\b",
         "[REDACTED TOKEN]",
         value,
     )
@@ -890,12 +945,44 @@ def _default_users(host: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _split_hosts(raw: str) -> tuple[str, ...]:
+    result: list[str] = []
+    for item in str(raw or "").split(","):
+        host = item.strip()
+        if host and host not in result:
+            result.append(host)
+    return tuple(result)
+
+
+def _host_candidates_from_args(args: argparse.Namespace) -> tuple[str, ...]:
+    explicit_host = str(getattr(args, "host", "") or "").strip()
+    if explicit_host:
+        return (explicit_host,)
+
+    configured_hosts = _split_hosts(os.environ.get("MESH_LIVE_HOSTS", ""))
+    if configured_hosts:
+        return configured_hosts
+
+    candidates: list[str] = []
+    configured_host = os.environ.get("MESH_WS_HOST", "").strip()
+    if configured_host:
+        candidates.append(configured_host)
+    candidates.extend(
+        [
+            os.environ.get("MESH_WS_VPN_HOST", "").strip() or DEFAULT_WS_HOST,
+            os.environ.get("MESH_WS_LAN_HOST", "").strip() or DEFAULT_WS_LAN_HOST,
+            os.environ.get("MESH_WS_CLOUDFLARE_HOST", "").strip() or DEFAULT_WS_CLOUDFLARE_HOST,
+        ]
+    )
+    return tuple(dict.fromkeys(item for item in candidates if item))
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Operate live tmux sessions without router or iTerm2.")
     parser.add_argument(
         "--host",
-        default=os.environ.get("MESH_WS_HOST", DEFAULT_WS_HOST),
-        help=f"SSH target hosting tmux. Default: MESH_WS_HOST or {DEFAULT_WS_HOST}",
+        default="",
+        help="SSH target hosting tmux. Overrides MESH_LIVE_HOSTS and default fallback hosts.",
     )
     parser.add_argument(
         "--local",
@@ -961,7 +1048,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _endpoint_from_args(args: argparse.Namespace) -> LiveEndpoint:
+def _users_from_args(args: argparse.Namespace, host: str) -> tuple[str, ...]:
     if args.users:
         users = tuple(
             user.strip()
@@ -969,12 +1056,39 @@ def _endpoint_from_args(args: argparse.Namespace) -> LiveEndpoint:
             if user.strip() and _SAFE_USER.fullmatch(user.strip())
         )
     else:
-        users = _default_users(args.host)
+        users = _default_users(host)
+    return tuple(dict.fromkeys(users))
+
+
+def _endpoint_from_args(args: argparse.Namespace, host: str | None = None) -> LiveEndpoint:
+    endpoint_host = str(host if host is not None else getattr(args, "host", "") or DEFAULT_WS_HOST)
     return LiveEndpoint(
-        host=args.host,
-        local=bool(args.local or host_is_local(args.host)),
-        users=tuple(dict.fromkeys(users)),
+        host=endpoint_host,
+        local=bool(args.local or host_is_local(endpoint_host)),
+        users=_users_from_args(args, endpoint_host),
     )
+
+
+def _endpoints_from_args(args: argparse.Namespace) -> list[LiveEndpoint]:
+    if args.local:
+        host = str(getattr(args, "host", "") or "localhost")
+        return [_endpoint_from_args(args, host)]
+    return [_endpoint_from_args(args, host) for host in _host_candidates_from_args(args)]
+
+
+def _discover_with_fallback(args: argparse.Namespace) -> tuple[LiveClient, list[LiveSession], list[str]]:
+    failures: list[str] = []
+    for endpoint in _endpoints_from_args(args):
+        client = LiveClient(endpoint)
+        try:
+            sessions, warnings = client.discover()
+        except LiveReadError as exc:
+            failures.append(f"{endpoint.host or 'local'}: {exc}")
+            continue
+        fallback_warnings = [f"skipped failed live host {item}" for item in failures]
+        return client, sessions, [*fallback_warnings, *warnings]
+    detail = "; ".join(failures) if failures else "no live hosts configured"
+    raise LiveReadError(f"all live hosts failed: {detail}")
 
 
 def _print_warnings(warnings: Sequence[str]) -> None:
@@ -999,8 +1113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             lines = validate_capture_lines(args.lines, allow_zero=False)
         else:
             lines = 0
-        client = LiveClient(_endpoint_from_args(args))
-        sessions, warnings = client.discover()
+        client, sessions, warnings = _discover_with_fallback(args)
         _print_warnings(warnings)
 
         if args.cmd == "board":
@@ -1008,7 +1121,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             selected, capture_warnings = client.capture(selected, lines)
             _print_warnings(capture_warnings)
             if args.json:
-                print(json.dumps({"sessions": [asdict(item) for item in selected]}, indent=2))
+                print(
+                    json.dumps(
+                        {"sessions": [redacted_session_dict(item) for item in selected]},
+                        indent=2,
+                    )
+                )
             else:
                 print(render_board(selected))
             return 1 if any(item.capture_error for item in selected) else 0
@@ -1069,11 +1187,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_warnings(capture_warnings)
             result = captured[0]
             if args.json:
-                print(json.dumps(asdict(result), indent=2))
+                print(json.dumps(redacted_session_dict(result), indent=2))
             elif result.capture_error:
                 print(f"Error: {result.capture_error}", file=sys.stderr)
             else:
-                print(result.output)
+                print(redact_capture(result.output))
             return 1 if result.capture_error else 0
 
         if args.cmd == "send":

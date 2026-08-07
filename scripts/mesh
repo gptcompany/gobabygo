@@ -592,13 +592,18 @@ Usage:
 Behavior:
   mesh live reads tmux directly on the configured workstation.
   It does not require the router or iTerm2.
+  Captured pane output is redacted before display and JSON output.
   send is literal and does not submit text unless --enter is explicit.
   send still acts as remote keyboard input; verify pane state immediately beforehand.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
   brief builds a best-effort redacted read-only prompt; review it before pasting.
 
 Env:
-  MESH_WS_HOST       SSH target hosting tmux (default: sam@10.0.0.2)
+  MESH_WS_HOST       preferred SSH target hosting tmux
+  MESH_LIVE_HOSTS    comma-separated SSH targets tried in order
+  MESH_WS_VPN_HOST   direct VPN host fallback (default: sam@10.0.0.2)
+  MESH_WS_LAN_HOST   direct LAN host fallback (default: sam@172.23.0.42)
+  MESH_WS_CLOUDFLARE_HOST  SSH alias fallback (default: dell7670)
   MESH_LIVE_USERS    comma-separated tmux owners to inspect
   MESH_LIVE_LOCAL    set to 1 to inspect tmux on this machine
   MESH_MOSH_HOST     optional direct VPN/LAN host for persistent attach

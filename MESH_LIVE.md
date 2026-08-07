@@ -90,6 +90,7 @@ transports; losing either transport does not terminate the tmux work.
 - Direct reachable VPN/LAN host: `attach` prefers mosh.
 - ProxyJump or Cloudflare SSH host: `attach` falls back to SSH.
 - Read-only and send controls use short SSH calls.
+- `MESH_LIVE_HOSTS` can set an explicit comma-separated fallback order for `mesh live`.
 - `MESH_WS_CONTROL_HOST` forces the shell-helper control host.
 - `MESH_MOSH_HOST` must be a trusted direct VPN/LAN endpoint.
 
