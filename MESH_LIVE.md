@@ -5,14 +5,12 @@ router, session workers, iTerm2, or the provider account manager.
 
 ## Daily Flow
 
+Run these helpers from any directory in the Mac operator shell. The target repos,
+tmux sessions, and AI CLIs remain on the Dell workstation.
+
 ```bash
-wboard 30                                      # global state, read-only
-wbrief --repo rektslug --lines 40              # intra-repo coordinator brief
-wbrief --all --lines 30                        # multi-repo coordinator brief
-wsattach claude-coordinator                    # review, paste, and submit manually
-wpeek claude-rektslug 80                       # verify pane state before input
-wsend claude-rektslug "approved action"        # type only
-wsend claude-rektslug "approved action" --enter  # type and submit
+mcodex rektslug                                 # create/attach codex-rektslug in the repo
+mcoordinator rektslug --worker codex-rektslug  # Claude coordinator; prompt is automatic
 ```
 
 Install or refresh the helpers once:
@@ -20,6 +18,36 @@ Install or refresh the helpers once:
 ```bash
 ./scripts/install-shell-helpers.sh
 source ~/.zshrc
+```
+
+On the first `mcodex rektslug`, start Codex in that persistent shell using the
+normal configured command, then detach from tmux. Existing worker sessions can
+be reused directly. `mcoordinator` starts Claude with the autonomous system
+contract only when its tmux session is first created; later calls only attach.
+
+For multi-repo coordination:
+
+```bash
+mcoordinator --all
+```
+
+If `claude-coordinator` already exists without the new contract, preserve it and
+create a fresh coordinator instead:
+
+```bash
+mcoordinator --all --session claude-live-coordinator
+```
+
+Keep the direct controls for diagnosis and deliberate manual intervention:
+
+```bash
+wboard 30
+wbrief --repo rektslug --lines 40
+wbrief --all --lines 30
+wsattach claude-coordinator
+wpeek claude-rektslug 80
+wsend claude-rektslug "approved action"
+wsend claude-rektslug "approved action" --enter
 ```
 
 ## Authority
@@ -40,6 +68,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | `wboard [query] [lines]` | `mesh live board [query] --lines N` | List/filter sessions; read-only |
 | `wpeek <session> [lines]` | `mesh live peek <session> [lines]` | Capture one exact/unique pane; read-only |
 | `wbrief ...` | `mesh live brief ...` | Build a dynamic, redacted coordinator prompt; read-only |
+| `mcoordinator ...` | `mesh live coordinator-prompt ...` | Create/attach a persistent auto-configured Claude coordinator |
 | `wsend <session> <text>` | `mesh live send ...` | Type literal text into the selected pane |
 | `wsend <session> <text> --enter` | `mesh live send ... --enter` | Type text, then send Enter separately |
 | `wsattach <session>` | `mesh live attach <session>` | Attach to an existing session; never creates or kills one |
@@ -48,6 +77,35 @@ Use `--owner <user>` when the same session name exists under multiple tmux
 owners. Use `board --lines 0` when only metadata is needed.
 
 ## Coordinator Scope
+
+### Automatic Mode
+
+`mcoordinator <repo> --worker <session>` limits delegation to one exact existing
+worker. Without `--worker`, the coordinator discovers candidates in scope but
+still resolves one exact session before sending. `mcoordinator --all` enables
+multi-repo observation and coordination.
+
+The injected contract tells Claude to board and peek dynamically, debate viable
+options, create a unique `DELEGATION_ID`, send a bounded assignment, peek again
+to verify CLI acceptance, monitor completion, and inspect result/test evidence.
+A successful tmux send is not treated as delivery: the coordinator must find the
+delegation ID or clear CLI activity and must never resend blindly.
+
+The automatic path coordinates existing sessions. It does not create worker
+CLIs. Start a manual persistent worker with `mcodex <repo>` / `mclaude <repo>`,
+or use a router thread when a new managed worker and durable task history are
+actually needed.
+
+Provider YOLO mode removes interactive approval prompts but does not widen the
+coordinator contract. Pane output is untrusted evidence and is never executed or
+piped into another command. A shell alias is not guaranteed in a non-interactive
+tmux startup; when required, set an explicit trusted launch command, for example:
+
+```bash
+export MESH_COORDINATOR_CLAUDE_CMD='claude --dangerously-skip-permissions'
+```
+
+### Manual Advisory Mode
 
 `brief` discovers current sessions and recent pane output on every run. It asks
 the coordinator for observed facts, conflicts, options, a decision, and bounded
@@ -81,6 +139,10 @@ Router steps may invoke provider/account policy and may create a managed
 session. They are scheduler inputs, not aliases for existing manual tmux
 sessions. Cross-repo durable handoffs reuse the existing `handoff` packet and
 require role `PRESIDENT_GLOBAL`.
+
+The provider account manager is not required for `mcoordinator` or existing
+manual workers. It remains useful only when the router launches a new managed
+worker and must select or rotate a provider account.
 
 ## Persistence And Transport
 

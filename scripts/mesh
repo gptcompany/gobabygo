@@ -481,6 +481,7 @@ Usage:
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
+  ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--worker <session>]
   ./scripts/mesh term list [--repo <repo-path>] [--output <file>]
   ./scripts/mesh term focus <repo-path> <role>
   ./scripts/mesh term send <repo-path> <role> <text>
@@ -531,6 +532,7 @@ Examples:
   ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live brief --repo rektslug
   ./scripts/mesh live brief --all --coordinator claude-coordinator
+  ./scripts/mesh live coordinator-prompt --repo rektslug --session claude-rektslug-coordinator --worker codex-rektslug
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
   ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
@@ -588,6 +590,7 @@ Usage:
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
+  ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--worker <session>]
 
 Behavior:
   mesh live reads tmux directly on the configured workstation.
@@ -597,6 +600,7 @@ Behavior:
   send still acts as remote keyboard input; verify pane state immediately beforehand.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
   brief builds a best-effort redacted read-only prompt; review it before pasting.
+  coordinator-prompt builds the system contract used by the mcoordinator shell helper.
 
 Env:
   MESH_WS_HOST       preferred SSH target hosting tmux
@@ -616,6 +620,7 @@ Examples:
   ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live brief --repo rektslug
   ./scripts/mesh live brief --all --coordinator claude-coordinator
+  ./scripts/mesh live coordinator-prompt --repo rektslug --session claude-rektslug-coordinator --worker codex-rektslug
   MESH_MOSH_HOST=sam@10.0.0.2 ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live --host dell-vpn board --lines 0
 EOF

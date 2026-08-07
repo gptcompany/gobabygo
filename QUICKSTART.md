@@ -214,7 +214,8 @@ This enables:
 - `wsend <tmux-session> [text] [--enter]` (literal send; Enter is always explicit)
 - `wbrief [--repo <repo>|--all]` (redacted dynamic prompt for coordinator debate and delegation)
 - `wsattach <tmux-session>` (persistent attach: direct mosh on VPN/LAN, SSH fallback)
-- `mclaude` / `mcodex` / `mtmux` (create-or-attach persistent named tmux sessions over mosh when a direct host is reachable)
+- `mclaude <repo>` / `mcodex <repo>` / `mtmux <repo>` (create-or-attach a persistent named tmux shell in that repo)
+- `mcoordinator [<repo>|--all] [--worker <session>]` (create-or-attach an auto-configured Claude coordinator)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh` with no args (interactive current-repo-root launcher: `attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` (comando canonico: apre il layout iTerm2 del repo; default minimale `boss,president`)
@@ -267,6 +268,8 @@ wpeek claude-rektslug 120
 wsend claude-rektslug "status?" --enter
 wbrief --repo rektslug
 wsattach <tmux-session>
+mcoordinator rektslug --worker codex-rektslug
+mcoordinator --all
 ```
 
 `mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach`, `mesh session manage`, and `mesh ui resume` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
@@ -278,6 +281,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - tmux is authoritative for existing live sessions
 - router DB is authoritative for durable managed orchestration
 - iTerm2 is optional layout/UX
+- `mcoordinator <repo>` is the default automatic intra-repo path; `mcoordinator --all` is multi-repo
+- run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
+- existing coordinator sessions are only attached; use `--session <fresh-name>` for a non-destructive bootstrap
 - `wbrief --repo <repo>` is intra-repo; `wbrief --all` is multi-repo
 - review with `wpeek` before every sensitive `wsend`; `--enter` is explicit execution
 
