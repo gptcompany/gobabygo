@@ -789,17 +789,24 @@ def redact_capture(text: str) -> str:
         value,
     )
     value = re.sub(
-        r"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|password|secret)"
-        r"(\s*[:=]\s*)\S+",
+        r"(?i)([\"']?[A-Z0-9_.-]*(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|"
+        r"AUTH[_-]?TOKEN|CLIENT[_-]?SECRET|PRIVATE[_-]?KEY|PASSWORD|PASS|SECRET|TOKEN)"
+        r"[A-Z0-9_.-]*[\"']?)"
+        r"(\s*[:=]\s*)([\"'])([^\r\n]*?)(\3)",
+        r"\1\2\3[REDACTED]\5",
+        value,
+    )
+    value = re.sub(
+        r"(?i)([\"']?[A-Z0-9_.-]*(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|"
+        r"AUTH[_-]?TOKEN|CLIENT[_-]?SECRET|PRIVATE[_-]?KEY|PASSWORD|PASS|SECRET|TOKEN)"
+        r"[A-Z0-9_.-]*[\"']?)"
+        r"(\s*[:=]\s*)(?![\"'])[^\s,}\]]+",
         r"\1\2[REDACTED]",
         value,
     )
     value = re.sub(
-        r"(?i)\b([A-Z0-9_.-]*(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|"
-        r"AUTH[_-]?TOKEN|CLIENT[_-]?SECRET|PRIVATE[_-]?KEY|PASSWORD|PASS|SECRET|TOKEN)"
-        r"[A-Z0-9_.-]*)"
-        r"(\s*[:=]\s*)(['\"]?)[^'\"\s,}]{6,}(['\"]?)",
-        r"\1\2\3[REDACTED]\4",
+        r"(?i)\b([a-z][a-z0-9+.-]*://)([^/@\s:]+):([^/@\s]+)@",
+        r"\1\2:[REDACTED]@",
         value,
     )
     value = re.sub(
@@ -816,9 +823,12 @@ def redact_capture(text: str) -> str:
             output.append("[REDACTED PRIVATE KEY]")
             in_private_key = True
             continue
+        if "-----END " in line and "PRIVATE KEY-----" in line:
+            if not in_private_key:
+                output = ["[REDACTED TRUNCATED PRIVATE KEY]"]
+            in_private_key = False
+            continue
         if in_private_key:
-            if "-----END " in line and "PRIVATE KEY-----" in line:
-                in_private_key = False
             continue
         output.append(line)
     return "\n".join(output)

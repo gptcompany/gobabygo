@@ -680,6 +680,44 @@ def test_redact_capture_removes_credentials_private_keys_and_terminal_sequences(
     assert "\x1b" not in redacted
 
 
+def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
+    module = _load_module()
+    raw = "\n".join(
+        [
+            'password="correct horse battery staple"',
+            '"access_token": "json secret with spaces"',
+            "DATABASE_URL=postgres://alice:database-secret@db.internal/app",
+        ]
+    )
+
+    redacted = module.redact_capture(raw)
+
+    for secret in (
+        "correct horse battery staple",
+        "json secret with spaces",
+        "database-secret",
+    ):
+        assert secret not in redacted
+    assert 'password="[REDACTED]"' in redacted
+    assert '"access_token": "[REDACTED]"' in redacted
+    assert "postgres://alice:[REDACTED]@db.internal/app" in redacted
+
+    key_tail = "\n".join(
+        [
+            "MIIE" + ("A" * 60),
+            "QWER" + ("B" * 60),
+            "-----END OPENSSH PRIVATE KEY-----",
+            "status after key",
+        ]
+    )
+    redacted_tail = module.redact_capture(key_tail)
+
+    assert "MIIE" not in redacted_tail
+    assert "QWER" not in redacted_tail
+    assert "[REDACTED TRUNCATED PRIVATE KEY]" in redacted_tail
+    assert "status after key" in redacted_tail
+
+
 def test_redacted_session_dict_does_not_expose_raw_capture_or_error() -> None:
     module = _load_module()
     session = module.LiveSession(
