@@ -492,7 +492,21 @@ def host_is_local(host: str) -> bool:
     local_addresses = _local_interface_addresses()
     if target in local_addresses:
         return True
-    return bool(_resolve_host_addresses(target) & local_addresses)
+    if _resolve_host_addresses(target) & local_addresses:
+        return True
+
+    config = _ssh_effective_config(host)
+    proxy_values = [
+        config.get(key, "").strip().lower() for key in ("proxyjump", "proxycommand")
+    ]
+    uses_proxy = any(value and value != "none" for value in proxy_values)
+    port = _as_int(config.get("port")) or 22
+    configured_target = _host_without_user(config.get("hostname", "")).lower()
+    if uses_proxy or port != 22 or not configured_target:
+        return False
+    if configured_target in local_names or configured_target in local_addresses:
+        return True
+    return bool(_resolve_host_addresses(configured_target) & local_addresses)
 
 
 def _ssh_options(host: str = "") -> list[str]:

@@ -387,10 +387,31 @@ def test_host_is_local_matches_configured_interface_ip(monkeypatch) -> None:
         "_resolve_host_addresses",
         lambda host: {"10.0.0.2"} if host in {"dell-lan", "sam@dell-lan"} else {host},
     )
+    monkeypatch.setattr(module, "_ssh_effective_config", lambda host: {})
 
     assert module.host_is_local("sam@10.0.0.2") is True
     assert module.host_is_local("dell-lan") is True
     assert module.host_is_local("remote.example.com") is False
+
+
+def test_host_is_local_uses_direct_ssh_hostname_without_bypassing_proxy(monkeypatch) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(module.socket, "gethostname", lambda: "sam7670")
+    monkeypatch.setattr(module.socket, "getfqdn", lambda: "sam7670.local")
+    monkeypatch.setattr(module, "_local_interface_addresses", lambda: {"10.0.0.2"})
+    monkeypatch.setattr(module, "_resolve_host_addresses", lambda host: {host})
+
+    configs = {
+        "dell-lan": {"hostname": "10.0.0.2", "port": "22"},
+        "dell-vpn": {"hostname": "10.0.0.2", "port": "22", "proxyjump": "jump-host"},
+        "dell-container": {"hostname": "10.0.0.2", "port": "2222"},
+    }
+    monkeypatch.setattr(module, "_ssh_effective_config", lambda host: configs[host])
+
+    assert module.host_is_local("dell-lan") is True
+    assert module.host_is_local("dell-vpn") is False
+    assert module.host_is_local("dell-container") is False
 
 
 def test_ssh_options_disable_multiplexing_for_proxy_hosts(monkeypatch, tmp_path: Path) -> None:
