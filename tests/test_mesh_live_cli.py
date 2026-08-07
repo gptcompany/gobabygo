@@ -50,7 +50,7 @@ def test_reader_discovers_current_users_tmux_session(monkeypatch) -> None:
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
 
-    result = module.handle_reader_request({"op": "discover", "users": ["sam"]})
+    result = module.handle_remote_request({"op": "discover", "users": ["sam"]})
 
     assert result["warnings"] == []
     assert result["sessions"] == [
@@ -85,7 +85,7 @@ def test_reader_reports_partial_discovery_when_sudo_is_denied(monkeypatch) -> No
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
 
-    result = module.handle_reader_request({"op": "discover", "users": ["mesh-worker"]})
+    result = module.handle_remote_request({"op": "discover", "users": ["mesh-worker"]})
 
     assert result["sessions"] == []
     assert result["warnings"] == [
@@ -109,7 +109,7 @@ def test_reader_treats_missing_tmux_server_as_empty(monkeypatch, message: str) -
         lambda args, timeout=10.0: _completed(args, returncode=1, stderr=message),
     )
 
-    result = module.handle_reader_request({"op": "discover", "users": ["sam"]})
+    result = module.handle_remote_request({"op": "discover", "users": ["sam"]})
 
     assert result == {"sessions": [], "warnings": []}
 
@@ -125,7 +125,7 @@ def test_reader_captures_exact_pane_with_bounded_history(monkeypatch) -> None:
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
 
-    result = module.handle_reader_request(
+    result = module.handle_remote_request(
         {
             "op": "capture",
             "lines": 80,
@@ -279,11 +279,189 @@ def test_default_users_are_valid_and_deduplicated(monkeypatch) -> None:
     assert module._default_users("sam@10.0.0.2") == ("sam", "mesh-worker", "mesh")
 
 
-def test_read_only_module_contains_no_tmux_mutation_primitives() -> None:
+def test_send_rejects_empty_multiline_control_and_oversized_text() -> None:
+    module = _load_module()
+
+    with pytest.raises(ValueError, match="requires text"):
+        module.validate_send_text("", enter=False)
+    assert module.validate_send_text("", enter=True) == ""
+    with pytest.raises(ValueError, match="control characters"):
+        module.validate_send_text("first\nsecond", enter=True)
+    with pytest.raises(ValueError, match="exceeds"):
+        module.validate_send_text("x" * (module.MAX_SEND_CHARS + 1), enter=False)
+
+
+def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+    hostile = "$(touch /tmp/not-created); --help"
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "claude-rektslug", "pane_id": "%7"},
+            "text": hostile,
+            "enter": True,
+        }
+    )
+
+    assert result["text_sent"] is True
+    assert result["enter_sent"] is True
+    assert commands == [
+        ["tmux", "send-keys", "-t", "%7", "-l", "--", hostile],
+        ["tmux", "send-keys", "-t", "%7", "Enter"],
+    ]
+
+
+def test_remote_send_does_not_send_enter_after_text_failure(monkeypatch) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        return _completed(args, returncode=1, stderr="pane disappeared")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "claude-rektslug", "pane_id": "%7"},
+            "text": "status?",
+            "enter": True,
+        }
+    )
+
+    assert result == {"error": "pane disappeared"}
+    assert len(commands) == 1
+
+
+def test_live_client_send_uses_discovered_owner_and_pane() -> None:
+    module = _load_module()
+    observed: dict = {}
+
+    def fake_request(endpoint, payload):
+        observed.update(payload)
+        return {
+            "owner": "sam",
+            "name": "claude-rektslug",
+            "pane_id": "%7",
+            "text_sent": True,
+            "enter_sent": False,
+        }
+
+    endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
+    client = module.LiveClient(endpoint, request_fn=fake_request)
+    session = module.LiveSession(owner="sam", name="claude-rektslug", pane_id="%7")
+
+    client.send(session, "status?", enter=False)
+
+    assert observed == {
+        "op": "send",
+        "target": {"owner": "sam", "name": "claude-rektslug", "pane_id": "%7"},
+        "text": "status?",
+        "enter": False,
+    }
+
+
+def test_attach_auto_uses_mosh_only_for_reachable_direct_host(monkeypatch) -> None:
+    module = _load_module()
+    endpoint = module.LiveEndpoint(host="sam@10.0.0.2", local=False, users=("sam",))
+    session = module.LiveSession(owner="sam", name="claude-rektslug")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/opt/local/bin/mosh")
+    monkeypatch.setattr(module, "ssh_host_uses_proxy", lambda host: False)
+    monkeypatch.setattr(module, "_direct_host_reachable", lambda host: True)
+    monkeypatch.setattr(module, "_remote_login_user", lambda host: "sam")
+
+    plan = module.build_attach_plan(endpoint, session)
+
+    assert plan.transport == "mosh"
+    assert plan.host == "sam@10.0.0.2"
+    assert plan.argv[0] == "/opt/local/bin/mosh"
+    assert plan.argv[-3:] == ("bash", "-lc", "exec tmux attach -t claude-rektslug")
+
+
+def test_attach_on_workstation_uses_local_tmux(monkeypatch) -> None:
+    module = _load_module()
+    endpoint = module.LiveEndpoint(host="sam@10.0.0.2", local=True, users=("mesh-worker",))
+    session = module.LiveSession(owner="mesh-worker", name="codex-progressive")
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+
+    plan = module.build_attach_plan(endpoint, session)
+
+    assert plan.transport == "local"
+    assert plan.argv == (
+        "sudo",
+        "-n",
+        "-u",
+        "mesh-worker",
+        "tmux",
+        "attach",
+        "-t",
+        "codex-progressive",
+    )
+
+
+def test_attach_auto_uses_ssh_for_cloudflare_or_jump_alias(monkeypatch) -> None:
+    module = _load_module()
+    endpoint = module.LiveEndpoint(host="dell7670", local=False, users=("sam",))
+    session = module.LiveSession(owner="sam", name="claude-rektslug")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/opt/local/bin/mosh")
+    monkeypatch.setattr(module, "ssh_host_uses_proxy", lambda host: True)
+    monkeypatch.setattr(module, "_remote_login_user", lambda host: "sam")
+    monkeypatch.setattr(module, "_ssh_options", lambda: ["-o", "ConnectTimeout=10"])
+
+    plan = module.build_attach_plan(endpoint, session)
+
+    assert plan.transport == "ssh"
+    assert plan.argv == (
+        "ssh",
+        "-o",
+        "ConnectTimeout=10",
+        "-t",
+        "dell7670",
+        "exec tmux attach -t claude-rektslug",
+    )
+
+
+def test_attach_cross_user_uses_noninteractive_sudo_and_shell_quoting(monkeypatch) -> None:
+    module = _load_module()
+    endpoint = module.LiveEndpoint(host="dell7670", local=False, users=("mesh-worker",))
+    session = module.LiveSession(owner="mesh-worker", name="codex odd'name")
+    monkeypatch.setattr(module, "_remote_login_user", lambda host: "sam")
+    monkeypatch.setattr(module, "_ssh_options", lambda: [])
+
+    plan = module.build_attach_plan(endpoint, session, transport="ssh")
+
+    assert plan.argv[:4] == ("ssh", "-t", "dell7670", plan.argv[-1])
+    assert plan.argv[-1].startswith("exec sudo -n -u mesh-worker tmux attach -t ")
+    assert "'\"'\"'" in plan.argv[-1]
+
+
+def test_forced_mosh_rejects_proxy_host(monkeypatch) -> None:
+    module = _load_module()
+    endpoint = module.LiveEndpoint(host="dell7670", local=False, users=("sam",))
+    session = module.LiveSession(owner="sam", name="claude-rektslug")
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/opt/local/bin/mosh")
+    monkeypatch.setattr(module, "ssh_host_uses_proxy", lambda host: True)
+
+    with pytest.raises(module.LiveReadError, match="direct VPN/LAN"):
+        module.build_attach_plan(endpoint, session, transport="mosh")
+
+
+def test_live_module_contains_no_tmux_lifecycle_mutation_primitives() -> None:
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_live_cli.py"
     source = script_path.read_text(encoding="utf-8")
 
-    forbidden = ("send-keys", "kill-session", "new-session", "attach-session")
+    forbidden = ("kill-session", "new-session")
     assert all(token not in source for token in forbidden)
 
 
@@ -301,6 +479,8 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert proc.returncode == 0
     assert "mesh live board" in proc.stdout
     assert "mesh live peek" in proc.stdout
+    assert "mesh live send" in proc.stdout
+    assert "mesh live attach" in proc.stdout
     assert "does not require the router or iTerm2" in proc.stdout
 
 

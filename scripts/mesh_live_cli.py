@@ -6,6 +6,8 @@ import json
 import os
 import pwd
 import re
+import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -18,6 +20,7 @@ DEFAULT_WS_HOST = "sam@10.0.0.2"
 DEFAULT_BOARD_LINES = 20
 DEFAULT_PEEK_LINES = 120
 MAX_CAPTURE_LINES = 2000
+MAX_SEND_CHARS = 8192
 _FIELD_SEPARATOR = "\x1f"
 _SAFE_USER = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*[$]?$")
 _REMOTE_PAYLOAD = globals().get("_MESH_LIVE_REMOTE_PAYLOAD")
@@ -69,6 +72,13 @@ class LiveEndpoint:
     host: str
     local: bool
     users: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AttachPlan:
+    transport: str
+    host: str
+    argv: tuple[str, ...]
 
 
 class LiveReadError(RuntimeError):
@@ -139,6 +149,24 @@ class LiveClient:
         warnings = [str(item) for item in response.get("warnings", []) if str(item).strip()]
         return enriched, warnings
 
+    def send(self, session: LiveSession, text: str, *, enter: bool) -> dict[str, Any]:
+        response = self._request_fn(
+            self.endpoint,
+            {
+                "op": "send",
+                "target": {
+                    "owner": session.owner,
+                    "name": session.name,
+                    "pane_id": session.pane_id,
+                },
+                "text": text,
+                "enter": bool(enter),
+            },
+        )
+        if response.get("error"):
+            raise LiveReadError(str(response["error"]))
+        return response
+
 
 def _as_int(value: Any) -> int:
     try:
@@ -159,6 +187,17 @@ def validate_capture_lines(lines: int, *, allow_zero: bool) -> int:
         raise ValueError("lines must be an integer") from exc
     if value < minimum or value > MAX_CAPTURE_LINES:
         raise ValueError(f"lines must be between {minimum} and {MAX_CAPTURE_LINES}")
+    return value
+
+
+def validate_send_text(text: str, *, enter: bool) -> str:
+    value = str(text or "")
+    if not value and not enter:
+        raise ValueError("send requires text or --enter")
+    if len(value) > MAX_SEND_CHARS:
+        raise ValueError(f"send text exceeds {MAX_SEND_CHARS} characters")
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("send text cannot contain newline or control characters")
     return value
 
 
@@ -313,7 +352,47 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, str],
     return result, []
 
 
-def handle_reader_request(payload: dict[str, Any]) -> dict[str, Any]:
+def _send_target(target: dict[str, Any], text: str, *, enter: bool) -> dict[str, Any]:
+    owner = str(target.get("owner") or "")
+    name = str(target.get("name") or "")
+    pane_id = str(target.get("pane_id") or "")
+    prefix = _tmux_prefix(owner)
+    if prefix is None:
+        return {"error": "tmux owner is unavailable"}
+    if not name or not pane_id:
+        return {"error": "send target is missing an exact session or pane id"}
+
+    tmux_target = pane_id
+    if text:
+        try:
+            proc = _run_command(
+                [*prefix, "tmux", "send-keys", "-t", tmux_target, "-l", "--", text]
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"error": str(exc)}
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+            return {"error": detail}
+
+    if enter:
+        try:
+            proc = _run_command([*prefix, "tmux", "send-keys", "-t", tmux_target, "Enter"])
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"error": str(exc)}
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+            return {"error": detail}
+
+    return {
+        "owner": owner,
+        "name": name,
+        "pane_id": pane_id,
+        "text_sent": bool(text),
+        "enter_sent": bool(enter),
+    }
+
+
+def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
     operation = str(payload.get("op") or "")
     if operation == "discover":
         sessions: list[dict[str, Any]] = []
@@ -341,7 +420,15 @@ def handle_reader_request(payload: dict[str, Any]) -> dict[str, Any]:
             warnings.extend(capture_warnings)
         return {"captures": captures, "warnings": warnings}
 
-    raise ValueError(f"unsupported read operation: {operation or '<empty>'}")
+    if operation == "send":
+        target = payload.get("target")
+        if not isinstance(target, dict):
+            raise ValueError("send target must be an object")
+        enter = bool(payload.get("enter"))
+        text = validate_send_text(str(payload.get("text") or ""), enter=enter)
+        return _send_target(target, text, enter=enter)
+
+    raise ValueError(f"unsupported live operation: {operation or '<empty>'}")
 
 
 def _host_without_user(host: str) -> str:
@@ -388,6 +475,148 @@ def _ssh_options() -> list[str]:
     return result
 
 
+def _ssh_effective_config(host: str) -> dict[str, str]:
+    try:
+        proc = _run_command(["ssh", "-G", host], timeout=5.0)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    config: dict[str, str] = {}
+    for row in proc.stdout.splitlines():
+        key, separator, value = row.partition(" ")
+        if separator and key and key not in config:
+            config[key.lower()] = value.strip()
+    return config
+
+
+def ssh_host_uses_proxy(host: str) -> bool:
+    config = _ssh_effective_config(host)
+    if not config:
+        return True
+    for key in ("proxyjump", "proxycommand"):
+        value = config.get(key, "").strip().lower()
+        if value and value != "none":
+            return True
+    return False
+
+
+def _direct_host_reachable(host: str, *, timeout: float = 1.0) -> bool:
+    config = _ssh_effective_config(host)
+    hostname = config.get("hostname") or _host_without_user(host)
+    port = _as_int(config.get("port")) or 22
+    if not hostname:
+        return False
+    try:
+        connection = socket.create_connection((hostname, port), timeout=timeout)
+    except OSError:
+        return False
+    connection.close()
+    return True
+
+
+def _remote_login_user(host: str) -> str:
+    config = _ssh_effective_config(host)
+    configured = config.get("user", "").strip()
+    if configured:
+        return configured
+    if "@" in host:
+        return host.rsplit("@", 1)[0]
+    return _current_username()
+
+
+def _tmux_attach_remote_command(owner: str, session_name: str, login_user: str) -> str:
+    if not _SAFE_USER.fullmatch(owner):
+        raise ValueError("invalid tmux owner")
+    if not session_name:
+        raise ValueError("missing tmux session name")
+    target = shlex.quote(session_name)
+    command = f"tmux attach -t {target}"
+    if owner != login_user:
+        command = f"sudo -n -u {shlex.quote(owner)} {command}"
+    return f"exec {command}"
+
+
+def build_attach_plan(
+    endpoint: LiveEndpoint,
+    session: LiveSession,
+    *,
+    transport: str = "auto",
+    mosh_host: str = "",
+) -> AttachPlan:
+    requested = str(transport or "auto").strip().lower()
+    if requested not in {"auto", "mosh", "ssh"}:
+        raise ValueError(f"unsupported attach transport: {requested}")
+
+    if endpoint.local:
+        if not _SAFE_USER.fullmatch(session.owner):
+            raise ValueError("invalid tmux owner")
+        argv = ("tmux", "attach", "-t", session.name)
+        if session.owner != _current_username():
+            argv = ("sudo", "-n", "-u", session.owner, *argv)
+        return AttachPlan(transport="local", host="localhost", argv=argv)
+
+    configured_mosh_host = (
+        str(mosh_host or "").strip() or os.environ.get("MESH_MOSH_HOST", "").strip()
+    )
+    candidate = configured_mosh_host or endpoint.host
+    mosh_bin = shutil.which("mosh")
+    use_mosh = requested == "mosh"
+    if requested == "auto":
+        use_mosh = bool(
+            mosh_bin
+            and candidate
+            and not ssh_host_uses_proxy(candidate)
+            and _direct_host_reachable(candidate)
+        )
+
+    if use_mosh:
+        if not mosh_bin:
+            raise LiveReadError("mosh is not installed")
+        if not candidate:
+            raise LiveReadError("missing direct mosh host")
+        if ssh_host_uses_proxy(candidate):
+            raise LiveReadError(
+                "mosh requires a direct VPN/LAN host without ProxyJump or ProxyCommand"
+            )
+        login_user = _remote_login_user(candidate)
+        remote_command = _tmux_attach_remote_command(session.owner, session.name, login_user)
+        mosh_ssh = (
+            "ssh -o ControlMaster=no -o ControlPath=none "
+            "-o ServerAliveInterval=10 -o ServerAliveCountMax=18 -o ConnectTimeout=10"
+        )
+        return AttachPlan(
+            transport="mosh",
+            host=candidate,
+            argv=(
+                mosh_bin,
+                f"--ssh={mosh_ssh}",
+                candidate,
+                "--",
+                "bash",
+                "-lc",
+                remote_command,
+            ),
+        )
+
+    if not endpoint.host:
+        raise LiveReadError("missing SSH host")
+    login_user = _remote_login_user(endpoint.host)
+    remote_command = _tmux_attach_remote_command(session.owner, session.name, login_user)
+    return AttachPlan(
+        transport="ssh",
+        host=endpoint.host,
+        argv=("ssh", *_ssh_options(), "-t", endpoint.host, remote_command),
+    )
+
+
+def execute_attach(plan: AttachPlan) -> None:
+    environment = os.environ.copy()
+    environment["LANG"] = os.environ.get("MESH_MOSH_LANG", "en_US.UTF-8")
+    environment["LC_ALL"] = os.environ.get("MESH_MOSH_LOCALE", "en_US.UTF-8")
+    os.execvpe(plan.argv[0], list(plan.argv), environment)
+
+
 def _parse_json_response(stdout: str) -> dict[str, Any]:
     for line in reversed(str(stdout or "").splitlines()):
         try:
@@ -401,7 +630,7 @@ def _parse_json_response(stdout: str) -> dict[str, Any]:
 
 def request_endpoint(endpoint: LiveEndpoint, payload: dict[str, Any]) -> dict[str, Any]:
     if endpoint.local:
-        return handle_reader_request(payload)
+        return handle_remote_request(payload)
     if not endpoint.host:
         raise LiveReadError("missing remote host")
 
@@ -511,7 +740,7 @@ def _default_users(host: str) -> tuple[str, ...]:
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Read live tmux sessions without router or iTerm2.")
+    parser = argparse.ArgumentParser(description="Operate live tmux sessions without router or iTerm2.")
     parser.add_argument(
         "--host",
         default=os.environ.get("MESH_WS_HOST", DEFAULT_WS_HOST),
@@ -540,6 +769,27 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     peek.add_argument("lines", nargs="?", type=int, default=DEFAULT_PEEK_LINES)
     peek.add_argument("--owner", default="", help="Disambiguate sessions owned by different users.")
     peek.add_argument("--json", action="store_true", help="Emit structured JSON.")
+
+    send = sub.add_parser("send", help="Send literal text to one live session.")
+    send.add_argument("session", help="Exact session name or unique prefix.")
+    send.add_argument("message", nargs="*", help="Literal text. It is not submitted without --enter.")
+    send.add_argument("--enter", action="store_true", help="Send Enter after the text.")
+    send.add_argument("--owner", default="", help="Disambiguate sessions owned by different users.")
+
+    attach = sub.add_parser("attach", help="Attach to an existing live session.")
+    attach.add_argument("session", help="Exact session name or unique prefix.")
+    attach.add_argument("--owner", default="", help="Disambiguate sessions owned by different users.")
+    attach.add_argument(
+        "--transport",
+        choices=["auto", "mosh", "ssh"],
+        default="auto",
+        help="Use direct mosh when safe, otherwise SSH (default: auto).",
+    )
+    attach.add_argument(
+        "--mosh-host",
+        default="",
+        help="Direct VPN/LAN host for mosh. Never use a Cloudflare or jump-host alias.",
+    )
     return parser.parse_args(argv)
 
 
@@ -567,7 +817,7 @@ def _print_warnings(warnings: Sequence[str]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     if _REMOTE_PAYLOAD is not None:
         try:
-            response = handle_reader_request(_REMOTE_PAYLOAD)
+            response = handle_remote_request(_REMOTE_PAYLOAD)
         except Exception as exc:
             response = {"error": str(exc)}
         print(json.dumps(response, separators=(",", ":")))
@@ -577,8 +827,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.cmd == "board":
             lines = validate_capture_lines(args.lines, allow_zero=True)
-        else:
+        elif args.cmd == "peek":
             lines = validate_capture_lines(args.lines, allow_zero=False)
+        else:
+            lines = 0
         client = LiveClient(_endpoint_from_args(args))
         sessions, warnings = client.discover()
         _print_warnings(warnings)
@@ -594,16 +846,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1 if any(item.capture_error for item in selected) else 0
 
         selected = resolve_session(sessions, args.session, owner=args.owner)
-        captured, capture_warnings = client.capture([selected], lines)
-        _print_warnings(capture_warnings)
-        result = captured[0]
-        if args.json:
-            print(json.dumps(asdict(result), indent=2))
-        elif result.capture_error:
-            print(f"Error: {result.capture_error}", file=sys.stderr)
-        else:
-            print(result.output)
-        return 1 if result.capture_error else 0
+        if args.cmd == "peek":
+            captured, capture_warnings = client.capture([selected], lines)
+            _print_warnings(capture_warnings)
+            result = captured[0]
+            if args.json:
+                print(json.dumps(asdict(result), indent=2))
+            elif result.capture_error:
+                print(f"Error: {result.capture_error}", file=sys.stderr)
+            else:
+                print(result.output)
+            return 1 if result.capture_error else 0
+
+        if args.cmd == "send":
+            message = validate_send_text(" ".join(args.message), enter=args.enter)
+            result = client.send(selected, message, enter=args.enter)
+            print(
+                f"[mesh live send] target={result['owner']}/{result['name']} "
+                f"pane={result['pane_id']} text={'yes' if result['text_sent'] else 'no'} "
+                f"enter={'yes' if result['enter_sent'] else 'no'}"
+            )
+            return 0
+
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise LiveReadError("attach requires an interactive terminal")
+        plan = build_attach_plan(
+            client.endpoint,
+            selected,
+            transport=args.transport,
+            mosh_host=args.mosh_host,
+        )
+        print(
+            f"[mesh live attach] target={selected.owner}/{selected.name} "
+            f"transport={plan.transport} host={plan.host}",
+            file=sys.stderr,
+        )
+        execute_attach(plan)
+        return 0
     except (LiveReadError, SessionResolutionError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
