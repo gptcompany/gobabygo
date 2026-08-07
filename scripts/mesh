@@ -593,8 +593,9 @@ Behavior:
   mesh live reads tmux directly on the configured workstation.
   It does not require the router or iTerm2.
   send is literal and does not submit text unless --enter is explicit.
+  send still acts as remote keyboard input; verify pane state immediately beforehand.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
-  brief builds a redacted read-only prompt for debate, decisions, and delegation.
+  brief builds a best-effort redacted read-only prompt; review it before pasting.
 
 Env:
   MESH_WS_HOST       SSH target hosting tmux (default: sam@10.0.0.2)
