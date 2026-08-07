@@ -797,7 +797,7 @@ _URI_STRONG_HOST = (
     r"(?:\[[a-z0-9_.:%-]+\](?::\d+)?|localhost(?::\d+)?|"
     r"(?:[a-z0-9_-]+\.)+[a-z0-9_-]+(?::\d+)?|[a-z0-9_-]+:\d+)"
 )
-_URI_TOKEN = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s\"'<>),}]+)")
+_URI_TOKEN = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s\"'<>),};]+)")
 
 
 def _looks_like_pem_body_line(line: str) -> bool:
@@ -878,9 +878,23 @@ def _redact_uri_at(scheme: str, rest: str, at_index: int) -> str | None:
     return f"{scheme}{rest[: colon_index + 1]}[REDACTED]@{rest[at_index + 1:]}"
 
 
+def _split_uri_trailing_brackets(rest: str) -> tuple[str, str]:
+    excess = rest.count("]") - rest.count("[")
+    if excess <= 0:
+        return rest, ""
+    trailing_count = 0
+    for char in reversed(rest):
+        if char != "]" or trailing_count >= excess:
+            break
+        trailing_count += 1
+    if not trailing_count:
+        return rest, ""
+    return rest[:-trailing_count], rest[-trailing_count:]
+
+
 def _redact_uri_token(match: re.Match[str]) -> str:
     scheme = match.group(1)
-    rest = match.group(2)
+    rest, trailing = _split_uri_trailing_brackets(match.group(2))
     first_delimiter = _authority_end(rest)
     first_at = rest.find("@")
     if 0 <= first_at < first_delimiter:
@@ -889,7 +903,7 @@ def _redact_uri_token(match: re.Match[str]) -> str:
         if _authority_host_is_valid(host) and (_authority_host_is_strong(host) or not later_at):
             redacted = _redact_uri_at(scheme, rest, first_at)
             if redacted is not None:
-                return redacted
+                return f"{redacted}{trailing}"
 
     if first_delimiter < len(rest) and (first_at < 0 or first_at > first_delimiter):
         if _authority_host_is_valid(rest[:first_delimiter]):
@@ -903,7 +917,7 @@ def _redact_uri_token(match: re.Match[str]) -> str:
             continue
         redacted = _redact_uri_at(scheme, rest, at_index)
         if redacted is not None:
-            return redacted
+            return f"{redacted}{trailing}"
     return match.group(0)
 
 
