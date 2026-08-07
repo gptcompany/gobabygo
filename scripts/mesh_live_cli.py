@@ -1095,6 +1095,10 @@ def _discover_with_fallback(args: argparse.Namespace) -> tuple[LiveClient, list[
         except LiveReadError as exc:
             failures.append(f"{endpoint.host or 'local'}: {exc}")
             continue
+        if not sessions and warnings:
+            detail = "; ".join(warnings)
+            failures.append(f"{endpoint.host or 'local'}: {detail}")
+            continue
         fallback_warnings = [f"skipped failed live host {item}" for item in failures]
         return client, sessions, [*fallback_warnings, *warnings]
     detail = "; ".join(failures) if failures else "no live hosts configured"

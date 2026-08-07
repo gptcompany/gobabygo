@@ -1025,6 +1025,66 @@ def test_main_falls_back_to_second_live_host(monkeypatch, capsys) -> None:
     assert "sam/claude-rektslug" in output.out
 
 
+def test_main_falls_back_when_discovery_has_only_warnings(monkeypatch, capsys) -> None:
+    module = _load_module()
+    attempts: list[str] = []
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            attempts.append(self.endpoint.host)
+            if self.endpoint.host == "first":
+                return [], ["sam: sudo denied"]
+            return [module.LiveSession(owner="sam", name="claude-rektslug")], []
+
+        def capture(self, sessions, lines):
+            return list(sessions), []
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+    monkeypatch.setattr(module, "host_is_local", lambda host: False)
+    monkeypatch.setenv("MESH_LIVE_HOSTS", "first,second")
+
+    code = module.main(["board", "--lines", "0"])
+
+    output = capsys.readouterr()
+    assert code == 0
+    assert attempts == ["first", "second"]
+    assert "skipped failed live host first: sam: sudo denied" in output.err
+    assert "sam/claude-rektslug" in output.out
+
+
+def test_discovery_accepts_empty_host_without_warnings(monkeypatch) -> None:
+    module = _load_module()
+    attempts: list[str] = []
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            attempts.append(self.endpoint.host)
+            return [], []
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+    monkeypatch.setattr(
+        module,
+        "_endpoints_from_args",
+        lambda args: [
+            module.LiveEndpoint("first", False, ("sam",)),
+            module.LiveEndpoint("second", False, ("sam",)),
+        ],
+    )
+
+    client, sessions, warnings = module._discover_with_fallback(object())
+
+    assert client.endpoint.host == "first"
+    assert sessions == []
+    assert warnings == []
+    assert attempts == ["first"]
+
+
 def test_main_remote_payload_mode_success_and_error(monkeypatch, capsys) -> None:
     module = _load_module()
     module._REMOTE_PAYLOAD = {"op": "discover", "users": ["sam"]}
