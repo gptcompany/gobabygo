@@ -115,10 +115,39 @@ def detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
 def claude_wait_option_selected(captured: str) -> bool:
     """Require a visible selection cursor on Claude's WAIT option."""
     body = str(captured or "")
-    lowered = body.lower()
-    if "/rate-limit-options" not in lowered or "what do you want to do?" not in lowered:
+    lines = body.splitlines()
+    menu_indexes = [
+        index for index, line in enumerate(lines) if "/rate-limit-options" in line.lower()
+    ]
+    if not menu_indexes:
         return False
-    return _CLAUDE_WAIT_SELECTED.search(body) is not None
+    menu_index = menu_indexes[-1]
+    if len(lines) - menu_index > 40:
+        return False
+    question_index = next(
+        (
+            index
+            for index in range(menu_index + 1, len(lines))
+            if "what do you want to do?" in lines[index].lower()
+        ),
+        -1,
+    )
+    if question_index < 0:
+        return False
+    selected_index = next(
+        (
+            index
+            for index in range(question_index + 1, len(lines))
+            if _CLAUDE_WAIT_SELECTED.search(lines[index]) is not None
+        ),
+        -1,
+    )
+    if selected_index < 0:
+        return False
+    trailing = lines[selected_index + 1 :]
+    if any(line.replace("\xa0", " ").lstrip().startswith("❯") for line in trailing):
+        return False
+    return not capture_shows_activity("\n".join(trailing))
 
 
 def classify_live_screen(cli_type: str, captured: str) -> LiveScreenState:

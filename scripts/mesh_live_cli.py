@@ -180,20 +180,27 @@ class LiveClient:
         warnings = [str(item) for item in response.get("warnings", []) if str(item).strip()]
         return enriched, warnings
 
-    def send(self, session: LiveSession, text: str, *, enter: bool) -> dict[str, Any]:
-        response = self._request_fn(
-            self.endpoint,
-            {
-                "op": "send",
-                "target": {
-                    "owner": session.owner,
-                    "name": session.name,
-                    "pane_id": session.pane_id,
-                },
-                "text": text,
-                "enter": bool(enter),
+    def send(
+        self,
+        session: LiveSession,
+        text: str,
+        *,
+        enter: bool,
+        expected_commands: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        payload = {
+            "op": "send",
+            "target": {
+                "owner": session.owner,
+                "name": session.name,
+                "pane_id": session.pane_id,
             },
-        )
+            "text": text,
+            "enter": bool(enter),
+        }
+        if expected_commands:
+            payload["expected_commands"] = list(expected_commands)
+        response = self._request_fn(self.endpoint, payload)
         if response.get("error"):
             raise LiveReadError(redact_capture(str(response["error"])))
         return response
@@ -386,7 +393,13 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, str],
     return result, []
 
 
-def _send_target(target: dict[str, Any], text: str, *, enter: bool) -> dict[str, Any]:
+def _send_target(
+    target: dict[str, Any],
+    text: str,
+    *,
+    enter: bool,
+    expected_commands: Sequence[str] = (),
+) -> dict[str, Any]:
     owner = str(target.get("owner") or "")
     name = str(target.get("name") or "")
     pane_id = str(target.get("pane_id") or "")
@@ -397,6 +410,29 @@ def _send_target(target: dict[str, Any], text: str, *, enter: bool) -> dict[str,
         return {"error": "send target is missing an exact session or pane id"}
 
     tmux_target = pane_id
+    target_format = _FIELD_SEPARATOR.join(["#{session_name}", "#{pane_current_command}"])
+    try:
+        target_proc = _run_command(
+            [*prefix, "tmux", "display-message", "-p", "-t", tmux_target, target_format]
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"error": str(exc)}
+    if target_proc.returncode != 0:
+        detail = (target_proc.stderr or target_proc.stdout or f"exit {target_proc.returncode}").strip()
+        return {"error": detail}
+    target_parts = target_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 1)
+    if len(target_parts) != 2 or target_parts[0] != name:
+        return {"error": "send target pane no longer belongs to the discovered session"}
+    current_command = Path(target_parts[1]).name.lower()
+    expected = {Path(str(item)).name.lower() for item in expected_commands if str(item).strip()}
+    if expected and current_command not in expected:
+        return {
+            "error": (
+                "send target process changed; expected "
+                f"{','.join(sorted(expected))}, found {current_command or '<empty>'}"
+            )
+        }
+
     if text:
         try:
             proc = _run_command(
@@ -460,7 +496,16 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("send target must be an object")
         enter = bool(payload.get("enter"))
         text = validate_send_text(str(payload.get("text") or ""), enter=enter)
-        return _send_target(target, text, enter=enter)
+        raw_expected = payload.get("expected_commands", [])
+        if not isinstance(raw_expected, list) or len(raw_expected) > 8:
+            raise ValueError("expected_commands must be a bounded list")
+        expected_commands = tuple(str(item or "").strip() for item in raw_expected)
+        return _send_target(
+            target,
+            text,
+            enter=enter,
+            expected_commands=expected_commands,
+        )
 
     raise ValueError(f"unsupported live operation: {operation or '<empty>'}")
 
@@ -790,6 +835,10 @@ def _is_claude_session(session: LiveSession) -> bool:
     return command in {"claude", "claude-code"} or session.name.lower().startswith("claude-")
 
 
+def _is_running_claude(session: LiveSession) -> bool:
+    return Path(session.pane_command or "").name.lower() in {"claude", "claude-code"}
+
+
 def _is_default_coordinator_name(name: str) -> bool:
     return re.fullmatch(r"claude(?:-[A-Za-z0-9_.-]+)?-coordinator", str(name or "")) is not None
 
@@ -828,6 +877,9 @@ def build_live_tick_plan(
         if session.capture_error:
             action = "none"
             reason = "capture_error"
+        elif not _is_running_claude(session):
+            action = "none"
+            reason = "pane current command is not Claude"
         elif state == LiveScreenState.rate_limit:
             if wait_selected(session.output):
                 action = "select_wait"
@@ -1060,7 +1112,12 @@ def execute_live_tick_actions(
                 changed = True
                 if persist_state is not None:
                     persist_state(state)
-                client.send(fresh, "", enter=True)
+                client.send(
+                    fresh,
+                    "",
+                    enter=True,
+                    expected_commands=("claude", "claude-code"),
+                )
                 if verify_delay > 0:
                     sleep_fn(verify_delay)
                 post = _capture_one_for_tick(client, fresh, lines)
@@ -1103,7 +1160,12 @@ def execute_live_tick_actions(
             changed = True
             if persist_state is not None:
                 persist_state(state)
-            client.send(fresh, message, enter=True)
+            client.send(
+                fresh,
+                message,
+                enter=True,
+                expected_commands=("claude", "claude-code"),
+            )
             if verify_delay > 0:
                 sleep_fn(verify_delay)
             post = _capture_one_for_tick(client, fresh, lines)

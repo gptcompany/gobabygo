@@ -34,3 +34,5 @@ def test_wait_action_requires_visible_selected_option() -> None:
         )
         is False
     )
+    assert claude_wait_option_selected(f"{RATE_LIMIT_SELECTED}\n❯ pending task") is False
+    assert claude_wait_option_selected(f"{RATE_LIMIT_SELECTED}\n✻ Working") is False

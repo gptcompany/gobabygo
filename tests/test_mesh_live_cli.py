@@ -449,6 +449,11 @@ def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
 
     def fake_run(args: list[str], *, timeout: float = 10.0):
         commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["claude-rektslug", "claude"]) + "\n",
+            )
         return _completed(args)
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
@@ -466,6 +471,14 @@ def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
     assert result["text_sent"] is True
     assert result["enter_sent"] is True
     assert commands == [
+        [
+            "tmux",
+            "display-message",
+            "-p",
+            "-t",
+            "%7",
+            module._FIELD_SEPARATOR.join(["#{session_name}", "#{pane_current_command}"]),
+        ],
         ["tmux", "send-keys", "-t", "%7", "-l", "--", hostile],
         ["tmux", "send-keys", "-t", "%7", "Enter"],
     ]
@@ -477,6 +490,11 @@ def test_remote_send_does_not_send_enter_after_text_failure(monkeypatch) -> None
 
     def fake_run(args: list[str], *, timeout: float = 10.0):
         commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["claude-rektslug", "claude"]) + "\n",
+            )
         return _completed(args, returncode=1, stderr="pane disappeared")
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
@@ -492,6 +510,37 @@ def test_remote_send_does_not_send_enter_after_text_failure(monkeypatch) -> None
     )
 
     assert result == {"error": "pane disappeared"}
+    assert len(commands) == 2
+
+
+def test_remote_send_rejects_changed_session_or_process(monkeypatch) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        return _completed(
+            args,
+            stdout=module._FIELD_SEPARATOR.join(["claude-worker", "bash"]) + "\n",
+        )
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    target = {"owner": "sam", "name": "claude-worker", "pane_id": "%2"}
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": target,
+            "text": "",
+            "enter": True,
+            "expected_commands": ["claude", "claude-code"],
+        }
+    )
+
+    assert result["error"] == (
+        "send target process changed; expected claude,claude-code, found bash"
+    )
     assert len(commands) == 1
 
 
@@ -521,6 +570,28 @@ def test_live_client_send_uses_discovered_owner_and_pane() -> None:
         "text": "status?",
         "enter": False,
     }
+
+
+def test_live_client_send_passes_expected_process_guard() -> None:
+    module = _load_module()
+    observed: dict = {}
+
+    def fake_request(endpoint, payload):
+        observed.update(payload)
+        return {"text_sent": False, "enter_sent": True}
+
+    endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
+    client = module.LiveClient(endpoint, request_fn=fake_request)
+    session = module.LiveSession(owner="sam", name="claude-worker", pane_id="%2")
+
+    client.send(
+        session,
+        "",
+        enter=True,
+        expected_commands=("claude", "claude-code"),
+    )
+
+    assert observed["expected_commands"] == ["claude", "claude-code"]
 
 
 def test_live_client_send_raises_reader_error() -> None:
@@ -1095,7 +1166,8 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
             target = targets[0]
             return [module.replace(target, output=self.outputs[target.name].pop(0))], []
 
-        def send(self, session, text, *, enter):
+        def send(self, session, text, *, enter, expected_commands=()):
+            assert expected_commands == ("claude", "claude-code")
             self.sends.append((session.name, text, enter))
             return {}
 
@@ -1184,6 +1256,13 @@ def test_live_tick_apply_never_sends_for_ambiguous_wait_or_changed_pane() -> Non
     assert results[0].action == "manual_rate_limit"
     assert results[0].status == "skipped"
 
+    shell_wait = module.replace(ambiguous, pane_command="bash", output=ambiguous.output.replace(
+        "  1. Stop", "❯ 1. Stop"
+    ))
+    plan = module.build_live_tick_plan([shell_wait], set())
+    assert plan[0].proposed_action == "none"
+    assert plan[0].reason == "pane current command is not Claude"
+
     coordinator = module.LiveSession(
         owner="sam",
         name="claude-coordinator",
@@ -1237,7 +1316,8 @@ def test_live_tick_records_uncertain_send_before_allowing_retry() -> None:
         def capture(self, targets, lines):
             return [module.replace(targets[0], output=wait_screen)], []
 
-        def send(self, session, text, *, enter):
+        def send(self, session, text, *, enter, expected_commands=()):
+            assert expected_commands == ("claude", "claude-code")
             self.send_count += 1
             if self.fail:
                 raise module.LiveReadError("connection closed after request")
