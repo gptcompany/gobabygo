@@ -537,6 +537,22 @@ def test_live_client_send_raises_reader_error() -> None:
         client.send(session, "status?", enter=False)
 
 
+def test_live_client_send_redacts_reader_error() -> None:
+    module = _load_module()
+
+    def fake_request(endpoint, payload):
+        return {"error": "OPENAI_API_KEY=must-not-leak"}
+
+    endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
+    client = module.LiveClient(endpoint, request_fn=fake_request)
+    session = module.LiveSession(owner="sam", name="claude-rektslug", pane_id="%7")
+
+    with pytest.raises(module.LiveReadError) as exc_info:
+        client.send(session, "status?", enter=False)
+    assert "must-not-leak" not in str(exc_info.value)
+    assert "[REDACTED]" in str(exc_info.value)
+
+
 def test_attach_auto_uses_mosh_only_for_reachable_direct_host(monkeypatch) -> None:
     module = _load_module()
     endpoint = module.LiveEndpoint(host="sam@10.0.0.2", local=False, users=("sam",))
@@ -1011,6 +1027,257 @@ def test_main_tick_is_local_metadata_only_dry_run(monkeypatch, capsys) -> None:
     assert payload["mode"] == "dry-run"
     assert payload["observations"][0]["proposed_action"] == "wake_coordinator"
     assert "raw" not in json.dumps(payload)
+
+
+def test_live_tick_state_round_trip_is_private_and_contains_no_capture(tmp_path: Path) -> None:
+    module = _load_module()
+    state_path = tmp_path / "state" / "tick.json"
+    state = {
+        "version": 1,
+        "sessions": {
+            "sam/claude-worker": {
+                "wait_attempt_at": 100.0,
+                "wait_fingerprint": "sha256-only",
+            }
+        },
+    }
+
+    module.save_live_tick_state(str(state_path), state)
+
+    assert module.load_live_tick_state(str(state_path)) == state
+    assert state_path.stat().st_mode & 0o777 == 0o600
+    assert state_path.parent.stat().st_mode & 0o777 == 0o700
+    assert list(state_path.parent.glob("*.tmp")) == []
+
+    with module.live_tick_state_lock(str(state_path)):
+        with pytest.raises(module.LiveReadError, match="already running"):
+            with module.live_tick_state_lock(str(state_path)):
+                pass
+
+
+def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> None:
+    module = _load_module()
+    wait_screen = (
+        "API_TOKEN=not-persisted\nYou've hit your limit\n❯ /rate-limit-options\n"
+        "What do you want to do?\n❯ 1. Stop and wait for limit to reset\n"
+        "  2. Upgrade your plan\n"
+    )
+    coordinator_screen = "coordinator ready\n❯ "
+    sessions = [
+        module.LiveSession(
+            owner="sam",
+            name="claude-worker",
+            pane_id="%2",
+            pane_command="claude",
+            output=wait_screen,
+        ),
+        module.LiveSession(
+            owner="sam",
+            name="claude-coordinator",
+            pane_id="%1",
+            pane_command="claude",
+            output=coordinator_screen,
+        ),
+    ]
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.outputs = {
+                "claude-worker": [wait_screen, "Waiting for limit reset"],
+                "claude-coordinator": [coordinator_screen, "✻ Working"],
+            }
+            self.sends: list[tuple[str, str, bool]] = []
+
+        def capture(self, targets, lines):
+            assert lines == 160
+            target = targets[0]
+            return [module.replace(target, output=self.outputs[target.name].pop(0))], []
+
+        def send(self, session, text, *, enter):
+            self.sends.append((session.name, text, enter))
+            return {}
+
+    client = FakeClient()
+    state = {"version": 1, "sessions": {}}
+    results, changed = module.execute_live_tick_actions(
+        client,
+        sessions,
+        {("sam", "claude-coordinator")},
+        state=state,
+        lines=160,
+        now=10_000.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert changed is True
+    assert [(item.action, item.status, item.verified) for item in results] == [
+        ("select_wait", "applied", True),
+        ("wake_coordinator", "applied", True),
+    ]
+    assert client.sends[0] == ("claude-worker", "", True)
+    assert client.sends[1][0] == "claude-coordinator"
+    assert client.sends[1][2] is True
+    assert client.sends[1][1].startswith("MESH_LIVE_TICK id=")
+    assert "never duplicate an existing delegation" in client.sends[1][1]
+    encoded_state = json.dumps(state)
+    assert "not-persisted" not in encoded_state
+    assert "You've hit" not in encoded_state
+
+    throttled_client = FakeClient()
+    throttled_client.outputs = {
+        "claude-worker": [wait_screen],
+        "claude-coordinator": [coordinator_screen],
+    }
+    second_results, second_changed = module.execute_live_tick_actions(
+        throttled_client,
+        sessions,
+        {("sam", "claude-coordinator")},
+        state=state,
+        lines=160,
+        now=10_100.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert second_changed is False
+    assert [item.status for item in second_results] == ["throttled", "throttled"]
+    assert throttled_client.sends == []
+
+
+def test_live_tick_apply_never_sends_for_ambiguous_wait_or_changed_pane() -> None:
+    module = _load_module()
+    ambiguous = module.LiveSession(
+        owner="sam",
+        name="claude-worker",
+        pane_id="%2",
+        pane_command="claude",
+        output=(
+            "You've hit your limit\n❯ /rate-limit-options\nWhat do you want to do?\n"
+            "  1. Stop and wait for limit to reset\n"
+        ),
+    )
+
+    class NoCallClient:
+        def capture(self, targets, lines):
+            raise AssertionError("ambiguous WAIT must not be recaptured for mutation")
+
+        def send(self, session, text, *, enter):
+            raise AssertionError("ambiguous WAIT must not be sent")
+
+    results, changed = module.execute_live_tick_actions(
+        NoCallClient(),
+        [ambiguous],
+        set(),
+        state={"version": 1, "sessions": {}},
+        lines=160,
+        now=10_000.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert changed is False
+    assert results[0].action == "manual_rate_limit"
+    assert results[0].status == "skipped"
+
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output="ready\n❯ ",
+    )
+
+    class ChangedPaneClient:
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], pane_id="%9", output="ready\n❯ ")], []
+
+        def send(self, session, text, *, enter):
+            raise AssertionError("changed pane must not be sent")
+
+    results, changed = module.execute_live_tick_actions(
+        ChangedPaneClient(),
+        [coordinator],
+        {("sam", "claude-coordinator")},
+        state={"version": 1, "sessions": {}},
+        lines=160,
+        now=10_000.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert changed is False
+    assert results[0].status == "failed"
+    assert "pane changed" in results[0].reason
+
+
+def test_live_tick_records_uncertain_send_before_allowing_retry() -> None:
+    module = _load_module()
+    wait_screen = (
+        "You've hit your limit\n❯ /rate-limit-options\nWhat do you want to do?\n"
+        "❯ 1. Stop and wait for limit to reset\n"
+    )
+    worker = module.LiveSession(
+        owner="sam",
+        name="claude-worker",
+        pane_id="%2",
+        pane_command="claude",
+        output=wait_screen,
+    )
+
+    class UncertainClient:
+        def __init__(self, fail: bool) -> None:
+            self.fail = fail
+            self.send_count = 0
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=wait_screen)], []
+
+        def send(self, session, text, *, enter):
+            self.send_count += 1
+            if self.fail:
+                raise module.LiveReadError("connection closed after request")
+            return {}
+
+    state = {"version": 1, "sessions": {}}
+    uncertain = UncertainClient(fail=True)
+    persisted: list[dict] = []
+    results, changed = module.execute_live_tick_actions(
+        uncertain,
+        [worker],
+        set(),
+        state=state,
+        lines=160,
+        now=10_000.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        persist_state=lambda value: persisted.append(json.loads(json.dumps(value))),
+    )
+
+    assert changed is True
+    assert uncertain.send_count == 1
+    assert results[0].status == "failed"
+    assert state["sessions"]["sam/claude-worker"]["wait_attempt_at"] == 10_000.0
+    assert persisted[0]["sessions"]["sam/claude-worker"]["wait_attempt_at"] == 10_000.0
+
+    retry = UncertainClient(fail=False)
+    results, changed = module.execute_live_tick_actions(
+        retry,
+        [worker],
+        set(),
+        state=state,
+        lines=160,
+        now=10_001.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert changed is False
+    assert retry.send_count == 0
+    assert results[0].status == "throttled"
 
 
 def test_main_tick_rejects_remote_execution(monkeypatch, capsys) -> None:

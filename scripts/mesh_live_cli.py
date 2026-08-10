@@ -2,6 +2,9 @@
 """Read-only operator view over local or remote tmux sessions."""
 
 import argparse
+from contextlib import contextmanager
+import fcntl
+import hashlib
 import json
 import os
 import pwd
@@ -11,6 +14,8 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -22,6 +27,7 @@ DEFAULT_WS_CLOUDFLARE_HOST = "dell7670"
 DEFAULT_WS_HOSTS = (DEFAULT_WS_HOST, DEFAULT_WS_LAN_HOST, DEFAULT_WS_CLOUDFLARE_HOST)
 DEFAULT_BOARD_LINES = 20
 DEFAULT_PEEK_LINES = 120
+DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
 MAX_CAPTURE_LINES = 2000
 MAX_SEND_CHARS = 8192
 _FIELD_SEPARATOR = "\x1f"
@@ -93,6 +99,17 @@ class TickObservation:
     screen_state: str
     proposed_action: str
     reason: str
+
+
+@dataclass(frozen=True)
+class TickActionResult:
+    owner: str
+    name: str
+    pane_id: str
+    action: str
+    status: str
+    reason: str
+    verified: bool
 
 
 class LiveReadError(RuntimeError):
@@ -178,7 +195,7 @@ class LiveClient:
             },
         )
         if response.get("error"):
-            raise LiveReadError(str(response["error"]))
+            raise LiveReadError(redact_capture(str(response["error"])))
         return response
 
 
@@ -850,6 +867,291 @@ def render_live_tick_plan(observations: Sequence[TickObservation]) -> str:
     return "\n".join(lines)
 
 
+def _tick_state_key(owner: str, name: str) -> str:
+    return f"{owner}/{name}"
+
+
+def _tick_screen_fingerprint(output: str) -> str:
+    redacted = redact_capture(output)
+    return hashlib.sha256(redacted.encode("utf-8", errors="replace")).hexdigest()
+
+
+def load_live_tick_state(path: str) -> dict[str, Any]:
+    state_path = Path(path).expanduser()
+    if not state_path.exists():
+        return {"version": 1, "sessions": {}}
+    if state_path.is_symlink():
+        raise LiveReadError(f"tick state file must not be a symlink: {state_path}")
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LiveReadError(f"unable to read tick state {state_path}: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise LiveReadError(f"unsupported tick state format: {state_path}")
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, dict):
+        raise LiveReadError(f"invalid tick state sessions: {state_path}")
+    return payload
+
+
+def save_live_tick_state(path: str, state: dict[str, Any]) -> None:
+    state_path = Path(path).expanduser()
+    if state_path.is_symlink():
+        raise LiveReadError(f"tick state file must not be a symlink: {state_path}")
+    state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        state_path.parent.chmod(0o700)
+    except OSError:
+        pass
+    temporary: Path | None = None
+    try:
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{state_path.name}.",
+            suffix=".tmp",
+            dir=state_path.parent,
+        )
+        temporary = Path(temporary_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, state_path)
+        state_path.chmod(0o600)
+    except OSError as exc:
+        try:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise LiveReadError(f"unable to write tick state {state_path}: {exc}") from exc
+
+
+@contextmanager
+def live_tick_state_lock(path: str):
+    state_path = Path(path).expanduser()
+    state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = state_path.with_name(f".{state_path.name}.lock")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise LiveReadError(f"unable to open tick lock {lock_path}: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise LiveReadError(f"another mesh live tick is already running: {lock_path}") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _tick_wake_message(token: str) -> str:
+    return (
+        f"MESH_LIVE_TICK id={token}: inspect authorized sessions now with mesh live board/peek. "
+        "Resume coordination only when there is actionable work, verify delivery before follow-up, "
+        "and never duplicate an existing delegation. Reply TICK_IDLE when no action is needed."
+    )
+
+
+def _tick_token(now: float, session: LiveSession) -> str:
+    seed = f"{now:.6f}:{session.owner}:{session.name}:{session.pane_id}:{os.getpid()}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def _capture_one_for_tick(
+    client: LiveClient,
+    session: LiveSession,
+    lines: int,
+) -> LiveSession:
+    captured, _warnings = client.capture([session], lines)
+    if not captured:
+        raise LiveReadError(f"tick capture returned no session for {session.owner}/{session.name}")
+    result = captured[0]
+    if result.capture_error:
+        raise LiveReadError(result.capture_error)
+    if result.pane_id != session.pane_id:
+        raise LiveReadError(
+            f"tick pane changed for {session.owner}/{session.name}: "
+            f"{session.pane_id} -> {result.pane_id}"
+        )
+    return result
+
+
+def execute_live_tick_actions(
+    client: LiveClient,
+    sessions: Sequence[LiveSession],
+    coordinator_keys: set[tuple[str, str]],
+    *,
+    state: dict[str, Any],
+    lines: int,
+    now: float,
+    min_wake_minutes: int,
+    wait_retry_minutes: int,
+    verify_delay: float,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    persist_state: Callable[[dict[str, Any]], None] | None = None,
+) -> tuple[list[TickActionResult], bool]:
+    LiveScreenState, wait_selected, classify_screen = _load_cli_screen_api()
+    observations = build_live_tick_plan(sessions, coordinator_keys)
+    by_key = {item.key: item for item in sessions}
+    session_state = state.setdefault("sessions", {})
+    if not isinstance(session_state, dict):
+        raise LiveReadError("tick state sessions must be an object")
+    changed = False
+    results: list[TickActionResult] = []
+    priorities = {"select_wait": 0, "wake_coordinator": 1}
+    ordered = sorted(observations, key=lambda item: priorities.get(item.proposed_action, 2))
+
+    for observation in ordered:
+        session = by_key[(observation.owner, observation.name)]
+        key = _tick_state_key(session.owner, session.name)
+        saved = session_state.setdefault(key, {})
+        if not isinstance(saved, dict):
+            saved = {}
+            session_state[key] = saved
+
+        if observation.proposed_action not in {"select_wait", "wake_coordinator"}:
+            results.append(
+                TickActionResult(
+                    owner=session.owner,
+                    name=session.name,
+                    pane_id=session.pane_id,
+                    action=observation.proposed_action,
+                    status="skipped",
+                    reason=observation.reason,
+                    verified=False,
+                )
+            )
+            continue
+
+        try:
+            fresh = _capture_one_for_tick(client, session, lines)
+            fresh_state = classify_screen("claude", fresh.output)
+            if observation.proposed_action == "select_wait":
+                fingerprint = _tick_screen_fingerprint(fresh.output)
+                last_attempt = float(saved.get("wait_attempt_at") or 0)
+                same_screen = saved.get("wait_fingerprint") == fingerprint
+                retry_after = max(1, wait_retry_minutes) * 60
+                if same_screen and (now - last_attempt) < retry_after:
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="select_wait",
+                            status="throttled",
+                            reason="WAIT was already attempted for this screen fingerprint",
+                            verified=False,
+                        )
+                    )
+                    continue
+                if fresh_state != LiveScreenState.rate_limit or not wait_selected(fresh.output):
+                    raise LiveReadError("rate-limit screen changed before WAIT selection")
+                saved.update(
+                    {
+                        "pane_id": fresh.pane_id,
+                        "wait_attempt_at": now,
+                        "wait_fingerprint": fingerprint,
+                    }
+                )
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
+                client.send(fresh, "", enter=True)
+                if verify_delay > 0:
+                    sleep_fn(verify_delay)
+                post = _capture_one_for_tick(client, fresh, lines)
+                verified = not wait_selected(post.output)
+                saved["wait_verified"] = verified
+                reason = "WAIT selected and screen advanced" if verified else "WAIT sent; screen change unverified"
+                results.append(
+                    TickActionResult(
+                        owner=session.owner,
+                        name=session.name,
+                        pane_id=session.pane_id,
+                        action="select_wait",
+                        status="applied",
+                        reason=reason,
+                        verified=verified,
+                    )
+                )
+                continue
+
+            last_wake = float(saved.get("last_wake_at") or 0)
+            wake_after = max(1, min_wake_minutes) * 60
+            if (now - last_wake) < wake_after:
+                results.append(
+                    TickActionResult(
+                        owner=session.owner,
+                        name=session.name,
+                        pane_id=session.pane_id,
+                        action="wake_coordinator",
+                        status="throttled",
+                        reason="coordinator wake interval has not elapsed",
+                        verified=False,
+                    )
+                )
+                continue
+            if fresh_state != LiveScreenState.idle:
+                raise LiveReadError(f"coordinator changed to {fresh_state.value} before wake")
+            token = _tick_token(now, fresh)
+            message = _tick_wake_message(token)
+            saved.update({"pane_id": fresh.pane_id, "last_wake_at": now, "last_wake_token": token})
+            changed = True
+            if persist_state is not None:
+                persist_state(state)
+            client.send(fresh, message, enter=True)
+            if verify_delay > 0:
+                sleep_fn(verify_delay)
+            post = _capture_one_for_tick(client, fresh, lines)
+            post_state = classify_screen("claude", post.output)
+            verified = token in post.output or post_state == LiveScreenState.busy
+            saved["last_wake_verified"] = verified
+            results.append(
+                TickActionResult(
+                    owner=session.owner,
+                    name=session.name,
+                    pane_id=session.pane_id,
+                    action="wake_coordinator",
+                    status="applied",
+                    reason="coordinator tick delivered" if verified else "coordinator tick sent; delivery unverified",
+                    verified=verified,
+                )
+            )
+        except (LiveReadError, ValueError) as exc:
+            results.append(
+                TickActionResult(
+                    owner=session.owner,
+                    name=session.name,
+                    pane_id=session.pane_id,
+                    action=observation.proposed_action,
+                    status="failed",
+                    reason=str(exc),
+                    verified=False,
+                )
+            )
+    return results, changed
+
+
+def render_live_tick_results(results: Sequence[TickActionResult]) -> str:
+    lines = ["mesh live tick: apply"]
+    for item in results:
+        lines.append(
+            f"{item.owner}/{item.name} pane={item.pane_id or '-'} action={item.action} "
+            f"status={item.status} verified={'yes' if item.verified else 'no'} reason={item.reason}"
+        )
+    if len(lines) == 1:
+        lines.append("no Claude sessions found")
+    return "\n".join(lines)
+
+
 def resolve_session(
     sessions: Sequence[LiveSession],
     requested: str,
@@ -1436,6 +1738,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     tick.add_argument("--lines", type=int, default=160, help="Captured lines per Claude session.")
     tick.add_argument("--json", action="store_true", help="Emit metadata-only structured JSON.")
+    tick.add_argument("--apply", action="store_true", help="Apply exact WAIT and idle-coordinator actions.")
+    tick.add_argument(
+        "--state-file",
+        default=os.environ.get("MESH_LIVE_TICK_STATE", DEFAULT_TICK_STATE_FILE),
+        help="Idempotency state path. No pane output is stored.",
+    )
+    tick.add_argument("--min-wake-minutes", type=int, default=25)
+    tick.add_argument("--wait-retry-minutes", type=int, default=60)
+    tick.add_argument("--verify-delay", type=float, default=1.0)
     return parser.parse_args(argv)
 
 
@@ -1528,19 +1839,55 @@ def main(argv: Sequence[str] | None = None) -> int:
             captured, capture_warnings = client.capture(targets, lines)
             _print_warnings(capture_warnings)
             observations = build_live_tick_plan(captured, coordinator_keys)
+            if not args.apply:
+                if args.json:
+                    print(
+                        json.dumps(
+                            {
+                                "mode": "dry-run",
+                                "observations": [asdict(item) for item in observations],
+                            },
+                            indent=2,
+                        )
+                    )
+                else:
+                    print(render_live_tick_plan(observations))
+                return 1 if any(item.capture_error for item in captured) else 0
+
+            if args.min_wake_minutes < 1 or args.wait_retry_minutes < 1:
+                raise ValueError("tick intervals must be positive minutes")
+            if args.verify_delay < 0 or args.verify_delay > 30:
+                raise ValueError("tick --verify-delay must be between 0 and 30 seconds")
+            with live_tick_state_lock(args.state_file):
+                state = load_live_tick_state(args.state_file)
+                results, changed = execute_live_tick_actions(
+                    client,
+                    captured,
+                    coordinator_keys,
+                    state=state,
+                    lines=lines,
+                    now=time.time(),
+                    min_wake_minutes=args.min_wake_minutes,
+                    wait_retry_minutes=args.wait_retry_minutes,
+                    verify_delay=args.verify_delay,
+                    persist_state=lambda value: save_live_tick_state(args.state_file, value),
+                )
+                if changed:
+                    save_live_tick_state(args.state_file, state)
             if args.json:
                 print(
                     json.dumps(
                         {
-                            "mode": "dry-run",
-                            "observations": [asdict(item) for item in observations],
+                            "mode": "apply",
+                            "results": [asdict(item) for item in results],
                         },
                         indent=2,
                     )
                 )
             else:
-                print(render_live_tick_plan(observations))
-            return 1 if any(item.capture_error for item in captured) else 0
+                print(render_live_tick_results(results))
+            failed = any(item.status == "failed" for item in results)
+            return 1 if failed or any(item.capture_error for item in captured) else 0
 
         if args.cmd == "board":
             selected = filter_sessions(sessions, args.query)
