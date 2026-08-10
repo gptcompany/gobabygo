@@ -89,10 +89,23 @@ fi
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mesh-live-cron.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 current="$tmp_dir/current"
+current_error="$tmp_dir/current.error"
 clean="$tmp_dir/clean"
 next="$tmp_dir/next"
 
-crontab -l >"$current" 2>/dev/null || :
+if ! LC_ALL=C crontab -l >"$current" 2>"$current_error"; then
+  if grep -qi "no crontab" "$current_error"; then
+    : >"$current"
+  else
+    detail="$(tr '\n' ' ' <"$current_error")"
+    fail "unable to read existing crontab${detail:+: $detail}"
+  fi
+fi
+begin_count="$(grep -Fxc "$BEGIN_MARKER" "$current" || true)"
+end_count="$(grep -Fxc "$END_MARKER" "$current" || true)"
+if [[ "$begin_count" != "$end_count" || "$begin_count" -gt 1 ]]; then
+  fail "existing mesh live tick marker block is malformed"
+fi
 awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
   $0 == begin { skip = 1; next }
   $0 == end { skip = 0; next }

@@ -20,7 +20,14 @@ def _fake_crontab(tmp_path: Path) -> tuple[dict[str, str], Path]:
 set -eu
 case "${1:-}" in
   -l)
-    test -f "$CRONTAB_STORE" || exit 1
+    if test "${CRONTAB_FAIL_READ:-0}" = 1; then
+      echo "permission denied" >&2
+      exit 1
+    fi
+    test -f "$CRONTAB_STORE" || {
+      echo "no crontab for test-user" >&2
+      exit 1
+    }
     cat "$CRONTAB_STORE"
     ;;
   -)
@@ -127,3 +134,26 @@ def test_cron_installer_rejects_unsafe_or_invalid_values(tmp_path: Path) -> None
     )
     assert unsafe_path.returncode == 2
     assert "must not contain" in unsafe_path.stderr
+
+
+def test_cron_installer_fails_closed_on_read_error_or_malformed_markers(
+    tmp_path: Path,
+) -> None:
+    env, store = _fake_crontab(tmp_path)
+    original = "0 3 * * * /usr/local/bin/backup\n"
+    store.write_text(original, encoding="utf-8")
+    args = ("--mesh-script", str(MESH), "--dry-run")
+
+    env["CRONTAB_FAIL_READ"] = "1"
+    failed_read = _run_installer(env, *args)
+    assert failed_read.returncode == 2
+    assert "unable to read existing crontab" in failed_read.stderr
+    assert store.read_text(encoding="utf-8") == original
+
+    env.pop("CRONTAB_FAIL_READ")
+    malformed = f"{original}# >>> gobabygo-mesh-live-tick >>>\n"
+    store.write_text(malformed, encoding="utf-8")
+    failed_marker = _run_installer(env, *args)
+    assert failed_marker.returncode == 2
+    assert "marker block is malformed" in failed_marker.stderr
+    assert store.read_text(encoding="utf-8") == malformed
