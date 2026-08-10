@@ -199,19 +199,19 @@ _ws_ssh_attach_or_start_once() {
   command ssh "${ssh_opts[@]}" -t "$ws_host" \
     "SESSION=$(printf '%q' "$session") TARGET_DIR=$(printf '%q' "$target_dir") STARTUP=$(printf '%q' "$startup") bash -lc '
 set -e
-if [[ ! -d "\$TARGET_DIR" ]]; then
-  echo "[tmux] missing repo dir: \$TARGET_DIR"
-  TARGET_DIR="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
+if [[ ! -d \"\$TARGET_DIR\" ]]; then
+  echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
+  exit 3
 fi
-if tmux has-session -t "\$SESSION" 2>/dev/null; then
-  exec tmux attach -t "\$SESSION"
+if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
+  exec tmux attach -t \"\$SESSION\"
 fi
-if [[ -n "\$STARTUP" ]]; then
-  tmux new-session -d -s "\$SESSION" -c "\$TARGET_DIR" "\$STARTUP; exec \\$SHELL -l"
+if [[ -n \"\$STARTUP\" ]]; then
+  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$STARTUP; exec \\$SHELL -l\"
 else
-  tmux new-session -d -s "\$SESSION" -c "\$TARGET_DIR"
+  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\"
 fi
-exec tmux attach -t "\$SESSION"
+exec tmux attach -t \"\$SESSION\"
 '"
 }
 
@@ -244,8 +244,8 @@ TARGET_DIR=$(printf '%q' "$target_dir")
 STARTUP=$(printf '%q' "$startup")
 set -e
 if [[ ! -d \"\$TARGET_DIR\" ]]; then
-  echo \"[tmux] missing dir: \$TARGET_DIR\"
-  TARGET_DIR=\"${MESH_WS_REPO_BASE:-/media/sam/1TB}\"
+  echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
+  exit 3
 fi
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   exec tmux attach -t \"\$SESSION\"

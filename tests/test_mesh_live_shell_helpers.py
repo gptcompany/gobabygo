@@ -28,6 +28,15 @@ def _run_shell(shell: str, body: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _fake_capture_command(directory: Path, name: str) -> None:
+    command = directory / name
+    command.write_text(
+        "#!/bin/sh\nprintf '<%s>\\n' \"$@\" > \"$CAPTURE_FILE\"\n",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+
+
 @pytest.mark.parametrize("shell", _shells())
 def test_board_peek_and_send_are_thin_mesh_live_wrappers(shell: str) -> None:
     helper = shlex.quote(str(HELPERS))
@@ -329,6 +338,56 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB 'claude --name claude
         "</data/sata/1TB>",
         "<claude --name claude-coordinator>",
     ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_ssh_start_fails_closed_for_missing_repo(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "ssh")
+    capture = tmp_path / "ssh-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_control_host() {{ printf '%s' 'dell7670'; }}
+_ws_ssh_attach_or_start_once claude-typo /data/sata/1TB/typo ''
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "missing repo dir" in command
+    assert "exit 3" in command
+    assert 'TARGET_DIR="/data/sata/1TB"' not in command
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_start_fails_closed_for_missing_repo(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "mosh")
+    capture = tmp_path / "mosh-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_mosh_host() {{ printf '%s' 'sam@10.0.0.2'; }}
+_ws_mosh_attach_or_start claude-typo /data/sata/1TB/typo ''
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "missing repo dir" in command
+    assert "exit 3" in command
+    assert 'TARGET_DIR="/data/sata/1TB"' not in command
 
 
 @pytest.mark.parametrize("shell", _shells())
