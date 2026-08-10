@@ -514,6 +514,7 @@ def test_coerce_string_list() -> None:
 def test_prompt_is_idle_and_auto_exit_success_detection() -> None:
     captured = "❯ Reply\n\n● GEMINI_OK\n\n❯ "
     assert _prompt_is_idle(captured) is True
+    assert _prompt_is_idle("● Reading file\n❯ ") is True
     assert _should_auto_exit_on_success(captured, ["GEMINI_OK"], delta_text="● GEMINI_OK") is True
     assert _should_auto_exit_on_success(captured, ["OTHER"], delta_text="● GEMINI_OK") is False
 

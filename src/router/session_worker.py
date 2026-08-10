@@ -37,7 +37,6 @@ from src.router.cli_screen import (
     last_prompt_line_has_content as _shared_last_prompt_line_has_content,
     line_shows_activity as _shared_line_shows_activity,
     looks_like_start_screen as _shared_looks_like_start_screen,
-    prompt_is_idle as _shared_prompt_is_idle,
 )
 from src.router.models import CrossRoleMessageType, MessageEnvelope, RoleState
 from src.router.provider_runtime import resolve_cli_command
@@ -417,7 +416,8 @@ def _wrap_cli_command_with_relay_proxy(
 
 def _prompt_is_idle(captured: str) -> bool:
     """Return True when Claude Code is back at an empty ready prompt."""
-    return _shared_prompt_is_idle(captured)
+    body = str(captured or "")
+    return "❯" in body and not _last_prompt_line_has_content(body)
 
 
 def _normalize_ws(text: str) -> str:
