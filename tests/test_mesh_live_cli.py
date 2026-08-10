@@ -1032,6 +1032,8 @@ def test_main_tick_is_local_metadata_only_dry_run(monkeypatch, capsys) -> None:
 def test_live_tick_state_round_trip_is_private_and_contains_no_capture(tmp_path: Path) -> None:
     module = _load_module()
     state_path = tmp_path / "state" / "tick.json"
+    state_path.parent.mkdir(mode=0o755)
+    state_path.parent.chmod(0o755)
     state = {
         "version": 1,
         "sessions": {
@@ -1046,7 +1048,7 @@ def test_live_tick_state_round_trip_is_private_and_contains_no_capture(tmp_path:
 
     assert module.load_live_tick_state(str(state_path)) == state
     assert state_path.stat().st_mode & 0o777 == 0o600
-    assert state_path.parent.stat().st_mode & 0o777 == 0o700
+    assert state_path.parent.stat().st_mode & 0o777 == 0o755
     assert list(state_path.parent.glob("*.tmp")) == []
 
     with module.live_tick_state_lock(str(state_path)):

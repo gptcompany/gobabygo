@@ -899,10 +899,6 @@ def save_live_tick_state(path: str, state: dict[str, Any]) -> None:
     if state_path.is_symlink():
         raise LiveReadError(f"tick state file must not be a symlink: {state_path}")
     state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        state_path.parent.chmod(0o700)
-    except OSError:
-        pass
     temporary: Path | None = None
     try:
         fd, temporary_name = tempfile.mkstemp(
