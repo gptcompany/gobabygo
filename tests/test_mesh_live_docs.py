@@ -43,6 +43,9 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "internal non-blocking lock",
         "never stores pane captures",
         "do not point live tick at router-managed owners",
+        "Claude as its current process",
+        "cannot be read or its managed marker block is malformed",
+        "cannot eliminate the race",
     ):
         assert required in normalized
 

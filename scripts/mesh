@@ -601,7 +601,8 @@ Behavior:
   It does not require the router or iTerm2.
   Captured pane output is redacted before display and JSON output.
   send is literal and does not submit text unless --enter is explicit.
-  send still acts as remote keyboard input; verify pane state immediately beforehand.
+  send rechecks the discovered session/pane but still acts as remote keyboard input;
+  verify pane state immediately beforehand because a residual race remains.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
   brief builds a best-effort redacted read-only prompt; review it before pasting.
   coordinator-prompt builds the system contract used by the mcoordinator shell helper.

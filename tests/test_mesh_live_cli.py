@@ -1775,6 +1775,7 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert "mesh live attach" in proc.stdout
     assert "mesh live tick" in proc.stdout
     assert "read-only by default" in proc.stdout
+    assert "residual race remains" in proc.stdout
     assert "MESH_LIVE_HOSTS" in proc.stdout
     assert "MESH_WS_CLOUDFLARE_HOST" in proc.stdout
     assert "does not require the router or iTerm2" in proc.stdout

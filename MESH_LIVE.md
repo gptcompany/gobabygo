@@ -124,11 +124,13 @@ Apply mode has two actions:
    an empty idle prompt. The coordinator then boards and peeks dynamically and
    decides whether existing work needs review, debate, or delegation.
 
-Before either send, tick recaptures the same pane and revalidates its state. It
-records the attempt before I/O, recaptures after I/O, and throttles retries by
-screen fingerprint or coordinator wake time. Ambiguous rate-limit screens are
-reported as `manual_rate_limit` and are never submitted. Tick does not create
-sessions, choose new tasks, or blindly resend a delegation.
+Before either send, tick recaptures the same pane, revalidates its state, and
+requires the pane to still belong to the discovered session with Claude as its
+current process. It records the attempt before I/O, recaptures after I/O, and
+throttles retries by screen fingerprint or coordinator wake time. Ambiguous or
+stale rate-limit screens are reported as `manual_rate_limit` and are never
+submitted. Tick does not create sessions, choose new tasks, or blindly resend a
+delegation.
 
 Install the opt-in 30-minute user cron from the clean Dell runtime, not from the
 Mac checkout:
@@ -146,6 +148,9 @@ Preview or remove the managed crontab block without touching unrelated entries:
 ./scripts/install-mesh-live-cron.sh --mesh-script "$PWD/scripts/mesh" --dry-run
 ./scripts/install-mesh-live-cron.sh --remove
 ```
+
+The installer fails without rewriting the crontab when the existing crontab
+cannot be read or its managed marker block is malformed.
 
 The default schedule gives a maximum polling delay of about 30 minutes. The
 state file is mode `0600` and stores hashes, timestamps, pane IDs, and delivery
@@ -236,11 +241,12 @@ Treat `send` as remote keyboard access, not as a messaging API.
 3. Omit `--enter` unless immediate submission is intended.
 4. Never pipe model/pane output into `wsend`, `eval`, or a shell.
 
-The pane can change between `peek` and `send`. Exact pane selection prevents
-name ambiguity but cannot prevent that race. Redaction removes common terminal
-escapes, credentials, tokens, marked private-key blocks, and consecutive
-PEM-like Base64 lines on a best-effort basis. Isolated Base64 is preserved, so
-this is not a DLP boundary.
+The send path immediately checks that the pane still belongs to the discovered
+session; automatic tick sends also require a current Claude process. The pane
+can still change after that check, so this narrows but cannot eliminate the
+race. Redaction removes common terminal escapes, credentials, tokens, marked
+private-key blocks, and consecutive PEM-like Base64 lines on a best-effort
+basis. Isolated Base64 is preserved, so this is not a DLP boundary.
 
 ## Code Map
 
