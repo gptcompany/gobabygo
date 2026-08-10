@@ -31,6 +31,14 @@ import requests
 import yaml
 
 from src.router.failure_classifier import classify_cli_failure
+from src.router.cli_screen import (
+    capture_shows_activity as _shared_capture_shows_activity,
+    detect_interactive_failure_screen as _shared_detect_interactive_failure_screen,
+    last_prompt_line_has_content as _shared_last_prompt_line_has_content,
+    line_shows_activity as _shared_line_shows_activity,
+    looks_like_start_screen as _shared_looks_like_start_screen,
+    prompt_is_idle as _shared_prompt_is_idle,
+)
 from src.router.models import CrossRoleMessageType, MessageEnvelope, RoleState
 from src.router.provider_runtime import resolve_cli_command
 from src.router.workdir_guard import parse_allowed_work_dirs, resolve_work_dir
@@ -38,14 +46,6 @@ from src.router.workdir_guard import parse_allowed_work_dirs, resolve_work_dir
 logger = logging.getLogger("mesh.session_worker")
 _CLAUDE_CODE_READY_MARKERS = ("❯",)
 _INBOUND_PROXY_PREFIX = "__mesh_inbound__:"
-_CLAUDE_RATE_LIMIT_SCREEN_MARKERS = (
-    "/rate-limit-options",
-    "what do you want to do?",
-    "stop and wait for limit to reset",
-    "upgrade your plan",
-)
-
-
 class SessionNotFoundError(RuntimeError):
     """Raised when the router no longer has a record for a session."""
 
@@ -287,25 +287,7 @@ def _compute_output_emit(
 
 def _last_prompt_line_has_content(captured: str) -> bool:
     """Return True when the bottom-most Claude Code composer still holds text."""
-    lowered_capture = str(captured or "").lower()
-    for line in reversed((captured or "").splitlines()):
-        normalized = line.replace("\xa0", " ").lstrip()
-        if normalized.startswith("❯"):
-            prompt_text = normalized[1:].strip()
-            if not prompt_text:
-                return False
-            # Gemini home can render a suggestion row like `❯ Try "..."` above the
-            # real empty composer; that row should not be treated as pending input.
-            if (
-                prompt_text.lower().startswith("try ")
-                and (
-                    "/model to try" in lowered_capture
-                    or "bypass permissions on" in lowered_capture
-                )
-            ):
-                return False
-            return True
-    return False
+    return _shared_last_prompt_line_has_content(captured)
 
 
 def _coerce_bool(value: object, *, default: bool = False) -> bool:
@@ -435,8 +417,7 @@ def _wrap_cli_command_with_relay_proxy(
 
 def _prompt_is_idle(captured: str) -> bool:
     """Return True when Claude Code is back at an empty ready prompt."""
-    body = str(captured or "")
-    return "❯" in body and not _last_prompt_line_has_content(body)
+    return _shared_prompt_is_idle(captured)
 
 
 def _normalize_ws(text: str) -> str:
@@ -459,53 +440,15 @@ def _capture_contains_prompt_text(captured: str, prompt: str) -> bool:
 
 
 def _capture_shows_activity(captured: str) -> bool:
-    body = str(captured or "")
-    lowered = body.lower()
-    if "press up to edit queued messages" in lowered:
-        return True
-    if "· flowing" in lowered or "✻ " in body or "⎿" in body:
-        return True
-    return any(_line_shows_activity(line) for line in body.splitlines())
+    return _shared_capture_shows_activity(captured)
 
 
 def _line_shows_activity(line: str) -> bool:
-    stripped = str(line or "").replace("\xa0", " ").strip()
-    if not stripped.startswith("● "):
-        return False
-    content = stripped[2:].strip()
-    if not content:
-        return False
-    if re.match(r"^[A-Z][A-Za-z0-9_-]*\(", content):
-        return True
-    lowered = content.lower()
-    return lowered.startswith(
-        (
-            "running ",
-            "executing ",
-            "reading ",
-            "writing ",
-            "editing ",
-            "searching ",
-            "updating ",
-            "creating ",
-            "calling ",
-            "using tool",
-        )
-    )
+    return _shared_line_shows_activity(line)
 
 
 def _looks_like_start_screen(captured: str) -> bool:
-    body = str(captured or "")
-    lowered = body.lower()
-    if _capture_shows_activity(body):
-        return False
-    return (
-        "welcome back" in lowered
-        or "tips for getting started" in lowered
-        or "/model to try opus" in lowered
-        or "run /init to create" in lowered
-        or "❯ try " in body.lower()
-    )
+    return _shared_looks_like_start_screen(captured)
 
 
 def _should_auto_exit_on_success(
@@ -579,13 +522,7 @@ def _success_file_matches(
 
 def _detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
     """Return a failure kind when the live TUI is stuck on a terminal error screen."""
-    failure_kind = classify_cli_failure(cli_type, captured)
-    if failure_kind != "account_exhausted":
-        return ""
-    body = str(captured or "").lower()
-    if any(marker in body for marker in _CLAUDE_RATE_LIMIT_SCREEN_MARKERS):
-        return failure_kind
-    return ""
+    return _shared_detect_interactive_failure_screen(cli_type, captured)
 
 
 def _discover_project_mcp_servers(work_dir: str) -> list[str]:

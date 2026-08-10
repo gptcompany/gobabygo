@@ -84,6 +84,17 @@ class AttachPlan:
     argv: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class TickObservation:
+    owner: str
+    name: str
+    pane_id: str
+    coordinator: bool
+    screen_state: str
+    proposed_action: str
+    reason: str
+
+
 class LiveReadError(RuntimeError):
     pass
 
@@ -744,6 +755,101 @@ def filter_sessions(sessions: Sequence[LiveSession], query: str) -> list[LiveSes
     return result
 
 
+def _load_cli_screen_api() -> tuple[Any, Any, Any]:
+    repo_root = str(Path(__file__).resolve().parents[1])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from src.router.cli_screen import (  # pylint: disable=import-outside-toplevel
+        LiveScreenState,
+        claude_wait_option_selected,
+        classify_live_screen,
+    )
+
+    return LiveScreenState, claude_wait_option_selected, classify_live_screen
+
+
+def _is_claude_session(session: LiveSession) -> bool:
+    command = Path(session.pane_command or "").name.lower()
+    return command in {"claude", "claude-code"} or session.name.lower().startswith("claude-")
+
+
+def _is_default_coordinator_name(name: str) -> bool:
+    return re.fullmatch(r"claude(?:-[A-Za-z0-9_.-]+)?-coordinator", str(name or "")) is not None
+
+
+def resolve_tick_candidates(
+    sessions: Sequence[LiveSession],
+    coordinator_names: Sequence[str],
+) -> tuple[list[LiveSession], set[tuple[str, str]]]:
+    coordinators: list[LiveSession] = []
+    if coordinator_names:
+        for name in coordinator_names:
+            coordinator = resolve_session(sessions, name)
+            if coordinator.key not in {item.key for item in coordinators}:
+                coordinators.append(coordinator)
+    else:
+        coordinators = [item for item in sessions if _is_default_coordinator_name(item.name)]
+
+    coordinator_keys = {item.key for item in coordinators}
+    candidates = [item for item in sessions if _is_claude_session(item)]
+    for coordinator in coordinators:
+        if coordinator.key not in {item.key for item in candidates}:
+            candidates.append(coordinator)
+    candidates.sort(key=lambda item: (item.name.lower(), item.owner.lower()))
+    return candidates, coordinator_keys
+
+
+def build_live_tick_plan(
+    sessions: Sequence[LiveSession],
+    coordinator_keys: set[tuple[str, str]],
+) -> list[TickObservation]:
+    LiveScreenState, wait_selected, classify_screen = _load_cli_screen_api()
+    observations: list[TickObservation] = []
+    for session in sessions:
+        state = classify_screen("claude", session.output)
+        is_coordinator = session.key in coordinator_keys
+        if session.capture_error:
+            action = "none"
+            reason = "capture_error"
+        elif state == LiveScreenState.rate_limit:
+            if wait_selected(session.output):
+                action = "select_wait"
+                reason = "exact Claude rate-limit menu with WAIT selected"
+            else:
+                action = "manual_rate_limit"
+                reason = "rate limit detected but WAIT selection is ambiguous"
+        elif is_coordinator and state == LiveScreenState.idle:
+            action = "wake_coordinator"
+            reason = "coordinator is at an empty idle prompt"
+        else:
+            action = "none"
+            reason = f"screen state is {state.value}"
+        observations.append(
+            TickObservation(
+                owner=session.owner,
+                name=session.name,
+                pane_id=session.pane_id,
+                coordinator=is_coordinator,
+                screen_state=state.value,
+                proposed_action=action,
+                reason=reason,
+            )
+        )
+    return observations
+
+
+def render_live_tick_plan(observations: Sequence[TickObservation]) -> str:
+    lines = ["mesh live tick: dry-run"]
+    for item in observations:
+        lines.append(
+            f"{item.owner}/{item.name} pane={item.pane_id or '-'} "
+            f"state={item.screen_state} action={item.proposed_action} reason={item.reason}"
+        )
+    if len(lines) == 1:
+        lines.append("no Claude sessions found")
+    return "\n".join(lines)
+
+
 def resolve_session(
     sessions: Sequence[LiveSession],
     requested: str,
@@ -1317,6 +1423,19 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
         help="Absolute mesh script path on the workstation.",
     )
+
+    tick = sub.add_parser(
+        "tick",
+        help="Inspect Claude sessions and propose safe coordinator/rate-limit actions.",
+    )
+    tick.add_argument(
+        "--coordinator",
+        action="append",
+        default=[],
+        help="Exact coordinator session; repeat for multiple coordinators. Default: safe name discovery.",
+    )
+    tick.add_argument("--lines", type=int, default=160, help="Captured lines per Claude session.")
+    tick.add_argument("--json", action="store_true", help="Emit metadata-only structured JSON.")
     return parser.parse_args(argv)
 
 
@@ -1395,12 +1514,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.cmd == "board":
             lines = validate_capture_lines(args.lines, allow_zero=True)
-        elif args.cmd in {"peek", "brief"}:
+        elif args.cmd in {"peek", "brief", "tick"}:
             lines = validate_capture_lines(args.lines, allow_zero=False)
         else:
             lines = 0
         client, sessions, warnings = _discover_with_fallback(args)
         _print_warnings(warnings)
+
+        if args.cmd == "tick":
+            if not client.endpoint.local:
+                raise ValueError("tick must run on the tmux workstation with --local")
+            targets, coordinator_keys = resolve_tick_candidates(sessions, args.coordinator)
+            captured, capture_warnings = client.capture(targets, lines)
+            _print_warnings(capture_warnings)
+            observations = build_live_tick_plan(captured, coordinator_keys)
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "mode": "dry-run",
+                            "observations": [asdict(item) for item in observations],
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                print(render_live_tick_plan(observations))
+            return 1 if any(item.capture_error for item in captured) else 0
 
         if args.cmd == "board":
             selected = filter_sessions(sessions, args.query)

@@ -941,6 +941,95 @@ def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:
     assert "Discover worker candidates" in output
 
 
+def test_live_tick_plan_requires_exact_wait_selection_and_idle_coordinator() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-rektslug-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output="header\n❯ ",
+    )
+    selected_wait = module.LiveSession(
+        owner="sam",
+        name="claude-worker-selected",
+        pane_id="%2",
+        pane_command="claude",
+        output=(
+            "You've hit your limit\n❯ /rate-limit-options\nWhat do you want to do?\n"
+            "❯ 1. Stop and wait for limit to reset\n  2. Upgrade your plan\n"
+        ),
+    )
+    ambiguous_wait = module.replace(
+        selected_wait,
+        name="claude-worker-ambiguous",
+        pane_id="%3",
+        output=selected_wait.output.replace("❯ 1. Stop", "  1. Stop"),
+    )
+
+    sessions, coordinator_keys = module.resolve_tick_candidates(
+        [selected_wait, coordinator, ambiguous_wait], []
+    )
+    plan = module.build_live_tick_plan(sessions, coordinator_keys)
+    actions = {item.name: item.proposed_action for item in plan}
+
+    assert actions == {
+        "claude-rektslug-coordinator": "wake_coordinator",
+        "claude-worker-ambiguous": "manual_rate_limit",
+        "claude-worker-selected": "select_wait",
+    }
+
+
+def test_main_tick_is_local_metadata_only_dry_run(monkeypatch, capsys) -> None:
+    module = _load_module()
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            return (
+                [
+                    module.LiveSession(
+                        owner="sam",
+                        name="claude-coordinator",
+                        pane_id="%1",
+                        pane_command="claude",
+                    )
+                ],
+                [],
+            )
+
+        def capture(self, sessions, lines):
+            assert lines == 20
+            return [module.replace(item, output="secret=raw\n❯ ") for item in sessions], []
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+
+    assert module.main(["--local", "tick", "--lines", "20", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "dry-run"
+    assert payload["observations"][0]["proposed_action"] == "wake_coordinator"
+    assert "raw" not in json.dumps(payload)
+
+
+def test_main_tick_rejects_remote_execution(monkeypatch, capsys) -> None:
+    module = _load_module()
+
+    class FakeClient:
+        def __init__(self, endpoint) -> None:
+            self.endpoint = endpoint
+
+        def discover(self):
+            return [], []
+
+    monkeypatch.setattr(module, "LiveClient", FakeClient)
+    monkeypatch.setattr(module, "host_is_local", lambda host: False)
+
+    assert module.main(["--host", "dell", "tick"]) == 2
+    assert "tick must run on the tmux workstation" in capsys.readouterr().err
+
+
 def test_request_endpoint_supports_local_missing_host_ssh_failure_and_json_parsing(
     monkeypatch,
 ) -> None:
