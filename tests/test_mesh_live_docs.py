@@ -26,6 +26,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "DELEGATION_ID",
         "successful tmux send is not treated as delivery",
         "MESH_COORDINATOR_CLAUDE_CMD",
+        "MESH_COORDINATOR_MESH_SCRIPT",
+        "clean runtime checkout",
         "tmux owns process/session persistence",
         "MESH_LIVE_HOSTS",
         "router database",

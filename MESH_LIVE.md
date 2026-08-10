@@ -149,6 +149,17 @@ worker and must select or rotate a provider account.
 tmux owns process/session persistence. Mosh and SSH are reconnectable
 transports; losing either transport does not terminate the tmux work.
 
+The coordinator executes `mesh live` on the workstation. Do not point it at a
+dirty or divergent development checkout. Keep a clean runtime checkout and set
+its absolute path in the Mac operator shell:
+
+```bash
+export MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo-runtime/scripts/mesh
+```
+
+Updating that runtime is a deployment operation; it must not reset, clean, or
+pull through an unrelated dirty worktree.
+
 - Direct reachable VPN/LAN host: `attach` prefers mosh.
 - ProxyJump or Cloudflare SSH host: `attach` falls back to SSH.
 - Read-only and send controls use short SSH calls.
