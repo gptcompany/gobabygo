@@ -439,10 +439,10 @@ def _send_target(
                 [*prefix, "tmux", "send-keys", "-t", tmux_target, "-l", "--", text]
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            return {"error": str(exc)}
+            return {"error": redact_capture(str(exc))}
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
-            return {"error": detail}
+            return {"error": redact_capture(detail)}
 
     if enter:
         try:

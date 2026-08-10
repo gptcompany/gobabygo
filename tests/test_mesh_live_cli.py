@@ -544,6 +544,33 @@ def test_remote_send_rejects_changed_session_or_process(monkeypatch) -> None:
     assert len(commands) == 1
 
 
+def test_remote_send_redacts_text_from_timeout_error(monkeypatch) -> None:
+    module = _load_module()
+    secret = "OPENAI_API_KEY=must-not-leak-from-timeout"
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["claude-worker", "claude"]) + "\n",
+            )
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "claude-worker", "pane_id": "%2"},
+            "text": secret,
+            "enter": True,
+        }
+    )
+
+    assert "must-not-leak-from-timeout" not in json.dumps(result)
+    assert "[REDACTED]" in result["error"]
+
+
 def test_live_client_send_uses_discovered_owner_and_pane() -> None:
     module = _load_module()
     observed: dict = {}
