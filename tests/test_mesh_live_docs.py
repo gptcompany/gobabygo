@@ -28,7 +28,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "MESH_COORDINATOR_CLAUDE_CMD",
         "MESH_COORDINATOR_MESH_SCRIPT",
         "clean runtime checkout",
-        "missing target fails with",
+        "missing target fails",
         "never fall back to the repository-base",
         "tmux owns process/session persistence",
         "MESH_LIVE_HOSTS",

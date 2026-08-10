@@ -25,9 +25,10 @@ normal configured command, then detach from tmux. Existing worker sessions can
 be reused directly. `mcoordinator` starts Claude with the autonomous system
 contract only when its tmux session is first created; later calls only attach.
 
-Repository names resolve below `MESH_WS_REPO_BASE`. A missing target fails with
-exit code `3`; persistent helpers never fall back to the repository-base
-directory. An absolute repository path is also accepted.
+Repository names resolve below `MESH_WS_REPO_BASE`. A missing target fails
+before tmux session creation.
+Persistent helpers never fall back to the repository-base directory. An
+absolute repository path is also accepted.
 
 For multi-repo coordination:
 
