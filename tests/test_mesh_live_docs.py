@@ -14,6 +14,7 @@ def test_mesh_live_runbook_is_linked_from_primary_docs() -> None:
 
 def test_mesh_live_runbook_covers_operator_contract() -> None:
     runbook = (ROOT / "MESH_LIVE.md").read_text(encoding="utf-8")
+    normalized = " ".join(runbook.split())
 
     for required in (
         "wboard 30",
@@ -35,8 +36,15 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "router database",
         "iTerm2 local state",
         "Treat `send` as remote keyboard access",
+        "mesh live tick --apply",
+        "exact Claude rate-limit menu",
+        "manual_rate_limit",
+        "install-mesh-live-cron.sh",
+        "internal non-blocking lock",
+        "never stores pane captures",
+        "do not point live tick at router-managed owners",
     ):
-        assert required in runbook
+        assert required in normalized
 
 
 def test_architecture_distinguishes_manual_and_router_managed_truth() -> None:
@@ -44,3 +52,4 @@ def test_architecture_distinguishes_manual_and_router_managed_truth() -> None:
 
     assert "Router-managed orchestration is authoritative" in architecture
     assert "manual session liveness" in architecture
+    assert "router-owned sessions remain under `session_worker` policy" in architecture

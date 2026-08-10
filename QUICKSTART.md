@@ -255,6 +255,7 @@ mesh live send claude-rektslug "status?" --enter
 mesh live attach claude-rektslug
 mesh live brief --repo rektslug
 mesh live brief --all --coordinator claude-coordinator
+MESH_LIVE_LOCAL=1 mesh live tick --json
 mesh thread create --name rektslug-live-delegation
 mesh thread add-step --thread rektslug-live-delegation --title "Implement fix" --step-index 0 --repo /data/sata/1TB/rektslug --cli codex --payload '{"prompt":"Implement the approved fix."}'
 mesh start                      # one-command start (feature label auto-generated)
@@ -288,6 +289,13 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - a misspelled repo fails before tmux creation; persistent helpers never fall back to the repo-base directory
 - `wbrief --repo <repo>` is intra-repo; `wbrief --all` is multi-repo
 - review with `wpeek` before every sensitive `wsend`; `--enter` is explicit execution
+- on the Dell runtime, `mesh live tick` is read-only and `tick --apply` only
+  handles an exact selected Claude WAIT menu or wakes an exactly idle coordinator
+- install optional 30-minute polling with
+  `./scripts/install-mesh-live-cron.sh --mesh-script "$PWD/scripts/mesh"`; it
+  defaults to the current tmux owner and must not target router-managed owners
+- tick state contains metadata only; use `install-mesh-live-cron.sh --remove`
+  to remove its marked crontab block without touching unrelated entries
 
 Current canonical UI slice:
 

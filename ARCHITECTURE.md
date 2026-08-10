@@ -87,6 +87,8 @@ Important boundary:
 - these panes are operator affordances
 - router-managed orchestration truth lives in router DB + worker/session records
 - manual live-session truth lives in tmux and does not require a router row
+- periodic `mesh live tick` supervision defaults to the invoking user's manual
+  tmux sessions; router-owned sessions remain under `session_worker` policy
 - when live attach is unavailable, `worker-*` and `verifier` panes are detached control shells on the WS, not the live worker runtime
 ```
 
