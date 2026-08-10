@@ -285,6 +285,7 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
 - existing coordinator sessions are only attached; use `--session <fresh-name>` for a non-destructive bootstrap
 - set `MESH_COORDINATOR_MESH_SCRIPT` to a clean Dell runtime checkout; never use a dirty development checkout
+- a misspelled repo fails before tmux creation; persistent helpers never fall back to the repo-base directory
 - `wbrief --repo <repo>` is intra-repo; `wbrief --all` is multi-repo
 - review with `wpeek` before every sensitive `wsend`; `--enter` is explicit execution
 
