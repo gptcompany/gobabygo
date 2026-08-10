@@ -1747,7 +1747,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     tick.add_argument("--min-wake-minutes", type=int, default=25)
     tick.add_argument("--wait-retry-minutes", type=int, default=60)
     tick.add_argument("--verify-delay", type=float, default=1.0)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.cmd == "tick" and not args.users:
+        args.users = _current_username()
+    return args
 
 
 def _users_from_args(args: argparse.Namespace, host: str) -> tuple[str, ...]:

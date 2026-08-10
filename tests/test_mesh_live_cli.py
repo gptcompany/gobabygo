@@ -1297,6 +1297,17 @@ def test_main_tick_rejects_remote_execution(monkeypatch, capsys) -> None:
     assert "tick must run on the tmux workstation" in capsys.readouterr().err
 
 
+def test_live_tick_defaults_to_current_user_and_honors_explicit_users(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+
+    default_args = module._parse_args(["--local", "tick"])
+    explicit_args = module._parse_args(["--local", "--users", "mesh-worker", "tick"])
+
+    assert module._endpoints_from_args(default_args)[0].users == ("sam",)
+    assert module._endpoints_from_args(explicit_args)[0].users == ("mesh-worker",)
+
+
 def test_request_endpoint_supports_local_missing_host_ssh_failure_and_json_parsing(
     monkeypatch,
 ) -> None:
