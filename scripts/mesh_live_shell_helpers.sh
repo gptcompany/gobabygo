@@ -183,14 +183,118 @@ wsessions() {
   _mesh_live_control_run live board --lines 0 "$@"
 }
 
+_ws_remote_resume_guard() {
+  command cat <<'MESH_REMOTE_RESUME_GUARD'
+_mesh_active_resume_id() {
+  local candidate pane_pid current claude_pid child_pid child_comm previous arg marker proc_root
+  candidate="$1"
+  pane_pid="$(tmux display-message -p -t "$candidate" "#{pane_pid}" 2>/dev/null || true)"
+  current="$(tmux display-message -p -t "$candidate" "#{pane_current_command}" 2>/dev/null || true)"
+  current="${current##*/}"
+  claude_pid=""
+  case "$current" in
+    claude|claude-code) claude_pid="$pane_pid" ;;
+  esac
+  if [[ -z "$claude_pid" && -n "$pane_pid" ]]; then
+    while IFS= read -r child_pid; do
+      child_pid="${child_pid//[[:space:]]/}"
+      [[ -n "$child_pid" ]] || continue
+      child_comm="$(ps -o comm= -p "$child_pid" 2>/dev/null || true)"
+      child_comm="${child_comm##*/}"
+      child_comm="${child_comm//[[:space:]]/}"
+      case "$child_comm" in
+        claude|claude-code) claude_pid="$child_pid"; break ;;
+      esac
+    done < <(ps -o pid= --ppid "$pane_pid" 2>/dev/null || true)
+  fi
+  [[ -n "$claude_pid" ]] || return 1
+
+  proc_root="${MESH_LIVE_PROC_ROOT:-/proc}"
+  if [[ -r "$proc_root/$claude_pid/cmdline" ]]; then
+    previous=""
+    while IFS= read -r -d "" arg; do
+      if [[ "$previous" == "--resume" ]]; then
+        printf "%s" "$arg"
+        return 0
+      fi
+      case "$arg" in
+        --resume=*) printf "%s" "${arg#--resume=}"; return 0 ;;
+      esac
+      previous="$arg"
+    done < "$proc_root/$claude_pid/cmdline"
+  fi
+
+  marker="$(tmux show-environment -t "$candidate" MESH_LIVE_CLAUDE_RESUME_ID 2>/dev/null || true)"
+  case "$marker" in
+    MESH_LIVE_CLAUDE_RESUME_ID=*) printf "%s" "${marker#MESH_LIVE_CLAUDE_RESUME_ID=}"; return 0 ;;
+  esac
+  return 1
+}
+
+if [[ "$SESSION_KIND" == "coordinator" && -n "$RESUME_ID" ]]; then
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" && "$candidate" != "$SESSION" ]] || continue
+    active_resume="$(_mesh_active_resume_id "$candidate" || true)"
+    if [[ "$active_resume" == "$RESUME_ID" ]]; then
+      echo "[tmux] Claude resume session is already active in tmux session: $candidate" >&2
+      exit 6
+    fi
+  done < <(tmux list-sessions -F "#{session_name}" 2>/dev/null || true)
+
+  lock_base="${XDG_RUNTIME_DIR:-$HOME/.local/state/gobabygo}"
+  lock_file="$lock_base/mesh-live-resume-locks/$RESUME_ID.lock"
+  if [[ -e "$lock_file" ]]; then
+    if [[ -L "$lock_file" ]]; then
+      echo "[tmux] refusing symlinked Claude resume lock: $lock_file" >&2
+      exit 6
+    fi
+    if ! flock -n "$lock_file" true 2>/dev/null; then
+      echo "[tmux] Claude resume session is already locked by another coordinator" >&2
+      exit 6
+    fi
+  fi
+fi
+MESH_REMOTE_RESUME_GUARD
+}
+
+_ws_remote_locked_startup() {
+  command cat <<'MESH_REMOTE_LOCKED_STARTUP'
+session_command="$STARTUP"
+session_handles_shell=0
+if [[ "$SESSION_KIND" == "coordinator" && -n "$RESUME_ID" ]]; then
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "[tmux] flock is required for deterministic Claude resume safety" >&2
+    exit 6
+  fi
+  lock_base="${XDG_RUNTIME_DIR:-$HOME/.local/state/gobabygo}"
+  lock_dir="$lock_base/mesh-live-resume-locks"
+  mkdir -p "$lock_dir"
+  chmod 700 "$lock_dir"
+  lock_file="$lock_dir/$RESUME_ID.lock"
+  if [[ -L "$lock_file" ]]; then
+    echo "[tmux] refusing symlinked Claude resume lock: $lock_file" >&2
+    exit 6
+  fi
+  (umask 077; : >> "$lock_file")
+  chmod 600 "$lock_file"
+  printf -v lock_file_q "%q" "$lock_file"
+  printf -v startup_q "%q" "$STARTUP"
+  session_command="exec 9>>$lock_file_q; if ! flock -n 9; then echo \"[tmux] Claude resume session is already locked by another coordinator\" >&2; sleep 2; exit 73; fi; bash -lc $startup_q; flock -u 9; exec \$SHELL -l"
+  session_handles_shell=1
+fi
+MESH_REMOTE_LOCKED_STARTUP
+}
+
 _ws_ssh_attach_or_start_once() {
-  local session target_dir startup resume_id session_kind ws_host
+  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup
   local -a ssh_opts=()
   session="$1"
   target_dir="$2"
   startup="$3"
   resume_id="${4:-}"
   session_kind="${5:-}"
+  resume_guard="$(_ws_remote_resume_guard)"
+  locked_startup="$(_ws_remote_locked_startup)"
   ws_host="$(_ws_control_host)" || return $?
   if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
     local opt
@@ -205,6 +309,7 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
   exit 3
 fi
+$resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
     marker=\"\$(tmux show-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 2>/dev/null || true)\"
@@ -246,13 +351,21 @@ if [[ -n \"\$RESUME_ID\" ]]; then
     exit 4
   fi
 fi
+$locked_startup
 if [[ -n \"\$STARTUP\" ]]; then
-  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$STARTUP; exec \\$SHELL -l\"
+  if [[ \"\$session_handles_shell\" -eq 1 ]]; then
+    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command\"
+  else
+    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command; exec \\$SHELL -l\"
+  fi
 else
   tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\"
 fi
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
+  if [[ -n \"\$RESUME_ID\" ]]; then
+    tmux set-environment -t \"\$SESSION\" MESH_LIVE_CLAUDE_RESUME_ID \"\$RESUME_ID\"
+  fi
 fi
 exec tmux attach -t \"\$SESSION\"
 '"
@@ -275,12 +388,13 @@ _ws_ssh_attach_or_start() {
 }
 
 _ws_mosh_preflight_attach_or_start() {
-  local session target_dir resume_id session_kind direct_host
+  local session target_dir resume_id session_kind direct_host resume_guard
   session="$1"
   target_dir="$2"
   resume_id="${3:-}"
   session_kind="${4:-}"
   direct_host="$5"
+  resume_guard="$(_ws_remote_resume_guard)"
   command ssh \
     -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 \
     "$direct_host" \
@@ -289,6 +403,7 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
   exit 3
 fi
+$resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
     marker=\"\$(tmux show-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 2>/dev/null || true)\"
@@ -335,11 +450,14 @@ fi
 
 _ws_mosh_attach_or_start() {
   local session target_dir startup resume_id session_kind direct_host remote_command rc
+  local resume_guard locked_startup
   session="$1"
   target_dir="$2"
   startup="${3:-}"
   resume_id="${4:-}"
   session_kind="${5:-}"
+  resume_guard="$(_ws_remote_resume_guard)"
+  locked_startup="$(_ws_remote_locked_startup)"
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -z "$direct_host" || -z "$(command -v mosh 2>/dev/null)" ]]; then
     _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
@@ -351,7 +469,7 @@ _ws_mosh_attach_or_start() {
   else
     rc=$?
     case "$rc" in
-      3|4|5|130|143) return "$rc" ;;
+      3|4|5|6|130|143) return "$rc" ;;
     esac
     printf '\n[ws] mosh preflight failed (exit %s); falling back to SSH.\n' "$rc" >&2
     _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
@@ -367,6 +485,7 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
   exit 3
 fi
+$resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
     marker=\"\$(tmux show-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 2>/dev/null || true)\"
@@ -408,13 +527,21 @@ if [[ -n \"\$RESUME_ID\" ]]; then
     exit 4
   fi
 fi
+$locked_startup
 if [[ -n \"\$STARTUP\" ]]; then
-  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$STARTUP; exec \\$SHELL -l\"
+  if [[ \"\$session_handles_shell\" -eq 1 ]]; then
+    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command\"
+  else
+    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command; exec \\$SHELL -l\"
+  fi
 else
   tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\"
 fi
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
+  if [[ -n \"\$RESUME_ID\" ]]; then
+    tmux set-environment -t \"\$SESSION\" MESH_LIVE_CLAUDE_RESUME_ID \"\$RESUME_ID\"
+  fi
 fi
 exec tmux attach -t \"\$SESSION\"
 "

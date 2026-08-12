@@ -606,6 +606,64 @@ _ws_mosh_preflight_attach_or_start claude-coordinator {shlex.quote(str(tmp_path)
 
 
 @pytest.mark.parametrize("shell", _shells())
+def test_mosh_preflight_rejects_legacy_coordinator_with_same_resume_id(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    resume_id = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    proc_root = tmp_path / "proc" / "23456"
+    proc_root.mkdir(parents=True)
+    (proc_root / "cmdline").write_bytes(
+        b"claude\0--dangerously-skip-permissions\0--resume\0"
+        + resume_id.encode("ascii")
+        + b"\0--name\0claude-coordinator\0"
+    )
+    ssh = fake_bin / "ssh"
+    ssh.write_text(
+        "#!/bin/bash\n"
+        "ps() {\n"
+        "  case \"$*\" in\n"
+        "    *'--ppid 12345'*) echo 23456 ;;\n"
+        "    *'-p 23456'*) echo claude ;;\n"
+        "  esac\n"
+        "}\n"
+        "export -f ps\n"
+        "for remote; do :; done\nexec bash -c \"$remote\"\n",
+        encoding="utf-8",
+    )
+    ssh.chmod(0o755)
+    tmux = fake_bin / "tmux"
+    tmux.write_text(
+        "#!/bin/bash\n"
+        "last=''\nfor last; do :; done\n"
+        "case \"$1:$last\" in\n"
+        "  list-sessions:*) echo claude-coordinator ;;\n"
+        "  display-message:'#{pane_current_command}') echo bash ;;\n"
+        "  display-message:'#{pane_pid}') echo 12345 ;;\n"
+        "  show-environment:*) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    tmux.chmod(0o755)
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+export MESH_LIVE_PROC_ROOT={shlex.quote(str(tmp_path / 'proc'))}
+_ws_mosh_preflight_attach_or_start claude-second {shlex.quote(str(tmp_path))} \
+  {resume_id} coordinator sam@172.23.0.42
+""",
+    )
+
+    assert proc.returncode == 6
+    assert "already active in tmux session: claude-coordinator" in proc.stderr
+    assert resume_id not in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_ssh_start_fails_closed_for_missing_repo(shell: str, tmp_path: Path) -> None:
     helper = shlex.quote(str(HELPERS))
     fake_bin = tmp_path / "bin"
@@ -647,16 +705,22 @@ export CAPTURE_FILE={shlex.quote(str(capture))}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_control_host() {{ printf '%s' 'dell-vpn'; }}
 _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
-  'claude --name claude-coordinator' '' coordinator
+  'claude --resume b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c' \
+  b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c coordinator
 """,
     )
 
     assert proc.returncode == 0, proc.stderr
     command = capture.read_text(encoding="utf-8")
     assert "MESH_LIVE_COORDINATOR=1" in command
+    assert "MESH_LIVE_CLAUDE_RESUME_ID" in command
+    assert "flock -n 9" in command
+    assert "MESH_LIVE_PROC_ROOT" in command
+    assert "ps -o args=" not in command
     assert "existing session $SESSION is a shell, not a Claude coordinator" in command
     assert "exit 5" in command
     assert "tmux set-environment" in command
+    assert "tmux kill-session" not in command
 
 
 @pytest.mark.parametrize("shell", _shells())
