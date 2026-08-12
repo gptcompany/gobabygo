@@ -51,7 +51,11 @@ the exact conversation is known. Before creating tmux, the workstation verifies
 that the UUID exists in Claude's history for the exact coordinator working
 directory; wrong, missing, malformed, and cross-repository IDs fail closed.
 Both options are used only when the tmux session is created; if the tmux already
-exists, `mcoordinator` only attaches to it and ignores resume validation.
+exists and is a valid coordinator, `mcoordinator` only attaches to it and ignores
+resume validation. New coordinators carry a tmux marker so they remain
+recognizable if Claude exits back to a shell. An older, unmarked session whose
+active process is only `bash`, `zsh`, `sh`, or `fish` fails closed instead of
+silently attaching as though it were a running coordinator.
 
 The helper runs in the Mac operator shell. It generates the current Gobabygo
 contract before starting tmux, then launches Claude on the Dell with resume and
@@ -65,8 +69,8 @@ it avoids a temporary conversation and makes contract injection explicit and
 testable. Resume remains opt-in so a new coordinator cannot silently inherit an
 unrelated conversation.
 
-If `claude-coordinator` already exists without the new contract, preserve it and
-create a fresh coordinator instead:
+If `claude-coordinator` is reported as an unmarked shell, inspect it with
+`wsattach claude-coordinator` or preserve it and create a fresh coordinator:
 
 ```bash
 mcoordinator --all --session claude-live-coordinator
@@ -276,7 +280,10 @@ Updating that runtime is a deployment operation; it must not reset, clean, or
 pull through an unrelated dirty worktree.
 
 - Direct reachable VPN/LAN host: `attach` prefers mosh.
-- ProxyJump or Cloudflare SSH host: `attach` falls back to SSH.
+- A mosh transport failure falls back to SSH without changing the tmux session.
+- Validation failures, stale coordinator detection, and operator interruption do
+  not trigger a second attach attempt through SSH.
+- ProxyJump or Cloudflare SSH host: `attach` uses SSH directly.
 - Read-only and send controls use short SSH calls.
 - `MESH_LIVE_HOSTS` can set an explicit comma-separated fallback order for `mesh live`.
 - `MESH_WS_CONTROL_HOST` forces the shell-helper control host.

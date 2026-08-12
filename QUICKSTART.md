@@ -289,7 +289,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   the helper resumes Claude and appends the current Gobabygo system contract in
   the same startup command
 - run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
-- existing coordinator sessions are only attached; use `--session <fresh-name>` for a non-destructive bootstrap
+- valid or marked coordinator sessions are only attached; an older unmarked shell
+  fails closed, so inspect it with `wsattach` or use `--session <fresh-name>` for
+  a non-destructive bootstrap
 - set `MESH_COORDINATOR_MESH_SCRIPT` to a clean Dell runtime checkout; never use a dirty development checkout
 - a misspelled repo fails before tmux creation; persistent helpers never fall back to the repo-base directory
 - `wbrief --repo <repo>` is intra-repo; `wbrief --all` is multi-repo
@@ -632,7 +634,7 @@ Note:
 
 - `mesh ui` is operator UX plus live attach when available; it is not the source of truth for orchestration state.
 - router DB/task/thread state still wins over what a pane appears to show.
-- `mesh live` uses `10s`/`count=18` SSH keepalive. Direct VPN/LAN control calls may use `ControlPersist=30m`; ProxyJump and Cloudflare paths disable multiplexing. Persistent interactive attach prefers direct mosh and falls back to SSH for proxy paths.
+- `mesh live` uses `10s`/`count=18` SSH keepalive. Direct VPN/LAN control calls may use `ControlPersist=30m`; ProxyJump and Cloudflare paths disable multiplexing. Persistent interactive attach prefers direct mosh, falls back to SSH on transport failure, and does not retry validation errors or operator interruption.
 - `mesh status` hides historical stale/offline worker rows by default; use `mesh status --all` when you need the full audit-heavy view.
 - If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.
 - If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.
