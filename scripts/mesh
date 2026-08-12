@@ -622,7 +622,6 @@ Env:
   MESH_LIVE_USERS    comma-separated tmux owners to inspect
   MESH_LIVE_LOCAL    set to 1 to inspect tmux on this machine
   MESH_LIVE_TICK_STATE  tick metadata/idempotency state (captures are never stored)
-  MESH_LIVE_CODEX_RECOVERY_STATE  Codex recovery metadata/idempotency state
   MESH_MOSH_HOST     optional direct VPN/LAN host for persistent attach
 
 Examples:

@@ -147,7 +147,9 @@ The recovery command accepts no task text. It recaptures only the current visibl
 pane, checks the exact bottom composer and Codex process, rejects activity,
 menus, confirmations, shell prompts, mismatched IDs, and records the attempt
 before sending Enter. Its metadata-only state rejects every second attempt for
-the same delegation and pane, keeping the recovery evidence-driven. Screen
+the same delegation and pane. The state path is fixed by the workstation code;
+the coordinator cannot redirect that write through a CLI option or request
+payload. This keeps the recovery evidence-driven. Screen
 changes in the final interval between the atomic recapture and tmux input cannot
 be eliminated completely; the command
 narrows that race and verifies the screen again afterward. Any refusal or

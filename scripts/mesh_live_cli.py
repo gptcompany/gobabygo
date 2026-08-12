@@ -210,8 +210,6 @@ class LiveClient:
         self,
         session: LiveSession,
         delegation_id: str,
-        *,
-        state_file: str,
     ) -> dict[str, Any]:
         response = self._request_fn(
             self.endpoint,
@@ -223,7 +221,6 @@ class LiveClient:
                     "pane_id": session.pane_id,
                 },
                 "delegation_id": delegation_id,
-                "state_file": state_file,
             },
         )
         if response.get("error"):
@@ -773,7 +770,7 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         return _recover_codex_submit(
             target,
             str(payload.get("delegation_id") or ""),
-            str(payload.get("state_file") or DEFAULT_CODEX_RECOVERY_STATE_FILE),
+            DEFAULT_CODEX_RECOVERY_STATE_FILE,
         )
 
     raise ValueError(f"unsupported live operation: {operation or '<empty>'}")
@@ -2019,14 +2016,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     recover_codex.add_argument(
         "--owner", default="", help="Disambiguate sessions owned by different users."
     )
-    recover_codex.add_argument(
-        "--state-file",
-        default=os.environ.get(
-            "MESH_LIVE_CODEX_RECOVERY_STATE", DEFAULT_CODEX_RECOVERY_STATE_FILE
-        ),
-        help="Remote metadata-only idempotency state path.",
-    )
-
     attach = sub.add_parser("attach", help="Attach to an existing live session.")
     attach.add_argument("session", help="Exact session name or unique prefix.")
     attach.add_argument("--owner", default="", help="Disambiguate sessions owned by different users.")
@@ -2336,7 +2325,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = client.recover_codex_submit(
                 selected,
                 delegation_id,
-                state_file=args.state_file,
             )
             print(
                 f"[mesh live recover-codex-submit] target={result['owner']}/{result['name']} "

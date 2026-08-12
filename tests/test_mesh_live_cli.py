@@ -651,6 +651,33 @@ def test_live_client_send_redacts_reader_error() -> None:
     assert "[REDACTED]" in str(exc_info.value)
 
 
+def test_live_client_codex_recovery_does_not_delegate_state_path() -> None:
+    module = _load_module()
+    observed: dict = {}
+
+    def fake_request(endpoint, payload):
+        observed.update(payload)
+        return {
+            "owner": "sam",
+            "name": "codex-rektslug",
+            "pane_id": "%7",
+            "delegation_id": "delegation-1234",
+            "verified": True,
+        }
+
+    endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
+    client = module.LiveClient(endpoint, request_fn=fake_request)
+    session = module.LiveSession(owner="sam", name="codex-rektslug", pane_id="%7")
+
+    client.recover_codex_submit(session, "delegation-1234")
+
+    assert observed == {
+        "op": "recover_codex_submit",
+        "target": {"owner": "sam", "name": "codex-rektslug", "pane_id": "%7"},
+        "delegation_id": "delegation-1234",
+    }
+
+
 def test_attach_auto_uses_mosh_only_for_reachable_direct_host(monkeypatch) -> None:
     module = _load_module()
     endpoint = module.LiveEndpoint(host="sam@10.0.0.2", local=False, users=("sam",))
@@ -1116,6 +1143,8 @@ def test_codex_recovery_verification_ignores_history_and_requires_composer_clear
 
 def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp_path) -> None:
     module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
     sep = module._FIELD_SEPARATOR
     commands: list[list[str]] = []
 
@@ -1129,7 +1158,7 @@ def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp
                 stdout="› Task DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo\n",
             )
         if "send-keys" in args:
-            state = json.loads((tmp_path / "recovery.json").read_text(encoding="utf-8"))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
             assert len(state["attempts"]) == 1
             return _completed(args)
         raise AssertionError(f"unexpected command: {args}")
@@ -1140,7 +1169,7 @@ def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp
         "op": "recover_codex_submit",
         "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
         "delegation_id": "delegation-1234",
-        "state_file": str(tmp_path / "recovery.json"),
+        "state_file": str(tmp_path / "caller-controlled.json"),
     }
 
     first = module.handle_remote_request(payload)
@@ -1151,12 +1180,16 @@ def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp
     assert first["enter_sent"] is True
     assert first["verified"] is False
     assert sum(command[-1] == "Enter" for command in commands if command) == 1
-    encoded_state = (tmp_path / "recovery.json").read_text(encoding="utf-8")
+    encoded_state = state_path.read_text(encoding="utf-8")
     assert "Task DELEGATION_ID" not in encoded_state
+    assert not (tmp_path / "caller-controlled.json").exists()
 
 
 def test_codex_recovery_rejects_non_codex_without_sending(monkeypatch, tmp_path) -> None:
     module = _load_module()
+    monkeypatch.setattr(
+        module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(tmp_path / "recovery.json")
+    )
     sep = module._FIELD_SEPARATOR
     commands: list[list[str]] = []
 
@@ -1173,7 +1206,6 @@ def test_codex_recovery_rejects_non_codex_without_sending(monkeypatch, tmp_path)
                 "op": "recover_codex_submit",
                 "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
                 "delegation_id": "delegation-1234",
-                "state_file": str(tmp_path / "recovery.json"),
             }
         )
 
