@@ -28,6 +28,7 @@ DEFAULT_WS_HOSTS = (DEFAULT_WS_HOST, DEFAULT_WS_LAN_HOST, DEFAULT_WS_CLOUDFLARE_
 DEFAULT_BOARD_LINES = 20
 DEFAULT_PEEK_LINES = 120
 DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
+DEFAULT_CODEX_RECOVERY_STATE_FILE = "~/.local/state/gobabygo/mesh-live-codex-recovery.json"
 MAX_CAPTURE_LINES = 2000
 MAX_SEND_CHARS = 8192
 _FIELD_SEPARATOR = "\x1f"
@@ -205,6 +206,30 @@ class LiveClient:
             raise LiveReadError(redact_capture(str(response["error"])))
         return response
 
+    def recover_codex_submit(
+        self,
+        session: LiveSession,
+        delegation_id: str,
+        *,
+        state_file: str,
+    ) -> dict[str, Any]:
+        response = self._request_fn(
+            self.endpoint,
+            {
+                "op": "recover_codex_submit",
+                "target": {
+                    "owner": session.owner,
+                    "name": session.name,
+                    "pane_id": session.pane_id,
+                },
+                "delegation_id": delegation_id,
+                "state_file": state_file,
+            },
+        )
+        if response.get("error"):
+            raise LiveReadError(redact_capture(str(response["error"])))
+        return response
+
 
 def _as_int(value: Any) -> int:
     try:
@@ -237,6 +262,15 @@ def validate_send_text(text: str, *, enter: bool) -> str:
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise ValueError("send text cannot contain newline or control characters")
     return value
+
+
+def validate_delegation_id(value: str) -> str:
+    delegation_id = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}", delegation_id):
+        raise ValueError(
+            "delegation ID must be 8-128 characters using letters, digits, dot, colon, underscore, or hyphen"
+        )
+    return delegation_id
 
 
 def _current_username() -> str:
@@ -462,6 +496,198 @@ def _send_target(
     }
 
 
+def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
+    owner = str(target.get("owner") or "")
+    name = str(target.get("name") or "")
+    pane_id = str(target.get("pane_id") or "")
+    prefix = _tmux_prefix(owner)
+    if prefix is None:
+        raise LiveReadError("tmux owner is unavailable")
+    if not name or not pane_id:
+        raise LiveReadError("recovery target is missing an exact session or pane id")
+
+    target_format = _FIELD_SEPARATOR.join(["#{session_name}", "#{pane_current_command}"])
+    target_proc = _run_command(
+        [*prefix, "tmux", "display-message", "-p", "-t", pane_id, target_format]
+    )
+    if target_proc.returncode != 0:
+        detail = (target_proc.stderr or target_proc.stdout or f"exit {target_proc.returncode}").strip()
+        raise LiveReadError(detail)
+    target_parts = target_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 1)
+    if len(target_parts) != 2 or target_parts[0] != name:
+        raise LiveReadError("recovery target pane no longer belongs to the discovered session")
+
+    current_command = Path(target_parts[1]).name.lower()
+    if current_command not in {"codex", "codex-cli"}:
+        raise LiveReadError(
+            f"recovery target process is not Codex: {current_command or '<empty>'}"
+        )
+    capture_proc = _run_command([*prefix, "tmux", "capture-pane", "-p", "-t", pane_id])
+    if capture_proc.returncode != 0:
+        detail = (capture_proc.stderr or capture_proc.stdout or f"exit {capture_proc.returncode}").strip()
+        raise LiveReadError(detail)
+    return {
+        "owner": owner,
+        "name": name,
+        "pane_id": pane_id,
+        "command": current_command,
+        "output": capture_proc.stdout.rstrip("\n"),
+    }
+
+
+_CODEX_ACTIVITY = re.compile(
+    r"(?im)(?:^\s*[•●◦]\s+|working(?:\s*\(|\s+)|esc to interrupt|ctrl\+c to stop)"
+)
+_CODEX_UNSAFE_INPUT = re.compile(
+    r"(?im)(?:press enter|\bconfirm(?:ation)?\b|\bapprove\b|\byes/no\b|\by/n\b|"
+    r"^\s*›\s*\d+[.)]\s|^\s*[$#%]\s+)"
+)
+_CODEX_FOOTER = re.compile(r"(?im)^\s*gpt-[^\n]*·")
+
+
+def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bool:
+    """Recognize only the bottom-most visible Codex composer holding this delegation."""
+    body = str(visible_screen or "").replace("\xa0", " ")
+    lines = body.splitlines()
+    prompt_indexes = [
+        index for index, line in enumerate(lines) if line.lstrip().startswith("›")
+    ]
+    if not prompt_indexes:
+        return False
+    composer_index = prompt_indexes[-1]
+    composer = "\n".join(lines[composer_index:])
+    token_chars = r"A-Za-z0-9_.:-"
+    exact_id = re.compile(
+        rf"(?<![{token_chars}]){re.escape(delegation_id)}(?![{token_chars}])"
+    )
+    if exact_id.search(composer) is None or _CODEX_FOOTER.search(composer) is None:
+        return False
+    if _CODEX_ACTIVITY.search(body) or _CODEX_UNSAFE_INPUT.search(composer):
+        return False
+    return True
+
+
+def _codex_recovery_key(target: dict[str, str], delegation_id: str) -> str:
+    raw = ":".join(
+        [target["owner"], target["name"], target["pane_id"], delegation_id]
+    )
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _load_codex_recovery_state(path: str) -> dict[str, Any]:
+    state_path = Path(path).expanduser()
+    if not state_path.exists():
+        return {"version": 1, "attempts": {}}
+    if state_path.is_symlink():
+        raise LiveReadError(f"Codex recovery state file must not be a symlink: {state_path}")
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LiveReadError(f"unable to read Codex recovery state {state_path}: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise LiveReadError(f"unsupported Codex recovery state format: {state_path}")
+    if not isinstance(payload.get("attempts"), dict):
+        raise LiveReadError(f"invalid Codex recovery attempts: {state_path}")
+    return payload
+
+
+def _save_codex_recovery_state(path: str, state: dict[str, Any]) -> None:
+    state_path = Path(path).expanduser()
+    if state_path.is_symlink():
+        raise LiveReadError(f"Codex recovery state file must not be a symlink: {state_path}")
+    state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{state_path.name}.", suffix=".tmp", dir=state_path.parent
+        )
+        temporary = Path(temporary_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, state_path)
+        state_path.chmod(0o600)
+    except OSError as exc:
+        try:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise LiveReadError(f"unable to write Codex recovery state {state_path}: {exc}") from exc
+
+
+@contextmanager
+def _codex_recovery_lock(path: str):
+    state_path = Path(path).expanduser()
+    state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = state_path.with_name(f".{state_path.name}.lock")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise LiveReadError(f"unable to open Codex recovery lock {lock_path}: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise LiveReadError("another Codex submit recovery is already running") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _recover_codex_submit(
+    target: dict[str, Any], delegation_id: str, state_file: str
+) -> dict[str, Any]:
+    delegation_id = validate_delegation_id(delegation_id)
+    if not state_file:
+        raise ValueError("Codex recovery state file is required")
+    with _codex_recovery_lock(state_file):
+        fresh = _capture_visible_target(target)
+        if not codex_composer_has_delegation(fresh["output"], delegation_id):
+            raise LiveReadError(
+                "Codex recovery refused: the bottom visible composer does not hold the exact delegation, "
+                "or the pane shows activity or an unsafe prompt"
+            )
+        state = _load_codex_recovery_state(state_file)
+        key = _codex_recovery_key(fresh, delegation_id)
+        attempts = state["attempts"]
+        if key in attempts:
+            raise LiveReadError("Codex recovery refused: Enter was already attempted for this delegation")
+        attempts[key] = {
+            "owner": fresh["owner"],
+            "name": fresh["name"],
+            "pane_id": fresh["pane_id"],
+            "delegation_id": delegation_id,
+            "attempted_at": time.time(),
+            "screen_fingerprint": hashlib.sha256(
+                redact_capture(fresh["output"]).encode("utf-8", errors="replace")
+            ).hexdigest(),
+        }
+        _save_codex_recovery_state(state_file, state)
+        sent = _send_target(
+            target,
+            "",
+            enter=True,
+            expected_commands=("codex", "codex-cli"),
+        )
+        if sent.get("error"):
+            raise LiveReadError(str(sent["error"]))
+        post = _capture_visible_target(target)
+        return {
+            **sent,
+            "delegation_id": delegation_id,
+            "verified": _CODEX_ACTIVITY.search(post["output"]) is not None,
+        }
+
+
 def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
     operation = str(payload.get("op") or "")
     if operation == "discover":
@@ -505,6 +731,16 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
             text,
             enter=enter,
             expected_commands=expected_commands,
+        )
+
+    if operation == "recover_codex_submit":
+        target = payload.get("target")
+        if not isinstance(target, dict):
+            raise ValueError("Codex recovery target must be an object")
+        return _recover_codex_submit(
+            target,
+            str(payload.get("delegation_id") or ""),
+            str(payload.get("state_file") or DEFAULT_CODEX_RECOVERY_STATE_FILE),
         )
 
     raise ValueError(f"unsupported live operation: {operation or '<empty>'}")
@@ -1631,11 +1867,12 @@ def build_live_coordinator_system_prompt(
             "7. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
             "8. If delivery is uncertain, inspect again and report uncertainty. Never resend blindly or duplicate a task.",
             "9. Codex paste-settle recovery: only when an immediate peek shows the exact current DELEGATION_ID "
-            "still in the bottom Codex composer and shows no Working/activity, do not resend the text. Send exactly "
-            f"one Enter-only command: `{live_command} send <session> --enter`.",
-            "10. After that Enter-only recovery, peek again. If the same delegation is still unsubmitted, report it "
-            "blocked; never send a second recovery Enter. Never use this recovery on menus, confirmations, shell "
-            "prompts, non-Codex sessions, or content that is not the exact current delegation.",
+            "still in the bottom Codex composer and shows no Working/activity, do not resend the text. Invoke exactly "
+            f"one guarded command: `{live_command} recover-codex-submit <session> <DELEGATION_ID>`.",
+            "10. The guarded command recaptures only the visible pane, rejects menus, confirmations, shell prompts, "
+            "activity, non-Codex processes, mismatched delegations, and every second attempt before sending Enter. "
+            "It accepts no task-text argument. After it returns, peek again; if the delegation is still unsubmitted, "
+            "report it blocked and never fall back to `send --enter` or resend the task.",
             "11. Monitor with bounded, non-aggressive peeks. Detect blocked prompts, context exhaustion, and conflicting work.",
             "12. When context is nearly exhausted, require a durable handoff in the target repository before more work.",
             "13. After completion, inspect git status, diff, commit, and relevant test evidence yourself.",
@@ -1739,6 +1976,23 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     send.add_argument("message", nargs="*", help="Literal text. It is not submitted without --enter.")
     send.add_argument("--enter", action="store_true", help="Send Enter after the text.")
     send.add_argument("--owner", default="", help="Disambiguate sessions owned by different users.")
+
+    recover_codex = sub.add_parser(
+        "recover-codex-submit",
+        help="Send one state-checked, idempotent recovery Enter to a stalled Codex composer.",
+    )
+    recover_codex.add_argument("session", help="Exact session name or unique prefix.")
+    recover_codex.add_argument("delegation_id", help="Exact current DELEGATION_ID.")
+    recover_codex.add_argument(
+        "--owner", default="", help="Disambiguate sessions owned by different users."
+    )
+    recover_codex.add_argument(
+        "--state-file",
+        default=os.environ.get(
+            "MESH_LIVE_CODEX_RECOVERY_STATE", DEFAULT_CODEX_RECOVERY_STATE_FILE
+        ),
+        help="Remote metadata-only idempotency state path.",
+    )
 
     attach = sub.add_parser("attach", help="Attach to an existing live session.")
     attach.add_argument("session", help="Exact session name or unique prefix.")
@@ -2043,6 +2297,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"enter={'yes' if result['enter_sent'] else 'no'}"
             )
             return 0
+
+        if args.cmd == "recover-codex-submit":
+            delegation_id = validate_delegation_id(args.delegation_id)
+            result = client.recover_codex_submit(
+                selected,
+                delegation_id,
+                state_file=args.state_file,
+            )
+            print(
+                f"[mesh live recover-codex-submit] target={result['owner']}/{result['name']} "
+                f"pane={result['pane_id']} delegation={result['delegation_id']} "
+                f"enter=yes verified={'yes' if result['verified'] else 'no'}"
+            )
+            return 0 if result["verified"] else 1
 
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise LiveReadError("attach requires an interactive terminal")

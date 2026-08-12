@@ -46,9 +46,12 @@ mcoordinator rektslug --continue --worker codex-rektslug
 ```
 
 `--continue` asks Claude to select the latest conversation in the coordinator
-working directory. `--resume <id>` is preferred when the exact conversation is
-known. Both options are used only when the tmux session is created; if the tmux
-already exists, `mcoordinator` only attaches to it.
+working directory. `--resume <id>` requires an exact UUID and is preferred when
+the exact conversation is known. Before creating tmux, the workstation verifies
+that the UUID exists in Claude's history for the exact coordinator working
+directory; wrong, missing, malformed, and cross-repository IDs fail closed.
+Both options are used only when the tmux session is created; if the tmux already
+exists, `mcoordinator` only attaches to it and ignores resume validation.
 
 The helper runs in the Mac operator shell. It generates the current Gobabygo
 contract before starting tmux, then launches Claude on the Dell with resume and
@@ -104,6 +107,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | - | `mesh live tick --apply` | Apply only exact WAIT and idle-coordinator wake actions |
 | `wsend <session> <text>` | `mesh live send ...` | Type literal text into the selected pane |
 | `wsend <session> <text> --enter` | `mesh live send ... --enter` | Type text, then send Enter separately |
+| - | `mesh live recover-codex-submit <session> <id>` | Guarded, stateful single-Enter recovery for one exact Codex delegation |
 | `wsattach <session>` | `mesh live attach <session>` | Attach to an existing session; never creates or kills one |
 
 Use `--owner <user>` when the same session name exists under multiple tmux
@@ -128,17 +132,23 @@ Codex can occasionally leave a rapidly typed/pasted task in its composer even
 when the initial send included `--enter`. The coordinator contract includes one
 bounded paste-settle recovery: after an immediate peek, and only when the exact
 current `DELEGATION_ID` is still visible in the bottom Codex composer with no
-Working/activity, it sends one Enter-only command and peeks again:
+Working/activity, it invokes the guarded recovery command and peeks again:
 
 ```bash
-mesh live send <codex-session> --enter
+mesh live recover-codex-submit <codex-session> <DELEGATION_ID>
 mesh live peek <codex-session> 80
 ```
 
-It never resends the task text and never sends a second recovery Enter. Menus,
-confirmations, shell prompts, non-Codex sessions, and uncertain composer content
-require operator review instead. This keeps recovery evidence-driven rather
-than adding a blind provider-wide delay or double Enter.
+The recovery command accepts no task text. It recaptures only the current visible
+pane, checks the exact bottom composer and Codex process, rejects activity,
+menus, confirmations, shell prompts, mismatched IDs, and records the attempt
+before sending Enter. Its metadata-only state rejects every second attempt for
+the same delegation and pane, keeping the recovery evidence-driven. Screen
+changes in the final interval between the atomic recapture and tmux input cannot
+be eliminated completely; the command
+narrows that race and verifies the screen again afterward. Any refusal or
+unverified result requires operator review, never fallback to task resend or a
+plain second `send --enter`.
 
 The automatic path coordinates existing sessions. It does not create worker
 CLIs. Start a manual persistent worker with `mcodex <repo>` / `mclaude <repo>`,

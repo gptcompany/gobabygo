@@ -479,6 +479,7 @@ Usage:
   ./scripts/mesh live board [query] [--lines N] [--json]
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
+  ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
   ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--worker <session>]
@@ -590,6 +591,7 @@ Usage:
   ./scripts/mesh live board [query] [--lines N] [--json]
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
+  ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
   ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--worker <session>]
@@ -603,6 +605,7 @@ Behavior:
   send is literal and does not submit text unless --enter is explicit.
   send rechecks the discovered session/pane but still acts as remote keyboard input;
   verify pane state immediately beforehand because a residual race remains.
+  recover-codex-submit is the guarded, stateful Enter-only path for one exact delegation.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
   brief builds a best-effort redacted read-only prompt; review it before pasting.
   coordinator-prompt builds the system contract used by the mcoordinator shell helper.
@@ -619,6 +622,7 @@ Env:
   MESH_LIVE_USERS    comma-separated tmux owners to inspect
   MESH_LIVE_LOCAL    set to 1 to inspect tmux on this machine
   MESH_LIVE_TICK_STATE  tick metadata/idempotency state (captures are never stored)
+  MESH_LIVE_CODEX_RECOVERY_STATE  Codex recovery metadata/idempotency state
   MESH_MOSH_HOST     optional direct VPN/LAN host for persistent attach
 
 Examples:
@@ -626,6 +630,7 @@ Examples:
   ./scripts/mesh live board rektslug --lines 40
   ./scripts/mesh live peek claude-rektslug 120
   ./scripts/mesh live send claude-rektslug "status?" --enter
+  ./scripts/mesh live recover-codex-submit codex-rektslug delegation-1234
   ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live brief --repo rektslug
   ./scripts/mesh live brief --all --coordinator claude-coordinator

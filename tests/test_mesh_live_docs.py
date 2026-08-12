@@ -10,7 +10,7 @@ def test_mesh_live_runbook_is_linked_from_primary_docs() -> None:
 
     assert "[MESH_LIVE.md](MESH_LIVE.md)" in readme
     assert "[MESH_LIVE.md](MESH_LIVE.md)" in quickstart
-    assert "one Enter-only recovery after a fresh peek" in quickstart
+    assert "mesh live recover-codex-submit <session> <id>" in quickstart
 
 
 def test_mesh_live_runbook_covers_operator_contract() -> None:
@@ -33,7 +33,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "successful tmux send is not treated as delivery",
         "bounded paste-settle recovery",
         "exact current `DELEGATION_ID`",
-        "never sends a second recovery Enter",
+        "rejects every second attempt",
         "evidence-driven",
         "MESH_COORDINATOR_CLAUDE_CMD",
         "MESH_COORDINATOR_MESH_SCRIPT",

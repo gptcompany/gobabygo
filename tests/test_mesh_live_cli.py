@@ -1032,11 +1032,122 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "Never resend blindly" in prompt
     assert "Codex paste-settle recovery" in prompt
     assert "exact current DELEGATION_ID" in prompt
-    assert "send <session> --enter" in prompt
-    assert "never send a second recovery Enter" in prompt
-    assert "Never use this recovery on menus, confirmations, shell prompts" in prompt
+    assert "recover-codex-submit <session> <DELEGATION_ID>" in prompt
+    assert "rejects menus, confirmations, shell prompts" in prompt
+    assert "every second attempt" in prompt
+    assert "accepts no task-text argument" in prompt
+    assert "never fall back to `send --enter` or resend the task" in prompt
     assert "context is nearly exhausted" in prompt
     assert "must not edit source files" in prompt
+
+
+@pytest.mark.parametrize(
+    ("screen", "expected"),
+    [
+        (
+            "Codex\n› Implement fix DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo",
+            True,
+        ),
+        (
+            "› old DELEGATION_ID=delegation-1234\n• Working (2s)\n› ",
+            False,
+        ),
+        (
+            "› old DELEGATION_ID=delegation-1234\n› 1. Yes, continue\n  2. No",
+            False,
+        ),
+        (
+            "› old DELEGATION_ID=delegation-1234\nPress Enter to confirm",
+            False,
+        ),
+        (
+            "› old DELEGATION_ID=delegation-1234\n$ ",
+            False,
+        ),
+        (
+            "› Implement fix DELEGATION_ID=another-delegation\n  gpt-5.4 · /repo",
+            False,
+        ),
+        (
+            "› Implement fix DELEGATION_ID=delegation-1234-extra\n  gpt-5.4 · /repo",
+            False,
+        ),
+        (
+            "› old DELEGATION_ID=delegation-1234\nsam@host repo % ",
+            False,
+        ),
+    ],
+)
+def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expected: bool) -> None:
+    module = _load_module()
+
+    assert module.codex_composer_has_delegation(screen, "delegation-1234") is expected
+
+
+def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    sep = module._FIELD_SEPARATOR
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(args, stdout=sep.join(["codex-worker", "codex"]) + "\n")
+        if "capture-pane" in args:
+            return _completed(
+                args,
+                stdout="› Task DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo\n",
+            )
+        if "send-keys" in args:
+            state = json.loads((tmp_path / "recovery.json").read_text(encoding="utf-8"))
+            assert len(state["attempts"]) == 1
+            return _completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    payload = {
+        "op": "recover_codex_submit",
+        "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+        "delegation_id": "delegation-1234",
+        "state_file": str(tmp_path / "recovery.json"),
+    }
+
+    first = module.handle_remote_request(payload)
+    with pytest.raises(module.LiveReadError, match="already attempted"):
+        module.handle_remote_request(payload)
+
+    assert first["text_sent"] is False
+    assert first["enter_sent"] is True
+    assert first["verified"] is False
+    assert sum(command[-1] == "Enter" for command in commands if command) == 1
+    encoded_state = (tmp_path / "recovery.json").read_text(encoding="utf-8")
+    assert "Task DELEGATION_ID" not in encoded_state
+
+
+def test_codex_recovery_rejects_non_codex_without_sending(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    sep = module._FIELD_SEPARATOR
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        return _completed(args, stdout=sep.join(["codex-worker", "bash"]) + "\n")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.LiveReadError, match="not Codex"):
+        module.handle_remote_request(
+            {
+                "op": "recover_codex_submit",
+                "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+                "delegation_id": "delegation-1234",
+                "state_file": str(tmp_path / "recovery.json"),
+            }
+        )
+
+    assert not any("send-keys" in command for command in commands)
 
 
 def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:

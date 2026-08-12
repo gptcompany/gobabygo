@@ -295,8 +295,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - `wbrief --repo <repo>` is intra-repo; `wbrief --all` is multi-repo
 - review with `wpeek` before every sensitive `wsend`; `--enter` is explicit execution
 - if an exact Codex delegation remains visibly unsubmitted after delivery, the
-  coordinator may send one Enter-only recovery after a fresh peek, then must
-  peek again; it never resends the task or sends a second recovery Enter
+  coordinator may invoke `mesh live recover-codex-submit <session> <id>` after a
+  fresh peek; the guarded command accepts no text, recaptures and validates the
+  visible Codex composer, and records the attempt before its single Enter
 - on the Dell runtime, `mesh live tick` is read-only and `tick --apply` only
   handles an exact selected Claude WAIT menu or wakes an exactly idle coordinator
 - install optional 30-minute polling with
