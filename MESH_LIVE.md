@@ -53,8 +53,10 @@ directory; wrong, missing, malformed, and cross-repository IDs fail closed.
 Both options are used only when the tmux session is created; if the tmux already
 exists and is a valid coordinator, `mcoordinator` only attaches to it and ignores
 resume validation. New coordinators carry a tmux marker so they remain
-recognizable if Claude exits back to a shell. An older, unmarked session whose
-active process is only `bash`, `zsh`, `sh`, or `fish` fails closed instead of
+recognizable if Claude exits back to a shell. For compatibility, an unmarked
+shell wrapper with a direct Claude child is also recognized without inspecting
+process arguments. An older, unmarked session whose active process is only
+`bash`, `zsh`, `sh`, or `fish` and has no Claude child fails closed instead of
 silently attaching as though it were a running coordinator.
 
 The helper runs in the Mac operator shell. It generates the current Gobabygo

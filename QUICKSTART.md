@@ -289,9 +289,10 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   the helper resumes Claude and appends the current Gobabygo system contract in
   the same startup command
 - run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
-- valid or marked coordinator sessions are only attached; an older unmarked shell
-  fails closed, so inspect it with `wsattach` or use `--session <fresh-name>` for
-  a non-destructive bootstrap
+- valid or marked coordinator sessions are only attached; a shell wrapper with a
+  Claude child is valid, while an older unmarked shell without Claude fails
+  closed, so inspect it with `wsattach` or use `--session <fresh-name>` for a
+  non-destructive bootstrap
 - set `MESH_COORDINATOR_MESH_SCRIPT` to a clean Dell runtime checkout; never use a dirty development checkout
 - a misspelled repo fails before tmux creation; persistent helpers never fall back to the repo-base directory
 - `wbrief --repo <repo>` is intra-repo; `wbrief --all` is multi-repo

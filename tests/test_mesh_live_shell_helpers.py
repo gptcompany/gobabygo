@@ -542,11 +542,61 @@ _ws_mosh_preflight_attach_or_start claude-coordinator /data/sata/1TB \
     assert "tmux has-session" in command
     assert "tmux show-environment" in command
     assert "tmux display-message" in command
+    assert "#{pane_pid}" in command
+    assert "ps -o comm= --ppid" in command
+    assert "ps -o args=" not in command
     assert "projects/$encoded_dir/$RESUME_ID.jsonl" in command
     assert "set -e" not in command
     assert "tmux new-session" not in command
     assert "tmux send-keys" not in command
     assert "tmux kill-session" not in command
+
+
+@pytest.mark.parametrize("shell", _shells())
+@pytest.mark.parametrize(("child_command", "expected_rc"), [("claude", 0), ("", 5)])
+def test_mosh_preflight_distinguishes_wrapped_claude_from_stale_shell(
+    shell: str, tmp_path: Path, child_command: str, expected_rc: int
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ssh = fake_bin / "ssh"
+    ssh.write_text(
+        "#!/bin/bash\n"
+        f"ps() {{ printf '%s\\n' {shlex.quote(child_command)}; }}\n"
+        "export -f ps\n"
+        "for remote; do :; done\nexec bash -c \"$remote\"\n",
+        encoding="utf-8",
+    )
+    ssh.chmod(0o755)
+    tmux = fake_bin / "tmux"
+    tmux.write_text(
+        "#!/bin/bash\n"
+        "last=''\nfor last; do :; done\n"
+        "case \"$1:$last\" in\n"
+        "  has-session:*) exit 0 ;;\n"
+        "  show-environment:*) exit 1 ;;\n"
+        "  display-message:'#{pane_current_command}') echo bash ;;\n"
+        "  display-message:'#{pane_pid}') echo 12345 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    tmux.chmod(0o755)
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_mosh_preflight_attach_or_start claude-coordinator {shlex.quote(str(tmp_path))} \
+  '' coordinator sam@172.23.0.42
+""",
+    )
+
+    assert proc.returncode == expected_rc
+    if child_command:
+        assert "not a Claude coordinator" not in proc.stderr
+    else:
+        assert "not a Claude coordinator" in proc.stderr
 
 
 @pytest.mark.parametrize("shell", _shells())
