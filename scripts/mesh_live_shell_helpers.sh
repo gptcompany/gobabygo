@@ -184,11 +184,12 @@ wsessions() {
 }
 
 _ws_ssh_attach_or_start_once() {
-  local session target_dir startup ws_host
+  local session target_dir startup resume_id ws_host
   local -a ssh_opts=()
   session="$1"
   target_dir="$2"
   startup="$3"
+  resume_id="${4:-}"
   ws_host="$(_ws_control_host)" || return $?
   if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
     local opt
@@ -197,7 +198,7 @@ _ws_ssh_attach_or_start_once() {
     done < <(_mesh_collect_ssh_opts)
   fi
   command ssh "${ssh_opts[@]}" -t "$ws_host" \
-    "SESSION=$(printf '%q' "$session") TARGET_DIR=$(printf '%q' "$target_dir") STARTUP=$(printf '%q' "$startup") bash -lc '
+    "SESSION=$(printf '%q' "$session") TARGET_DIR=$(printf '%q' "$target_dir") STARTUP=$(printf '%q' "$startup") RESUME_ID=$(printf '%q' "$resume_id") bash -lc '
 set -e
 if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
@@ -205,6 +206,19 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
 fi
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   exec tmux attach -t \"\$SESSION\"
+fi
+if [[ -n \"\$RESUME_ID\" ]]; then
+  case \"\$RESUME_ID\" in
+    ????????-????-????-????-????????????) ;;
+    *) echo \"[tmux] invalid Claude resume session ID\" >&2; exit 4 ;;
+  esac
+  encoded_dir=\"\${TARGET_DIR//\//-}\"
+  claude_config=\"\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}\"
+  resume_file=\"\$claude_config/projects/\$encoded_dir/\$RESUME_ID.jsonl\"
+  if [[ ! -f \"\$resume_file\" ]]; then
+    echo \"[tmux] Claude resume session not found in target directory: \$TARGET_DIR\" >&2
+    exit 4
+  fi
 fi
 if [[ -n \"\$STARTUP\" ]]; then
   tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$STARTUP; exec \\$SHELL -l\"
@@ -216,12 +230,13 @@ exec tmux attach -t \"\$SESSION\"
 }
 
 _ws_ssh_attach_or_start() {
-  local session target_dir startup rc
+  local session target_dir startup resume_id rc
   session="$1"
   target_dir="$2"
   startup="$3"
+  resume_id="${4:-}"
   while true; do
-    _ws_ssh_attach_or_start_once "$session" "$target_dir" "$startup"
+    _ws_ssh_attach_or_start_once "$session" "$target_dir" "$startup" "$resume_id"
     rc=$?
     [[ "$rc" -eq 255 ]] || return "$rc"
     printf '\n[ws] SSH disconnected. Reconnecting in 3s. Press Ctrl-C to stop.\n' >&2
@@ -230,18 +245,20 @@ _ws_ssh_attach_or_start() {
 }
 
 _ws_mosh_attach_or_start() {
-  local session target_dir startup direct_host remote_command
+  local session target_dir startup resume_id direct_host remote_command
   session="$1"
   target_dir="$2"
   startup="${3:-}"
+  resume_id="${4:-}"
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -z "$direct_host" || -z "$(command -v mosh 2>/dev/null)" ]]; then
-    _ws_ssh_attach_or_start "$session" "$target_dir" "$startup"
+    _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id"
     return $?
   fi
   remote_command="SESSION=$(printf '%q' "$session")
 TARGET_DIR=$(printf '%q' "$target_dir")
 STARTUP=$(printf '%q' "$startup")
+RESUME_ID=$(printf '%q' "$resume_id")
 set -e
 if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
@@ -249,6 +266,19 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
 fi
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   exec tmux attach -t \"\$SESSION\"
+fi
+if [[ -n \"\$RESUME_ID\" ]]; then
+  case \"\$RESUME_ID\" in
+    ????????-????-????-????-????????????) ;;
+    *) echo \"[tmux] invalid Claude resume session ID\" >&2; exit 4 ;;
+  esac
+  encoded_dir=\"\${TARGET_DIR//\//-}\"
+  claude_config=\"\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}\"
+  resume_file=\"\$claude_config/projects/\$encoded_dir/\$RESUME_ID.jsonl\"
+  if [[ ! -f \"\$resume_file\" ]]; then
+    echo \"[tmux] Claude resume session not found in target directory: \$TARGET_DIR\" >&2
+    exit 4
+  fi
 fi
 if [[ -n \"\$STARTUP\" ]]; then
   tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$STARTUP; exec \\$SHELL -l\"
@@ -348,7 +378,7 @@ mcoordinator() {
       --resume)
         if [[
           $# -lt 2 || -z "$2" || "$continue_mode" -eq 1 || -n "$resume_id" ||
-          "$2" != [A-Za-z0-9]* || "$2" == *[^A-Za-z0-9_.-]*
+          ! "$2" =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$
         ]]; then
           echo "$usage" >&2
           return 2
@@ -397,5 +427,5 @@ mcoordinator() {
     startup="${claude_cmd}"
   fi
   startup="${startup} --name $(printf '%q' "$session") --append-system-prompt $(printf '%q' "$prompt")"
-  _ws_mosh_attach_or_start "$session" "$target_dir" "$startup"
+  _ws_mosh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id"
 }

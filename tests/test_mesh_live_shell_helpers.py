@@ -330,7 +330,7 @@ def test_mcoordinator_resumes_with_fresh_gobabygo_contract(shell: str) -> None:
         f"""
 source {helper}
 _mesh_live_run() {{ printf '%s' 'FRESH GOBABYGO CONTRACT'; }}
-_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nresume=%s\n' "$1" "$2" "$3" "$4"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_CLAUDE_CMD=claude
 mcoordinator --all --resume {resume_id}
@@ -345,6 +345,7 @@ mcoordinator --all --resume {resume_id}
         "--append-system-prompt "
     )
     assert "FRESH" in lines[2]
+    assert lines[3] == f"resume={resume_id}"
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -393,6 +394,7 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB 'claude --name claude
         "<claude-coordinator>",
         "</data/sata/1TB>",
         "<claude --name claude-coordinator>",
+        "<>",
     ]
 
 
@@ -502,7 +504,41 @@ def test_mcoordinator_rejects_conflicting_or_unsafe_resume(shell: str) -> None:
         shell,
         f"source {helper}; mcoordinator --all --resume=--dangerous",
     )
+    malformed = _run_shell(
+        shell,
+        f"source {helper}; mcoordinator --all --resume not.a.real-session",
+    )
 
     assert conflict.returncode == 2
     assert "Usage: mcoordinator" in conflict.stderr
     assert unsafe.returncode == 2
+    assert malformed.returncode == 2
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_resume_validation_is_after_existing_tmux_attach_and_scoped_to_target_dir(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "ssh")
+    capture = tmp_path / "ssh-args"
+    resume_id = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_control_host() {{ printf '%s' 'dell7670'; }}
+_ws_ssh_attach_or_start_once claude-rektslug /data/sata/1TB/rektslug \
+  'claude --resume {resume_id}' {resume_id}
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert command.index("tmux has-session") < command.index("Claude resume session not found")
+    assert r'encoded_dir="${TARGET_DIR//\//-}"' in command
+    assert 'projects/$encoded_dir/$RESUME_ID.jsonl' in command
