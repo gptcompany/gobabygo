@@ -124,6 +124,22 @@ to verify CLI acceptance, monitor completion, and inspect result/test evidence.
 A successful tmux send is not treated as delivery: the coordinator must find the
 delegation ID or clear CLI activity and must never resend blindly.
 
+Codex can occasionally leave a rapidly typed/pasted task in its composer even
+when the initial send included `--enter`. The coordinator contract includes one
+bounded paste-settle recovery: after an immediate peek, and only when the exact
+current `DELEGATION_ID` is still visible in the bottom Codex composer with no
+Working/activity, it sends one Enter-only command and peeks again:
+
+```bash
+mesh live send <codex-session> --enter
+mesh live peek <codex-session> 80
+```
+
+It never resends the task text and never sends a second recovery Enter. Menus,
+confirmations, shell prompts, non-Codex sessions, and uncertain composer content
+require operator review instead. This keeps recovery evidence-driven rather
+than adding a blind provider-wide delay or double Enter.
+
 The automatic path coordinates existing sessions. It does not create worker
 CLIs. Start a manual persistent worker with `mcodex <repo>` / `mclaude <repo>`,
 or use a router thread when a new managed worker and durable task history are

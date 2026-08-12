@@ -1030,6 +1030,11 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "YOLO mode removes approval prompts; it does not expand this authorization" in prompt
     assert "does not prove the CLI accepted the task" in prompt
     assert "Never resend blindly" in prompt
+    assert "Codex paste-settle recovery" in prompt
+    assert "exact current DELEGATION_ID" in prompt
+    assert "send <session> --enter" in prompt
+    assert "never send a second recovery Enter" in prompt
+    assert "Never use this recovery on menus, confirmations, shell prompts" in prompt
     assert "context is nearly exhausted" in prompt
     assert "must not edit source files" in prompt
 

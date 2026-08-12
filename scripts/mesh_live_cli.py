@@ -1630,10 +1630,16 @@ def build_live_coordinator_system_prompt(
             "6. Send the task to the exact existing worker, then peek again to verify the DELEGATION_ID or clear CLI activity.",
             "7. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
             "8. If delivery is uncertain, inspect again and report uncertainty. Never resend blindly or duplicate a task.",
-            "9. Monitor with bounded, non-aggressive peeks. Detect blocked prompts, context exhaustion, and conflicting work.",
-            "10. When context is nearly exhausted, require a durable handoff in the target repository before more work.",
-            "11. After completion, inspect git status, diff, commit, and relevant test evidence yourself.",
-            "12. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision.",
+            "9. Codex paste-settle recovery: only when an immediate peek shows the exact current DELEGATION_ID "
+            "still in the bottom Codex composer and shows no Working/activity, do not resend the text. Send exactly "
+            f"one Enter-only command: `{live_command} send <session> --enter`.",
+            "10. After that Enter-only recovery, peek again. If the same delegation is still unsubmitted, report it "
+            "blocked; never send a second recovery Enter. Never use this recovery on menus, confirmations, shell "
+            "prompts, non-Codex sessions, or content that is not the exact current delegation.",
+            "11. Monitor with bounded, non-aggressive peeks. Detect blocked prompts, context exhaustion, and conflicting work.",
+            "12. When context is nearly exhausted, require a durable handoff in the target repository before more work.",
+            "13. After completion, inspect git status, diff, commit, and relevant test evidence yourself.",
+            "14. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision.",
             "",
             "Standing authorization:",
             "- Provider YOLO mode removes approval prompts; it does not expand this authorization.",
