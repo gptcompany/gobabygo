@@ -1892,7 +1892,8 @@ def build_live_coordinator_system_prompt(
             "2. Prefer existing sessions, the smallest useful task, and non-overlapping file ownership.",
             "3. Inspect the exact worker immediately before delegation and confirm it is ready for input.",
             "4. Create a unique DELEGATION_ID and include scope, allowed files, acceptance criteria, tests, and forbidden actions.",
-            "5. Require the worker to report WORKER_DONE <DELEGATION_ID> or WORKER_BLOCKED <DELEGATION_ID>.",
+            "5. Require the worker's latest response to end with exactly one standalone status line: "
+            "WORKER_DONE <DELEGATION_ID> or WORKER_BLOCKED <DELEGATION_ID>.",
             "6. Send the task to the exact existing worker, then peek again to verify the DELEGATION_ID or clear CLI activity.",
             "7. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
             "8. If delivery is uncertain, inspect again and report uncertainty. Never resend blindly or duplicate a task.",
@@ -1903,7 +1904,10 @@ def build_live_coordinator_system_prompt(
             "activity, non-Codex processes, mismatched delegations, and every second attempt before sending Enter. "
             "It accepts no task-text argument. After it returns, peek again; if the delegation is still unsubmitted, "
             "report it blocked and never fall back to `send --enter` or resend the task.",
-            "11. Monitor with bounded, non-aggressive peeks. Detect blocked prompts, context exhaustion, and conflicting work.",
+            "11. Monitor with bounded, non-aggressive peeks. Never detect completion by searching the whole capture for "
+            "WORKER_DONE or WORKER_BLOCKED: the delegated task and composer may echo both strings. Accept status only "
+            "from one exact standalone line with the current DELEGATION_ID in the latest worker-authored response after "
+            "delegation. Ignore task/brief echoes, quoted text, history, and composer content; ambiguous evidence remains active or uncertain.",
             "12. When context is nearly exhausted, require a durable handoff in the target repository before more work.",
             "13. After completion, inspect git status, diff, commit, and relevant test evidence yourself.",
             "14. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision.",

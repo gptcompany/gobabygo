@@ -132,6 +132,13 @@ to verify CLI acceptance, monitor completion, and inspect result/test evidence.
 A successful tmux send is not treated as delivery: the coordinator must find the
 delegation ID or clear CLI activity and must never resend blindly.
 
+Completion is not a substring search over the pane. Delegation briefs and CLI
+composers can echo both `WORKER_DONE` and `WORKER_BLOCKED`. A status is a
+candidate only when the latest worker-authored response after delegation ends
+with one exact standalone marker carrying the current `DELEGATION_ID`; task
+echoes, quoted text, history, composer content, and ambiguous reports are ignored.
+The coordinator still verifies the claimed result and test evidence.
+
 Codex can occasionally leave a rapidly typed/pasted task in its composer even
 when the initial send included `--enter`. The coordinator contract includes one
 bounded paste-settle recovery: after an immediate peek, and only when the exact
