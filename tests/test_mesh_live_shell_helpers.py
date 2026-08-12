@@ -250,7 +250,7 @@ def test_mcoordinator_bootstraps_repo_coordinator(shell: str, tmp_path: Path) ->
 source {helper}
 PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
 _mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'AUTONOMOUS PROMPT'; }}
-_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nkind=%s\n' "$1" "$2" "$3" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
 MESH_COORDINATOR_CLAUDE_CMD=claude
@@ -268,6 +268,7 @@ mcoordinator rektslug --worker codex-rektslug-worker
         "startup=claude --name claude-rektslug-coordinator --append-system-prompt "
     )
     assert "AUTONOMOUS" in lines[2]
+    assert lines[3] == "kind=coordinator"
     assert prompt_args_file.read_text(encoding="utf-8").splitlines() == [
         "<live>",
         "<coordinator-prompt>",
@@ -292,7 +293,7 @@ def test_mcoordinator_bootstraps_multi_repo_coordinator(shell: str, tmp_path: Pa
 source {helper}
 PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
 _mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'MULTI PROMPT'; }}
-_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nkind=%s\n' "$1" "$2" "$3" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
 MESH_COORDINATOR_CLAUDE_CMD=claude
@@ -310,6 +311,7 @@ mcoordinator --all --session claude-live-coordinator
         "startup=claude --name claude-live-coordinator --append-system-prompt "
     )
     assert "MULTI" in lines[2]
+    assert lines[3] == "kind=coordinator"
     assert prompt_args_file.read_text(encoding="utf-8").splitlines() == [
         "<live>",
         "<coordinator-prompt>",
@@ -330,7 +332,7 @@ def test_mcoordinator_resumes_with_fresh_gobabygo_contract(shell: str) -> None:
         f"""
 source {helper}
 _mesh_live_run() {{ printf '%s' 'FRESH GOBABYGO CONTRACT'; }}
-_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nresume=%s\n' "$1" "$2" "$3" "$4"; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nresume=%s\nkind=%s\n' "$1" "$2" "$3" "$4" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_CLAUDE_CMD=claude
 mcoordinator --all --resume {resume_id}
@@ -346,6 +348,7 @@ mcoordinator --all --resume {resume_id}
     )
     assert "FRESH" in lines[2]
     assert lines[3] == f"resume={resume_id}"
+    assert lines[4] == "kind=coordinator"
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -356,7 +359,7 @@ def test_mcoordinator_continues_latest_conversation_in_repo_scope(shell: str) ->
         f"""
 source {helper}
 _mesh_live_run() {{ printf '%s' 'CURRENT CONTRACT'; }}
-_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nkind=%s\n' "$1" "$2" "$3" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_CLAUDE_CMD=claude
 mcoordinator rektslug --continue --worker codex-rektslug
@@ -374,6 +377,7 @@ mcoordinator rektslug --continue --worker codex-rektslug
         "--append-system-prompt "
     )
     assert "CURRENT" in lines[2]
+    assert lines[3] == "kind=coordinator"
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -385,7 +389,8 @@ def test_mosh_fallback_forwards_coordinator_startup_to_ssh(shell: str) -> None:
 source {helper}
 _ws_mosh_host() {{ return 1; }}
 _ws_ssh_attach_or_start() {{ printf '<%s>\n' "$@"; }}
-_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB 'claude --name claude-coordinator'
+_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
+  'claude --name claude-coordinator' '' coordinator
 """,
     )
 
@@ -395,7 +400,67 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB 'claude --name claude
         "</data/sata/1TB>",
         "<claude --name claude-coordinator>",
         "<>",
+        "<coordinator>",
     ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_transport_failure_falls_back_to_ssh(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    mosh = fake_bin / "mosh"
+    mosh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    mosh.chmod(0o755)
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_ws_ssh_attach_or_start() {{ printf '<%s>\n' "$@"; }}
+_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
+  'claude --name claude-coordinator' resume-id coordinator
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "mosh attach failed (exit 1); falling back to SSH" in proc.stderr
+    assert proc.stdout.splitlines() == [
+        "<claude-coordinator>",
+        "</data/sata/1TB>",
+        "<claude --name claude-coordinator>",
+        "<resume-id>",
+        "<coordinator>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+@pytest.mark.parametrize("exit_code", [3, 4, 5, 130, 143])
+def test_mosh_operator_or_validation_stop_does_not_fall_back(
+    shell: str, tmp_path: Path, exit_code: int
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    mosh = fake_bin / "mosh"
+    mosh.write_text(f"#!/bin/sh\nexit {exit_code}\n", encoding="utf-8")
+    mosh.chmod(0o755)
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_ws_ssh_attach_or_start() {{ echo unexpected-ssh; }}
+_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
+  'claude --name claude-coordinator' '' coordinator
+""",
+    )
+
+    assert proc.returncode == exit_code
+    assert "unexpected-ssh" not in proc.stdout
+    assert "falling back" not in proc.stderr
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -421,6 +486,35 @@ _ws_ssh_attach_or_start_once claude-typo /data/sata/1TB/typo ''
     assert "missing repo dir" in command
     assert "exit 3" in command
     assert 'TARGET_DIR="/data/sata/1TB"' not in command
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_coordinator_start_rejects_unmarked_shell_and_sets_marker(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "ssh")
+    capture = tmp_path / "ssh-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_control_host() {{ printf '%s' 'dell-vpn'; }}
+_ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
+  'claude --name claude-coordinator' '' coordinator
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "MESH_LIVE_COORDINATOR=1" in command
+    assert "existing session $SESSION is a shell, not a Claude coordinator" in command
+    assert "exit 5" in command
+    assert "tmux set-environment" in command
 
 
 @pytest.mark.parametrize("shell", _shells())
