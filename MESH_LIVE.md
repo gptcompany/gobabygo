@@ -282,6 +282,9 @@ Updating that runtime is a deployment operation; it must not reset, clean, or
 pull through an unrelated dirty worktree.
 
 - Direct reachable VPN/LAN host: `attach` prefers mosh.
+- Persistent create/attach runs one short read-only SSH preflight before mosh to
+  validate the repo, scoped resume ID, and existing coordinator. This is required
+  because mosh does not reliably propagate the remote command's exit status.
 - A mosh transport failure falls back to SSH without changing the tmux session.
 - Validation failures, stale coordinator detection, and operator interruption do
   not trigger a second attach attempt through SSH.

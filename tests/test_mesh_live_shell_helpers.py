@@ -418,6 +418,7 @@ def test_mosh_transport_failure_falls_back_to_ssh(shell: str, tmp_path: Path) ->
 source {helper}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_ws_mosh_preflight_attach_or_start() {{ return 0; }}
 _ws_ssh_attach_or_start() {{ printf '<%s>\n' "$@"; }}
 _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
   'claude --name claude-coordinator' resume-id coordinator
@@ -436,8 +437,8 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
 
 
 @pytest.mark.parametrize("shell", _shells())
-@pytest.mark.parametrize("exit_code", [3, 4, 5, 130, 143])
-def test_mosh_operator_or_validation_stop_does_not_fall_back(
+@pytest.mark.parametrize("exit_code", [130, 143])
+def test_mosh_operator_stop_does_not_fall_back(
     shell: str, tmp_path: Path, exit_code: int
 ) -> None:
     helper = shlex.quote(str(HELPERS))
@@ -452,6 +453,7 @@ def test_mosh_operator_or_validation_stop_does_not_fall_back(
 source {helper}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_ws_mosh_preflight_attach_or_start() {{ return 0; }}
 _ws_ssh_attach_or_start() {{ echo unexpected-ssh; }}
 _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
   'claude --name claude-coordinator' '' coordinator
@@ -461,6 +463,90 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
     assert proc.returncode == exit_code
     assert "unexpected-ssh" not in proc.stdout
     assert "falling back" not in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
+@pytest.mark.parametrize("exit_code", [3, 4, 5])
+def test_mosh_preflight_validation_stop_does_not_launch_or_fallback(
+    shell: str, exit_code: int
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+mosh() {{ echo unexpected-mosh; }}
+_ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_ws_mosh_preflight_attach_or_start() {{ return {exit_code}; }}
+_ws_ssh_attach_or_start() {{ echo unexpected-ssh; }}
+_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
+  'claude --name claude-coordinator' '' coordinator
+""",
+    )
+
+    assert proc.returncode == exit_code
+    assert "unexpected-mosh" not in proc.stdout
+    assert "unexpected-ssh" not in proc.stdout
+    assert "falling back" not in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_preflight_transport_failure_falls_back_to_ssh(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+mosh() {{ echo unexpected-mosh; }}
+_ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_ws_mosh_preflight_attach_or_start() {{ return 255; }}
+_ws_ssh_attach_or_start() {{ printf '<%s>\n' "$@"; }}
+_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
+  'claude --name claude-coordinator' resume-id coordinator
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "unexpected-mosh" not in proc.stdout
+    assert "mosh preflight failed (exit 255); falling back to SSH" in proc.stderr
+    assert proc.stdout.splitlines() == [
+        "<claude-coordinator>",
+        "</data/sata/1TB>",
+        "<claude --name claude-coordinator>",
+        "<resume-id>",
+        "<coordinator>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_preflight_is_read_only_and_scoped(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "ssh")
+    capture = tmp_path / "ssh-args"
+    resume_id = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_mosh_preflight_attach_or_start claude-coordinator /data/sata/1TB \
+  {resume_id} coordinator sam@172.23.0.42
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "tmux has-session" in command
+    assert "tmux show-environment" in command
+    assert "tmux display-message" in command
+    assert "projects/$encoded_dir/$RESUME_ID.jsonl" in command
+    assert "set -e" not in command
+    assert "tmux new-session" not in command
+    assert "tmux send-keys" not in command
+    assert "tmux kill-session" not in command
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -531,6 +617,7 @@ source {helper}
 export CAPTURE_FILE={shlex.quote(str(capture))}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_mosh_host() {{ printf '%s' 'sam@10.0.0.2'; }}
+_ws_mosh_preflight_attach_or_start() {{ return 0; }}
 _ws_mosh_attach_or_start claude-typo /data/sata/1TB/typo ''
 """,
     )

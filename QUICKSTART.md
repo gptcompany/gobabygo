@@ -634,7 +634,7 @@ Note:
 
 - `mesh ui` is operator UX plus live attach when available; it is not the source of truth for orchestration state.
 - router DB/task/thread state still wins over what a pane appears to show.
-- `mesh live` uses `10s`/`count=18` SSH keepalive. Direct VPN/LAN control calls may use `ControlPersist=30m`; ProxyJump and Cloudflare paths disable multiplexing. Persistent interactive attach prefers direct mosh, falls back to SSH on transport failure, and does not retry validation errors or operator interruption.
+- `mesh live` uses `10s`/`count=18` SSH keepalive. Direct VPN/LAN control calls may use `ControlPersist=30m`; ProxyJump and Cloudflare paths disable multiplexing. Persistent create/attach performs a read-only SSH validation preflight because mosh does not reliably propagate remote exit status; it then prefers direct mosh, falls back to SSH on transport failure, and does not retry validation errors or operator interruption.
 - `mesh status` hides historical stale/offline worker rows by default; use `mesh status --all` when you need the full audit-heavy view.
 - If tmux is alive but the task requeues after ~5 minutes, router or worker is still running old code without lease renewal.
 - If a task opens tmux and then blocks on theme/security/trust-folder/MCP prompts, the problem is unattended CLI bootstrap under `mesh-worker`.

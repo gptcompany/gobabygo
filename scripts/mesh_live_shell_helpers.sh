@@ -262,6 +262,53 @@ _ws_ssh_attach_or_start() {
   done
 }
 
+_ws_mosh_preflight_attach_or_start() {
+  local session target_dir resume_id session_kind direct_host
+  session="$1"
+  target_dir="$2"
+  resume_id="${3:-}"
+  session_kind="${4:-}"
+  direct_host="$5"
+  command ssh \
+    -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 \
+    "$direct_host" \
+    "SESSION=$(printf '%q' "$session") TARGET_DIR=$(printf '%q' "$target_dir") RESUME_ID=$(printf '%q' "$resume_id") SESSION_KIND=$(printf '%q' "$session_kind") bash -lc '
+if [[ ! -d \"\$TARGET_DIR\" ]]; then
+  echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
+  exit 3
+fi
+if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
+  if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
+    marker=\"\$(tmux show-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 2>/dev/null || true)\"
+    current=\"\$(tmux display-message -p -t \"\$SESSION\" \"#{pane_current_command}\" 2>/dev/null || true)\"
+    current=\"\${current##*/}\"
+    case \"\$marker:\$current\" in
+      MESH_LIVE_COORDINATOR=1:*|*:claude|*:claude-code) ;;
+      *:bash|*:zsh|*:sh|*:fish)
+        echo \"[tmux] existing session \$SESSION is a shell, not a Claude coordinator\" >&2
+        echo \"[tmux] use mcoordinator --session <fresh-name> to bootstrap, or wsattach \$SESSION to inspect it\" >&2
+        exit 5
+        ;;
+    esac
+  fi
+  exit 0
+fi
+if [[ -n \"\$RESUME_ID\" ]]; then
+  case \"\$RESUME_ID\" in
+    ????????-????-????-????-????????????) ;;
+    *) echo \"[tmux] invalid Claude resume session ID\" >&2; exit 4 ;;
+  esac
+  encoded_dir=\"\${TARGET_DIR//\//-}\"
+  claude_config=\"\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}\"
+  resume_file=\"\$claude_config/projects/\$encoded_dir/\$RESUME_ID.jsonl\"
+  if [[ ! -f \"\$resume_file\" ]]; then
+    echo \"[tmux] Claude resume session not found in target directory: \$TARGET_DIR\" >&2
+    exit 4
+  fi
+fi
+'"
+}
+
 _ws_mosh_attach_or_start() {
   local session target_dir startup resume_id session_kind direct_host remote_command rc
   session="$1"
@@ -271,6 +318,18 @@ _ws_mosh_attach_or_start() {
   session_kind="${5:-}"
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -z "$direct_host" || -z "$(command -v mosh 2>/dev/null)" ]]; then
+    _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
+    return $?
+  fi
+  if _ws_mosh_preflight_attach_or_start \
+    "$session" "$target_dir" "$resume_id" "$session_kind" "$direct_host"; then
+    :
+  else
+    rc=$?
+    case "$rc" in
+      3|4|5|130|143) return "$rc" ;;
+    esac
+    printf '\n[ws] mosh preflight failed (exit %s); falling back to SSH.\n' "$rc" >&2
     _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
     return $?
   fi
@@ -332,7 +391,7 @@ exec tmux attach -t \"\$SESSION\"
     rc=$?
   fi
   case "$rc" in
-    3|4|5|130|143) return "$rc" ;;
+    130|143) return "$rc" ;;
   esac
   printf '\n[ws] mosh attach failed (exit %s); falling back to SSH.\n' "$rc" >&2
   _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
