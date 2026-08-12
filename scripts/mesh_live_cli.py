@@ -543,28 +543,61 @@ _CODEX_UNSAFE_INPUT = re.compile(
     r"^\s*›\s*\d+[.)]\s|^\s*[$#%]\s+)"
 )
 _CODEX_FOOTER = re.compile(r"(?im)^\s*gpt-[^\n]*·")
+_CODEX_SEPARATOR = re.compile(r"^\s*[─━-]{8,}\s*$")
 
 
-def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bool:
-    """Recognize only the bottom-most visible Codex composer holding this delegation."""
+def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
     body = str(visible_screen or "").replace("\xa0", " ")
     lines = body.splitlines()
     prompt_indexes = [
         index for index, line in enumerate(lines) if line.lstrip().startswith("›")
     ]
     if not prompt_indexes:
-        return False
+        return "", body
     composer_index = prompt_indexes[-1]
-    composer = "\n".join(lines[composer_index:])
+    separator_indexes = [
+        index
+        for index, line in enumerate(lines[:composer_index])
+        if _CODEX_SEPARATOR.fullmatch(line)
+    ]
+    current_start = separator_indexes[-1] + 1 if separator_indexes else 0
+    return "\n".join(lines[composer_index:]), "\n".join(lines[current_start:])
+
+
+def _codex_composer_contains_delegation(composer: str, delegation_id: str) -> bool:
     token_chars = r"A-Za-z0-9_.:-"
     exact_id = re.compile(
         rf"(?<![{token_chars}]){re.escape(delegation_id)}(?![{token_chars}])"
     )
-    if exact_id.search(composer) is None or _CODEX_FOOTER.search(composer) is None:
+    return exact_id.search(composer) is not None
+
+
+def codex_screen_shows_current_activity(visible_screen: str) -> bool:
+    _composer, current_region = _codex_visible_regions(visible_screen)
+    return _CODEX_ACTIVITY.search(current_region) is not None
+
+
+def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bool:
+    """Recognize only the bottom-most visible Codex composer holding this delegation."""
+    composer, current_region = _codex_visible_regions(visible_screen)
+    if not composer:
         return False
-    if _CODEX_ACTIVITY.search(body) or _CODEX_UNSAFE_INPUT.search(composer):
+    if (
+        not _codex_composer_contains_delegation(composer, delegation_id)
+        or _CODEX_FOOTER.search(composer) is None
+    ):
+        return False
+    if _CODEX_ACTIVITY.search(current_region) or _CODEX_UNSAFE_INPUT.search(composer):
         return False
     return True
+
+
+def codex_submit_recovery_verified(visible_screen: str, delegation_id: str) -> bool:
+    composer, _current_region = _codex_visible_regions(visible_screen)
+    return (
+        codex_screen_shows_current_activity(visible_screen)
+        and not _codex_composer_contains_delegation(composer, delegation_id)
+    )
 
 
 def _codex_recovery_key(target: dict[str, str], delegation_id: str) -> str:
@@ -684,7 +717,7 @@ def _recover_codex_submit(
         return {
             **sent,
             "delegation_id": delegation_id,
-            "verified": _CODEX_ACTIVITY.search(post["output"]) is not None,
+            "verified": codex_submit_recovery_verified(post["output"], delegation_id),
         }
 
 

@@ -1076,12 +1076,42 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
             "› old DELEGATION_ID=delegation-1234\nsam@host repo % ",
             False,
         ),
+        (
+            "• Ran git status\n  └ clean\n────────────────────\n"
+            "› Implement fix DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo",
+            True,
+        ),
+        (
+            "• Ran old command\n────────────────────\n• Working (2s)\n"
+            "› Implement fix DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo",
+            False,
+        ),
     ],
 )
 def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expected: bool) -> None:
     module = _load_module()
 
     assert module.codex_composer_has_delegation(screen, "delegation-1234") is expected
+
+
+def test_codex_recovery_verification_ignores_history_and_requires_composer_clear() -> None:
+    module = _load_module()
+    historical_activity = (
+        "• Ran old command\n────────────────────\n"
+        "› Task DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo"
+    )
+    current_activity = (
+        "• Ran old command\n────────────────────\n• Working (2s · esc to interrupt)\n"
+        "› Find and fix a bug in @filename\n  gpt-5.4 · /repo"
+    )
+    active_but_still_queued = (
+        "────────────────────\n• Working (2s · esc to interrupt)\n"
+        "› Task DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo"
+    )
+
+    assert module.codex_submit_recovery_verified(historical_activity, "delegation-1234") is False
+    assert module.codex_submit_recovery_verified(current_activity, "delegation-1234") is True
+    assert module.codex_submit_recovery_verified(active_but_still_queued, "delegation-1234") is False
 
 
 def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp_path) -> None:
