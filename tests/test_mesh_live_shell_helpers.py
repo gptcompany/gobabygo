@@ -553,9 +553,12 @@ _ws_mosh_preflight_attach_or_start claude-coordinator /data/sata/1TB \
 
 
 @pytest.mark.parametrize("shell", _shells())
-@pytest.mark.parametrize(("child_command", "expected_rc"), [("claude", 0), ("", 5)])
+@pytest.mark.parametrize(
+    ("child_command", "marker", "expected_rc"),
+    [("claude", "", 0), ("", "", 5), ("", "MESH_LIVE_COORDINATOR=1", 5)],
+)
 def test_mosh_preflight_distinguishes_wrapped_claude_from_stale_shell(
-    shell: str, tmp_path: Path, child_command: str, expected_rc: int
+    shell: str, tmp_path: Path, child_command: str, marker: str, expected_rc: int
 ) -> None:
     helper = shlex.quote(str(HELPERS))
     fake_bin = tmp_path / "bin"
@@ -575,7 +578,8 @@ def test_mosh_preflight_distinguishes_wrapped_claude_from_stale_shell(
         "last=''\nfor last; do :; done\n"
         "case \"$1:$last\" in\n"
         "  has-session:*) exit 0 ;;\n"
-        "  show-environment:*) exit 1 ;;\n"
+        f"  show-environment:*) [[ -n {shlex.quote(marker)} ]] && echo {shlex.quote(marker)}; "
+        f"[[ -n {shlex.quote(marker)} ]] ;;\n"
         "  display-message:'#{pane_current_command}') echo bash ;;\n"
         "  display-message:'#{pane_pid}') echo 12345 ;;\n"
         "esac\n",
@@ -595,6 +599,8 @@ _ws_mosh_preflight_attach_or_start claude-coordinator {shlex.quote(str(tmp_path)
     assert proc.returncode == expected_rc
     if child_command:
         assert "not a Claude coordinator" not in proc.stderr
+    elif marker:
+        assert "no longer has a running Claude process" in proc.stderr
     else:
         assert "not a Claude coordinator" in proc.stderr
 

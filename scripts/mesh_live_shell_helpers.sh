@@ -215,12 +215,16 @@ if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
     if [[ -n \"\$pane_pid\" ]]; then
       claude_child=\"\$(ps -o comm= --ppid \"\$pane_pid\" 2>/dev/null | grep -E -m 1 \"^[[:space:]]*(claude|claude-code)[[:space:]]*\$\" || true)\"
     fi
-    if [[ \"\$marker\" == \"MESH_LIVE_COORDINATOR=1\" || \"\$current\" == \"claude\" || \"\$current\" == \"claude-code\" || -n \"\$claude_child\" ]]; then
+    if [[ \"\$current\" == \"claude\" || \"\$current\" == \"claude-code\" || -n \"\$claude_child\" ]]; then
       :
     else
       case \"\$current\" in
         bash|zsh|sh|fish)
-          echo \"[tmux] existing session \$SESSION is a shell, not a Claude coordinator\" >&2
+          if [[ \"\$marker\" == \"MESH_LIVE_COORDINATOR=1\" ]]; then
+            echo \"[tmux] existing coordinator session \$SESSION no longer has a running Claude process\" >&2
+          else
+            echo \"[tmux] existing session \$SESSION is a shell, not a Claude coordinator\" >&2
+          fi
           echo \"[tmux] use mcoordinator --session <fresh-name> to bootstrap, or wsattach \$SESSION to inspect it\" >&2
           exit 5
           ;;
@@ -295,12 +299,16 @@ if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
     if [[ -n \"\$pane_pid\" ]]; then
       claude_child=\"\$(ps -o comm= --ppid \"\$pane_pid\" 2>/dev/null | grep -E -m 1 \"^[[:space:]]*(claude|claude-code)[[:space:]]*\$\" || true)\"
     fi
-    if [[ \"\$marker\" == \"MESH_LIVE_COORDINATOR=1\" || \"\$current\" == \"claude\" || \"\$current\" == \"claude-code\" || -n \"\$claude_child\" ]]; then
+    if [[ \"\$current\" == \"claude\" || \"\$current\" == \"claude-code\" || -n \"\$claude_child\" ]]; then
       :
     else
       case \"\$current\" in
         bash|zsh|sh|fish)
-          echo \"[tmux] existing session \$SESSION is a shell, not a Claude coordinator\" >&2
+          if [[ \"\$marker\" == \"MESH_LIVE_COORDINATOR=1\" ]]; then
+            echo \"[tmux] existing coordinator session \$SESSION no longer has a running Claude process\" >&2
+          else
+            echo \"[tmux] existing session \$SESSION is a shell, not a Claude coordinator\" >&2
+          fi
           echo \"[tmux] use mcoordinator --session <fresh-name> to bootstrap, or wsattach \$SESSION to inspect it\" >&2
           exit 5
           ;;
@@ -369,12 +377,16 @@ if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
     if [[ -n \"\$pane_pid\" ]]; then
       claude_child=\"\$(ps -o comm= --ppid \"\$pane_pid\" 2>/dev/null | grep -E -m 1 \"^[[:space:]]*(claude|claude-code)[[:space:]]*\$\" || true)\"
     fi
-    if [[ \"\$marker\" == \"MESH_LIVE_COORDINATOR=1\" || \"\$current\" == \"claude\" || \"\$current\" == \"claude-code\" || -n \"\$claude_child\" ]]; then
+    if [[ \"\$current\" == \"claude\" || \"\$current\" == \"claude-code\" || -n \"\$claude_child\" ]]; then
       :
     else
       case \"\$current\" in
         bash|zsh|sh|fish)
-          echo \"[tmux] existing session \$SESSION is a shell, not a Claude coordinator\" >&2
+          if [[ \"\$marker\" == \"MESH_LIVE_COORDINATOR=1\" ]]; then
+            echo \"[tmux] existing coordinator session \$SESSION no longer has a running Claude process\" >&2
+          else
+            echo \"[tmux] existing session \$SESSION is a shell, not a Claude coordinator\" >&2
+          fi
           echo \"[tmux] use mcoordinator --session <fresh-name> to bootstrap, or wsattach \$SESSION to inspect it\" >&2
           exit 5
           ;;

@@ -52,8 +52,9 @@ that the UUID exists in Claude's history for the exact coordinator working
 directory; wrong, missing, malformed, and cross-repository IDs fail closed.
 Both options are used only when the tmux session is created; if the tmux already
 exists and is a valid coordinator, `mcoordinator` only attaches to it and ignores
-resume validation. New coordinators carry a tmux marker so they remain
-recognizable if Claude exits back to a shell. For compatibility, an unmarked
+resume validation. New coordinators carry a tmux marker so a terminated
+coordinator can be diagnosed distinctly, but attach still requires a running
+Claude process. For compatibility, an unmarked
 shell wrapper with a direct Claude child is also recognized without inspecting
 process arguments. An older, unmarked session whose active process is only
 `bash`, `zsh`, `sh`, or `fish` and has no Claude child fails closed instead of
