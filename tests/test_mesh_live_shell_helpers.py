@@ -253,6 +253,7 @@ _mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'AUT
 _ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
+MESH_COORDINATOR_CLAUDE_CMD=claude
 mcoordinator rektslug --worker codex-rektslug-worker
 """,
     )
@@ -294,6 +295,7 @@ _mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'MUL
 _ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
+MESH_COORDINATOR_CLAUDE_CMD=claude
 mcoordinator --all --session claude-live-coordinator
 """,
     )
@@ -317,6 +319,60 @@ mcoordinator --all --session claude-live-coordinator
         "<--mesh-script>",
         "</data/sata/1TB/gobabygo/scripts/mesh>",
     ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_resumes_with_fresh_gobabygo_contract(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    resume_id = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ printf '%s' 'FRESH GOBABYGO CONTRACT'; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+MESH_COORDINATOR_CLAUDE_CMD=claude
+mcoordinator --all --resume {resume_id}
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert lines[:2] == ["session=claude-coordinator", "dir=/data/sata/1TB"]
+    assert lines[2].startswith(
+        f"startup=claude --resume {resume_id} --name claude-coordinator "
+        "--append-system-prompt "
+    )
+    assert "FRESH" in lines[2]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_continues_latest_conversation_in_repo_scope(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ printf '%s' 'CURRENT CONTRACT'; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\n' "$1" "$2" "$3"; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+MESH_COORDINATOR_CLAUDE_CMD=claude
+mcoordinator rektslug --continue --worker codex-rektslug
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    lines = proc.stdout.splitlines()
+    assert lines[:2] == [
+        "session=claude-rektslug-coordinator",
+        "dir=/data/sata/1TB/rektslug",
+    ]
+    assert lines[2].startswith(
+        "startup=claude --continue --name claude-rektslug-coordinator "
+        "--append-system-prompt "
+    )
+    assert "CURRENT" in lines[2]
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -432,3 +488,21 @@ def test_mcoordinator_rejects_unsafe_session_override(shell: str) -> None:
 
     assert proc.returncode == 2
     assert "Usage: mcoordinator" in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_rejects_conflicting_or_unsafe_resume(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+
+    conflict = _run_shell(
+        shell,
+        f"source {helper}; mcoordinator --all --continue --resume session-id",
+    )
+    unsafe = _run_shell(
+        shell,
+        f"source {helper}; mcoordinator --all --resume=--dangerous",
+    )
+
+    assert conflict.returncode == 2
+    assert "Usage: mcoordinator" in conflict.stderr
+    assert unsafe.returncode == 2

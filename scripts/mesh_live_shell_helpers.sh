@@ -306,11 +306,15 @@ mcodex() {
 }
 
 mcoordinator() {
-  local repo worker session_override session target_dir repo_base remote_mesh prompt claude_cmd startup
+  local repo worker session_override resume_id continue_mode session target_dir repo_base remote_mesh
+  local prompt claude_cmd startup usage
   local -a prompt_args=()
+  usage="Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
   repo=""
   worker=""
   session_override=""
+  resume_id=""
+  continue_mode=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --all)
@@ -319,7 +323,7 @@ mcoordinator() {
         ;;
       --worker)
         if [[ $# -lt 2 || -z "$2" ]]; then
-          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]" >&2
+          echo "$usage" >&2
           return 2
         fi
         worker="$2"
@@ -327,14 +331,33 @@ mcoordinator() {
         ;;
       --session)
         if [[ $# -lt 2 || -z "$2" || "$2" == *[^A-Za-z0-9_.-]* ]]; then
-          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]" >&2
+          echo "$usage" >&2
           return 2
         fi
         session_override="$2"
         shift 2
         ;;
+      --continue)
+        if [[ "$continue_mode" -eq 1 || -n "$resume_id" ]]; then
+          echo "$usage" >&2
+          return 2
+        fi
+        continue_mode=1
+        shift
+        ;;
+      --resume)
+        if [[
+          $# -lt 2 || -z "$2" || "$continue_mode" -eq 1 || -n "$resume_id" ||
+          "$2" != [A-Za-z0-9]* || "$2" == *[^A-Za-z0-9_.-]*
+        ]]; then
+          echo "$usage" >&2
+          return 2
+        fi
+        resume_id="$2"
+        shift 2
+        ;;
       -h|--help)
-        echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]"
+        echo "$usage"
         return 0
         ;;
       -* )
@@ -343,7 +366,7 @@ mcoordinator() {
         ;;
       *)
         if [[ -n "$repo" ]]; then
-          echo "Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>]" >&2
+          echo "$usage" >&2
           return 2
         fi
         repo="$1"
@@ -366,6 +389,13 @@ mcoordinator() {
   [[ -n "$worker" ]] && prompt_args+=(--worker "$worker")
   prompt="$(_mesh_live_run "${prompt_args[@]}")" || return $?
   claude_cmd="${MESH_COORDINATOR_CLAUDE_CMD:-claude}"
-  startup="${claude_cmd} --name $(printf '%q' "$session") --append-system-prompt $(printf '%q' "$prompt")"
+  if [[ "$continue_mode" -eq 1 ]]; then
+    startup="${claude_cmd} --continue"
+  elif [[ -n "$resume_id" ]]; then
+    startup="${claude_cmd} --resume $(printf '%q' "$resume_id")"
+  else
+    startup="${claude_cmd}"
+  fi
+  startup="${startup} --name $(printf '%q' "$session") --append-system-prompt $(printf '%q' "$prompt")"
   _ws_mosh_attach_or_start "$session" "$target_dir" "$startup"
 }

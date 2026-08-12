@@ -36,6 +36,32 @@ For multi-repo coordination:
 mcoordinator --all
 ```
 
+After a workstation reboot, tmux sessions are gone but Claude conversation
+history remains. Resume explicitly while recreating the coordinator:
+
+```bash
+mcoordinator --all --continue
+mcoordinator --all --resume <claude-session-id>       # deterministic
+mcoordinator rektslug --continue --worker codex-rektslug
+```
+
+`--continue` asks Claude to select the latest conversation in the coordinator
+working directory. `--resume <id>` is preferred when the exact conversation is
+known. Both options are used only when the tmux session is created; if the tmux
+already exists, `mcoordinator` only attaches to it.
+
+The helper runs in the Mac operator shell. It generates the current Gobabygo
+contract before starting tmux, then launches Claude on the Dell with resume and
+`--append-system-prompt` in the same command. Claude therefore receives both the
+old conversation and the freshly generated contract. The contract uses the
+absolute `MESH_COORDINATOR_MESH_SCRIPT` path on the Dell, so the running
+coordinator does not depend on Mac aliases, shell functions, or `.zshrc`.
+
+Using `/resume` interactively is possible, but the startup option is preferred:
+it avoids a temporary conversation and makes contract injection explicit and
+testable. Resume remains opt-in so a new coordinator cannot silently inherit an
+unrelated conversation.
+
 If `claude-coordinator` already exists without the new contract, preserve it and
 create a fresh coordinator instead:
 

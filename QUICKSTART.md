@@ -215,7 +215,7 @@ This enables:
 - `wbrief [--repo <repo>|--all]` (redacted dynamic prompt for coordinator debate and delegation)
 - `wsattach <tmux-session>` (persistent attach: direct mosh on VPN/LAN, SSH fallback)
 - `mclaude <repo>` / `mcodex <repo>` / `mtmux <repo>` (create-or-attach a persistent named tmux shell in that repo)
-- `mcoordinator [<repo>|--all] [--worker <session>]` (create-or-attach an auto-configured Claude coordinator)
+- `mcoordinator [<repo>|--all] [--worker <session>] [--continue|--resume <id>]` (create-or-attach an auto-configured Claude coordinator; explicit post-reboot resume)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh` with no args (interactive current-repo-root launcher: `attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` (comando canonico: apre il layout iTerm2 del repo; default minimale `boss,president`)
@@ -271,6 +271,8 @@ wbrief --repo rektslug
 wsattach <tmux-session>
 mcoordinator rektslug --worker codex-rektslug
 mcoordinator --all
+mcoordinator --all --continue
+mcoordinator --all --resume <claude-session-id>
 ```
 
 `mesh` with no args now opens a small interactive launcher for the current repo root and routes to `attach`, `sessions`, `ui`, `start`, or `attach --all`. `mesh ui`, `mesh start`, `mesh run <phase>`, and `mesh thread` also resolve the git repo root when you launch them from a nested subdirectory. `mesh sessions` is the single primary session helper: on a TTY it opens the picker; use `mesh sessions --list` or `mesh session list` only when you want the raw router list. `mesh attach`, `mesh session manage`, and `mesh ui resume` remain only as compatibility aliases. `wsattach` remains a low-level fallback when you already know the tmux session name.
@@ -283,6 +285,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - router DB is authoritative for durable managed orchestration
 - iTerm2 is optional layout/UX
 - `mcoordinator <repo>` is the default automatic intra-repo path; `mcoordinator --all` is multi-repo
+- after a reboot use explicit `--continue` or deterministic `--resume <id>`;
+  the helper resumes Claude and appends the current Gobabygo system contract in
+  the same startup command
 - run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
 - existing coordinator sessions are only attached; use `--session <fresh-name>` for a non-destructive bootstrap
 - set `MESH_COORDINATOR_MESH_SCRIPT` to a clean Dell runtime checkout; never use a dirty development checkout
