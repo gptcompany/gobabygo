@@ -288,6 +288,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - after a reboot use explicit `--continue` or deterministic `--resume <id>`;
   the helper resumes Claude and appends the current Gobabygo system contract in
   the same startup command
+- exact `--resume <id>` rejects the same UUID in another active tmux coordinator
+  and holds a private per-UUID lock while Claude runs; `--continue` cannot offer
+  this guarantee because its UUID is selected inside Claude after startup
 - run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
 - valid coordinator sessions are only attached; a shell wrapper with a Claude
   child is valid, while a marked coordinator or older unmarked shell without Claude fails

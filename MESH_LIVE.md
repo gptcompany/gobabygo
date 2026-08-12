@@ -50,6 +50,18 @@ working directory. `--resume <id>` requires an exact UUID and is preferred when
 the exact conversation is known. Before creating tmux, the workstation verifies
 that the UUID exists in Claude's history for the exact coordinator working
 directory; wrong, missing, malformed, and cross-repository IDs fail closed.
+Before creating a differently named coordinator, the helper also rejects that
+UUID when an active Claude process in another tmux session already uses it. This
+works with both newly marked coordinators and legacy coordinators by parsing the
+exact NUL-delimited `--resume` process argument internally; process arguments and
+the UUID are never printed in diagnostics.
+
+New deterministic resumes use a private per-UUID `flock` for the lifetime of the
+Claude process. This closes the simultaneous-start race even when two preflights
+run before either process becomes visible. The lock is released if Claude exits
+back to the persistent shell. No database, daemon, tmux kill, or iTerm2 state is
+involved.
+
 Both options are used only when the tmux session is created; if the tmux already
 exists and is a valid coordinator, `mcoordinator` only attaches to it and ignores
 resume validation. New coordinators carry a tmux marker so a terminated
@@ -71,6 +83,11 @@ Using `/resume` interactively is possible, but the startup option is preferred:
 it avoids a temporary conversation and makes contract injection explicit and
 testable. Resume remains opt-in so a new coordinator cannot silently inherit an
 unrelated conversation.
+
+`--continue` cannot provide the per-UUID guarantee because Claude selects the
+conversation only after startup. Use it only when no other coordinator can be
+using the same history; prefer exact `--resume <id>` whenever concurrency safety
+matters.
 
 If `claude-coordinator` is reported as an unmarked shell, inspect it with
 `wsattach claude-coordinator` or preserve it and create a fresh coordinator:
