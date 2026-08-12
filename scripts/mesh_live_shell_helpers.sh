@@ -279,7 +279,7 @@ if [[ "$SESSION_KIND" == "coordinator" && -n "$RESUME_ID" ]]; then
   chmod 600 "$lock_file"
   printf -v lock_file_q "%q" "$lock_file"
   printf -v startup_q "%q" "$STARTUP"
-  session_command="exec 9>>$lock_file_q; if ! flock -n 9; then echo \"[tmux] Claude resume session is already locked by another coordinator\" >&2; sleep 2; exit 73; fi; bash -lc $startup_q; flock -u 9; exec \$SHELL -l"
+  session_command="exec 9>>$lock_file_q; if ! flock -n 9; then echo \"[tmux] Claude resume session is already locked by another coordinator\" >&2; sleep 2; exit 73; fi; eval $startup_q; flock -u 9; exec \$SHELL -l"
   session_handles_shell=1
 fi
 MESH_REMOTE_LOCKED_STARTUP

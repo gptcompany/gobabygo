@@ -715,6 +715,8 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
     assert "MESH_LIVE_COORDINATOR=1" in command
     assert "MESH_LIVE_CLAUDE_RESUME_ID" in command
     assert "flock -n 9" in command
+    assert "eval $startup_q" in command
+    assert "bash -lc $startup_q" not in command
     assert "MESH_LIVE_PROC_ROOT" in command
     assert "ps -o args=" not in command
     assert "existing session $SESSION is a shell, not a Claude coordinator" in command
