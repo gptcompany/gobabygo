@@ -60,3 +60,11 @@ def test_load_rejects_missing_templates_mapping(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="templates.*mapping"):
         load_pipeline_templates(path)
+
+
+def test_load_reports_invalid_yaml_as_value_error(tmp_path: Path) -> None:
+    path = tmp_path / "pipeline.yaml"
+    path.write_text("templates: [unterminated\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid template YAML"):
+        load_pipeline_templates(path)

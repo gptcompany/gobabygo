@@ -2198,6 +2198,77 @@ def build_live_coordinator_system_prompt(
     )
 
 
+def _load_pipeline_template_api() -> tuple[Callable[..., Any], Callable[..., Any], Callable[..., Any]]:
+    repo_root = str(Path(__file__).resolve().parents[1])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from src.pipeline_templates import (  # pylint: disable=import-outside-toplevel
+        default_pipeline_template_file,
+        load_pipeline_templates,
+        normalized_pipeline_steps,
+    )
+
+    return default_pipeline_template_file, load_pipeline_templates, normalized_pipeline_steps
+
+
+def build_live_workflow_projection(name: str) -> dict[str, Any]:
+    """Project one canonical pipeline template without router or tmux access."""
+    workflow_name = str(name or "").strip()
+    if not workflow_name:
+        raise ValueError("workflow name is required")
+    default_file, load_templates, normalize_steps = _load_pipeline_template_api()
+    source = Path(default_file()).resolve()
+    loaded = load_templates(source)
+    templates = loaded["templates"]
+    template = templates.get(workflow_name)
+    if not isinstance(template, dict):
+        known = ", ".join(sorted(str(item) for item in templates))
+        raise ValueError(f"unknown workflow '{workflow_name}'; known workflows: {known}")
+
+    steps: list[dict[str, Any]] = []
+    for index, raw_step in enumerate(normalize_steps(workflow_name, template)):
+        steps.append(
+            {
+                "index": index,
+                "name": str(raw_step["name"]),
+                "title": str(raw_step.get("title") or ""),
+                "target_cli": str(raw_step.get("target_cli") or ""),
+                "role": str(raw_step.get("role") or ""),
+                "depends_on_steps": list(raw_step["depends_on_steps"]),
+                "critical": bool(raw_step.get("critical", False)),
+                "review_policy": str(raw_step.get("review_policy") or "none"),
+                "prompt": str(raw_step.get("prompt") or ""),
+            }
+        )
+    return {
+        "name": workflow_name,
+        "description": str(template.get("description") or ""),
+        "source": str(source),
+        "steps": steps,
+    }
+
+
+def render_live_workflow_projection(projection: dict[str, Any]) -> str:
+    """Render a compact operator view of a workflow projection."""
+    lines = [
+        f"Workflow: {projection['name']}",
+        f"Source: {projection['source']}",
+        f"Description: {projection['description'] or '-'}",
+        "Steps:",
+    ]
+    for step in projection["steps"]:
+        dependencies = ",".join(str(item) for item in step["depends_on_steps"]) or "-"
+        lines.extend(
+            [
+                f"[{step['index']:02d}] {step['name']} | {step['role'] or '-'}/{step['target_cli'] or '-'} "
+                f"| depends={dependencies} | critical={'yes' if step['critical'] else 'no'} "
+                f"| review={step['review_policy']}",
+                f"  Prompt: {step['prompt'] or '-'}",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _default_users(host: str) -> tuple[str, ...]:
     configured = os.environ.get("MESH_LIVE_USERS", "").strip()
     raw_users: list[str] = []
@@ -2374,6 +2445,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Absolute mesh script path on the workstation.",
     )
 
+    workflow = sub.add_parser(
+        "workflow",
+        help="Inspect canonical workflow templates without router or tmux access.",
+    )
+    workflow_sub = workflow.add_subparsers(dest="workflow_cmd", required=True)
+    workflow_show = workflow_sub.add_parser("show", help="Show one workflow projection.")
+    workflow_show.add_argument("name", help="Canonical workflow name, for example speckit.")
+    workflow_show.add_argument("--json", action="store_true", help="Emit structured JSON.")
+
     tick = sub.add_parser(
         "tick",
         help="Inspect Claude sessions and propose safe coordinator/rate-limit actions.",
@@ -2464,6 +2544,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _parse_args(argv)
     try:
+        if args.cmd == "workflow":
+            projection = build_live_workflow_projection(args.name)
+            if args.json:
+                print(json.dumps(projection, indent=2))
+            else:
+                print(render_live_workflow_projection(projection))
+            return 0
         if args.cmd == "coordinator-prompt":
             print(
                 build_live_coordinator_system_prompt(

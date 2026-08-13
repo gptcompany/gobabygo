@@ -1934,6 +1934,46 @@ def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:
     assert "Discover worker candidates" in output
 
 
+def test_workflow_projection_reuses_canonical_speckit_template() -> None:
+    module = _load_module()
+
+    projection = module.build_live_workflow_projection("speckit")
+
+    assert projection["name"] == "speckit"
+    assert projection["source"].endswith("/mapping/pipeline_templates.yaml")
+    assert len(projection["steps"]) == 20
+    assert projection["steps"][0]["name"] == "speckit.specify"
+    assert projection["steps"][1]["depends_on_steps"] == [0]
+    assert projection["steps"][4]["target_cli"] == "codex"
+    assert projection["steps"][5]["target_cli"] == "gemini"
+    assert projection["steps"][6]["depends_on_steps"] == [4, 5]
+
+
+def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda args: (_ for _ in ()).throw(AssertionError("tmux discovery must not run")),
+    )
+
+    rc = module.main(["workflow", "show", "speckit", "--json"])
+
+    assert rc == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["name"] == "speckit"
+    assert output["steps"][19]["name"] == "confidence-gate-post-impl.adjudicator"
+
+
+def test_main_rejects_unknown_workflow(capsys) -> None:
+    module = _load_module()
+
+    rc = module.main(["workflow", "show", "missing"])
+
+    assert rc == 2
+    assert "unknown workflow 'missing'" in capsys.readouterr().err
+
+
 def test_ensure_codex_is_local_only(monkeypatch, capsys) -> None:
     module = _load_module()
     monkeypatch.delenv("MESH_LIVE_LOCAL", raising=False)

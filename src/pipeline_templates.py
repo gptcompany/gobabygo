@@ -18,8 +18,11 @@ def load_pipeline_templates(path: str | Path) -> dict[str, Any]:
     file_path = Path(path).expanduser()
     if not file_path.exists():
         raise FileNotFoundError(f"Template file not found: {file_path}")
-    with file_path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
+    try:
+        with file_path.open("r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid template YAML: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("Template YAML root must be a mapping")
     templates = data.get("templates")

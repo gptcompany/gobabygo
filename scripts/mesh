@@ -483,6 +483,7 @@ Usage:
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
+  ./scripts/mesh live workflow show <name> [--json]
   ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--worker <session>]
   ./scripts/mesh term list [--repo <repo-path>] [--output <file>]
   ./scripts/mesh term focus <repo-path> <role>
@@ -535,6 +536,7 @@ Examples:
   ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live brief --repo rektslug
   ./scripts/mesh live brief --all --coordinator claude-coordinator
+  ./scripts/mesh live workflow show speckit
   ./scripts/mesh live coordinator-prompt --repo rektslug --session claude-rektslug-coordinator --worker codex-rektslug
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply
@@ -597,6 +599,7 @@ Usage:
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
+  ./scripts/mesh live workflow show <name> [--json]
   ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--worker <session>]
   ./scripts/mesh live tick [--coordinator <session>] [--json]
   ./scripts/mesh live tick [--coordinator <session>] --apply [--state-file <path>]
@@ -619,6 +622,7 @@ Behavior:
   or one recent, tracked [Pasted Content N chars] placeholder. It never clears a composer.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
   brief builds a best-effort redacted read-only prompt; review it before pasting.
+  workflow show reads the canonical pipeline template without tmux or router access.
   coordinator-prompt builds the system contract used by the mcoordinator shell helper.
   tick is local-only and read-only by default; --apply handles only exact selected WAIT menus
   and exactly idle coordinators. It recaptures, persists attempts, verifies, and throttles.
@@ -647,6 +651,7 @@ Examples:
   ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live brief --repo rektslug
   ./scripts/mesh live brief --all --coordinator claude-coordinator
+  ./scripts/mesh live workflow show speckit
   ./scripts/mesh live coordinator-prompt --repo rektslug --session claude-rektslug-coordinator --worker codex-rektslug
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply
