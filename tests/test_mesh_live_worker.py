@@ -1,0 +1,240 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+
+def _load_module():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "mesh_live_worker.py"
+    spec = importlib.util.spec_from_file_location("mesh_live_worker", script)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _git_repo(path: Path) -> Path:
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return path.resolve()
+
+
+def _completed(args: list[str], returncode: int = 0, stdout: str = "", stderr: str = ""):
+    return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
+
+
+def test_resolve_repo_requires_configured_exact_git_root(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    subdir = repo / "src"
+    subdir.mkdir()
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+
+    assert module.resolve_repo("rektslug") == repo
+    assert module.resolve_repo(str(repo)) == repo
+    with pytest.raises(module.WorkerEnsureError, match="Git repository root"):
+        module.resolve_repo(str(subdir))
+    with pytest.raises(module.WorkerEnsureError, match="outside configured roots"):
+        module.resolve_repo("/tmp")
+
+
+def test_resolve_repo_rejects_ambiguous_name(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    first = tmp_path / "one"
+    second = tmp_path / "two"
+    _git_repo(first / "same")
+    _git_repo(second / "same")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", os.pathsep.join([str(first), str(second)]))
+
+    with pytest.raises(module.WorkerEnsureError, match="ambiguous"):
+        module.resolve_repo("same")
+
+
+def test_ensure_codex_creates_fixed_yolo_worker_without_send_keys(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_codex_executable", lambda: "/usr/local/bin/codex")
+    commands: list[list[str]] = []
+    created = False
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal created
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        commands.append(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=0 if created else 1)
+        if args[:2] == ["tmux", "new-session"]:
+            created = True
+            return _completed(args)
+        if args[:2] == ["tmux", "display-message"]:
+            fields = module._FIELD_SEPARATOR.join(
+                ["codex-rektslug", str(repo), "codex", "0", "1"]
+            )
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.ensure_codex_worker(str(repo), expected_session="codex-rektslug")
+
+    assert result == {
+        "session": "codex-rektslug",
+        "repo": str(repo),
+        "created": True,
+        "ready": True,
+    }
+    launch = next(command for command in commands if command[:2] == ["tmux", "new-session"])
+    assert launch[:8] == [
+        "tmux",
+        "new-session",
+        "-d",
+        "-s",
+        "codex-rektslug",
+        "-c",
+        str(repo),
+        "exec /usr/local/bin/codex --dangerously-bypass-approvals-and-sandbox -C " + str(repo),
+    ]
+    assert not any("send-keys" in command for command in commands)
+
+
+def test_ensure_codex_reuses_matching_live_worker(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args)
+        if args[:2] == ["tmux", "display-message"]:
+            fields = module._FIELD_SEPARATOR.join(
+                ["codex-rektslug", str(repo), "codex", "0", "1"]
+            )
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.ensure_codex_worker("rektslug")
+
+    assert result["created"] is False
+    assert result["ready"] is True
+
+
+def test_ensure_codex_reuses_concurrent_atomic_winner(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_codex_executable", lambda: "/usr/local/bin/codex")
+    inspections = 0
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal inspections
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "has-session"]:
+            inspections += 1
+            return _completed(args, returncode=1 if inspections == 1 else 0)
+        if args[:2] == ["tmux", "new-session"]:
+            return _completed(args, returncode=1, stderr="duplicate session: codex-rektslug\n")
+        if args[:2] == ["tmux", "display-message"]:
+            fields = module._FIELD_SEPARATOR.join(
+                ["codex-rektslug", str(repo), "codex", "0", "1"]
+            )
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.ensure_codex_worker("rektslug")
+
+    assert result["created"] is False
+    assert result["ready"] is True
+
+
+def test_ensure_codex_reports_early_process_exit(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_codex_executable", lambda: "/usr/local/bin/codex")
+    created = False
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal created
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "new-session"]:
+            created = True
+            return _completed(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.WorkerEnsureError, match="exited during startup"):
+        module.ensure_codex_worker("rektslug")
+    assert created is True
+
+
+@pytest.mark.parametrize(
+    ("metadata", "message"),
+    [
+        (("/other/repo", "codex", "0", "1"), "different repository"),
+        (("{repo}", "bash", "0", "1"), "not Codex"),
+        (("{repo}", "codex", "0", "2"), "single-pane"),
+    ],
+)
+def test_ensure_codex_fails_closed_on_session_collision(
+    monkeypatch, tmp_path, metadata, message
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    path, command, dead, panes = metadata
+    path = path.format(repo=repo)
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args)
+        fields = module._FIELD_SEPARATOR.join(
+            ["codex-rektslug", path, command, dead, panes]
+        )
+        return _completed(args, stdout=fields + "\n")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.WorkerEnsureError, match=message):
+        module.ensure_codex_worker("rektslug")
+
+
+def test_ensure_codex_rejects_expected_session_mismatch_before_tmux(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    tmux_called = False
+    real_run = module._run_command
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal tmux_called
+        if args[0] == "tmux":
+            tmux_called = True
+        return real_run(args, timeout=timeout)
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.WorkerEnsureError, match="does not match"):
+        module.ensure_codex_worker("rektslug", expected_session="codex-other")
+    assert tmux_called is False

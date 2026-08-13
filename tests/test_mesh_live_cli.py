@@ -1236,6 +1236,50 @@ def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:
     assert "Discover worker candidates" in output
 
 
+def test_ensure_codex_is_local_only(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.delenv("MESH_LIVE_LOCAL", raising=False)
+
+    assert module.main(["ensure-codex", "/data/sata/1TB/rektslug"]) == 2
+    assert "must run on the tmux workstation" in capsys.readouterr().err
+
+
+def test_ensure_codex_delegates_only_to_fixed_local_helper(monkeypatch, capsys) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        return _completed(
+            args,
+            stdout=(
+                "[mesh live ensure-codex] session=codex-rektslug "
+                "repo=/data/sata/1TB/rektslug action=created ready=yes\n"
+            ),
+        )
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    assert module.main(
+        [
+            "--local",
+            "ensure-codex",
+            "/data/sata/1TB/rektslug",
+            "--expect-session",
+            "codex-rektslug",
+        ]
+    ) == 0
+    command = commands[0]
+    assert command[0] == sys.executable
+    assert command[1].endswith("/scripts/mesh_live_worker.py")
+    assert command[2:] == [
+        "/data/sata/1TB/rektslug",
+        "--expect-session",
+        "codex-rektslug",
+    ]
+    assert "action=created ready=yes" in capsys.readouterr().out
+
+
 def test_live_tick_plan_requires_exact_wait_selection_and_idle_coordinator() -> None:
     module = _load_module()
     coordinator = module.LiveSession(
