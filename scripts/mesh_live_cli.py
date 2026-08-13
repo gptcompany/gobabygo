@@ -551,6 +551,7 @@ _CODEX_COLLAPSED_PASTE = re.compile(
     r"^\s*›\s*\[Pasted Content (?P<chars>[1-9][0-9]*) chars?\]\s*$",
     re.IGNORECASE,
 )
+_CODEX_COLLAPSED_PASTE_MARKER = re.compile(r"\[Pasted Content\b", re.IGNORECASE)
 
 
 def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
@@ -667,7 +668,7 @@ def codex_submit_recovery_verified(visible_screen: str, delegation_id: str) -> b
     composer_cleared = (
         bool(composer)
         and not _codex_composer_contains_delegation(composer, delegation_id)
-        and _codex_collapsed_paste_chars(composer) is None
+        and _CODEX_COLLAPSED_PASTE_MARKER.search(composer) is None
     )
     return composer_cleared or codex_screen_shows_current_activity(visible_screen)
 
@@ -2050,7 +2051,8 @@ def build_live_coordinator_system_prompt(
             f"- Refresh scope: `{board_command}`",
             f"- Inspect one session: `{live_command} peek <session> 80`",
             f"- Ensure one Codex worker: `{ensure_command}`",
-            f"- Send one bounded single-line task: `{live_command} send <session> \"<task>\" --enter`",
+            f"- Send one bounded single-line Codex task: `{live_command} send <session> \"<task>\" "
+            "--delegation-id <DELEGATION_ID> --enter`",
             "The send text must be one literal line and at most 8192 characters. For a long or multi-line brief, "
             "write a non-secret brief file inside the target repository, then send one line containing the "
             "DELEGATION_ID, absolute brief path, and instruction to read and execute it.",
@@ -2068,18 +2070,22 @@ def build_live_coordinator_system_prompt(
             "5. Create a unique DELEGATION_ID and include scope, allowed files, acceptance criteria, tests, and forbidden actions.",
             "6. Require the worker's latest response to end with exactly one standalone status line: "
             "WORKER_DONE <DELEGATION_ID> or WORKER_BLOCKED <DELEGATION_ID>.",
-            "7. Send the task to the exact worker, then peek again to verify the DELEGATION_ID or clear CLI activity.",
+            "7. Send the task to the exact worker with the same `--delegation-id <DELEGATION_ID>`, then peek again "
+            "to verify the DELEGATION_ID or clear CLI activity.",
             "8. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
             "9. If delivery is uncertain, inspect again and report uncertainty. Never resend blindly or duplicate a task.",
-            "10. Codex paste-settle recovery: only when an immediate peek shows the exact current DELEGATION_ID "
-            "still in the bottom Codex composer and shows no Working/activity, do not resend the text. Invoke exactly "
+            "10. Codex paste-settle recovery: only when an immediate peek shows the exact current DELEGATION_ID, "
+            "or an exact `[Pasted Content N chars]` placeholder correlated to the recent tracked send, still in the "
+            "bottom Codex composer with no Working/activity, do not resend the text. Invoke exactly "
             f"one guarded command: `{live_command} recover-codex-submit <session> <DELEGATION_ID>`.",
             "11. The guarded command recaptures only the visible pane, rejects menus, confirmations, shell prompts, "
-            "activity, non-Codex processes, mismatched delegations, and every second attempt before sending Enter. "
+            "activity, non-Codex processes, mismatched or untracked delegations, stale or length-mismatched collapsed "
+            "pastes, and every second attempt before sending Enter. "
             "It accepts no task-text argument and polls briefly after Enter. `submission=verified` is positive evidence; "
             "`submission=unknown` means Enter was delivered but redraw evidence was inconclusive. On unknown, continue "
             "bounded peeks and report uncertainty; do not declare the worker blocked solely from that result; never "
-            "fall back to `send --enter` or resend the task.",
+            "fall back to `send --enter`, a naked Enter, composer clearing, or task resend. When collapsed-paste "
+            "correlation is unavailable, attach and inspect manually.",
             "12. Monitor with bounded, non-aggressive peeks. Never detect completion by searching the whole capture for "
             "WORKER_DONE or WORKER_BLOCKED: the delegated task and composer may echo both strings. Accept status only "
             "from one exact standalone line with the current DELEGATION_ID in the latest worker-authored response after "

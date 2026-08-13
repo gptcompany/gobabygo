@@ -140,6 +140,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | - | `mesh live tick --apply` | Apply only exact WAIT and idle-coordinator wake actions |
 | `wsend <session> <text>` | `mesh live send ...` | Type literal text into the selected pane |
 | `wsend <session> <text> --enter` | `mesh live send ... --enter` | Type text, then send Enter separately |
+| - | `mesh live send <codex-session> <text> --delegation-id <id> --enter` | Deliver and record a metadata-only recovery receipt |
 | - | `mesh live recover-codex-submit <session> <id>` | Guarded, stateful single-Enter recovery for one exact Codex delegation |
 | `wsattach <session>` | `mesh live attach <session>` | Attach to an existing session; never creates or kills one |
 
@@ -165,7 +166,9 @@ delegation ID or clear CLI activity and must never resend blindly.
 characters are rejected. For a long or multi-line delegation, the coordinator
 writes a non-secret brief inside the target repository and sends one line with
 the `DELEGATION_ID`, absolute brief path, and instruction to read and execute
-that file. This keeps remote keyboard input bounded and auditable.
+that file. Codex delegations use the same ID in `--delegation-id`; this records
+only owner/session/pane, ID, character count, SHA-256 digest, and timestamp,
+never task text. This keeps remote keyboard input bounded and auditable.
 
 Completion is not a substring search over the pane. Delegation briefs and CLI
 composers can echo both `WORKER_DONE` and `WORKER_BLOCKED`. A status is a
@@ -175,10 +178,13 @@ echoes, quoted text, history, composer content, and ambiguous reports are ignore
 The coordinator still verifies the claimed result and test evidence.
 
 Codex can occasionally leave a rapidly typed/pasted task in its composer even
-when the initial send included `--enter`. The coordinator contract includes one
-bounded paste-settle recovery: after an immediate peek, and only when the exact
-current `DELEGATION_ID` is still visible in the bottom Codex composer with no
-Working/activity, it invokes the guarded recovery command and peeks again:
+when the initial send included `--enter`; long pastes may render only as
+`[Pasted Content N chars]`. The coordinator contract includes one bounded
+paste-settle recovery. After an immediate peek it proceeds only when the bottom
+Codex composer has no Working/activity and either shows the exact current
+`DELEGATION_ID` or an exact collapsed placeholder correlated to the same recent
+tracked send, pane, ID, and character count. It then invokes the guarded
+recovery command and peeks again:
 
 ```bash
 mesh live recover-codex-submit <codex-session> <DELEGATION_ID>
@@ -187,8 +193,9 @@ mesh live peek <codex-session> 80
 
 The recovery command accepts no task text. It recaptures only the current visible
 pane, checks the exact bottom composer and Codex process, rejects activity,
-menus, confirmations, shell prompts, mismatched IDs, and records the attempt
-before sending Enter. It then polls the visible TUI for a bounded interval.
+menus, confirmations, shell prompts, mismatched IDs, untracked, stale, or
+length-mismatched placeholders, and records the attempt before sending Enter.
+It then polls the visible TUI for a bounded interval.
 `submission=verified` is positive redraw evidence; `submission=unknown` means
 Enter was delivered but the TUI did not prove acceptance in time. Unknown
 requires bounded follow-up peeks and must not alone mark the worker blocked.
@@ -201,6 +208,12 @@ be eliminated completely; polling narrows that race. A refusal occurs before
 delivery and exits `2`; an inconclusive post-delivery verification exits `1` as
 unknown; verified delivery exits `0`. Never fall back to task resend or a plain
 second `send --enter`.
+
+The receipt proves only what Gobabygo delivered to tmux; it cannot identify text
+typed directly into the same composer afterward. Therefore placeholder recovery
+expires after 15 minutes and requires an otherwise empty exact placeholder. If
+correlation is unavailable, attach and inspect manually. Mesh live never clears
+the composer automatically and never falls back to a naked Enter.
 
 When no suitable Codex worker exists, the automatic path may run only:
 
@@ -315,6 +328,8 @@ instruction without a human boundary.
 ## Delegation Boundary
 
 For an existing manual session, delegate through a bounded `mesh live send`.
+For Codex include `--delegation-id <DELEGATION_ID> --enter` so a collapsed paste
+can be recovered without exposing or persisting the task text.
 For a missing native Codex worker, the coordinator may use `ensure-codex` under
 its standing contract and then the same bounded send/verify protocol. Neither
 path uses account selection or durable router state.

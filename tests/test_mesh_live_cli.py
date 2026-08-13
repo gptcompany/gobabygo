@@ -1201,14 +1201,18 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "one literal line and at most 8192 characters" in prompt
     assert "non-secret brief file inside the target repository" in prompt
     assert "DELEGATION_ID, absolute brief path" in prompt
+    assert "--delegation-id <DELEGATION_ID>" in prompt
     assert "Never resend blindly" in prompt
     assert "Codex paste-settle recovery" in prompt
     assert "exact current DELEGATION_ID" in prompt
+    assert "[Pasted Content N chars]" in prompt
+    assert "recent tracked send" in prompt
     assert "recover-codex-submit <session> <DELEGATION_ID>" in prompt
     assert "rejects menus, confirmations, shell prompts" in prompt
+    assert "stale or length-mismatched collapsed pastes" in prompt
     assert "every second attempt" in prompt
     assert "accepts no task-text argument" in prompt
-    assert "never fall back to `send --enter` or resend the task" in prompt
+    assert "never fall back to `send --enter`, a naked Enter, composer clearing" in prompt
     assert "context is nearly exhausted" in prompt
     assert "must not edit source files" in prompt
 
@@ -1356,6 +1360,10 @@ def test_codex_recovery_verification_accepts_clear_composer_or_current_running_s
         "────────────────────\n"
         "› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo"
     )
+    altered_collapsed_paste_still_queued = (
+        "────────────────────\n"
+        "› prefix [Pasted Content 1085 chars]\n  gpt-5.4 · /repo"
+    )
 
     assert module.codex_submit_recovery_verified(historical_activity, "delegation-1234") is False
     assert module.codex_submit_recovery_verified(current_activity, "delegation-1234") is True
@@ -1370,6 +1378,12 @@ def test_codex_recovery_verification_accepts_clear_composer_or_current_running_s
     assert (
         module.codex_submit_recovery_verified(
             collapsed_paste_still_queued, "delegation-1234"
+        )
+        is False
+    )
+    assert (
+        module.codex_submit_recovery_verified(
+            altered_collapsed_paste_still_queued, "delegation-1234"
         )
         is False
     )
