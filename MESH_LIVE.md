@@ -246,7 +246,9 @@ manual tmux sessions.
 Tracked Codex sends serialize receipt invalidation, tmux input, and receipt
 creation under the recovery lock. Before a tracked send, Mesh recaptures the
 visible pane and proceeds only when the main Codex composer is recognizable,
-empty, and idle. Existing draft text, a collapsed paste, activity, menus,
+empty, and idle. A recognized stock placeholder counts as empty. MCP startup
+warnings do not by themselves make the composer occupied.
+Existing draft text, a collapsed paste, activity, menus,
 confirmations, and ambiguous startup screens are refused before any key input or
 receipt invalidation. Mesh never clears that content automatically; inspect it
 manually or select another authorized idle worker. If the composer contains a
@@ -256,6 +258,11 @@ means task text was delivered but the requested Enter failed; the receipt remain
 available for the guarded recovery, and the task must not be resent. A receipt
 write failure after text delivery is reported as `tracked=no` and also requires
 manual inspection, not resend.
+
+A tracked-send refusal is a safety result, not a prompt-length problem. Never
+bypass it by omitting `--delegation-id` or by replacing the task with a shorter
+untracked pointer; doing so removes the occupied-composer guard and recovery
+receipt.
 
 `send` accepts one literal line up to 8192 characters; newlines and control
 characters are rejected. For a long or multi-line delegation, the coordinator

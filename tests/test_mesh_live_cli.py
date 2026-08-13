@@ -1470,6 +1470,7 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "never fall back to `send --enter`, a naked Enter, composer clearing" in prompt
     assert "refuses a non-empty, active, or ambiguous composer" in prompt
     assert "never clear or overwrite it" in prompt
+    assert "Never bypass this refusal by omitting `--delegation-id`" in prompt
     assert "context is nearly exhausted" in prompt
     assert "must not edit source files" in prompt
     assert "Workflow mode: adaptive" in prompt
@@ -1631,7 +1632,21 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
     ("screen", "expected"),
     [
         ("────────────────────\n› \n  gpt-5.4 · /repo", True),
+        (
+            "⚠ MCP startup interrupted. The following servers were not initialized:\n"
+            "  openmemory\n\n"
+            "────────────────────\n"
+            "› Improve documentation in @filename\n"
+            "  gpt-5.6-sol xhigh · /repo",
+            True,
+        ),
         ("────────────────────\n› draft DEC-8\n  gpt-5.4 · /repo", False),
+        (
+            "────────────────────\n"
+            "› Improve documentation in @filename and update DEC-8\n"
+            "  gpt-5.6-sol xhigh · /repo",
+            False,
+        ),
         ("────────────────────\n› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo", False),
         ("────────────────────\n• Working (2s)\n› \n  gpt-5.4 · /repo", False),
         ("────────────────────\n› 1. Approve\n  2. Cancel\n  gpt-5.4 · /repo", False),

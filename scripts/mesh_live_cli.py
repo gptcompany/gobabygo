@@ -583,6 +583,11 @@ _CODEX_COLLAPSED_PASTE = re.compile(
     re.IGNORECASE,
 )
 _CODEX_COLLAPSED_PASTE_MARKER = re.compile(r"\[Pasted Content\b", re.IGNORECASE)
+_CODEX_EMPTY_COMPOSER_PLACEHOLDERS = frozenset(
+    {
+        "Improve documentation in @filename",
+    }
+)
 
 
 def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
@@ -641,7 +646,8 @@ def codex_screen_is_ready_for_delegation(visible_screen: str) -> bool:
             _prefix, separator, content = line.partition("›")
             if not separator:
                 return False
-        if content.strip():
+        stripped = content.strip()
+        if stripped and stripped not in _CODEX_EMPTY_COMPOSER_PLACEHOLDERS:
             return False
     return footer_found
 
@@ -2262,7 +2268,7 @@ def build_live_coordinator_system_prompt(
             "include the ID in the text but omit the Codex-only tracking option.",
             "Before tracked Codex text is delivered, send recaptures the pane and refuses a non-empty, active, or ambiguous composer. "
             "On refusal, never clear or overwrite it: recover only a correlated prior delegation under step 10; otherwise use another "
-            "authorized idle worker or report the manual blocker.",
+            "authorized idle worker or report the manual blocker. Never bypass this refusal by omitting `--delegation-id` or using a shorter task.",
             "8. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
             "9. If delivery is uncertain, inspect again and report uncertainty. Never resend blindly or duplicate a task.",
             "10. Codex paste-settle recovery: only when an immediate peek shows the exact current DELEGATION_ID, "
