@@ -2589,6 +2589,135 @@ def test_session_limit_first_observation_uses_declared_reset_or_runs_now() -> No
     )
 
 
+def test_session_limit_replaces_legacy_persisted_schedule() -> None:
+    module = _load_module()
+    timezone = ZoneInfo("Asia/Bangkok")
+    now = datetime(2026, 8, 14, 5, 0, tzinfo=timezone).timestamp()
+    legacy_not_before = datetime(2026, 8, 15, 0, 0, tzinfo=timezone).timestamp()
+    screen = _claude_session_limit_screen()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="bash",
+        pane_child_command="claude",
+        output=screen,
+    )
+
+    class WakeClient:
+        def __init__(self) -> None:
+            self.outputs = [screen, "✻ Working\n❯ "]
+            self.sends: list[str] = []
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(
+            self,
+            target,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
+            self.sends.append(text)
+            return {}
+
+    state = {
+        "version": 1,
+        "sessions": {
+            "sam/claude-coordinator": {
+                "pane_id": "%1",
+                "session_limit_fingerprint": module._tick_session_limit_fingerprint(
+                    session, "12am", "Asia/Bangkok"
+                ),
+                "session_limit_not_before": legacy_not_before,
+            }
+        },
+    }
+    client = WakeClient()
+
+    results, changed = module.execute_live_tick_actions(
+        client,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert changed is True
+    assert results[0].status == "applied"
+    assert len(client.sends) == 1
+    saved = state["sessions"]["sam/claude-coordinator"]
+    assert saved["session_limit_not_before"] == now
+    assert saved["session_limit_schedule_version"] == (
+        module.SESSION_LIMIT_SCHEDULE_VERSION
+    )
+
+
+def test_session_limit_migration_preserves_attempt_tombstone() -> None:
+    module = _load_module()
+    timezone = ZoneInfo("Asia/Bangkok")
+    now = datetime(2026, 8, 14, 5, 0, tzinfo=timezone).timestamp()
+    screen = _claude_session_limit_screen()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="bash",
+        pane_child_command="claude",
+        output=screen,
+    )
+
+    class NoSendClient:
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=screen)], []
+
+        def send(self, *args, **kwargs):
+            raise AssertionError("a migrated attempt tombstone must prevent another send")
+
+    attempted_at = now - 300
+    state = {
+        "version": 1,
+        "sessions": {
+            "sam/claude-coordinator": {
+                "pane_id": "%1",
+                "session_limit_fingerprint": module._tick_session_limit_fingerprint(
+                    session, "12am", "Asia/Bangkok"
+                ),
+                "session_limit_not_before": now + 86400,
+                "session_limit_attempted_at": attempted_at,
+            }
+        },
+    }
+
+    results, changed = module.execute_live_tick_actions(
+        NoSendClient(),
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert changed is True
+    assert results[0].status == "throttled"
+    saved = state["sessions"]["sam/claude-coordinator"]
+    assert saved["session_limit_attempted_at"] == attempted_at
+    assert saved["session_limit_not_before"] == now
+    assert saved["session_limit_schedule_version"] == (
+        module.SESSION_LIMIT_SCHEDULE_VERSION
+    )
+
+
 def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
     module = _load_module()
     before = datetime(2026, 8, 13, 23, 30, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()

@@ -32,6 +32,7 @@ DEFAULT_PEEK_LINES = 120
 DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
 DEFAULT_CODEX_RECOVERY_STATE_FILE = "~/.local/state/gobabygo/mesh-live-codex-recovery.json"
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
+SESSION_LIMIT_SCHEDULE_VERSION = 2
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
 CODEX_RECOVERY_VERIFY_INTERVAL = 0.25
 CODEX_DELIVERY_RECEIPT_MAX_AGE = 15 * 60
@@ -1710,6 +1711,7 @@ def _tick_session_limit_fingerprint(
 def _clear_session_limit_state(saved: dict[str, Any]) -> bool:
     keys = (
         "session_limit_fingerprint",
+        "session_limit_schedule_version",
         "session_limit_not_before",
         "session_limit_attempted_at",
         "session_limit_token",
@@ -1866,7 +1868,14 @@ def execute_live_tick_actions(
                 fingerprint = _tick_session_limit_fingerprint(
                     fresh, reset_label, timezone_name
                 )
-                if saved.get("session_limit_fingerprint") == fingerprint:
+                same_fingerprint = (
+                    saved.get("session_limit_fingerprint") == fingerprint
+                )
+                current_schedule = (
+                    saved.get("session_limit_schedule_version")
+                    == SESSION_LIMIT_SCHEDULE_VERSION
+                )
+                if same_fingerprint and current_schedule:
                     try:
                         not_before = float(saved["session_limit_not_before"])
                     except (KeyError, TypeError, ValueError):
@@ -1875,11 +1884,15 @@ def execute_live_tick_actions(
                     not_before = _session_limit_not_before(
                         reset_label, timezone_name, now
                     )
-                    _clear_session_limit_state(saved)
+                    if not same_fingerprint:
+                        _clear_session_limit_state(saved)
                     saved.update(
                         {
                             "pane_id": fresh.pane_id,
                             "session_limit_fingerprint": fingerprint,
+                            "session_limit_schedule_version": (
+                                SESSION_LIMIT_SCHEDULE_VERSION
+                            ),
                             "session_limit_not_before": not_before,
                         }
                     )
