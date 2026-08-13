@@ -129,6 +129,13 @@ Canonical built-in workflow templates are now session-native too:
 - `speckit_codex`
 - `gemini_team_demo`
 
+`mesh live` projects these templates as coordinator policy without creating a
+router workflow instance. Repository scope binds one repo at startup.
+Coordinator scope keeps the program objective, dependency graph, gates, and
+adjudication in the coordinator and late-binds `{repo}` plus `{feature}` for
+each concrete delegation. The router/database remains optional durable history;
+tmux remains authoritative for liveness of existing manual sessions.
+
 Meaning:
 
 - the template file itself now encodes interactive team orchestration

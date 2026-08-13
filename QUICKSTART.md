@@ -257,6 +257,7 @@ mesh live attach claude-rektslug
 mesh live brief --repo rektslug
 mesh live brief --all --coordinator claude-coordinator
 mesh live workflow show speckit --json
+mesh live workflow show speckit --scope coordinator --json
 MESH_LIVE_LOCAL=1 mesh live tick --json
 mesh thread create --name rektslug-live-delegation
 mesh thread add-step --thread rektslug-live-delegation --title "Implement fix" --step-index 0 --repo /data/sata/1TB/rektslug --cli codex --payload '{"prompt":"Implement the approved fix."}'
@@ -293,6 +294,12 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   Speckit for features, architecture, ambiguity, and independent challenge
 - `mesh live workflow show speckit` projects the canonical
   `mapping/pipeline_templates.yaml` phases without router, tmux discovery, or iTerm2
+- `mcoordinator <repo>` binds Speckit to that repository and derives the
+  feature/task from the objective; `mcoordinator --all` keeps Speckit at
+  coordinator/program scope and binds repo plus feature/task only per concrete
+  delegation, so no single pair is required at startup
+- coordinator scope does not create a router pipeline: the router/database is
+  optional persistence for selected tasks and handoffs
 - Speckit live keeps one writer per repo; Codex/Gemini challenger roles use
   different existing sessions when available, and missing perspectives are
   reported as degraded coverage rather than silently skipped

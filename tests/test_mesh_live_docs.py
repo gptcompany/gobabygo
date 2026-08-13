@@ -49,8 +49,14 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "The default `adaptive` workflow",
         "MESH_COORDINATOR_WORKFLOW",
         "mesh live workflow show speckit --json",
+        "mesh live workflow show speckit --scope coordinator --json",
         "mapping/pipeline_templates.yaml",
         "does not connect to the router, inspect tmux, or require iTerm2",
+        "uses repository scope",
+        "uses coordinator scope",
+        "late-bound for each concrete delegation",
+        "not mandatory startup parameters",
+        "router thread/database may persist selected tasks",
         "`speckit.analyze` checks consistency",
         "Independent perspectives come from",
         "one active writer per repository",
@@ -113,3 +119,6 @@ def test_architecture_distinguishes_manual_and_router_managed_truth() -> None:
     assert "Router-managed orchestration is authoritative" in architecture
     assert "manual session liveness" in architecture
     assert "router-owned sessions remain under `session_worker` policy" in architecture
+    assert "Coordinator scope keeps the program objective" in architecture
+    assert "late-binds `{repo}` plus `{feature}`" in architecture
+    assert "router/database remains optional durable history" in architecture

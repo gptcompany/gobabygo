@@ -40,10 +40,26 @@ projection at any time:
 ```bash
 mesh live workflow show speckit
 mesh live workflow show speckit --json
+mesh live workflow show speckit --scope coordinator --json
 ```
 
 The projection is read from `mapping/pipeline_templates.yaml`; it does not
 connect to the router, inspect tmux, or require iTerm2.
+
+The scope is selected automatically by `mcoordinator`:
+
+- `mcoordinator <repo>` uses repository scope. The repo is already fixed; the
+  coordinator infers the feature or task from the operator objective and only
+  asks when that objective is genuinely ambiguous.
+- `mcoordinator --all` uses coordinator scope. The global specification,
+  decisions, dependency graph, and adjudication stay with the coordinator.
+  `{repo}` and `{feature}` are late-bound for each concrete delegation; they are
+  not mandatory startup parameters and the coordinator must not request one
+  global pair before cross-repo clarification or read-only analysis.
+
+Coordinator scope is a policy projection, not a durable pipeline instance. A
+router thread/database may persist selected tasks and handoffs when useful, but
+is not required to hold the global Speckit state or coordinate live tmux panes.
 
 `mcoordinator` injects the autonomous system contract only when its tmux
 session is first created; later calls only attach. An already running
@@ -152,7 +168,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | `wpeek <session> [lines]` | `mesh live peek <session> [lines]` | Capture one exact/unique pane; read-only |
 | `wbrief ...` | `mesh live brief ...` | Build a dynamic, redacted coordinator prompt; read-only |
 | `mcoordinator ...` | `mesh live coordinator-prompt ...` | Create/attach a persistent auto-configured Claude coordinator |
-| - | `mesh live workflow show <name>` | Project one canonical workflow; read-only, no router/tmux access |
+| - | `mesh live workflow show <name> [--scope repository\|coordinator]` | Project one canonical workflow; read-only, no router/tmux access |
 | - | `mesh live ensure-codex <repo>` | Locally create/reuse one deterministic native Codex worker; no task is sent |
 | - | `mesh live tick` | Inspect local Claude sessions and print a metadata-only action plan |
 | - | `mesh live tick --apply` | Apply only exact WAIT and idle-coordinator wake actions |
@@ -189,6 +205,13 @@ across spec, plan, and tasks. Independent perspectives come from the plan,
 pre-implementation, and post-implementation confidence gates: Codex challenges
 technical consistency, Gemini challenges product/UX consequences, and the
 coordinator performs the final operator-facing adjudication.
+
+In repository scope, the phases describe one repo and the feature/task is
+derived from the objective. In coordinator scope, the same phases govern a
+program of work: specification, clarification, dependency analysis, gates, and
+final decisions stay global, while each implementation or review lane receives
+its exact repo and feature/task only at delegation time. Read-only evidence
+lanes may span repositories before any writer is selected.
 
 Template roles are desired perspectives, not permission to spawn processes.
 The following are coordinator contract rules, not filesystem locks or an OS
