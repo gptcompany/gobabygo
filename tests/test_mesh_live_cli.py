@@ -1487,9 +1487,13 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
 
     assert "Workflow mode: speckit" in prompt
     assert (
-        "MESH_LIVE_LOCAL=1 /opt/gobabygo/scripts/mesh live workflow show speckit --json"
+        "MESH_LIVE_LOCAL=1 /opt/gobabygo/scripts/mesh live workflow show speckit "
+        "--scope repository --json"
         in prompt
     )
+    assert "Speckit scope: repository" in prompt
+    assert "repository is already bound to rektslug" in prompt
+    assert "do not ask the operator to restate it merely to fill a template placeholder" in prompt
     assert "dependency order" in prompt
     assert "does not authorize router use, iTerm2, session creation" in prompt
 
@@ -1526,6 +1530,35 @@ def test_coordinator_system_prompt_adapts_without_forcing_speckit() -> None:
     assert "bounded incidents, audits, operational diagnosis, and narrow fixes" in prompt
     assert "new features, architecture changes, ambiguous requirements" in prompt
     assert "otherwise do not manufacture a formal pipeline" in prompt
+    assert (
+        "MESH_LIVE_LOCAL=1 /opt/gobabygo/scripts/mesh live workflow show speckit "
+        "--scope coordinator --json"
+        in prompt
+    )
+    assert "Speckit scope: coordinator" in prompt
+    assert "Keep the global objective, specification, dependency graph" in prompt
+    assert "Do not require or ask for one global {repo} plus {feature} pair" in prompt
+    assert "late-bound delegation fields" in prompt
+    assert "read-only evidence collection may span repositories" in prompt
+    assert "one-active-writer-per-repository rule across parallel lanes" in prompt
+
+
+def test_coordinator_system_prompt_keeps_forced_speckit_at_coordinator_scope() -> None:
+    module = _load_module()
+
+    prompt = module.build_live_coordinator_system_prompt(
+        repo="",
+        repo_root="",
+        coordinator_session="claude-coordinator",
+        worker_session="",
+        mesh_script="/opt/gobabygo/scripts/mesh",
+        workflow="speckit",
+    )
+
+    assert "Workflow mode: speckit" in prompt
+    assert "workflow show speckit --scope coordinator --json" in prompt
+    assert "Do not require or ask for one global {repo} plus {feature} pair" in prompt
+    assert "Bind one exact repository and feature or task only" in prompt
 
 
 @pytest.mark.parametrize(

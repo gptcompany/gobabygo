@@ -2116,6 +2116,10 @@ def build_live_coordinator_system_prompt(
     else:
         scope = "all live repositories"
         board_command = f"{live_command} board --lines 30"
+    workflow_scope = "repository" if repo else "coordinator"
+    workflow_command = (
+        f"{live_command} workflow show speckit --scope {workflow_scope} --json"
+    )
     if worker_session:
         worker_policy = (
             f"Your authorized worker target is exactly {worker_session}. "
@@ -2133,22 +2137,40 @@ def build_live_coordinator_system_prompt(
     if worker_session:
         ensure_command += f" --expect-session {shlex.quote(worker_session)}"
 
+    if workflow_scope == "repository":
+        speckit_scope_policy = [
+            "Speckit scope: repository.",
+            f"The repository is already bound to {repo}. Infer the feature or task from the operator objective, "
+            "handoff, and observed evidence. If it is clear, do not ask the operator to restate it merely to fill a template placeholder.",
+            "Before each concrete delegation, render its exact repository and feature or task; never submit unresolved placeholders.",
+        ]
+    else:
+        speckit_scope_policy = [
+            "Speckit scope: coordinator.",
+            "Keep the global objective, specification, dependency graph, product decisions, and final adjudication at coordinator level.",
+            "Do not require or ask for one global {repo} plus {feature} pair at workflow startup. "
+            "Those template placeholders are late-bound delegation fields, not startup parameters.",
+            "Bind one exact repository and feature or task only when creating each concrete workstream delegation. "
+            "Clarification, analysis, and read-only evidence collection may span repositories before implementation lanes are selected.",
+            "Track dependencies per workstream and preserve the one-active-writer-per-repository rule across parallel lanes.",
+        ]
+
     if workflow_mode == "speckit":
         workflow_policy = [
             "Workflow mode: speckit.",
-            f"Before planning, load the canonical workflow with `{live_command} workflow show speckit --json`.",
-            "Use its phases, roles, dependency order, critical flags, review policy, prompts, and live_policy as workflow policy. "
-            "Render the repo and feature placeholders from the operator objective; do not submit unresolved placeholders.",
+            f"Before planning, load the canonical workflow with `{workflow_command}`.",
+            "Use its phases, roles, dependency order, critical flags, review policy, prompts, live_policy, and binding_policy as workflow policy.",
+            *speckit_scope_policy,
         ]
     elif workflow_mode == "adaptive":
         workflow_policy = [
             "Workflow mode: adaptive.",
             "Use direct coordination for bounded incidents, audits, operational diagnosis, and narrow fixes. "
             "Use Speckit for new features, architecture changes, ambiguous requirements, or work requiring independent challenge and adjudication.",
-            f"When selecting Speckit, load the canonical workflow first with `{live_command} workflow show speckit --json`; "
+            f"When selecting Speckit, load the canonical workflow first with `{workflow_command}`; "
             "otherwise do not manufacture a formal pipeline.",
-            "Use the loaded phases, roles, dependency order, critical flags, review policy, prompts, and live_policy as workflow policy. "
-            "Render the repo and feature placeholders from the operator objective; do not submit unresolved placeholders.",
+            "Use the loaded phases, roles, dependency order, critical flags, review policy, prompts, live_policy, and binding_policy as workflow policy.",
+            *speckit_scope_policy,
         ]
     else:
         workflow_policy = [
