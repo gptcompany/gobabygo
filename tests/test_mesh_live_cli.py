@@ -1744,6 +1744,27 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
             "  gpt-5.6-sol xhigh · /repo · Context 100%",
             True,
         ),
+        (
+            "• Old completed response\n"
+            "─ Worked for 6m 32s ─────────────────────\n\n"
+            "╭────────────────────────────────────╮\n"
+            "│ >_ OpenAI Codex (v0.147.0)         │\n"
+            "│ directory: /repo                   │\n"
+            "╰────────────────────────────────────╯\n\n"
+            "⚠ MCP startup incomplete (failed: openmemory)\n\n"
+            "› Write tests for @filename\n"
+            "  gpt-5.6-sol xhigh · /repo · Context 100%",
+            True,
+        ),
+        (
+            "• Old completed response\n"
+            "─ Worked for 6m 32s ─────────────────────\n\n"
+            "│ >_ OpenAI Codex (v0.147.0)\n"
+            "• Starting MCP servers (2/3): serena (4s • esc to interrupt)\n\n"
+            "› Write tests for @filename\n"
+            "  gpt-5.6-sol xhigh · /repo · Context 100%",
+            False,
+        ),
         ("────────────────────\n› draft DEC-8\n  gpt-5.4 · /repo", False),
         (
             "────────────────────\n"

@@ -639,6 +639,7 @@ _CODEX_UNSAFE_INPUT = re.compile(
     r"^\s*›\s*\d+[.)]\s|^\s*[$#%]\s+)"
 )
 _CODEX_FOOTER = re.compile(r"(?im)^\s*gpt-[^\n]*·")
+_CODEX_WELCOME = re.compile(r"^\s*│\s*>_\s+OpenAI Codex\s+\(v[^)]+\)")
 _CODEX_SEPARATOR = re.compile(
     r"^\s*[─━-]+(?:\s+Worked for \d+(?:h|m|s)(?:\s+\d+(?:h|m|s))*\s+)?[─━-]{2,}\s*$",
     re.IGNORECASE,
@@ -670,7 +671,15 @@ def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
         for index, line in enumerate(lines[:composer_index])
         if _CODEX_SEPARATOR.fullmatch(line)
     ]
-    current_start = separator_indexes[-1] + 1 if separator_indexes else 0
+    welcome_indexes = [
+        index
+        for index, line in enumerate(lines[:composer_index])
+        if _CODEX_WELCOME.match(line)
+    ]
+    current_start = max(
+        separator_indexes[-1] + 1 if separator_indexes else 0,
+        welcome_indexes[-1] if welcome_indexes else 0,
+    )
     return "\n".join(lines[composer_index:]), "\n".join(lines[current_start:])
 
 
