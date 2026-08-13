@@ -669,12 +669,12 @@ def _codex_delivery_matches_collapsed_paste(
             continue
     if not pane_receipt_times or delivered_at != max(pane_receipt_times):
         return False
+    if pane_receipt_times.count(delivered_at) != 1:
+        return False
     age = now - delivered_at
     return (
         receipt_chars == text_chars
         and 0 <= age <= CODEX_DELIVERY_RECEIPT_MAX_AGE
-        and re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("text_sha256") or ""))
-        is not None
     )
 
 
@@ -790,16 +790,23 @@ def _record_codex_delivery(
 ) -> None:
     with _codex_recovery_lock(state_file):
         state = _load_codex_recovery_state(state_file)
-        key = _codex_recovery_key(target, delegation_id)
-        state["deliveries"][key] = {
+        deliveries = state["deliveries"]
+        pane_identity = {
             "owner": str(target["owner"]),
             "name": str(target["name"]),
             "pane_id": str(target["pane_id"]),
+        }
+        for existing_key, existing in list(deliveries.items()):
+            if isinstance(existing, dict) and all(
+                str(existing.get(field) or "") == value
+                for field, value in pane_identity.items()
+            ):
+                del deliveries[existing_key]
+        key = _codex_recovery_key(target, delegation_id)
+        deliveries[key] = {
+            **pane_identity,
             "delegation_id": delegation_id,
             "text_chars": len(text),
-            "text_sha256": hashlib.sha256(
-                text.encode("utf-8", errors="replace")
-            ).hexdigest(),
             "delivered_at": time.time(),
         }
         _save_codex_recovery_state(state_file, state)

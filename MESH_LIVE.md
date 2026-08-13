@@ -167,8 +167,9 @@ characters are rejected. For a long or multi-line delegation, the coordinator
 writes a non-secret brief inside the target repository and sends one line with
 the `DELEGATION_ID`, absolute brief path, and instruction to read and execute
 that file. Codex delegations use the same ID in `--delegation-id`; this records
-only owner/session/pane, ID, character count, SHA-256 digest, and timestamp,
-never task text. This keeps remote keyboard input bounded and auditable.
+only owner/session/pane, ID, character count, and timestamp, never task text or
+a task digest. Only the latest tracked delivery per pane is retained. This keeps
+remote keyboard input bounded and auditable.
 
 Completion is not a substring search over the pane. Delegation briefs and CLI
 composers can echo both `WORKER_DONE` and `WORKER_BLOCKED`. A status is a

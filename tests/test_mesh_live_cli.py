@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -519,7 +518,6 @@ def test_remote_send_tracks_codex_delivery_without_storing_text(
     assert result["delivery_tracked"] is True
     assert result["delegation_id"] == "delegation-1234"
     assert receipt["text_chars"] == len(message)
-    assert receipt["text_sha256"] == hashlib.sha256(message.encode()).hexdigest()
     assert receipt["pane_id"] == "%7"
     assert message not in state_path.read_text(encoding="utf-8")
 
@@ -562,6 +560,31 @@ def test_remote_send_reports_untracked_after_receipt_failure_without_resend(
     assert result["delivery_tracked"] is False
     assert result["tracking_error"] == "state unavailable"
     assert sum("send-keys" in command for command in commands) == 2
+
+
+def test_codex_delivery_receipt_replaces_prior_receipt_for_same_pane(tmp_path) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+
+    module._record_codex_delivery(
+        target,
+        "delegation-first",
+        "DELEGATION_ID=delegation-first first",
+        str(state_path),
+    )
+    module._record_codex_delivery(
+        target,
+        "delegation-second",
+        "DELEGATION_ID=delegation-second second",
+        str(state_path),
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    receipts = list(state["deliveries"].values())
+    assert len(receipts) == 1
+    assert receipts[0]["delegation_id"] == "delegation-second"
+    assert "text_sha256" not in receipts[0]
 
 
 @pytest.mark.parametrize(
@@ -1305,7 +1328,6 @@ def test_codex_collapsed_paste_receipt_requires_exact_recent_target() -> None:
                 **target,
                 "delegation_id": "delegation-1234",
                 "text_chars": 1085,
-                "text_sha256": "a" * 64,
                 "delivered_at": 1000.0,
             }
         },
@@ -1342,7 +1364,6 @@ def test_codex_collapsed_paste_receipt_must_be_latest_for_pane() -> None:
             **target,
             "delegation_id": delegation_id,
             "text_chars": 1085,
-            "text_sha256": "a" * 64,
             "delivered_at": delivered_at,
         }
 
@@ -1439,7 +1460,6 @@ def test_codex_recovery_accepts_matching_collapsed_paste_receipt_once(
                         **target,
                         "delegation_id": "delegation-1234",
                         "text_chars": 1085,
-                        "text_sha256": "a" * 64,
                         "delivered_at": module.time.time(),
                     }
                 },
