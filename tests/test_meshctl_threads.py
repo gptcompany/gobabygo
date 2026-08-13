@@ -496,6 +496,30 @@ templates:
         err = capsys.readouterr().err
         assert "unknown template" in err
 
+    @patch("src.meshctl.requests.post")
+    def test_pipeline_create_rejects_invalid_dag_before_router_mutation(
+        self, mock_post: MagicMock, tmp_path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        template_file = tmp_path / "pipeline.yaml"
+        template_file.write_text(
+            """version: 1
+templates:
+  speckit:
+    steps:
+      - name: duplicate
+      - name: duplicate
+""",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(SystemExit):
+            cmd_pipeline_create(
+                _pipeline_create_args(template="speckit", template_file=str(template_file))
+            )
+
+        assert "duplicate step name" in capsys.readouterr().err
+        mock_post.assert_not_called()
+
     @patch.dict(os.environ, {"MESH_ENFORCE_SESSION_ONLY": "1"}, clear=False)
     @patch("src.meshctl.requests.post")
     def test_pipeline_create_respects_session_only_env(

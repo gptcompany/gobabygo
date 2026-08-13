@@ -19,6 +19,12 @@ from pathlib import Path
 import requests
 import yaml
 
+from src.pipeline_templates import (
+    default_pipeline_template_file as _default_pipeline_template_file,
+    load_pipeline_templates as _load_pipeline_templates,
+    normalized_pipeline_steps,
+)
+
 # ---------------------------------------------------------------------------
 # Configuration helpers
 # ---------------------------------------------------------------------------
@@ -696,26 +702,6 @@ def cmd_cleanup_stale_state(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _default_pipeline_template_file() -> Path:
-    """Default YAML path for pipeline templates."""
-    return Path(__file__).resolve().parent.parent / "mapping" / "pipeline_templates.yaml"
-
-
-def _load_pipeline_templates(path: str) -> dict:
-    """Load pipeline templates YAML from disk."""
-    file_path = Path(path).expanduser()
-    if not file_path.exists():
-        raise FileNotFoundError(f"Template file not found: {file_path}")
-    with file_path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    if not isinstance(data, dict):
-        raise ValueError("Template YAML root must be a mapping")
-    templates = data.get("templates")
-    if not isinstance(templates, dict):
-        raise ValueError("Template YAML must contain 'templates' mapping")
-    return data
-
-
 class _StrictFormatDict(dict):
     """str.format_map dict that fails for missing keys."""
 
@@ -783,12 +769,10 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    raw_steps = template.get("steps")
-    if not isinstance(raw_steps, list) or not raw_steps:
-        print(
-            f"Error: template '{args.template}' has no steps",
-            file=sys.stderr,
-        )
+    try:
+        raw_steps = normalized_pipeline_steps(args.template, template)
+    except ValueError as e:
+        print(f"Error: invalid pipeline template -- {e}", file=sys.stderr)
         sys.exit(1)
 
     account_scope = str(getattr(args, "account_scope", "config") or "config").strip().lower()
