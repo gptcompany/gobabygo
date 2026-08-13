@@ -318,6 +318,8 @@ mcoordinator rektslug --worker codex-rektslug-worker
         "<claude-rektslug-coordinator>",
         "<--mesh-script>",
         "</data/sata/1TB/gobabygo/scripts/mesh>",
+        "<--workflow>",
+        "<direct>",
         "<--worker>",
         "<codex-rektslug-worker>",
     ]
@@ -360,7 +362,47 @@ mcoordinator --all --session claude-live-coordinator
         "<claude-live-coordinator>",
         "<--mesh-script>",
         "</data/sata/1TB/gobabygo/scripts/mesh>",
+        "<--workflow>",
+        "<direct>",
     ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_forwards_explicit_workflow(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    prompt_args_file = tmp_path / "prompt-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'SPECKIT PROMPT'; }}
+_ws_mosh_attach_or_start() {{ :; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+mcoordinator rektslug --workflow speckit
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "<--workflow>\n<speckit>" in prompt_args_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_rejects_invalid_workflow_before_attach(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ echo 'prompt generation must not run' >&2; return 99; }}
+_ws_mosh_attach_or_start() {{ echo 'attach must not run' >&2; return 98; }}
+mcoordinator rektslug --workflow unknown
+""",
+    )
+
+    assert proc.returncode == 2
+    assert "Usage: mcoordinator" in proc.stderr
+    assert "must not run" not in proc.stderr
 
 
 @pytest.mark.parametrize("shell", _shells())

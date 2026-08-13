@@ -1459,6 +1459,47 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "never fall back to `send --enter`, a naked Enter, composer clearing" in prompt
     assert "context is nearly exhausted" in prompt
     assert "must not edit source files" in prompt
+    assert "Workflow mode: direct" in prompt
+    assert "do not manufacture a formal pipeline" in prompt
+
+
+def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
+    module = _load_module()
+
+    prompt = module.build_live_coordinator_system_prompt(
+        repo="rektslug",
+        repo_root="/data/sata/1TB/rektslug",
+        coordinator_session="claude-rektslug-coordinator",
+        worker_session="",
+        mesh_script="/opt/gobabygo/scripts/mesh",
+        workflow="speckit",
+    )
+
+    assert "Workflow mode: speckit" in prompt
+    assert (
+        "MESH_LIVE_LOCAL=1 /opt/gobabygo/scripts/mesh live workflow show speckit --json"
+        in prompt
+    )
+    assert "dependency order" in prompt
+    assert "does not authorize router use, iTerm2, session creation" in prompt
+
+
+def test_coordinator_system_prompt_adapts_without_forcing_speckit() -> None:
+    module = _load_module()
+
+    prompt = module.build_live_coordinator_system_prompt(
+        repo="",
+        repo_root="",
+        coordinator_session="claude-coordinator",
+        worker_session="",
+        mesh_script="/opt/gobabygo/scripts/mesh",
+        workflow="adaptive",
+    )
+
+    assert "Workflow mode: adaptive" in prompt
+    assert "bounded incidents, audits, operational diagnosis, and narrow fixes" in prompt
+    assert "new features, architecture changes, ambiguous requirements" in prompt
+    assert "otherwise do not manufacture a formal pipeline" in prompt
 
 
 @pytest.mark.parametrize(
@@ -1932,6 +1973,24 @@ def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:
     )
     assert "repository name explicitly selected by the operator" in output
     assert "Discover worker candidates" in output
+
+
+def test_main_passes_workflow_to_coordinator_prompt(capsys) -> None:
+    module = _load_module()
+
+    rc = module.main(
+        [
+            "coordinator-prompt",
+            "--all",
+            "--session",
+            "claude-coordinator",
+            "--workflow",
+            "adaptive",
+        ]
+    )
+
+    assert rc == 0
+    assert "Workflow mode: adaptive" in capsys.readouterr().out
 
 
 def test_workflow_projection_reuses_canonical_speckit_template() -> None:

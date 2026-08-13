@@ -604,12 +604,13 @@ mcodex() {
 }
 
 mcoordinator() {
-  local repo worker session_override resume_id continue_mode session target_dir repo_base remote_mesh
+  local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh
   local prompt claude_cmd startup usage
   local -a prompt_args=()
-  usage="Usage: mcoordinator [<repo>|--all] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
+  usage="Usage: mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
   repo=""
   worker=""
+  workflow="${MESH_COORDINATOR_WORKFLOW:-direct}"
   session_override=""
   resume_id=""
   continue_mode=0
@@ -625,6 +626,20 @@ mcoordinator() {
           return 2
         fi
         worker="$2"
+        shift 2
+        ;;
+      --workflow)
+        if [[ $# -lt 2 ]]; then
+          echo "$usage" >&2
+          return 2
+        fi
+        case "$2" in
+          direct|speckit|adaptive) workflow="$2" ;;
+          *)
+            echo "$usage" >&2
+            return 2
+            ;;
+        esac
         shift 2
         ;;
       --session)
@@ -678,11 +693,11 @@ mcoordinator() {
   if [[ -n "$repo" ]]; then
     session="${session_override:-$(_ws_tmux_session_name claude "${repo##*/}-coordinator")}"
     target_dir="$(_ws_tmux_target_dir "$repo")"
-    prompt_args=(live coordinator-prompt --repo "$repo" --repo-root "$target_dir" --session "$session" --mesh-script "$remote_mesh")
+    prompt_args=(live coordinator-prompt --repo "$repo" --repo-root "$target_dir" --session "$session" --mesh-script "$remote_mesh" --workflow "$workflow")
   else
     session="${session_override:-claude-coordinator}"
     target_dir="$(_ws_tmux_target_dir)"
-    prompt_args=(live coordinator-prompt --all --session "$session" --mesh-script "$remote_mesh")
+    prompt_args=(live coordinator-prompt --all --session "$session" --mesh-script "$remote_mesh" --workflow "$workflow")
   fi
   [[ -n "$worker" ]] && prompt_args+=(--worker "$worker")
   prompt="$(_mesh_live_run "${prompt_args[@]}")" || return $?
