@@ -1948,8 +1948,15 @@ def test_main_board_json_peek_send_and_attach_error_paths(monkeypatch, capsys) -
 
     assert module.main(["--local", "send", "claude-rektslug", "status?", "--enter"]) == 0
     output = capsys.readouterr()
-    assert "target=sam/claude-rektslug pane=%7 text=yes enter=yes" in output.out
+    assert (
+        "target=sam/claude-rektslug pane=%7 text_delivered=yes "
+        "enter_delivered=yes submission=unknown" in output.out
+    )
     assert sends[-1] == {"session": "claude-rektslug", "text": "status?", "enter": True}
+
+    assert module.main(["--local", "send", "claude-rektslug", "draft-only"]) == 0
+    output = capsys.readouterr()
+    assert "enter_delivered=no submission=not-requested" in output.out
 
     assert module.main(["--local", "attach", "claude-rektslug"]) == 2
     output = capsys.readouterr()

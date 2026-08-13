@@ -2396,8 +2396,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = client.send(selected, message, enter=args.enter)
             print(
                 f"[mesh live send] target={result['owner']}/{result['name']} "
-                f"pane={result['pane_id']} text={'yes' if result['text_sent'] else 'no'} "
-                f"enter={'yes' if result['enter_sent'] else 'no'}"
+                f"pane={result['pane_id']} "
+                f"text_delivered={'yes' if result['text_sent'] else 'no'} "
+                f"enter_delivered={'yes' if result['enter_sent'] else 'no'} "
+                f"submission={'unknown' if result['enter_sent'] else 'not-requested'}"
             )
             return 0
 
