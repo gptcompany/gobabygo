@@ -677,7 +677,7 @@ mcoordinator() {
   if [[ -n "$repo" ]]; then
     session="${session_override:-$(_ws_tmux_session_name claude "${repo##*/}-coordinator")}"
     target_dir="$(_ws_tmux_target_dir "$repo")"
-    prompt_args=(live coordinator-prompt --repo "$repo" --session "$session" --mesh-script "$remote_mesh")
+    prompt_args=(live coordinator-prompt --repo "$repo" --repo-root "$target_dir" --session "$session" --mesh-script "$remote_mesh")
   else
     session="${session_override:-claude-coordinator}"
     target_dir="$(_ws_tmux_target_dir)"

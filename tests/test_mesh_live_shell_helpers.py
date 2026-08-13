@@ -274,6 +274,8 @@ mcoordinator rektslug --worker codex-rektslug-worker
         "<coordinator-prompt>",
         "<--repo>",
         "<rektslug>",
+        "<--repo-root>",
+        "</data/sata/1TB/rektslug>",
         "<--session>",
         "<claude-rektslug-coordinator>",
         "<--mesh-script>",
