@@ -654,6 +654,21 @@ def _codex_delivery_matches_collapsed_paste(
         delivered_at = float(receipt.get("delivered_at"))
     except (TypeError, ValueError):
         return False
+    pane_receipt_times: list[float] = []
+    for candidate in state["deliveries"].values():
+        if not isinstance(candidate, dict):
+            continue
+        if any(
+            str(candidate.get(field) or "") != target[field]
+            for field in ("owner", "name", "pane_id")
+        ):
+            continue
+        try:
+            pane_receipt_times.append(float(candidate.get("delivered_at")))
+        except (TypeError, ValueError):
+            continue
+    if not pane_receipt_times or delivered_at != max(pane_receipt_times):
+        return False
     age = now - delivered_at
     return (
         receipt_chars == text_chars

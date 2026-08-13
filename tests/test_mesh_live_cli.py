@@ -1333,6 +1333,38 @@ def test_codex_collapsed_paste_receipt_requires_exact_recent_target() -> None:
     )
 
 
+def test_codex_collapsed_paste_receipt_must_be_latest_for_pane() -> None:
+    module = _load_module()
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+
+    def receipt(delegation_id: str, delivered_at: float) -> dict:
+        return {
+            **target,
+            "delegation_id": delegation_id,
+            "text_chars": 1085,
+            "text_sha256": "a" * 64,
+            "delivered_at": delivered_at,
+        }
+
+    first_id = "delegation-first"
+    second_id = "delegation-second"
+    state = {
+        "version": 1,
+        "attempts": {},
+        "deliveries": {
+            module._codex_recovery_key(target, first_id): receipt(first_id, 1000.0),
+            module._codex_recovery_key(target, second_id): receipt(second_id, 1001.0),
+        },
+    }
+
+    assert not module._codex_delivery_matches_collapsed_paste(
+        state, target, first_id, 1085, now=1002.0
+    )
+    assert module._codex_delivery_matches_collapsed_paste(
+        state, target, second_id, 1085, now=1002.0
+    )
+
+
 def test_codex_recovery_verification_accepts_clear_composer_or_current_running_state() -> None:
     module = _load_module()
     historical_activity = (

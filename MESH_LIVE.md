@@ -183,7 +183,8 @@ when the initial send included `--enter`; long pastes may render only as
 paste-settle recovery. After an immediate peek it proceeds only when the bottom
 Codex composer has no Working/activity and either shows the exact current
 `DELEGATION_ID` or an exact collapsed placeholder correlated to the same recent
-tracked send, pane, ID, and character count. It then invokes the guarded
+tracked send, pane, ID, and character count. The receipt must also be the latest
+tracked delivery to that pane. It then invokes the guarded
 recovery command and peeks again:
 
 ```bash
