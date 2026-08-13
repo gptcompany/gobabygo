@@ -1461,6 +1461,14 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "must not edit source files" in prompt
     assert "Workflow mode: direct" in prompt
     assert "do not manufacture a formal pipeline" in prompt
+    assert "at most one active writer per repository" in prompt
+    assert "different tmux session from the writer" in prompt
+    assert "YOLO mode is not a sandbox" in prompt
+    assert "never create Gemini or Claude sessions" in prompt
+    assert "different session of the same model is an independent context" in prompt
+    assert "report degraded coverage" in prompt
+    assert "For Codex, pass the same `--delegation-id" in prompt
+    assert "For another existing CLI" in prompt
 
 
 def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
@@ -2006,6 +2014,14 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
     assert projection["steps"][4]["target_cli"] == "codex"
     assert projection["steps"][5]["target_cli"] == "gemini"
     assert projection["steps"][6]["depends_on_steps"] == [4, 5]
+    assert projection["live_policy"] == {
+        "coordinator_role": "final-adjudicator",
+        "template_target_cli": "preferred-perspective-not-spawn-authorization",
+        "writer_limit": "one-active-writer-per-repository",
+        "reviewer_session": "different-from-writer-read-only",
+        "automatic_spawn": "ensure-codex-only",
+        "missing_perspective": "report-degraded-coverage",
+    }
 
 
 def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> None:
@@ -2021,6 +2037,7 @@ def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> Non
     assert rc == 0
     output = json.loads(capsys.readouterr().out)
     assert output["name"] == "speckit"
+    assert output["live_policy"]["automatic_spawn"] == "ensure-codex-only"
     assert output["steps"][19]["name"] == "confidence-gate-post-impl.adjudicator"
 
 

@@ -2137,7 +2137,7 @@ def build_live_coordinator_system_prompt(
         workflow_policy = [
             "Workflow mode: speckit.",
             f"Before planning, load the canonical workflow with `{live_command} workflow show speckit --json`.",
-            "Use its phases, roles, dependency order, critical flags, review policy, and prompts as workflow policy. "
+            "Use its phases, roles, dependency order, critical flags, review policy, prompts, and live_policy as workflow policy. "
             "Render the repo and feature placeholders from the operator objective; do not submit unresolved placeholders.",
         ]
     elif workflow_mode == "adaptive":
@@ -2147,7 +2147,7 @@ def build_live_coordinator_system_prompt(
             "Use Speckit for new features, architecture changes, ambiguous requirements, or work requiring independent challenge and adjudication.",
             f"When selecting Speckit, load the canonical workflow first with `{live_command} workflow show speckit --json`; "
             "otherwise do not manufacture a formal pipeline.",
-            "Use the loaded phases, roles, dependency order, critical flags, review policy, and prompts as workflow policy. "
+            "Use the loaded phases, roles, dependency order, critical flags, review policy, prompts, and live_policy as workflow policy. "
             "Render the repo and feature placeholders from the operator objective; do not submit unresolved placeholders.",
         ]
     else:
@@ -2168,7 +2168,8 @@ def build_live_coordinator_system_prompt(
             f"- Refresh scope: `{board_command}`",
             f"- Inspect one session: `{live_command} peek <session> 80`",
             f"- Ensure one Codex worker: `{ensure_command}`",
-            f"- Send one bounded single-line Codex task: `{live_command} send <session> \"<task>\" "
+            f"- Send one bounded single-line task to an existing worker: `{live_command} send <session> \"<task>\" --enter`",
+            f"- Track a Codex task for guarded submit recovery: `{live_command} send <codex-session> \"<task>\" "
             "--delegation-id <DELEGATION_ID> --enter`",
             "The send text must be one literal line and at most 8192 characters. For a long or multi-line brief, "
             "write a non-secret brief file inside the target repository, then send one line containing the "
@@ -2178,6 +2179,15 @@ def build_live_coordinator_system_prompt(
             "",
             *workflow_policy,
             "The workflow projection is policy input only: it does not authorize router use, iTerm2, session creation, or nested AI launch.",
+            "Live workflow role boundaries:",
+            "- You are the final operator-facing adjudicator. Template lead/president/worker roles are desired perspectives, not authority to launch CLIs.",
+            "- Keep at most one active writer per repository. You may synthesize requirements, plans, and non-secret delegation briefs, but never edit source code yourself.",
+            "- Map template target_cli to a ready existing session when available. Only ensure-codex may create a missing worker; never create Gemini or Claude sessions.",
+            "- A reviewer or challenger must use a different tmux session from the writer and receive an explicitly read-only brief. YOLO mode is not a sandbox; inspect Git afterward and stop if a reviewer mutated the worktree.",
+            "- Prefer model-diverse review. A different session of the same model is an independent context, not a model-diverse perspective; label it accurately.",
+            "- Fan out only steps whose dependencies have completed. Give every role a distinct DELEGATION_ID and shared immutable evidence paths or commit IDs.",
+            "- If the preferred perspective is unavailable, continue only when useful and report degraded coverage; never silently claim the missing review occurred.",
+            "- Template implementation steps go to the authorized writer, regardless of their template target_cli. Final close remains your evidence-based decision.",
             "",
             "Autonomous workflow:",
             "1. Turn the operator objective into observed facts, unknowns, options, and a recommended decision.",
@@ -2190,8 +2200,9 @@ def build_live_coordinator_system_prompt(
             "5. Create a unique DELEGATION_ID and include scope, allowed files, acceptance criteria, tests, and forbidden actions.",
             "6. Require the worker's latest response to end with exactly one standalone status line: "
             "WORKER_DONE <DELEGATION_ID> or WORKER_BLOCKED <DELEGATION_ID>.",
-            "7. Send the task to the exact worker with the same `--delegation-id <DELEGATION_ID>`, then peek again "
-            "to verify the DELEGATION_ID or clear CLI activity.",
+            "7. Send the task to the exact worker, then peek again to verify the DELEGATION_ID or clear CLI activity. "
+            "For Codex, pass the same `--delegation-id <DELEGATION_ID>` to enable guarded recovery. For another existing CLI, "
+            "include the ID in the text but omit the Codex-only tracking option.",
             "8. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
             "9. If delivery is uncertain, inspect again and report uncertainty. Never resend blindly or duplicate a task.",
             "10. Codex paste-settle recovery: only when an immediate peek shows the exact current DELEGATION_ID, "
@@ -2274,6 +2285,14 @@ def build_live_workflow_projection(name: str) -> dict[str, Any]:
         "name": workflow_name,
         "description": str(template.get("description") or ""),
         "source": str(source),
+        "live_policy": {
+            "coordinator_role": "final-adjudicator",
+            "template_target_cli": "preferred-perspective-not-spawn-authorization",
+            "writer_limit": "one-active-writer-per-repository",
+            "reviewer_session": "different-from-writer-read-only",
+            "automatic_spawn": "ensure-codex-only",
+            "missing_perspective": "report-degraded-coverage",
+        },
         "steps": steps,
     }
 
@@ -2284,6 +2303,9 @@ def render_live_workflow_projection(projection: dict[str, Any]) -> str:
         f"Workflow: {projection['name']}",
         f"Source: {projection['source']}",
         f"Description: {projection['description'] or '-'}",
+        "Live policy: coordinator=final-adjudicator; writer=one-active-per-repo; "
+        "reviewer=different-session-read-only; spawn=ensure-codex-only; "
+        "missing-perspective=degraded-coverage",
         "Steps:",
     ]
     for step in projection["steps"]:
