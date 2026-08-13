@@ -522,6 +522,25 @@ def test_remote_send_tracks_codex_delivery_without_storing_text(
     assert message not in state_path.read_text(encoding="utf-8")
 
 
+def test_codex_delivery_receipt_counts_unicode_characters(tmp_path) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    message = "DELEGATION_ID=delegation-1234 verifica scelta è pronta ✓"
+
+    module._record_codex_delivery(
+        target,
+        "delegation-1234",
+        message,
+        str(state_path),
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    receipt = next(iter(state["deliveries"].values()))
+    assert receipt["text_chars"] == len(message)
+    assert receipt["text_chars"] < len(message.encode("utf-8"))
+
+
 def test_remote_send_reports_untracked_after_receipt_failure_without_resend(
     monkeypatch,
 ) -> None:
