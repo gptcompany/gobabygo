@@ -639,7 +639,7 @@ _CODEX_UNSAFE_INPUT = re.compile(
 )
 _CODEX_FOOTER = re.compile(r"(?im)^\s*gpt-[^\n]*·")
 _CODEX_SEPARATOR = re.compile(
-    r"^\s*[─━-]{2,}(?:\s+Worked for \d+(?:h|m|s)(?:\s+\d+(?:h|m|s))*\s+)?[─━-]{2,}\s*$",
+    r"^\s*[─━-]+(?:\s+Worked for \d+(?:h|m|s)(?:\s+\d+(?:h|m|s))*\s+)?[─━-]{2,}\s*$",
     re.IGNORECASE,
 )
 _CODEX_COLLAPSED_PASTE = re.compile(

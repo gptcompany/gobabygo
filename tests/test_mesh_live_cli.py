@@ -1704,7 +1704,7 @@ def test_coordinator_system_prompt_keeps_forced_speckit_at_coordinator_scope() -
             True,
         ),
         (
-            "WORKER_BLOCKED prior-delegation\n"
+            "• Ran prior check\n  └ clean\n\nWORKER_BLOCKED prior-delegation\n"
             "─ Worked for 6m 55s ─────────────────────\n\n"
             "› DELEGATION_ID: delegation-1234 — read /repo/brief.md\n"
             "  and complete the review\n\n"
