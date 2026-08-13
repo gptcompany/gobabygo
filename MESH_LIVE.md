@@ -388,6 +388,10 @@ reset so the date is unambiguous. One attempt is recorded before keyboard I/O;
 an uncertain delivery is not retried automatically. The attempt tombstone is
 retained until a later tick observes that the pane is no longer on the exact
 session-limit screen, preventing stale scrollback from triggering a duplicate.
+As a bounded startup exception, a first observation within the same 90-second
+grace window after the displayed reset schedules that reset; a later first
+observation fails closed to the next occurrence rather than guessing that a
+stale banner is current.
 
 Install the opt-in 30-minute user cron from the clean Dell runtime, not from the
 Mac checkout:

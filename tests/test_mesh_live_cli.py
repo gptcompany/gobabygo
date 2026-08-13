@@ -2556,6 +2556,23 @@ def test_live_tick_schedules_exact_session_limit_without_sending() -> None:
     assert "session limit" not in json.dumps(state).lower()
 
 
+def test_session_limit_first_observation_uses_only_bounded_post_reset_grace() -> None:
+    module = _load_module()
+    timezone = ZoneInfo("Asia/Bangkok")
+    reset = datetime(2026, 8, 14, 0, 0, tzinfo=timezone).timestamp()
+
+    within_grace = datetime(2026, 8, 14, 0, 1, tzinfo=timezone).timestamp()
+    assert module._session_limit_not_before("12am", "Asia/Bangkok", within_grace) == (
+        reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+
+    after_grace = datetime(2026, 8, 14, 0, 2, tzinfo=timezone).timestamp()
+    next_reset = datetime(2026, 8, 15, 0, 0, tzinfo=timezone).timestamp()
+    assert module._session_limit_not_before("12am", "Asia/Bangkok", after_grace) == (
+        next_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+
+
 def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
     module = _load_module()
     before = datetime(2026, 8, 13, 23, 30, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
