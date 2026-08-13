@@ -1485,10 +1485,14 @@ def _session_limit_not_before(reset_label: str, timezone_name: str, now: float) 
         hour += 12
     minute = int(match.group(2) or 0)
     reset = observed.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    seconds_after_reset = (observed - reset).total_seconds()
-    if seconds_after_reset > SESSION_LIMIT_RESET_GRACE_SECONDS:
-        reset += timedelta(days=1)
-    return reset.timestamp() + SESSION_LIMIT_RESET_GRACE_SECONDS
+    previous_reset = reset if reset <= observed else reset - timedelta(days=1)
+    next_reset = reset if reset > observed else reset + timedelta(days=1)
+    if observed - previous_reset < next_reset - observed:
+        reset = previous_reset
+    else:
+        reset = next_reset
+    due = reset.timestamp() + SESSION_LIMIT_RESET_GRACE_SECONDS
+    return max(now, due) if reset <= observed else due
 
 
 def _is_default_coordinator_name(name: str) -> bool:

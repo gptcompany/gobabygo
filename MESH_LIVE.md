@@ -380,18 +380,20 @@ stale rate-limit screens are reported as `manual_rate_limit` and are never
 submitted. Tick does not create sessions, choose new tasks, or blindly resend a
 delegation.
 
-The session-limit wake is fail-closed. The banner must include the exact
+The session-limit wake is guarded. The banner must include the exact
 `/upgrade to increase your usage limit.` line and an empty prompt. Unknown
 timezones, malformed times, non-empty composers, changed panes, or changed
-processes cause no send. The first observation must happen before the declared
-reset so the date is unambiguous. One attempt is recorded before keyboard I/O;
-an uncertain delivery is not retried automatically. The attempt tombstone is
-retained until a later tick observes that the pane is no longer on the exact
+processes cause no send. Because the banner has no date, tick maps its time to
+the nearest past or future occurrence in the named timezone, preferring the
+future occurrence on an exact tie. A future occurrence waits through the
+90-second grace; a past occurrence whose grace has elapsed makes the single
+guarded attempt at the next observation. For example, `resets 12am` first seen
+at `5am` is due immediately, while the same banner seen at `4pm` waits for the
+next midnight. This handles stale panes after a reboot without always
+postponing them to the following day. One attempt is recorded before keyboard
+I/O; an uncertain delivery is not retried automatically. The attempt tombstone
+is retained until a later tick observes that the pane is no longer on the exact
 session-limit screen, preventing stale scrollback from triggering a duplicate.
-As a bounded startup exception, a first observation within the same 90-second
-grace window after the displayed reset schedules that reset; a later first
-observation fails closed to the next occurrence rather than guessing that a
-stale banner is current.
 
 Install the opt-in 30-minute user cron from the clean Dell runtime, not from the
 Mac checkout:

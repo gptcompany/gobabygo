@@ -2556,7 +2556,7 @@ def test_live_tick_schedules_exact_session_limit_without_sending() -> None:
     assert "session limit" not in json.dumps(state).lower()
 
 
-def test_session_limit_first_observation_uses_only_bounded_post_reset_grace() -> None:
+def test_session_limit_first_observation_uses_declared_reset_or_runs_now() -> None:
     module = _load_module()
     timezone = ZoneInfo("Asia/Bangkok")
     reset = datetime(2026, 8, 14, 0, 0, tzinfo=timezone).timestamp()
@@ -2567,9 +2567,25 @@ def test_session_limit_first_observation_uses_only_bounded_post_reset_grace() ->
     )
 
     after_grace = datetime(2026, 8, 14, 0, 2, tzinfo=timezone).timestamp()
-    next_reset = datetime(2026, 8, 15, 0, 0, tzinfo=timezone).timestamp()
     assert module._session_limit_not_before("12am", "Asia/Bangkok", after_grace) == (
-        next_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+        after_grace
+    )
+
+    five_hours_after = datetime(2026, 8, 14, 5, 0, tzinfo=timezone).timestamp()
+    assert module._session_limit_not_before(
+        "12am", "Asia/Bangkok", five_hours_after
+    ) == five_hours_after
+
+    before_reset = datetime(2026, 8, 14, 22, 0, tzinfo=timezone).timestamp()
+    future_reset = datetime(2026, 8, 14, 23, 0, tzinfo=timezone).timestamp()
+    assert module._session_limit_not_before("11pm", "Asia/Bangkok", before_reset) == (
+        future_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+
+    afternoon = datetime(2026, 8, 14, 16, 0, tzinfo=timezone).timestamp()
+    next_midnight = datetime(2026, 8, 15, 0, 0, tzinfo=timezone).timestamp()
+    assert module._session_limit_not_before("12am", "Asia/Bangkok", afternoon) == (
+        next_midnight + module.SESSION_LIMIT_RESET_GRACE_SECONDS
     )
 
 
