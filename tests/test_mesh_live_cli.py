@@ -1266,6 +1266,25 @@ def test_codex_recovery_polls_until_tui_redraw_confirms_submission(
     assert sleeps == [module.CODEX_RECOVERY_VERIFY_INTERVAL] * 2
 
 
+def test_codex_recovery_post_enter_capture_timeout_is_unknown(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 2)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+
+    def timeout(_target):
+        raise subprocess.TimeoutExpired(["tmux", "capture-pane"], timeout=10)
+
+    monkeypatch.setattr(module, "_capture_visible_target", timeout)
+
+    assert (
+        module._poll_codex_submit_verification(
+            {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+            "delegation-1234",
+        )
+        is False
+    )
+
+
 def test_codex_recovery_rejects_non_codex_without_sending(monkeypatch, tmp_path) -> None:
     module = _load_module()
     monkeypatch.setattr(

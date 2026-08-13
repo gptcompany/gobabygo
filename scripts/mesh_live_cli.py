@@ -608,7 +608,7 @@ def _poll_codex_submit_verification(
     for attempt in range(CODEX_RECOVERY_VERIFY_ATTEMPTS):
         try:
             post = _capture_visible_target(target)
-        except LiveReadError:
+        except (LiveReadError, OSError, subprocess.SubprocessError):
             post = None
         if post is not None and codex_submit_recovery_verified(
             post["output"], delegation_id
