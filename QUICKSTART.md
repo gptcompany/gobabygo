@@ -215,7 +215,7 @@ This enables:
 - `wbrief [--repo <repo>|--all]` (redacted dynamic prompt for coordinator debate and delegation)
 - `wsattach <tmux-session>` (persistent attach: direct mosh on VPN/LAN, SSH fallback)
 - `mclaude <repo>` / `mcodex <repo>` / `mtmux <repo>` (create-or-attach a persistent named tmux shell in that repo)
-- `mcoordinator [<repo>|--all] [--worker <session>] [--continue|--resume <id>]` (create-or-attach an auto-configured Claude coordinator; explicit post-reboot resume)
+- `mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--continue|--resume <id>]` (create-or-attach an adaptive Claude coordinator; explicit post-reboot resume)
 - `mesh` (global wrapper to `gobabygo/scripts/mesh`)
 - `mesh` with no args (interactive current-repo-root launcher: `attach`, `sessions`, `ui`, `start`)
 - `mesh ui <repo>` (comando canonico: apre il layout iTerm2 del repo; default minimale `boss,president`)
@@ -256,6 +256,7 @@ mesh live send claude-rektslug "status?" --enter
 mesh live attach claude-rektslug
 mesh live brief --repo rektslug
 mesh live brief --all --coordinator claude-coordinator
+mesh live workflow show speckit --json
 MESH_LIVE_LOCAL=1 mesh live tick --json
 mesh thread create --name rektslug-live-delegation
 mesh thread add-step --thread rektslug-live-delegation --title "Implement fix" --step-index 0 --repo /data/sata/1TB/rektslug --cli codex --payload '{"prompt":"Implement the approved fix."}'
@@ -272,6 +273,8 @@ wbrief --repo rektslug
 wsattach <tmux-session>
 mcoordinator rektslug --worker codex-rektslug
 mcoordinator --all
+mcoordinator rektslug --workflow speckit
+mcoordinator rektslug --workflow direct
 mcoordinator --all --continue
 mcoordinator --all --resume <claude-session-id>
 ```
@@ -286,6 +289,15 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - router DB is authoritative for durable managed orchestration
 - iTerm2 is optional layout/UX
 - `mcoordinator <repo>` is the default automatic intra-repo path; `mcoordinator --all` is multi-repo
+- `adaptive` is the default workflow: direct for incidents/audits/narrow fixes,
+  Speckit for features, architecture, ambiguity, and independent challenge
+- `mesh live workflow show speckit` projects the canonical
+  `mapping/pipeline_templates.yaml` phases without router, tmux discovery, or iTerm2
+- Speckit live keeps one writer per repo; Codex/Gemini challenger roles use
+  different existing sessions when available, and missing perspectives are
+  reported as degraded coverage rather than silently skipped
+- only `ensure-codex` may create a missing live worker; template roles do not
+  authorize Claude/Gemini spawn, nested AI launch, router use, or iTerm2
 - the coordinator reuses existing workers and may bootstrap one deterministic
   `codex-<repo>` through local-only `ensure-codex`; it does not ask for a
   per-worker authorization and sends no task during bootstrap

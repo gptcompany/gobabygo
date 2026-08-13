@@ -11,7 +11,9 @@ tmux sessions, and AI CLIs remain on the Dell workstation.
 
 ```bash
 mcoordinator rektslug                           # intra-repo; worker bootstrap is automatic
-mcoordinator --all                              # multi-repo; choose/delegate through Claude
+mcoordinator --all                              # multi-repo; adaptive workflow across live repos
+mcoordinator rektslug --workflow speckit        # force the canonical Speckit phases
+mcoordinator rektslug --workflow direct         # bounded coordination without a formal pipeline
 ```
 
 Install or refresh the helpers once:
@@ -27,6 +29,21 @@ root; this creates `codex-<repo>` with the trusted native Codex binary in YOLO
 mode, sends no task, then requires a fresh board/peek before delegation. Use
 `mcoordinator rektslug --worker codex-rektslug` when the exact worker name must
 be pinned. `mcodex rektslug` remains available for a deliberately manual shell.
+
+The default `adaptive` workflow uses direct coordination for incidents, audits,
+operational diagnosis, and narrow fixes. It selects Speckit for features,
+architecture changes, ambiguous requirements, or work needing independent
+challenge and adjudication. Override it with `--workflow direct|speckit|adaptive`
+or `MESH_COORDINATOR_WORKFLOW`. Inspect the router-independent canonical
+projection at any time:
+
+```bash
+mesh live workflow show speckit
+mesh live workflow show speckit --json
+```
+
+The projection is read from `mapping/pipeline_templates.yaml`; it does not
+connect to the router, inspect tmux, or require iTerm2.
 
 `mcoordinator` injects the autonomous system contract only when its tmux
 session is first created; later calls only attach. An already running
@@ -135,6 +152,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | `wpeek <session> [lines]` | `mesh live peek <session> [lines]` | Capture one exact/unique pane; read-only |
 | `wbrief ...` | `mesh live brief ...` | Build a dynamic, redacted coordinator prompt; read-only |
 | `mcoordinator ...` | `mesh live coordinator-prompt ...` | Create/attach a persistent auto-configured Claude coordinator |
+| - | `mesh live workflow show <name>` | Project one canonical workflow; read-only, no router/tmux access |
 | - | `mesh live ensure-codex <repo>` | Locally create/reuse one deterministic native Codex worker; no task is sent |
 | - | `mesh live tick` | Inspect local Claude sessions and print a metadata-only action plan |
 | - | `mesh live tick --apply` | Apply only exact WAIT and idle-coordinator wake actions |
@@ -161,6 +179,40 @@ options, create a unique `DELEGATION_ID`, send a bounded assignment, peek again
 to verify CLI acceptance, monitor completion, and inspect result/test evidence.
 A successful tmux send is not treated as delivery: the coordinator must find the
 delegation ID or clear CLI activity and must never resend blindly.
+
+### Adaptive Speckit
+
+Speckit live reuses the phases, prompts, roles, dependencies, critical flags,
+and review policy in `mapping/pipeline_templates.yaml`; it is not a copied
+prompt or a second workflow definition. `speckit.analyze` checks consistency
+across spec, plan, and tasks. Independent perspectives come from the plan,
+pre-implementation, and post-implementation confidence gates: Codex challenges
+technical consistency, Gemini challenges product/UX consequences, and the
+coordinator performs the final operator-facing adjudication.
+
+Template roles are desired perspectives, not permission to spawn processes.
+The live adapter follows these boundaries:
+
+1. Keep one active writer per repository.
+2. Use a different tmux session for each reviewer/challenger and give it an
+   explicitly read-only brief. YOLO mode is not an OS sandbox, so verify Git
+   afterward and stop if a reviewer changed the worktree.
+3. Prefer model-diverse review. A second session of the same model provides an
+   independent context but must not be reported as a different model view.
+4. Fan out only after dependencies complete, with distinct delegation IDs and
+   shared immutable evidence paths or commit IDs.
+5. Map a template `target_cli` to an existing ready session. Only
+   `ensure-codex` may create a missing worker; the coordinator does not create
+   Claude or Gemini sessions.
+6. Report missing preferred reviewers as degraded coverage. Never claim an
+   unavailable perspective ran.
+7. Send implementation to the authorized writer even when the router template
+   names a different lead. The coordinator synthesizes and adjudicates but does
+   not edit source code.
+
+The router/database remains optional for durable managed orchestration. Loading
+the live projection never creates a router thread and never takes ownership of
+manual tmux sessions.
 
 Tracked Codex sends serialize receipt invalidation, tmux input, and receipt
 creation under the recovery lock. `submission=not-submitted` means task text was

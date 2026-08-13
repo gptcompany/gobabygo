@@ -639,6 +639,7 @@ Env:
   MESH_LIVE_REPO_ROOTS  colon-separated roots allowed for ensure-codex
   MESH_LIVE_TICK_STATE  tick metadata/idempotency state (captures are never stored)
   MESH_MOSH_HOST     optional direct VPN/LAN host for persistent attach
+  MESH_COORDINATOR_WORKFLOW  coordinator policy: direct|speckit|adaptive (default: adaptive)
 
 Examples:
   ./scripts/mesh live board
