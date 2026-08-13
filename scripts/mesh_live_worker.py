@@ -173,6 +173,18 @@ def _validate_reusable(existing: dict[str, str], repo: Path) -> None:
         )
 
 
+def _startup_transition_pending(existing: dict[str, str], repo: Path) -> bool:
+    if existing["dead"] != "0" or existing["panes"] != "1":
+        return False
+    if existing["command"] not in {"sh", "bash", "zsh", "codex", "codex-cli"}:
+        return False
+    try:
+        existing_repo = Path(existing["repo"]).resolve()
+    except (OSError, RuntimeError):
+        return False
+    return existing["command"] in {"sh", "bash", "zsh"} or existing_repo != repo
+
+
 def ensure_codex_worker(repo_value: str, *, expected_session: str = "") -> dict[str, object]:
     repo = resolve_repo(repo_value)
     session = session_name_for_repo(repo)
@@ -210,7 +222,7 @@ def ensure_codex_worker(repo_value: str, *, expected_session: str = "") -> dict[
         try:
             _validate_reusable(existing, repo)
         except WorkerEnsureError as exc:
-            if existing["command"] in {"sh", "bash", "zsh"}:
+            if _startup_transition_pending(existing, repo):
                 time.sleep(0.1)
                 continue
             raise exc

@@ -295,6 +295,46 @@ def test_ensure_codex_waits_for_exec_transition(monkeypatch, tmp_path) -> None:
     assert displays == 2
 
 
+def test_ensure_codex_retries_transient_post_create_repo_path(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "progressive-deploy")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_codex_executable", lambda: "/usr/local/bin/codex")
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    created = False
+    displays = 0
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal created, displays
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "new-session"]:
+            created = True
+            return _completed(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=0 if created else 1)
+        if args[:2] == ["tmux", "display-message"]:
+            displays += 1
+            pane_path = "/home/sam" if displays == 1 else str(repo)
+            fields = module._FIELD_SEPARATOR.join(
+                ["codex-progressive-deploy", pane_path, "codex", "0", "1"]
+            )
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.ensure_codex_worker("progressive-deploy")
+
+    assert result == {
+        "session": "codex-progressive-deploy",
+        "repo": str(repo),
+        "created": True,
+        "ready": True,
+    }
+    assert displays == 2
+
+
 @pytest.mark.parametrize(
     ("metadata", "message"),
     [
