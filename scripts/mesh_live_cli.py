@@ -190,6 +190,7 @@ class LiveClient:
         *,
         enter: bool,
         expected_commands: Sequence[str] = (),
+        delegation_id: str = "",
     ) -> dict[str, Any]:
         payload = {
             "op": "send",
@@ -203,6 +204,8 @@ class LiveClient:
         }
         if expected_commands:
             payload["expected_commands"] = list(expected_commands)
+        if delegation_id:
+            payload["delegation_id"] = delegation_id
         response = self._request_fn(self.endpoint, payload)
         if response.get("error"):
             raise LiveReadError(redact_capture(str(response["error"])))
@@ -629,7 +632,7 @@ def _codex_recovery_key(target: dict[str, str], delegation_id: str) -> str:
 def _load_codex_recovery_state(path: str) -> dict[str, Any]:
     state_path = Path(path).expanduser()
     if not state_path.exists():
-        return {"version": 1, "attempts": {}}
+        return {"version": 1, "attempts": {}, "deliveries": {}}
     if state_path.is_symlink():
         raise LiveReadError(f"Codex recovery state file must not be a symlink: {state_path}")
     try:
@@ -640,6 +643,10 @@ def _load_codex_recovery_state(path: str) -> dict[str, Any]:
         raise LiveReadError(f"unsupported Codex recovery state format: {state_path}")
     if not isinstance(payload.get("attempts"), dict):
         raise LiveReadError(f"invalid Codex recovery attempts: {state_path}")
+    if "deliveries" not in payload:
+        payload["deliveries"] = {}
+    if not isinstance(payload.get("deliveries"), dict):
+        raise LiveReadError(f"invalid Codex delivery receipts: {state_path}")
     return payload
 
 
@@ -686,13 +693,33 @@ def _codex_recovery_lock(path: str):
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise LiveReadError("another Codex submit recovery is already running") from exc
+            raise LiveReadError("another Codex delivery or submit recovery is already running") from exc
         yield
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+def _record_codex_delivery(
+    target: dict[str, Any], delegation_id: str, text: str, state_file: str
+) -> None:
+    with _codex_recovery_lock(state_file):
+        state = _load_codex_recovery_state(state_file)
+        key = _codex_recovery_key(target, delegation_id)
+        state["deliveries"][key] = {
+            "owner": str(target["owner"]),
+            "name": str(target["name"]),
+            "pane_id": str(target["pane_id"]),
+            "delegation_id": delegation_id,
+            "text_chars": len(text),
+            "text_sha256": hashlib.sha256(
+                text.encode("utf-8", errors="replace")
+            ).hexdigest(),
+            "delivered_at": time.time(),
+        }
+        _save_codex_recovery_state(state_file, state)
 
 
 def _recover_codex_submit(
@@ -779,12 +806,34 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(raw_expected, list) or len(raw_expected) > 8:
             raise ValueError("expected_commands must be a bounded list")
         expected_commands = tuple(str(item or "").strip() for item in raw_expected)
-        return _send_target(
+        raw_delegation_id = str(payload.get("delegation_id") or "").strip()
+        delegation_id = ""
+        if raw_delegation_id:
+            delegation_id = validate_delegation_id(raw_delegation_id)
+            if not enter or not text:
+                raise ValueError("tracked Codex delegation requires text and --enter")
+            if not _codex_composer_contains_delegation(text, delegation_id):
+                raise ValueError("send text does not contain the exact delegation ID")
+            expected_commands = ("codex", "codex-cli")
+        result = _send_target(
             target,
             text,
             enter=enter,
             expected_commands=expected_commands,
         )
+        if result.get("error") or not delegation_id:
+            return result
+        _record_codex_delivery(
+            result,
+            delegation_id,
+            text,
+            DEFAULT_CODEX_RECOVERY_STATE_FILE,
+        )
+        return {
+            **result,
+            "delegation_id": delegation_id,
+            "delivery_tracked": True,
+        }
 
     if operation == "recover_codex_submit":
         target = payload.get("target")
@@ -2059,6 +2108,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     send.add_argument("--enter", action="store_true", help="Send Enter after the text.")
     send.add_argument("--owner", default="", help="Disambiguate sessions owned by different users.")
+    send.add_argument(
+        "--delegation-id",
+        default="",
+        help="Track this exact Codex delegation for guarded collapsed-paste recovery.",
+    )
 
     recover_codex = sub.add_parser(
         "recover-codex-submit",
@@ -2405,13 +2459,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.cmd == "send":
             message = validate_send_text(" ".join(args.message), enter=args.enter)
-            result = client.send(selected, message, enter=args.enter)
+            delegation_id = (
+                validate_delegation_id(args.delegation_id) if args.delegation_id else ""
+            )
+            send_kwargs: dict[str, Any] = {"enter": args.enter}
+            if delegation_id:
+                send_kwargs["delegation_id"] = delegation_id
+            result = client.send(selected, message, **send_kwargs)
             print(
                 f"[mesh live send] target={result['owner']}/{result['name']} "
                 f"pane={result['pane_id']} "
                 f"text_delivered={'yes' if result['text_sent'] else 'no'} "
                 f"enter_delivered={'yes' if result['enter_sent'] else 'no'} "
                 f"submission={'unknown' if result['enter_sent'] else 'not-requested'}"
+                f"{' delegation=' + result['delegation_id'] + ' tracked=yes' if result.get('delivery_tracked') else ''}"
             )
             return 0
 

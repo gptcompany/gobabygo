@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -484,6 +485,73 @@ def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
     ]
 
 
+def test_remote_send_tracks_codex_delivery_without_storing_text(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    message = "DELEGATION_ID=delegation-1234 read /repo/brief.md"
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+            "text": message,
+            "enter": True,
+            "delegation_id": "delegation-1234",
+        }
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    receipt = next(iter(state["deliveries"].values()))
+    assert result["delivery_tracked"] is True
+    assert result["delegation_id"] == "delegation-1234"
+    assert receipt["text_chars"] == len(message)
+    assert receipt["text_sha256"] == hashlib.sha256(message.encode()).hexdigest()
+    assert receipt["pane_id"] == "%7"
+    assert message not in state_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("text", "enter", "error"),
+    [
+        ("read /repo/brief.md", True, "does not contain"),
+        ("DELEGATION_ID=delegation-1234", False, "requires text and --enter"),
+    ],
+)
+def test_remote_send_rejects_invalid_tracked_delegation_before_io(
+    monkeypatch, text: str, enter: bool, error: str
+) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(module, "_run_command", lambda args, timeout=10.0: commands.append(args))
+
+    with pytest.raises(ValueError, match=error):
+        module.handle_remote_request(
+            {
+                "op": "send",
+                "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+                "text": text,
+                "enter": enter,
+                "delegation_id": "delegation-1234",
+            }
+        )
+
+    assert commands == []
+
+
 def test_remote_send_does_not_send_enter_after_text_failure(monkeypatch) -> None:
     module = _load_module()
     commands: list[list[str]] = []
@@ -619,6 +687,28 @@ def test_live_client_send_passes_expected_process_guard() -> None:
     )
 
     assert observed["expected_commands"] == ["claude", "claude-code"]
+
+
+def test_live_client_send_passes_codex_delegation_receipt_request() -> None:
+    module = _load_module()
+    observed: dict = {}
+
+    def fake_request(endpoint, payload):
+        observed.update(payload)
+        return {"text_sent": True, "enter_sent": True}
+
+    endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
+    client = module.LiveClient(endpoint, request_fn=fake_request)
+    session = module.LiveSession(owner="sam", name="codex-worker", pane_id="%2")
+
+    client.send(
+        session,
+        "DELEGATION_ID=delegation-1234 read /repo/brief.md",
+        enter=True,
+        delegation_id="delegation-1234",
+    )
+
+    assert observed["delegation_id"] == "delegation-1234"
 
 
 def test_live_client_send_raises_reader_error() -> None:
