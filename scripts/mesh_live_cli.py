@@ -125,6 +125,8 @@ class SessionResolutionError(ValueError):
 
 
 RequestFn = Callable[[LiveEndpoint, dict[str, Any]], dict[str, Any]]
+SendFn = Callable[[], dict[str, Any]]
+SendTransactionFn = Callable[[dict[str, str], SendFn], dict[str, Any]]
 
 
 class LiveClient:
@@ -436,7 +438,7 @@ def _send_target(
     *,
     enter: bool,
     expected_commands: Sequence[str] = (),
-    before_input: Callable[[dict[str, str]], None] | None = None,
+    transaction: SendTransactionFn | None = None,
 ) -> dict[str, Any]:
     owner = str(target.get("owner") or "")
     name = str(target.get("name") or "")
@@ -477,36 +479,55 @@ def _send_target(
         "pane_id": pane_id,
         "command": current_command,
     }
-    if before_input is not None:
-        before_input(validated_target)
 
-    if text:
-        try:
-            proc = _run_command(
-                [*prefix, "tmux", "send-keys", "-t", tmux_target, "-l", "--", text]
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {"error": redact_capture(str(exc))}
-        if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
-            return {"error": redact_capture(detail)}
+    def deliver() -> dict[str, Any]:
+        if text:
+            try:
+                proc = _run_command(
+                    [*prefix, "tmux", "send-keys", "-t", tmux_target, "-l", "--", text]
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                return {"error": redact_capture(str(exc))}
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+                return {"error": redact_capture(detail)}
 
-    if enter:
-        try:
-            proc = _run_command([*prefix, "tmux", "send-keys", "-t", tmux_target, "Enter"])
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {"error": str(exc)}
-        if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
-            return {"error": detail}
+        if enter:
+            try:
+                proc = _run_command([*prefix, "tmux", "send-keys", "-t", tmux_target, "Enter"])
+            except (OSError, subprocess.SubprocessError) as exc:
+                if text:
+                    return {
+                        "owner": owner,
+                        "name": name,
+                        "pane_id": pane_id,
+                        "text_sent": True,
+                        "enter_sent": False,
+                        "delivery_error": redact_capture(str(exc)),
+                    }
+                return {"error": str(exc)}
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+                if text:
+                    return {
+                        "owner": owner,
+                        "name": name,
+                        "pane_id": pane_id,
+                        "text_sent": True,
+                        "enter_sent": False,
+                        "delivery_error": redact_capture(detail),
+                    }
+                return {"error": detail}
 
-    return {
-        "owner": owner,
-        "name": name,
-        "pane_id": pane_id,
-        "text_sent": bool(text),
-        "enter_sent": bool(enter),
-    }
+        return {
+            "owner": owner,
+            "name": name,
+            "pane_id": pane_id,
+            "text_sent": bool(text),
+            "enter_sent": bool(enter),
+        }
+
+    return transaction(validated_target, deliver) if transaction else deliver()
 
 
 def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
@@ -558,7 +579,7 @@ _CODEX_UNSAFE_INPUT = re.compile(
 _CODEX_FOOTER = re.compile(r"(?im)^\s*gpt-[^\n]*·")
 _CODEX_SEPARATOR = re.compile(r"^\s*[─━-]{8,}\s*$")
 _CODEX_COLLAPSED_PASTE = re.compile(
-    r"^\s*›\s*\[Pasted Content (?P<chars>[1-9][0-9]*) chars?\]\s*$",
+    r"^\s*›\s*\[Pasted Content (?P<chars>[1-9][0-9]*) chars\]\s*$",
     re.IGNORECASE,
 )
 _CODEX_COLLAPSED_PASTE_MARKER = re.compile(r"\[Pasted Content\b", re.IGNORECASE)
@@ -619,7 +640,9 @@ def _codex_collapsed_paste_chars(composer: str) -> int | None:
     for line in str(composer or "").splitlines():
         if _CODEX_FOOTER.search(line):
             footer_found = True
-            break
+            continue
+        if footer_found and line.strip():
+            return None
         if line.strip():
             content_lines.append(line)
     if not footer_found or len(content_lines) != 1:
@@ -795,59 +818,45 @@ def _codex_recovery_lock(path: str):
             os.close(fd)
 
 
-def _record_codex_delivery(
-    target: dict[str, Any], delegation_id: str, text: str, state_file: str
+def _pane_identity(target: dict[str, Any]) -> dict[str, str]:
+    return {
+        "owner": str(target.get("owner") or ""),
+        "name": str(target.get("name") or ""),
+        "pane_id": str(target.get("pane_id") or ""),
+    }
+
+
+def _discard_codex_deliveries_in_state(
+    state: dict[str, Any], target: dict[str, Any]
+) -> bool:
+    pane_identity = _pane_identity(target)
+    deliveries = state["deliveries"]
+    stale_keys = [
+        key
+        for key, receipt in deliveries.items()
+        if isinstance(receipt, dict)
+        and all(
+            str(receipt.get(field) or "") == value
+            for field, value in pane_identity.items()
+        )
+    ]
+    for key in stale_keys:
+        del deliveries[key]
+    return bool(stale_keys)
+
+
+def _record_codex_delivery_in_state(
+    state: dict[str, Any], target: dict[str, Any], delegation_id: str, text: str
 ) -> None:
-    with _codex_recovery_lock(state_file):
-        state = _load_codex_recovery_state(state_file)
-        deliveries = state["deliveries"]
-        pane_identity = {
-            "owner": str(target["owner"]),
-            "name": str(target["name"]),
-            "pane_id": str(target["pane_id"]),
-        }
-        for existing_key, existing in list(deliveries.items()):
-            if isinstance(existing, dict) and all(
-                str(existing.get(field) or "") == value
-                for field, value in pane_identity.items()
-            ):
-                del deliveries[existing_key]
-        key = _codex_recovery_key(target, delegation_id)
-        deliveries[key] = {
-            **pane_identity,
-            "delegation_id": delegation_id,
-            "text_chars": len(text),
-            "delivered_at": time.time(),
-        }
-        _save_codex_recovery_state(state_file, state)
-
-
-def _discard_codex_deliveries(target: dict[str, Any], state_file: str) -> None:
-    state_path = Path(state_file).expanduser()
-    if not state_path.exists():
-        return
-    with _codex_recovery_lock(state_file):
-        state = _load_codex_recovery_state(state_file)
-        deliveries = state["deliveries"]
-        pane_identity = {
-            "owner": str(target.get("owner") or ""),
-            "name": str(target.get("name") or ""),
-            "pane_id": str(target.get("pane_id") or ""),
-        }
-        stale_keys = [
-            key
-            for key, receipt in deliveries.items()
-            if isinstance(receipt, dict)
-            and all(
-                str(receipt.get(field) or "") == value
-                for field, value in pane_identity.items()
-            )
-        ]
-        if not stale_keys:
-            return
-        for key in stale_keys:
-            del deliveries[key]
-        _save_codex_recovery_state(state_file, state)
+    _discard_codex_deliveries_in_state(state, target)
+    pane_identity = _pane_identity(target)
+    key = _codex_recovery_key(pane_identity, delegation_id)
+    state["deliveries"][key] = {
+        **pane_identity,
+        "delegation_id": delegation_id,
+        "text_chars": len(text),
+        "delivered_at": time.time(),
+    }
 
 
 def _recover_codex_submit(
@@ -955,35 +964,49 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
             if not _codex_composer_contains_delegation(text, delegation_id):
                 raise ValueError("send text does not contain the exact delegation ID")
             expected_commands = ("codex", "codex-cli")
-        result = _send_target(
-            target,
-            text,
-            enter=enter,
-            expected_commands=expected_commands,
-            before_input=lambda validated: (
-                _discard_codex_deliveries(
-                    validated, DEFAULT_CODEX_RECOVERY_STATE_FILE
+        def codex_send_transaction(
+            validated: dict[str, str], deliver: SendFn
+        ) -> dict[str, Any]:
+            if validated["command"] not in {"codex", "codex-cli"}:
+                return deliver()
+            with _codex_recovery_lock(DEFAULT_CODEX_RECOVERY_STATE_FILE):
+                state = _load_codex_recovery_state(
+                    DEFAULT_CODEX_RECOVERY_STATE_FILE
                 )
-                if validated["command"] in {"codex", "codex-cli"}
-                else None
-            ),
-        )
-        if result.get("error") or not delegation_id:
-            return result
+                if _discard_codex_deliveries_in_state(state, validated):
+                    _save_codex_recovery_state(
+                        DEFAULT_CODEX_RECOVERY_STATE_FILE, state
+                    )
+                send_result = deliver()
+                if not send_result.get("error") and delegation_id and send_result.get("text_sent"):
+                    _record_codex_delivery_in_state(state, send_result, delegation_id, text)
+                    try:
+                        _save_codex_recovery_state(
+                            DEFAULT_CODEX_RECOVERY_STATE_FILE, state
+                        )
+                    except LiveReadError as exc:
+                        return {
+                            **send_result,
+                            "delegation_id": delegation_id,
+                            "delivery_tracked": False,
+                            "tracking_error": redact_capture(str(exc)),
+                        }
+                return send_result
+
         try:
-            _record_codex_delivery(
-                result,
-                delegation_id,
+            result = _send_target(
+                target,
                 text,
-                DEFAULT_CODEX_RECOVERY_STATE_FILE,
+                enter=enter,
+                expected_commands=expected_commands,
+                transaction=codex_send_transaction,
             )
         except LiveReadError as exc:
             return {
-                **result,
-                "delegation_id": delegation_id,
-                "delivery_tracked": False,
-                "tracking_error": redact_capture(str(exc)),
+                "error": redact_capture(str(exc)),
             }
+        if result.get("error") or not delegation_id or result.get("tracking_error"):
+            return result
         return {
             **result,
             "delegation_id": delegation_id,
@@ -2626,12 +2649,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             if delegation_id:
                 send_kwargs["delegation_id"] = delegation_id
             result = client.send(selected, message, **send_kwargs)
+            if result["enter_sent"]:
+                submission = "unknown"
+            elif args.enter:
+                submission = "not-submitted"
+            else:
+                submission = "not-requested"
             print(
                 f"[mesh live send] target={result['owner']}/{result['name']} "
                 f"pane={result['pane_id']} "
                 f"text_delivered={'yes' if result['text_sent'] else 'no'} "
                 f"enter_delivered={'yes' if result['enter_sent'] else 'no'} "
-                f"submission={'unknown' if result['enter_sent'] else 'not-requested'}"
+                f"submission={submission}"
                 f"{' delegation=' + result['delegation_id'] + ' tracked=' + ('yes' if result.get('delivery_tracked') else 'no') if result.get('delegation_id') else ''}"
             )
             if result.get("tracking_error"):
@@ -2640,7 +2669,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "do not resend; inspect the worker manually",
                     file=sys.stderr,
                 )
-            return 0
+            if result.get("delivery_error"):
+                print(
+                    f"Warning: Enter delivery failed after text delivery: "
+                    f"{result['delivery_error']}; do not resend; use guarded recovery or inspect manually",
+                    file=sys.stderr,
+                )
+            return 1 if result.get("tracking_error") or result.get("delivery_error") else 0
 
         if args.cmd == "recover-codex-submit":
             delegation_id = validate_delegation_id(args.delegation_id)

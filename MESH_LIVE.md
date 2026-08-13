@@ -162,6 +162,13 @@ to verify CLI acceptance, monitor completion, and inspect result/test evidence.
 A successful tmux send is not treated as delivery: the coordinator must find the
 delegation ID or clear CLI activity and must never resend blindly.
 
+Tracked Codex sends serialize receipt invalidation, tmux input, and receipt
+creation under the recovery lock. `submission=not-submitted` means task text was
+delivered but the requested Enter failed; the receipt remains available for the
+guarded recovery, and the task must not be resent. A receipt write failure after
+text delivery is reported as `tracked=no` and also requires manual inspection,
+not resend.
+
 `send` accepts one literal line up to 8192 characters; newlines and control
 characters are rejected. For a long or multi-line delegation, the coordinator
 writes a non-secret brief inside the target repository and sends one line with

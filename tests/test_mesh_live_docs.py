@@ -51,6 +51,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "non-secret brief inside the target repository",
         "--delegation-id <DELEGATION_ID> --enter",
         "metadata-only recovery receipt",
+        "submission=not-submitted",
+        "tracked=no",
         "`[Pasted Content N chars]`",
         "expires after 15 minutes",
         "never clears the composer automatically",

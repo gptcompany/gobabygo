@@ -25,6 +25,12 @@ def _completed(args: list[str], returncode: int = 0, stdout: str = "", stderr: s
     return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
 
 
+def _record_codex_delivery(module, target, delegation_id, text, state_path) -> None:
+    state = module._load_codex_recovery_state(str(state_path))
+    module._record_codex_delivery_in_state(state, target, delegation_id, text)
+    module._save_codex_recovery_state(str(state_path), state)
+
+
 def test_reader_discovers_current_users_tmux_session(monkeypatch) -> None:
     module = _load_module()
     sep = module._FIELD_SEPARATOR
@@ -528,7 +534,8 @@ def test_codex_delivery_receipt_counts_unicode_characters(tmp_path) -> None:
     target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
     message = "DELEGATION_ID=delegation-1234 verifica scelta è pronta ✓"
 
-    module._record_codex_delivery(
+    _record_codex_delivery(
+        module,
         target,
         "delegation-1234",
         message,
@@ -542,9 +549,14 @@ def test_codex_delivery_receipt_counts_unicode_characters(tmp_path) -> None:
 
 
 def test_remote_send_reports_untracked_after_receipt_failure_without_resend(
-    monkeypatch,
+    monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "DEFAULT_CODEX_RECOVERY_STATE_FILE",
+        str(tmp_path / "recovery.json"),
+    )
     commands: list[list[str]] = []
 
     def fake_run(args: list[str], *, timeout: float = 10.0):
@@ -560,7 +572,7 @@ def test_remote_send_reports_untracked_after_receipt_failure_without_resend(
     monkeypatch.setattr(module, "_run_command", fake_run)
     monkeypatch.setattr(
         module,
-        "_record_codex_delivery",
+        "_save_codex_recovery_state",
         lambda *_args: (_ for _ in ()).throw(module.LiveReadError("state unavailable")),
     )
 
@@ -581,18 +593,60 @@ def test_remote_send_reports_untracked_after_receipt_failure_without_resend(
     assert sum("send-keys" in command for command in commands) == 2
 
 
+def test_tracked_codex_send_records_partial_delivery_when_enter_fails(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        if args[-1] == "Enter":
+            return _completed(args, returncode=1, stderr="pane input busy")
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+            "text": "DELEGATION_ID=delegation-1234 read /repo/brief.md",
+            "enter": True,
+            "delegation_id": "delegation-1234",
+        }
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert result["text_sent"] is True
+    assert result["enter_sent"] is False
+    assert result["delivery_tracked"] is True
+    assert result["delivery_error"] == "pane input busy"
+    assert len(state["deliveries"]) == 1
+
+
 def test_codex_delivery_receipt_replaces_prior_receipt_for_same_pane(tmp_path) -> None:
     module = _load_module()
     state_path = tmp_path / "recovery.json"
     target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
 
-    module._record_codex_delivery(
+    _record_codex_delivery(
+        module,
         target,
         "delegation-first",
         "DELEGATION_ID=delegation-first first",
         str(state_path),
     )
-    module._record_codex_delivery(
+    _record_codex_delivery(
+        module,
         target,
         "delegation-second",
         "DELEGATION_ID=delegation-second second",
@@ -613,7 +667,8 @@ def test_untracked_codex_send_discards_prior_delivery_receipt(
     state_path = tmp_path / "recovery.json"
     monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
     target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
-    module._record_codex_delivery(
+    _record_codex_delivery(
+        module,
         target,
         "delegation-first",
         "DELEGATION_ID=delegation-first first",
@@ -652,7 +707,8 @@ def test_changed_send_target_does_not_discard_delivery_receipt(
     state_path = tmp_path / "recovery.json"
     monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
     target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
-    module._record_codex_delivery(
+    _record_codex_delivery(
+        module,
         target,
         "delegation-first",
         "DELEGATION_ID=delegation-first first",
@@ -924,6 +980,76 @@ def test_live_client_codex_recovery_does_not_delegate_state_path() -> None:
         "target": {"owner": "sam", "name": "codex-rektslug", "pane_id": "%7"},
         "delegation_id": "delegation-1234",
     }
+
+
+def test_remote_send_refuses_input_while_codex_recovery_lock_is_held(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        module,
+        "_run_command",
+        lambda args, timeout=10.0: (
+            commands.append(args)
+            or _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        ),
+    )
+
+    with module._codex_recovery_lock(str(state_path)):
+        result = module.handle_remote_request(
+            {
+                "op": "send",
+                "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+                "text": "status?",
+                "enter": True,
+            }
+        )
+
+    assert "already running" in result["error"]
+    assert len(commands) == 1
+    assert "display-message" in commands[0]
+    assert not any("send-keys" in command for command in commands)
+
+
+def test_claude_send_does_not_depend_on_codex_recovery_state(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    state_path.write_text("not-json", encoding="utf-8")
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["claude-worker", "claude"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "claude-worker", "pane_id": "%7"},
+            "text": "status?",
+            "enter": True,
+        }
+    )
+
+    assert result["text_sent"] is True
+    assert result["enter_sent"] is True
+    assert sum("send-keys" in command for command in commands) == 2
 
 
 def test_attach_auto_uses_mosh_only_for_reachable_direct_host(monkeypatch) -> None:
@@ -1392,9 +1518,14 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
     ("screen", "expected"),
     [
         ("Codex\n› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo", 1085),
-        ("› [Pasted Content 1 char]\n  gpt-5.4 · /repo", 1),
+        ("› [Pasted Content 1 chars]\n  gpt-5.4 · /repo", 1),
+        ("› [Pasted Content 1 char]\n  gpt-5.4 · /repo", None),
         ("› prefix [Pasted Content 1085 chars]\n  gpt-5.4 · /repo", None),
         ("› [Pasted Content 1085 chars] suffix\n  gpt-5.4 · /repo", None),
+        (
+            "› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo\n  unexpected",
+            None,
+        ),
         (
             "• Working (2s)\n› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo",
             None,
@@ -2477,6 +2608,52 @@ def test_main_board_json_peek_send_and_attach_error_paths(monkeypatch, capsys) -
     assert module.main(["--local", "attach", "claude-rektslug"]) == 2
     output = capsys.readouterr()
     assert "attach requires an interactive terminal" in output.err
+
+
+def test_main_send_reports_partial_delivery_without_resend_signal(
+    monkeypatch, capsys
+) -> None:
+    module = _load_module()
+    session = module.LiveSession(owner="sam", name="codex-worker", pane_id="%7")
+
+    class FakeClient:
+        endpoint = module.LiveEndpoint("localhost", True, ("sam",))
+
+        def send(self, selected, text, *, enter, delegation_id=""):
+            assert selected == session
+            return {
+                "owner": "sam",
+                "name": "codex-worker",
+                "pane_id": "%7",
+                "text_sent": True,
+                "enter_sent": False,
+                "delegation_id": delegation_id,
+                "delivery_tracked": True,
+                "delivery_error": "pane input busy",
+            }
+
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda _args: (FakeClient(), [session], []),
+    )
+
+    code = module.main(
+        [
+            "--local",
+            "send",
+            "codex-worker",
+            "DELEGATION_ID=delegation-1234 read /repo/brief.md",
+            "--delegation-id",
+            "delegation-1234",
+            "--enter",
+        ]
+    )
+
+    output = capsys.readouterr()
+    assert code == 1
+    assert "text_delivered=yes enter_delivered=no submission=not-submitted" in output.out
+    assert "do not resend" in output.err
 
 
 def test_main_brief_rejects_conflicting_or_empty_scope(monkeypatch, capsys) -> None:
