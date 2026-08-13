@@ -18,7 +18,8 @@ Usage:
                             [--state-file PATH] [--log-file PATH] [--dry-run]
   install-mesh-live-cron.sh --remove [--dry-run]
 
-Installs one idempotent user-crontab entry for `mesh live tick --apply`.
+Installs one idempotent user-crontab entry for `mesh live tick --apply`, including
+exact WAIT selection and one wake after an explicitly declared session reset.
 No daemon, router, database, iTerm2, or root access is required.
 EOF
 }

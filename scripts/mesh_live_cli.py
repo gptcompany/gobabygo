@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 import fcntl
 import hashlib
 import json
@@ -19,6 +20,7 @@ import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 DEFAULT_WS_HOST = "sam@10.0.0.2"
@@ -29,6 +31,7 @@ DEFAULT_BOARD_LINES = 20
 DEFAULT_PEEK_LINES = 120
 DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
 DEFAULT_CODEX_RECOVERY_STATE_FILE = "~/.local/state/gobabygo/mesh-live-codex-recovery.json"
+SESSION_LIMIT_RESET_GRACE_SECONDS = 90
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
 CODEX_RECOVERY_VERIFY_INTERVAL = 0.25
 CODEX_DELIVERY_RECEIPT_MAX_AGE = 15 * 60
@@ -50,6 +53,7 @@ class LiveSession:
     pane_id: str = ""
     pane_path: str = ""
     pane_command: str = ""
+    pane_child_command: str = ""
     pane_dead: bool = False
     role: str = ""
     repo_name: str = ""
@@ -72,6 +76,7 @@ class LiveSession:
             pane_id=str(raw.get("pane_id") or ""),
             pane_path=str(raw.get("pane_path") or ""),
             pane_command=str(raw.get("pane_command") or ""),
+            pane_child_command=str(raw.get("pane_child_command") or ""),
             pane_dead=_as_bool(raw.get("pane_dead")),
             role=str(raw.get("role") or ""),
             repo_name=str(raw.get("repo_name") or ""),
@@ -103,6 +108,7 @@ class TickObservation:
     screen_state: str
     proposed_action: str
     reason: str
+    not_before: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -193,6 +199,7 @@ class LiveClient:
         *,
         enter: bool,
         expected_commands: Sequence[str] = (),
+        allow_coordinator_wrapper: bool = False,
         delegation_id: str = "",
     ) -> dict[str, Any]:
         payload = {
@@ -207,6 +214,8 @@ class LiveClient:
         }
         if expected_commands:
             payload["expected_commands"] = list(expected_commands)
+        if allow_coordinator_wrapper:
+            payload["allow_coordinator_wrapper"] = True
         if delegation_id:
             payload["delegation_id"] = delegation_id
         response = self._request_fn(self.endpoint, payload)
@@ -334,6 +343,23 @@ def _tmux_environment(prefix: list[str], session_name: str, variable: str) -> st
     return value[len(marker) :] if value.startswith(marker) else ""
 
 
+def _pane_direct_child_command(prefix: Sequence[str], pane_pid: str) -> str:
+    if not str(pane_pid or "").isdigit():
+        return ""
+    try:
+        proc = _run_command([*prefix, "ps", "-axo", "pid=,ppid=,comm="])
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    commands: list[str] = []
+    for line in proc.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) == 3 and parts[1] == pane_pid:
+            commands.append(Path(parts[2]).name.lower())
+    return commands[0] if len(commands) == 1 else ""
+
+
 def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
     prefix = _tmux_prefix(owner)
     if prefix is None:
@@ -363,14 +389,20 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
 
     sessions: list[dict[str, Any]] = []
     pane_format = _FIELD_SEPARATOR.join(
-        ["#{pane_id}", "#{pane_current_path}", "#{pane_current_command}", "#{pane_dead}"]
+        [
+            "#{pane_id}",
+            "#{pane_current_path}",
+            "#{pane_current_command}",
+            "#{pane_dead}",
+            "#{pane_pid}",
+        ]
     )
     for row in proc.stdout.splitlines():
         parts = row.split(_FIELD_SEPARATOR)
         if len(parts) != 5 or not parts[0]:
             continue
         name, created_at, activity_at, windows, attached = parts
-        pane_id = pane_path = pane_command = pane_dead = ""
+        pane_id = pane_path = pane_command = pane_child_command = pane_dead = pane_pid = ""
         try:
             pane_proc = _run_command(
                 [*prefix, "tmux", "display-message", "-p", "-t", name, pane_format]
@@ -379,7 +411,19 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
             pane_proc = None
         if pane_proc is not None and pane_proc.returncode == 0:
             pane_parts = pane_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR)
-            if len(pane_parts) == 4:
+            if len(pane_parts) == 5:
+                pane_id, pane_path, pane_command, pane_dead, pane_pid = pane_parts
+                wrapped_coordinator = (
+                    _tmux_environment(prefix, name, "MESH_LIVE_COORDINATOR") == "1"
+                )
+                if wrapped_coordinator and Path(pane_command).name.lower() in {
+                    "bash",
+                    "zsh",
+                    "sh",
+                    "fish",
+                }:
+                    pane_child_command = _pane_direct_child_command(prefix, pane_pid)
+            elif len(pane_parts) == 4:
                 pane_id, pane_path, pane_command, pane_dead = pane_parts
 
         role = _tmux_environment(prefix, name, "MESH_UI_ROLE")
@@ -397,6 +441,7 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
                 "pane_id": pane_id,
                 "pane_path": pane_path,
                 "pane_command": pane_command,
+                "pane_child_command": pane_child_command,
                 "pane_dead": _as_bool(pane_dead),
                 "role": role,
                 "repo_name": repo_name,
@@ -438,6 +483,7 @@ def _send_target(
     *,
     enter: bool,
     expected_commands: Sequence[str] = (),
+    allow_coordinator_wrapper: bool = False,
     transaction: SendTransactionFn | None = None,
 ) -> dict[str, Any]:
     owner = str(target.get("owner") or "")
@@ -450,7 +496,9 @@ def _send_target(
         return {"error": "send target is missing an exact session or pane id"}
 
     tmux_target = pane_id
-    target_format = _FIELD_SEPARATOR.join(["#{session_name}", "#{pane_current_command}"])
+    target_format = _FIELD_SEPARATOR.join(
+        ["#{session_name}", "#{pane_current_command}", "#{pane_pid}"]
+    )
     try:
         target_proc = _run_command(
             [*prefix, "tmux", "display-message", "-p", "-t", tmux_target, target_format]
@@ -460,12 +508,25 @@ def _send_target(
     if target_proc.returncode != 0:
         detail = (target_proc.stderr or target_proc.stdout or f"exit {target_proc.returncode}").strip()
         return {"error": detail}
-    target_parts = target_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 1)
-    if len(target_parts) != 2 or target_parts[0] != name:
+    target_parts = target_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 2)
+    if len(target_parts) not in {2, 3} or target_parts[0] != name:
         return {"error": "send target pane no longer belongs to the discovered session"}
     current_command = Path(target_parts[1]).name.lower()
     expected = {Path(str(item)).name.lower() for item in expected_commands if str(item).strip()}
-    if expected and current_command not in expected:
+    effective_command = current_command
+    if (
+        expected
+        and effective_command not in expected
+        and allow_coordinator_wrapper
+        and current_command in {"bash", "zsh", "sh", "fish"}
+        and _tmux_environment(prefix, name, "MESH_LIVE_COORDINATOR") == "1"
+    ):
+        child_command = _pane_direct_child_command(
+            prefix, target_parts[2] if len(target_parts) == 3 else ""
+        )
+        if child_command in expected:
+            effective_command = child_command
+    if expected and effective_command not in expected:
         return {
             "error": (
                 "send target process changed; expected "
@@ -477,7 +538,7 @@ def _send_target(
         "owner": owner,
         "name": name,
         "pane_id": pane_id,
-        "command": current_command,
+        "command": effective_command,
     }
 
     def deliver() -> dict[str, Any]:
@@ -988,6 +1049,7 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(raw_expected, list) or len(raw_expected) > 8:
             raise ValueError("expected_commands must be a bounded list")
         expected_commands = tuple(str(item or "").strip() for item in raw_expected)
+        allow_coordinator_wrapper = bool(payload.get("allow_coordinator_wrapper"))
         raw_delegation_id = str(payload.get("delegation_id") or "").strip()
         delegation_id = ""
         if raw_delegation_id:
@@ -1039,6 +1101,7 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
                 text,
                 enter=enter,
                 expected_commands=expected_commands,
+                allow_coordinator_wrapper=allow_coordinator_wrapper,
                 transaction=codex_send_transaction,
             )
         except LiveReadError as exc:
@@ -1373,17 +1436,23 @@ def filter_sessions(sessions: Sequence[LiveSession], query: str) -> list[LiveSes
     return result
 
 
-def _load_cli_screen_api() -> tuple[Any, Any, Any]:
+def _load_cli_screen_api() -> tuple[Any, Any, Any, Any]:
     repo_root = str(Path(__file__).resolve().parents[1])
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
     from src.router.cli_screen import (  # pylint: disable=import-outside-toplevel
         LiveScreenState,
+        claude_session_limit_reset,
         claude_wait_option_selected,
         classify_live_screen,
     )
 
-    return LiveScreenState, claude_wait_option_selected, classify_live_screen
+    return (
+        LiveScreenState,
+        claude_wait_option_selected,
+        claude_session_limit_reset,
+        classify_live_screen,
+    )
 
 
 def _is_claude_session(session: LiveSession) -> bool:
@@ -1392,7 +1461,30 @@ def _is_claude_session(session: LiveSession) -> bool:
 
 
 def _is_running_claude(session: LiveSession) -> bool:
-    return Path(session.pane_command or "").name.lower() in {"claude", "claude-code"}
+    commands = {
+        Path(session.pane_command or "").name.lower(),
+        Path(session.pane_child_command or "").name.lower(),
+    }
+    return bool(commands & {"claude", "claude-code"})
+
+
+def _session_limit_not_before(reset_label: str, timezone_name: str, now: float) -> float:
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise ValueError(f"unknown session-limit timezone: {timezone_name}") from exc
+    observed = datetime.fromtimestamp(now, timezone)
+    match = re.fullmatch(r"(1[0-2]|[1-9])(?::([0-5][0-9]))?(am|pm)", reset_label)
+    if match is None:
+        raise ValueError(f"invalid session-limit reset time: {reset_label}")
+    hour = int(match.group(1)) % 12
+    if match.group(3) == "pm":
+        hour += 12
+    minute = int(match.group(2) or 0)
+    reset = observed.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if reset <= observed:
+        reset += timedelta(days=1)
+    return reset.timestamp() + SESSION_LIMIT_RESET_GRACE_SECONDS
 
 
 def _is_default_coordinator_name(name: str) -> bool:
@@ -1424,8 +1516,11 @@ def resolve_tick_candidates(
 def build_live_tick_plan(
     sessions: Sequence[LiveSession],
     coordinator_keys: set[tuple[str, str]],
+    *,
+    now: float | None = None,
 ) -> list[TickObservation]:
-    LiveScreenState, wait_selected, classify_screen = _load_cli_screen_api()
+    LiveScreenState, wait_selected, session_limit_reset, classify_screen = _load_cli_screen_api()
+    observed_at = time.time() if now is None else now
     observations: list[TickObservation] = []
     for session in sessions:
         state = classify_screen("claude", session.output)
@@ -1443,12 +1538,28 @@ def build_live_tick_plan(
             else:
                 action = "manual_rate_limit"
                 reason = "rate limit detected but WAIT selection is ambiguous"
+        elif state == LiveScreenState.session_limit:
+            reset = session_limit_reset(session.output)
+            if reset is None:
+                action = "none"
+                reason = "session-limit reset metadata is ambiguous"
+            else:
+                try:
+                    not_before = _session_limit_not_before(*reset, observed_at)
+                except ValueError as exc:
+                    action = "none"
+                    reason = str(exc)
+                else:
+                    action = "wake_after_reset"
+                    reason = "exact Claude session-limit banner; wait for declared reset"
         elif is_coordinator and state == LiveScreenState.idle:
             action = "wake_coordinator"
             reason = "coordinator is at an empty idle prompt"
         else:
             action = "none"
             reason = f"screen state is {state.value}"
+        if state != LiveScreenState.session_limit or action != "wake_after_reset":
+            not_before = 0.0
         observations.append(
             TickObservation(
                 owner=session.owner,
@@ -1458,6 +1569,7 @@ def build_live_tick_plan(
                 screen_state=state.value,
                 proposed_action=action,
                 reason=reason,
+                not_before=not_before,
             )
         )
     return observations
@@ -1466,9 +1578,15 @@ def build_live_tick_plan(
 def render_live_tick_plan(observations: Sequence[TickObservation]) -> str:
     lines = ["mesh live tick: dry-run"]
     for item in observations:
+        schedule = (
+            f" not_before={datetime.fromtimestamp(item.not_before).astimezone().isoformat()}"
+            if item.not_before
+            else ""
+        )
         lines.append(
             f"{item.owner}/{item.name} pane={item.pane_id or '-'} "
-            f"state={item.screen_state} action={item.proposed_action} reason={item.reason}"
+            f"state={item.screen_state} action={item.proposed_action}{schedule} "
+            f"reason={item.reason}"
         )
     if len(lines) == 1:
         lines.append("no Claude sessions found")
@@ -1564,6 +1682,37 @@ def _tick_wake_message(token: str) -> str:
     )
 
 
+def _tick_session_limit_wake_message(token: str) -> str:
+    return (
+        f"MESH_LIVE_RESET_WAKE id={token}: the session-limit reset time shown by this "
+        "Claude session has passed. Resume the interrupted request from existing context; "
+        "do not broaden scope or duplicate completed work."
+    )
+
+
+def _tick_session_limit_fingerprint(
+    session: LiveSession, reset_label: str, timezone_name: str
+) -> str:
+    seed = ":".join(
+        [session.owner, session.name, session.pane_id, reset_label, timezone_name]
+    )
+    return hashlib.sha256(seed.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _clear_session_limit_state(saved: dict[str, Any]) -> bool:
+    keys = (
+        "session_limit_fingerprint",
+        "session_limit_not_before",
+        "session_limit_attempted_at",
+        "session_limit_token",
+        "session_limit_verified",
+    )
+    changed = any(key in saved for key in keys)
+    for key in keys:
+        saved.pop(key, None)
+    return changed
+
+
 def _tick_token(now: float, session: LiveSession) -> str:
     seed = f"{now:.6f}:{session.owner}:{session.name}:{session.pane_id}:{os.getpid()}"
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
@@ -1602,15 +1751,15 @@ def execute_live_tick_actions(
     sleep_fn: Callable[[float], None] = time.sleep,
     persist_state: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[list[TickActionResult], bool]:
-    LiveScreenState, wait_selected, classify_screen = _load_cli_screen_api()
-    observations = build_live_tick_plan(sessions, coordinator_keys)
+    LiveScreenState, wait_selected, session_limit_reset, classify_screen = _load_cli_screen_api()
+    observations = build_live_tick_plan(sessions, coordinator_keys, now=now)
     by_key = {item.key: item for item in sessions}
     session_state = state.setdefault("sessions", {})
     if not isinstance(session_state, dict):
         raise LiveReadError("tick state sessions must be an object")
     changed = False
     results: list[TickActionResult] = []
-    priorities = {"select_wait": 0, "wake_coordinator": 1}
+    priorities = {"select_wait": 0, "wake_after_reset": 1, "wake_coordinator": 2}
     ordered = sorted(observations, key=lambda item: priorities.get(item.proposed_action, 2))
 
     for observation in ordered:
@@ -1621,7 +1770,15 @@ def execute_live_tick_actions(
             saved = {}
             session_state[key] = saved
 
-        if observation.proposed_action not in {"select_wait", "wake_coordinator"}:
+        if observation.screen_state != LiveScreenState.session_limit.value:
+            if _clear_session_limit_state(saved):
+                changed = True
+
+        if observation.proposed_action not in {
+            "select_wait",
+            "wake_after_reset",
+            "wake_coordinator",
+        }:
             results.append(
                 TickActionResult(
                     owner=session.owner,
@@ -1693,6 +1850,102 @@ def execute_live_tick_actions(
                 )
                 continue
 
+            if observation.proposed_action == "wake_after_reset":
+                reset = session_limit_reset(fresh.output)
+                if fresh_state != LiveScreenState.session_limit or reset is None:
+                    raise LiveReadError("session-limit screen changed before scheduled wake")
+                reset_label, timezone_name = reset
+                fingerprint = _tick_session_limit_fingerprint(
+                    fresh, reset_label, timezone_name
+                )
+                if saved.get("session_limit_fingerprint") == fingerprint:
+                    try:
+                        not_before = float(saved["session_limit_not_before"])
+                    except (KeyError, TypeError, ValueError):
+                        raise LiveReadError("invalid persisted session-limit schedule")
+                else:
+                    not_before = _session_limit_not_before(
+                        reset_label, timezone_name, now
+                    )
+                    _clear_session_limit_state(saved)
+                    saved.update(
+                        {
+                            "pane_id": fresh.pane_id,
+                            "session_limit_fingerprint": fingerprint,
+                            "session_limit_not_before": not_before,
+                        }
+                    )
+                    changed = True
+                    if persist_state is not None:
+                        persist_state(state)
+                if now < not_before:
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="wake_after_reset",
+                            status="scheduled",
+                            reason=f"waiting until reset plus {SESSION_LIMIT_RESET_GRACE_SECONDS}s grace",
+                            verified=False,
+                        )
+                    )
+                    continue
+                if saved.get("session_limit_attempted_at"):
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="wake_after_reset",
+                            status="throttled",
+                            reason="session-limit wake was already attempted for this reset",
+                            verified=False,
+                        )
+                    )
+                    continue
+                token = _tick_token(now, fresh)
+                saved.update(
+                    {
+                        "session_limit_attempted_at": now,
+                        "session_limit_token": token,
+                    }
+                )
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
+                client.send(
+                    fresh,
+                    _tick_session_limit_wake_message(token),
+                    enter=True,
+                    expected_commands=("claude", "claude-code"),
+                    allow_coordinator_wrapper=observation.coordinator,
+                )
+                if verify_delay > 0:
+                    sleep_fn(verify_delay)
+                post = _capture_one_for_tick(client, fresh, lines)
+                post_state = classify_screen("claude", post.output)
+                verified = token in post.output or post_state == LiveScreenState.busy
+                saved["session_limit_verified"] = verified
+                if verified and post_state != LiveScreenState.session_limit:
+                    _clear_session_limit_state(saved)
+                results.append(
+                    TickActionResult(
+                        owner=session.owner,
+                        name=session.name,
+                        pane_id=session.pane_id,
+                        action="wake_after_reset",
+                        status="applied",
+                        reason=(
+                            "post-reset wake delivered"
+                            if verified
+                            else "post-reset wake sent; delivery unverified"
+                        ),
+                        verified=verified,
+                    )
+                )
+                continue
+
             last_wake = float(saved.get("last_wake_at") or 0)
             wake_after = max(1, min_wake_minutes) * 60
             if (now - last_wake) < wake_after:
@@ -1721,6 +1974,7 @@ def execute_live_tick_actions(
                 message,
                 enter=True,
                 expected_commands=("claude", "claude-code"),
+                allow_coordinator_wrapper=True,
             )
             if verify_delay > 0:
                 sleep_fn(verify_delay)
@@ -2615,7 +2869,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     tick = sub.add_parser(
         "tick",
-        help="Inspect Claude sessions and propose safe coordinator/rate-limit actions.",
+        help="Inspect Claude sessions and propose safe coordinator/limit actions.",
     )
     tick.add_argument(
         "--coordinator",
@@ -2625,7 +2879,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     tick.add_argument("--lines", type=int, default=160, help="Captured lines per Claude session.")
     tick.add_argument("--json", action="store_true", help="Emit metadata-only structured JSON.")
-    tick.add_argument("--apply", action="store_true", help="Apply exact WAIT and idle-coordinator actions.")
+    tick.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply exact WAIT, post-reset wake, and idle-coordinator actions.",
+    )
     tick.add_argument(
         "--state-file",
         default=os.environ.get("MESH_LIVE_TICK_STATE", DEFAULT_TICK_STATE_FILE),

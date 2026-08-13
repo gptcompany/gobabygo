@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -79,12 +81,53 @@ def test_reader_discovers_current_users_tmux_session(monkeypatch) -> None:
             "pane_id": "%7",
             "pane_path": "/data/sata/1TB/rektslug",
             "pane_command": "claude",
+            "pane_child_command": "",
             "pane_dead": False,
             "role": "lead",
             "repo_name": "rektslug",
         }
     ]
     assert all("sudo" not in command for command in commands)
+
+
+def test_reader_recognizes_single_claude_child_only_for_marked_coordinator(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    sep = module._FIELD_SEPARATOR
+    marked = True
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if "list-sessions" in args:
+            return _completed(args, stdout=sep.join(["claude-coordinator", "1", "2", "1", "0"]) + "\n")
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=sep.join(["%2", "/data/sata/1TB", "bash", "0", "123"]) + "\n",
+            )
+        if args[-1] == "MESH_LIVE_COORDINATOR":
+            return _completed(args, stdout="MESH_LIVE_COORDINATOR=1\n" if marked else "\n")
+        if args[-1] in {"MESH_UI_ROLE", "MESH_UI_REPO_NAME"}:
+            return _completed(args)
+        if args[:3] == ["ps", "-axo", "pid=,ppid=,comm="]:
+            return _completed(args, stdout="456 123 claude\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    marked_session = module.LiveSession.from_dict(
+        module.handle_remote_request({"op": "discover", "users": ["sam"]})["sessions"][0]
+    )
+    assert marked_session.pane_child_command == "claude"
+    assert module._is_running_claude(marked_session) is True
+
+    marked = False
+    unmarked_session = module.LiveSession.from_dict(
+        module.handle_remote_request({"op": "discover", "users": ["sam"]})["sessions"][0]
+    )
+    assert unmarked_session.pane_child_command == ""
+    assert module._is_running_claude(unmarked_session) is False
 
 
 def test_reader_reports_partial_discovery_when_sudo_is_denied(monkeypatch) -> None:
@@ -491,11 +534,56 @@ def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
             "-p",
             "-t",
             "%7",
-            module._FIELD_SEPARATOR.join(["#{session_name}", "#{pane_current_command}"]),
+            module._FIELD_SEPARATOR.join(
+                ["#{session_name}", "#{pane_current_command}", "#{pane_pid}"]
+            ),
         ],
         ["tmux", "send-keys", "-t", "%7", "-l", "--", hostile],
         ["tmux", "send-keys", "-t", "%7", "Enter"],
     ]
+
+
+def test_send_accepts_claude_child_only_for_marked_coordinator_wrapper(monkeypatch) -> None:
+    module = _load_module()
+    sep = module._FIELD_SEPARATOR
+    commands: list[list[str]] = []
+    coordinator_marker = "MESH_LIVE_COORDINATOR=1"
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(args, stdout=sep.join(["claude-coordinator", "bash", "123"]) + "\n")
+        if "show-environment" in args:
+            return _completed(args, stdout=f"{coordinator_marker}\n" if coordinator_marker else "\n")
+        if args[:3] == ["ps", "-axo", "pid=,ppid=,comm="]:
+            return _completed(args, stdout="456 123 claude\n")
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    target = {"owner": "sam", "name": "claude-coordinator", "pane_id": "%2"}
+
+    accepted = module._send_target(
+        target,
+        "wake",
+        enter=True,
+        expected_commands=("claude", "claude-code"),
+        allow_coordinator_wrapper=True,
+    )
+    assert accepted["enter_sent"] is True
+    assert any("send-keys" in command for command in commands)
+
+    coordinator_marker = ""
+    commands.clear()
+    refused = module._send_target(
+        target,
+        "wake",
+        enter=True,
+        expected_commands=("claude", "claude-code"),
+        allow_coordinator_wrapper=True,
+    )
+    assert "expected claude,claude-code, found bash" in refused["error"]
+    assert not any("send-keys" in command for command in commands)
 
 
 def test_remote_send_tracks_codex_delivery_without_storing_text(
@@ -2400,6 +2488,189 @@ def test_live_tick_plan_requires_exact_wait_selection_and_idle_coordinator() -> 
     }
 
 
+def _claude_session_limit_screen(reset: str = "12am") -> str:
+    return (
+        f"⎿  You've hit your session limit · resets {reset} (Asia/Bangkok)\n"
+        "   /upgrade to increase your usage limit.\n\n"
+        "✻ Crunched for 1m 33s\n\n❯ \n"
+    )
+
+
+def test_live_tick_schedules_exact_session_limit_without_sending() -> None:
+    module = _load_module()
+    now = datetime(2026, 8, 13, 16, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="bash",
+        pane_child_command="claude",
+        output=_claude_session_limit_screen(),
+    )
+
+    plan = module.build_live_tick_plan([session], {session.key}, now=now)
+
+    assert plan[0].screen_state == "session_limit"
+    assert plan[0].proposed_action == "wake_after_reset"
+    expected = datetime(2026, 8, 14, 0, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    assert plan[0].not_before == expected + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+
+    class CaptureOnlyClient:
+        def __init__(self) -> None:
+            self.send_count = 0
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=_claude_session_limit_screen())], []
+
+        def send(self, *args, **kwargs):
+            self.send_count += 1
+            raise AssertionError("session-limit wake must not be sent before reset")
+
+    client = CaptureOnlyClient()
+    state = {"version": 1, "sessions": {}}
+    results, changed = module.execute_live_tick_actions(
+        client,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert changed is True
+    assert results[0].status == "scheduled"
+    assert client.send_count == 0
+    saved = state["sessions"]["sam/claude-coordinator"]
+    assert saved["session_limit_not_before"] == plan[0].not_before
+    assert "session limit" not in json.dumps(state).lower()
+
+
+def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
+    module = _load_module()
+    before = datetime(2026, 8, 13, 23, 30, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    due = (
+        datetime(2026, 8, 14, 0, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+        + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+    screen = _claude_session_limit_screen()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="bash",
+        pane_child_command="claude",
+        output=screen,
+    )
+
+    class WakeClient:
+        def __init__(self, *, fail_send: bool = False) -> None:
+            self.outputs = [screen, "✻ Working\n❯ "]
+            self.sends: list[str] = []
+            self.fail_send = fail_send
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(
+            self,
+            session,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
+            assert enter is True
+            assert expected_commands == ("claude", "claude-code")
+            assert allow_coordinator_wrapper is True
+            self.sends.append(text)
+            if self.fail_send:
+                raise module.LiveReadError("connection closed after request")
+            return {}
+
+    state = {"version": 1, "sessions": {}}
+    scheduled_client = WakeClient()
+    scheduled_client.outputs = [screen]
+    module.execute_live_tick_actions(
+        scheduled_client,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=before,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    wake_client = WakeClient()
+    results, changed = module.execute_live_tick_actions(
+        wake_client,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=due,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert changed is True
+    assert results[0].status == "applied"
+    assert results[0].verified is True
+    assert wake_client.sends[0].startswith("MESH_LIVE_RESET_WAKE id=")
+    assert "Resume the interrupted request" in wake_client.sends[0]
+
+    uncertain_state = {"version": 1, "sessions": {}}
+    first = WakeClient()
+    first.outputs = [screen]
+    module.execute_live_tick_actions(
+        first,
+        [session],
+        {session.key},
+        state=uncertain_state,
+        lines=160,
+        now=before,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    uncertain = WakeClient(fail_send=True)
+    uncertain.outputs = [screen]
+    results, _changed = module.execute_live_tick_actions(
+        uncertain,
+        [session],
+        {session.key},
+        state=uncertain_state,
+        lines=160,
+        now=due,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert results[0].status == "failed"
+    retry = WakeClient()
+    retry.outputs = [screen]
+    results, changed = module.execute_live_tick_actions(
+        retry,
+        [session],
+        {session.key},
+        state=uncertain_state,
+        lines=160,
+        now=due + 60,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert changed is False
+    assert results[0].status == "throttled"
+    assert retry.sends == []
+
+
 def test_main_tick_is_local_metadata_only_dry_run(monkeypatch, capsys) -> None:
     module = _load_module()
 
@@ -2499,8 +2770,17 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
             target = targets[0]
             return [module.replace(target, output=self.outputs[target.name].pop(0))], []
 
-        def send(self, session, text, *, enter, expected_commands=()):
+        def send(
+            self,
+            session,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
             assert expected_commands == ("claude", "claude-code")
+            assert allow_coordinator_wrapper == (session.name == "claude-coordinator")
             self.sends.append((session.name, text, enter))
             return {}
 

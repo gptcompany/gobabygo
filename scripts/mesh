@@ -627,8 +627,9 @@ Behavior:
   Repository scope binds one repo at startup; coordinator scope late-binds repo and
   feature/task per concrete delegation while the global workflow remains with the coordinator.
   coordinator-prompt builds the system contract used by the mcoordinator shell helper.
-  tick is local-only and read-only by default; --apply handles only exact selected WAIT menus
-  and exactly idle coordinators. It recaptures, persists attempts, verifies, and throttles.
+  tick is local-only and read-only by default; --apply handles only exact selected WAIT menus,
+  exact session-limit banners after their declared reset, and exactly idle coordinators.
+  It recaptures, persists attempts before I/O, verifies, and throttles.
   tick defaults to the invoking tmux owner; do not target router-managed owners.
 
 Env:

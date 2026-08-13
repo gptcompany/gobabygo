@@ -17,6 +17,15 @@ _CLAUDE_RATE_LIMIT_SCREEN_MARKERS = (
 _CLAUDE_WAIT_SELECTED = re.compile(
     r"(?im)^[ \t]*(?:❯|>)[ \t]*(?:1[.)]?[ \t]*)?stop and wait for limit to reset[ \t]*$"
 )
+_CLAUDE_SESSION_LIMIT = re.compile(
+    r"(?im)^[ \t]*(?:⎿[ \t]*)?you've hit your session limit[ \t]*·[ \t]*"
+    r"resets[ \t]+(?P<time>(?:1[0-2]|[1-9])(?::[0-5][0-9])?[ \t]*(?:am|pm))"
+    r"[ \t]*\((?P<timezone>[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)+)\)[ \t]*$"
+    r"\r?\n[ \t]*/upgrade to increase your usage limit\.[ \t]*$"
+)
+_CLAUDE_COMPLETED_ACTIVITY = re.compile(
+    r"(?im)^[ \t]*✻[ \t]+(?:crunched|worked)[^\n]*$"
+)
 
 
 class LiveScreenState(str, Enum):
@@ -24,6 +33,7 @@ class LiveScreenState(str, Enum):
     busy = "busy"
     awaiting_input = "awaiting_input"
     rate_limit = "rate_limit"
+    session_limit = "session_limit"
     unknown = "unknown"
 
 
@@ -150,8 +160,32 @@ def claude_wait_option_selected(captured: str) -> bool:
     return not capture_shows_activity("\n".join(trailing))
 
 
+def claude_session_limit_reset(captured: str) -> tuple[str, str] | None:
+    """Return the current session-limit reset label and IANA timezone."""
+    body = str(captured or "")
+    matches = list(_CLAUDE_SESSION_LIMIT.finditer(body))
+    if not matches:
+        return None
+    match = matches[-1]
+    trailing = _CLAUDE_COMPLETED_ACTIVITY.sub("", body[match.end() :])
+    if len(trailing.splitlines()) > 30:
+        return None
+    prompts = [
+        line.replace("\xa0", " ").lstrip()
+        for line in trailing.splitlines()
+        if line.replace("\xa0", " ").lstrip().startswith("❯")
+    ]
+    if len(prompts) != 1 or prompts[0][1:].strip():
+        return None
+    if not prompt_is_idle(trailing):
+        return None
+    return match.group("time").lower().replace(" ", ""), match.group("timezone")
+
+
 def classify_live_screen(cli_type: str, captured: str) -> LiveScreenState:
     body = str(captured or "")
+    if str(cli_type or "").strip().lower() == "claude" and claude_session_limit_reset(body):
+        return LiveScreenState.session_limit
     if detect_interactive_failure_screen(cli_type, body):
         return LiveScreenState.rate_limit
     if capture_shows_activity(body):

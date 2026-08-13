@@ -356,21 +356,36 @@ MESH_LIVE_LOCAL=1 mesh live tick --json
 MESH_LIVE_LOCAL=1 mesh live tick --apply
 ```
 
-Apply mode has two actions:
+Apply mode has three actions:
 
 1. It sends Enter only when the exact Claude rate-limit menu is present and
    `Stop and wait for limit to reset` is already the selected option.
 2. It sends a fixed `MESH_LIVE_TICK` instruction only when a coordinator is at
    an empty idle prompt. The coordinator then boards and peeks dynamically and
    decides whether existing work needs review, debate, or delegation.
+3. It recognizes the exact Claude session-limit banner containing a reset time
+   and IANA timezone, persists that schedule, waits through a 90-second grace
+   period, and then sends one fixed `MESH_LIVE_RESET_WAKE` instruction to the
+   same empty Claude pane. This resumes the interrupted request; it does not
+   bypass or shorten the provider limit.
 
-Before either send, tick recaptures the same pane, revalidates its state, and
+Before any send, tick recaptures the same pane, revalidates its state, and
 requires the pane to still belong to the discovered session with Claude as its
-current process. It records the attempt before I/O, recaptures after I/O, and
+current process. A coordinator launched through the resume lock may have a shell
+as the tmux pane command; tick accepts it only when the tmux coordinator marker
+is present and that shell has exactly one direct child named `claude` or
+`claude-code`. It records the attempt before I/O, recaptures after I/O, and
 throttles retries by screen fingerprint or coordinator wake time. Ambiguous or
 stale rate-limit screens are reported as `manual_rate_limit` and are never
 submitted. Tick does not create sessions, choose new tasks, or blindly resend a
 delegation.
+
+The session-limit wake is fail-closed. The banner must include the exact
+`/upgrade to increase your usage limit.` line and an empty prompt. Unknown
+timezones, malformed times, non-empty composers, changed panes, or changed
+processes cause no send. The first observation must happen before the declared
+reset so the date is unambiguous. One attempt is recorded before keyboard I/O;
+an uncertain delivery is not retried automatically.
 
 Install the opt-in 30-minute user cron from the clean Dell runtime, not from the
 Mac checkout:
@@ -392,7 +407,8 @@ Preview or remove the managed crontab block without touching unrelated entries:
 The installer fails without rewriting the crontab when the existing crontab
 cannot be read or its managed marker block is malformed.
 
-The default schedule gives a maximum polling delay of about 30 minutes. The
+The default schedule gives a maximum polling delay of about 30 minutes after
+the reset and grace period. The
 state file is mode `0600` and stores hashes, timestamps, pane IDs, and delivery
 flags only; it never stores pane captures. The command uses an internal
 non-blocking lock, so overlapping cron/manual ticks fail closed. Use an explicit
