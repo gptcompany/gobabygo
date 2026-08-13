@@ -2254,6 +2254,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 detail = redact_capture(
                     (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
                 )
+                if detail.startswith("Error: "):
+                    detail = detail.removeprefix("Error: ")
                 raise LiveReadError(detail)
             print(redact_capture(proc.stdout).rstrip("\n"))
             return 0

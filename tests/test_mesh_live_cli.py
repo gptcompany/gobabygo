@@ -1382,6 +1382,24 @@ def test_ensure_codex_delegates_only_to_fixed_local_helper(monkeypatch, capsys) 
     assert "action=created ready=yes" in capsys.readouterr().out
 
 
+def test_ensure_codex_does_not_duplicate_delegated_error_prefix(monkeypatch, capsys) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(
+        module,
+        "_run_command",
+        lambda args, timeout=10.0: _completed(
+            args,
+            returncode=2,
+            stderr="Error: worker target is the active control-plane checkout\n",
+        ),
+    )
+
+    assert module.main(["--local", "ensure-codex", "/runtime"]) == 2
+    error = capsys.readouterr().err
+    assert error == "Error: worker target is the active control-plane checkout\n"
+
+
 @pytest.mark.parametrize(
     ("submission", "expected_code"),
     [("verified", 0), ("unknown", 1)],
