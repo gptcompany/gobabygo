@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import re
 import shlex
-import shutil
 import subprocess
 import time
 from typing import Sequence

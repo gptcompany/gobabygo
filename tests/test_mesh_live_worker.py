@@ -57,6 +57,56 @@ def test_resolve_repo_rejects_ambiguous_name(monkeypatch, tmp_path) -> None:
         module.resolve_repo("same")
 
 
+def test_session_name_is_sanitized_and_bounded() -> None:
+    module = _load_module()
+
+    assert module.session_name_for_repo(Path("My Repo")) == "codex-my-repo"
+    with pytest.raises(module.WorkerEnsureError, match="cannot form"):
+        module.session_name_for_repo(Path("---"))
+    with pytest.raises(module.WorkerEnsureError, match="too long"):
+        module.session_name_for_repo(Path("a" * 80))
+
+
+def test_codex_executable_accepts_only_fixed_executable_candidates(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    trusted = tmp_path / "codex"
+    trusted.write_text("#!/bin/sh\n", encoding="utf-8")
+    trusted.chmod(0o755)
+    monkeypatch.setattr(module, "_CODEX_CANDIDATES", (str(tmp_path / "missing"), str(trusted)))
+
+    assert module._codex_executable() == str(trusted)
+
+    trusted.chmod(0o644)
+    with pytest.raises(module.WorkerEnsureError, match="trusted Codex executable"):
+        module._codex_executable()
+
+
+@pytest.mark.parametrize(
+    ("display_result", "message"),
+    [
+        ((1, "", "tmux inspect failed\n"), "tmux inspect failed"),
+        ((0, "wrong output\n", ""), "metadata changed"),
+    ],
+)
+def test_inspect_session_rejects_tmux_errors_and_changed_metadata(
+    monkeypatch, display_result, message
+) -> None:
+    module = _load_module()
+    returncode, stdout, stderr = display_result
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args)
+        return _completed(args, returncode=returncode, stdout=stdout, stderr=stderr)
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.WorkerEnsureError, match=message):
+        module._inspect_session("codex-rektslug")
+
+
 def test_ensure_codex_creates_fixed_yolo_worker_without_send_keys(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "rektslug")
@@ -187,6 +237,64 @@ def test_ensure_codex_reports_early_process_exit(monkeypatch, tmp_path) -> None:
     assert created is True
 
 
+def test_ensure_codex_reports_creation_failure_without_atomic_winner(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_codex_executable", lambda: "/usr/local/bin/codex")
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "new-session"]:
+            return _completed(args, returncode=1, stderr="tmux server unavailable\n")
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.WorkerEnsureError, match="tmux server unavailable"):
+        module.ensure_codex_worker("rektslug")
+
+
+def test_ensure_codex_waits_for_exec_transition(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_codex_executable", lambda: "/usr/local/bin/codex")
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    created = False
+    displays = 0
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal created, displays
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "new-session"]:
+            created = True
+            return _completed(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=0 if created else 1)
+        if args[:2] == ["tmux", "display-message"]:
+            displays += 1
+            command = "bash" if displays == 1 else "codex"
+            fields = module._FIELD_SEPARATOR.join(
+                ["codex-rektslug", str(repo), command, "0", "1"]
+            )
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.ensure_codex_worker("rektslug")
+
+    assert result["created"] is True
+    assert displays == 2
+
+
 @pytest.mark.parametrize(
     ("metadata", "message"),
     [
@@ -238,3 +346,24 @@ def test_ensure_codex_rejects_expected_session_mismatch_before_tmux(monkeypatch,
     with pytest.raises(module.WorkerEnsureError, match="does not match"):
         module.ensure_codex_worker("rektslug", expected_session="codex-other")
     assert tmux_called is False
+
+
+def test_main_emits_json_and_bounded_error(monkeypatch, capsys) -> None:
+    module = _load_module()
+    result = {
+        "session": "codex-rektslug",
+        "repo": "/data/sata/1TB/rektslug",
+        "created": False,
+        "ready": True,
+    }
+    monkeypatch.setattr(module, "ensure_codex_worker", lambda *_args, **_kwargs: result)
+
+    assert module.main(["rektslug", "--json"]) == 0
+    assert '"session": "codex-rektslug"' in capsys.readouterr().out
+
+    def fail(*_args, **_kwargs):
+        raise module.WorkerEnsureError("bounded failure")
+
+    monkeypatch.setattr(module, "ensure_codex_worker", fail)
+    assert module.main(["rektslug"]) == 2
+    assert "Error: bounded failure" in capsys.readouterr().err
