@@ -537,9 +537,6 @@ def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
 _CODEX_ACTIVITY = re.compile(
     r"(?im)(?:^\s*[•●◦]\s+|working(?:\s*\(|\s+)|esc to interrupt|ctrl\+c to stop)"
 )
-_CODEX_RUNNING = re.compile(
-    r"(?im)(?:working(?:\s*\(|\s+)|esc to interrupt|ctrl\+c to stop)"
-)
 _CODEX_UNSAFE_INPUT = re.compile(
     r"(?im)(?:press enter|\bconfirm(?:ation)?\b|\bapprove\b|\byes/no\b|\by/n\b|"
     r"^\s*›\s*\d+[.)]\s|^\s*[$#%]\s+)"
@@ -575,8 +572,11 @@ def _codex_composer_contains_delegation(composer: str, delegation_id: str) -> bo
 
 
 def codex_screen_shows_current_activity(visible_screen: str) -> bool:
-    _composer, current_region = _codex_visible_regions(visible_screen)
-    return _CODEX_ACTIVITY.search(current_region) is not None
+    composer, current_region = _codex_visible_regions(visible_screen)
+    activity_region = current_region
+    if composer and current_region.endswith(composer):
+        activity_region = current_region[: -len(composer)]
+    return _CODEX_ACTIVITY.search(activity_region) is not None
 
 
 def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bool:
@@ -595,11 +595,11 @@ def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bo
 
 
 def codex_submit_recovery_verified(visible_screen: str, delegation_id: str) -> bool:
-    composer, current_region = _codex_visible_regions(visible_screen)
+    composer, _current_region = _codex_visible_regions(visible_screen)
     composer_cleared = bool(composer) and not _codex_composer_contains_delegation(
         composer, delegation_id
     )
-    return composer_cleared or _CODEX_RUNNING.search(current_region) is not None
+    return composer_cleared or codex_screen_shows_current_activity(visible_screen)
 
 
 def _poll_codex_submit_verification(

@@ -1154,11 +1154,22 @@ def test_codex_recovery_verification_accepts_clear_composer_or_current_running_s
         "• Ran old command\n────────────────────\n"
         "› Find and fix a bug in @filename\n  gpt-5.4 · /repo"
     )
+    queued_text_mentions_activity = (
+        "────────────────────\n"
+        "› Explain Working (9s) and esc to interrupt "
+        "DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo"
+    )
 
     assert module.codex_submit_recovery_verified(historical_activity, "delegation-1234") is False
     assert module.codex_submit_recovery_verified(current_activity, "delegation-1234") is True
     assert module.codex_submit_recovery_verified(active_but_still_queued, "delegation-1234") is True
     assert module.codex_submit_recovery_verified(cleared_without_activity, "delegation-1234") is True
+    assert (
+        module.codex_submit_recovery_verified(
+            queued_text_mentions_activity, "delegation-1234"
+        )
+        is False
+    )
 
 
 def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp_path) -> None:
