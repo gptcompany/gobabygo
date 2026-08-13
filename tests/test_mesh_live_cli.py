@@ -1459,8 +1459,8 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "never fall back to `send --enter`, a naked Enter, composer clearing" in prompt
     assert "context is nearly exhausted" in prompt
     assert "must not edit source files" in prompt
-    assert "Workflow mode: direct" in prompt
-    assert "do not manufacture a formal pipeline" in prompt
+    assert "Workflow mode: adaptive" in prompt
+    assert "otherwise do not manufacture a formal pipeline" in prompt
     assert "at most one active writer per repository" in prompt
     assert "different tmux session from the writer" in prompt
     assert "YOLO mode is not a sandbox" in prompt
@@ -1490,6 +1490,22 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     )
     assert "dependency order" in prompt
     assert "does not authorize router use, iTerm2, session creation" in prompt
+
+
+def test_coordinator_system_prompt_supports_explicit_direct_mode() -> None:
+    module = _load_module()
+
+    prompt = module.build_live_coordinator_system_prompt(
+        repo="rektslug",
+        repo_root="/data/sata/1TB/rektslug",
+        coordinator_session="claude-rektslug-coordinator",
+        worker_session="",
+        mesh_script="/opt/gobabygo/scripts/mesh",
+        workflow="direct",
+    )
+
+    assert "Workflow mode: direct" in prompt
+    assert "do not manufacture a formal pipeline" in prompt
 
 
 def test_coordinator_system_prompt_adapts_without_forcing_speckit() -> None:

@@ -2104,10 +2104,10 @@ def build_live_coordinator_system_prompt(
     coordinator_session: str,
     worker_session: str,
     mesh_script: str,
-    workflow: str = "direct",
+    workflow: str = "adaptive",
 ) -> str:
     live_command = f"MESH_LIVE_LOCAL=1 {shlex.quote(mesh_script)} live"
-    workflow_mode = str(workflow or "direct").strip().lower()
+    workflow_mode = str(workflow or "adaptive").strip().lower()
     if workflow_mode not in {"direct", "speckit", "adaptive"}:
         raise ValueError(f"unsupported coordinator workflow '{workflow_mode}'")
     if repo:
@@ -2499,8 +2499,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     coordinator_prompt.add_argument(
         "--workflow",
         choices=("direct", "speckit", "adaptive"),
-        default="direct",
-        help="Coordinator workflow policy (default: direct).",
+        default="adaptive",
+        help="Coordinator workflow policy (default: adaptive).",
     )
 
     workflow = sub.add_parser(

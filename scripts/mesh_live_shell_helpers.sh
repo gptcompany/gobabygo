@@ -610,7 +610,7 @@ mcoordinator() {
   usage="Usage: mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
   repo=""
   worker=""
-  workflow="${MESH_COORDINATOR_WORKFLOW:-direct}"
+  workflow="${MESH_COORDINATOR_WORKFLOW:-adaptive}"
   session_override=""
   resume_id=""
   continue_mode=0

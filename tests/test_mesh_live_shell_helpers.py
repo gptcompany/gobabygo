@@ -319,7 +319,7 @@ mcoordinator rektslug --worker codex-rektslug-worker
         "<--mesh-script>",
         "</data/sata/1TB/gobabygo/scripts/mesh>",
         "<--workflow>",
-        "<direct>",
+        "<adaptive>",
         "<--worker>",
         "<codex-rektslug-worker>",
     ]
@@ -363,7 +363,7 @@ mcoordinator --all --session claude-live-coordinator
         "<--mesh-script>",
         "</data/sata/1TB/gobabygo/scripts/mesh>",
         "<--workflow>",
-        "<direct>",
+        "<adaptive>",
     ]
 
 
