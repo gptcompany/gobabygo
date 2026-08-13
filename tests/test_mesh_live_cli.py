@@ -2025,7 +2025,15 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
     projection = module.build_live_workflow_projection("speckit")
 
     assert projection["name"] == "speckit"
+    assert projection["scope"] == "repository"
     assert projection["source"].endswith("/mapping/pipeline_templates.yaml")
+    assert projection["binding_policy"] == {
+        "objective_scope": "single-repository",
+        "startup_repo_required": True,
+        "startup_feature_required": False,
+        "repo_feature_binding": "repository-at-start-feature-from-operator-objective",
+        "cross_repository_evidence": "out-of-scope",
+    }
     assert len(projection["steps"]) == 20
     assert projection["steps"][0]["name"] == "speckit.specify"
     assert projection["steps"][1]["depends_on_steps"] == [0]
@@ -2057,6 +2065,39 @@ def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> Non
     assert output["name"] == "speckit"
     assert output["live_policy"]["automatic_spawn"] == "ensure-codex-only"
     assert output["steps"][19]["name"] == "confidence-gate-post-impl.adjudicator"
+
+
+def test_coordinator_workflow_projection_late_binds_each_delegation() -> None:
+    module = _load_module()
+
+    projection = module.build_live_workflow_projection("speckit", scope="coordinator")
+
+    assert projection["scope"] == "coordinator"
+    assert projection["binding_policy"] == {
+        "objective_scope": "coordinator-program",
+        "startup_repo_required": False,
+        "startup_feature_required": False,
+        "repo_feature_binding": "per-concrete-delegation",
+        "cross_repository_evidence": "allowed-read-only",
+    }
+
+
+def test_main_projects_coordinator_workflow_without_live_discovery(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda args: (_ for _ in ()).throw(AssertionError("tmux discovery must not run")),
+    )
+
+    rc = module.main(
+        ["workflow", "show", "speckit", "--scope", "coordinator", "--json"]
+    )
+
+    assert rc == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["scope"] == "coordinator"
+    assert output["binding_policy"]["repo_feature_binding"] == "per-concrete-delegation"
 
 
 def test_main_rejects_unknown_workflow(capsys) -> None:

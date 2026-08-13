@@ -2253,11 +2253,18 @@ def _load_pipeline_template_api() -> tuple[Callable[..., Any], Callable[..., Any
     return default_pipeline_template_file, load_pipeline_templates, normalized_pipeline_steps
 
 
-def build_live_workflow_projection(name: str) -> dict[str, Any]:
+def build_live_workflow_projection(
+    name: str,
+    *,
+    scope: str = "repository",
+) -> dict[str, Any]:
     """Project one canonical pipeline template without router or tmux access."""
     workflow_name = str(name or "").strip()
     if not workflow_name:
         raise ValueError("workflow name is required")
+    workflow_scope = str(scope or "repository").strip().lower()
+    if workflow_scope not in {"repository", "coordinator"}:
+        raise ValueError(f"unsupported workflow scope '{workflow_scope}'")
     default_file, load_templates, normalize_steps = _load_pipeline_template_api()
     source = Path(default_file()).resolve()
     loaded = load_templates(source)
@@ -2284,8 +2291,28 @@ def build_live_workflow_projection(name: str) -> dict[str, Any]:
         )
     return {
         "name": workflow_name,
+        "scope": workflow_scope,
         "description": str(template.get("description") or ""),
         "source": str(source),
+        "binding_policy": {
+            "objective_scope": (
+                "single-repository"
+                if workflow_scope == "repository"
+                else "coordinator-program"
+            ),
+            "startup_repo_required": workflow_scope == "repository",
+            "startup_feature_required": False,
+            "repo_feature_binding": (
+                "repository-at-start-feature-from-operator-objective"
+                if workflow_scope == "repository"
+                else "per-concrete-delegation"
+            ),
+            "cross_repository_evidence": (
+                "out-of-scope"
+                if workflow_scope == "repository"
+                else "allowed-read-only"
+            ),
+        },
         "live_policy": {
             "coordinator_role": "final-adjudicator",
             "template_target_cli": "preferred-perspective-not-spawn-authorization",
@@ -2302,8 +2329,10 @@ def render_live_workflow_projection(projection: dict[str, Any]) -> str:
     """Render a compact operator view of a workflow projection."""
     lines = [
         f"Workflow: {projection['name']}",
+        f"Scope: {projection['scope']}",
         f"Source: {projection['source']}",
         f"Description: {projection['description'] or '-'}",
+        f"Binding: {projection['binding_policy']['repo_feature_binding']}",
         "Live policy: coordinator=final-adjudicator; writer=one-active-per-repo; "
         "reviewer=different-session-read-only; spawn=ensure-codex-only; "
         "missing-perspective=degraded-coverage",
@@ -2511,6 +2540,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     workflow_sub = workflow.add_subparsers(dest="workflow_cmd", required=True)
     workflow_show = workflow_sub.add_parser("show", help="Show one workflow projection.")
     workflow_show.add_argument("name", help="Canonical workflow name, for example speckit.")
+    workflow_show.add_argument(
+        "--scope",
+        choices=("repository", "coordinator"),
+        default="repository",
+        help="Bind the workflow to one repository or keep it at coordinator level.",
+    )
     workflow_show.add_argument("--json", action="store_true", help="Emit structured JSON.")
 
     tick = sub.add_parser(
@@ -2604,7 +2639,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         if args.cmd == "workflow":
-            projection = build_live_workflow_projection(args.name)
+            projection = build_live_workflow_projection(args.name, scope=args.scope)
             if args.json:
                 print(json.dumps(projection, indent=2))
             else:
