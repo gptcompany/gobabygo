@@ -1243,8 +1243,10 @@ def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:
     assert "all live repositories" in output
     assert "/opt/gobabygo/scripts/mesh live board --lines 30" in output
     assert (
-        "/opt/gobabygo/scripts/mesh live ensure-codex <absolute-git-root>" in output
+        "/opt/gobabygo/scripts/mesh live ensure-codex <repo-name-or-absolute-git-root>"
+        in output
     )
+    assert "repository name explicitly selected by the operator" in output
     assert "Discover worker candidates" in output
 
 

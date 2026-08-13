@@ -195,11 +195,14 @@ plain second `send --enter`.
 When no suitable Codex worker exists, the automatic path may run only:
 
 ```bash
-MESH_LIVE_LOCAL=1 mesh live ensure-codex <absolute-git-root>
+MESH_LIVE_LOCAL=1 mesh live ensure-codex <repo-name-or-absolute-git-root>
 ```
 
 The target must resolve to an exact Git root below `MESH_LIVE_REPO_ROOTS` (or
 `MESH_WS_REPO_BASE`), and the tmux name is deterministically `codex-<repo>`.
+In multi-repo mode a repo name must come from the operator's explicit objective;
+an absolute path may instead come from tmux metadata. Pane capture text is never
+used as a command argument. Missing or ambiguous names fail before tmux mutation.
 `--expect-session` makes a pinned coordinator fail before tmux mutation when
 that name differs. Existing name/path/process/pane collisions fail closed;
 concurrent calls reuse the atomic winner. The command invokes only the trusted

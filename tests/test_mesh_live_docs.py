@@ -37,6 +37,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "MESH_LIVE_REPO_ROOTS",
         "does not accept task text",
         "unavailable through the remote live endpoint",
+        "operator's explicit objective",
+        "ambiguous names fail before tmux mutation",
         "it is not an OS sandbox",
         "already running coordinator therefore keeps its old contract",
         "DELEGATION_ID",

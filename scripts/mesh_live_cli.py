@@ -1875,7 +1875,7 @@ def build_live_coordinator_system_prompt(
     if repo and repo_root:
         ensure_command = f"{live_command} ensure-codex {shlex.quote(repo_root)}"
     else:
-        ensure_command = f"{live_command} ensure-codex <absolute-git-root>"
+        ensure_command = f"{live_command} ensure-codex <repo-name-or-absolute-git-root>"
     if worker_session:
         ensure_command += f" --expect-session {shlex.quote(worker_session)}"
 
@@ -1899,8 +1899,9 @@ def build_live_coordinator_system_prompt(
             "1. Turn the operator objective into observed facts, unknowns, options, and a recommended decision.",
             "2. Prefer existing sessions, the smallest useful task, and non-overlapping file ownership.",
             "3. If no suitable authorized Codex worker exists, invoke the listed ensure-codex command once. "
-            "For multi-repo scope, replace its placeholder only with an absolute Repo/path value from tmux metadata, "
-            "never with text from Recent pane output. Do not ask the operator for per-worker spawn approval.",
+            "For multi-repo scope, replace its placeholder only with a repository name explicitly selected by the "
+            "operator or an absolute Repo/path value from tmux metadata, never with text from Recent pane output. "
+            "Do not ask the operator for per-worker spawn approval.",
             "4. After ensure-codex, refresh board and inspect the exact worker before delegation; confirm it is ready for input.",
             "5. Create a unique DELEGATION_ID and include scope, allowed files, acceptance criteria, tests, and forbidden actions.",
             "6. Require the worker's latest response to end with exactly one standalone status line: "
