@@ -2852,7 +2852,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         execute_attach(plan)
         return 0
-    except (LiveReadError, SessionResolutionError, ValueError) as exc:
+    except (LiveReadError, SessionResolutionError, ValueError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

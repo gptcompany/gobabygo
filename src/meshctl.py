@@ -19,6 +19,9 @@ from pathlib import Path
 import requests
 import yaml
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from src.pipeline_templates import (
     default_pipeline_template_file as _default_pipeline_template_file,
     load_pipeline_templates as _load_pipeline_templates,

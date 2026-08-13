@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -68,3 +70,20 @@ def test_load_reports_invalid_yaml_as_value_error(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Invalid template YAML"):
         load_pipeline_templates(path)
+
+
+def test_meshctl_supports_direct_script_execution_from_external_directory(
+    tmp_path: Path,
+) -> None:
+    meshctl = Path(__file__).resolve().parents[1] / "src" / "meshctl.py"
+
+    proc = subprocess.run(
+        [sys.executable, str(meshctl), "--help"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "pipeline" in proc.stdout

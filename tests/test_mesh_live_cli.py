@@ -2068,6 +2068,27 @@ def test_main_rejects_unknown_workflow(capsys) -> None:
     assert "unknown workflow 'missing'" in capsys.readouterr().err
 
 
+def test_main_reports_missing_workflow_source_without_traceback(monkeypatch, capsys) -> None:
+    module = _load_module()
+
+    def missing_loader(path: Path) -> dict[str, object]:
+        raise FileNotFoundError(f"Template file not found: {path}")
+
+    monkeypatch.setattr(
+        module,
+        "_load_pipeline_template_api",
+        lambda: (lambda: Path("/missing/pipeline_templates.yaml"), missing_loader, lambda n, t: []),
+    )
+
+    rc = module.main(["workflow", "show", "speckit"])
+
+    assert rc == 2
+    assert (
+        capsys.readouterr().err
+        == "Error: Template file not found: /missing/pipeline_templates.yaml\n"
+    )
+
+
 def test_ensure_codex_is_local_only(monkeypatch, capsys) -> None:
     module = _load_module()
     monkeypatch.delenv("MESH_LIVE_LOCAL", raising=False)
