@@ -1133,7 +1133,7 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
     assert module.codex_composer_has_delegation(screen, "delegation-1234") is expected
 
 
-def test_codex_recovery_verification_ignores_history_and_requires_composer_clear() -> None:
+def test_codex_recovery_verification_accepts_clear_composer_or_current_running_state() -> None:
     module = _load_module()
     historical_activity = (
         "• Ran old command\n────────────────────\n"
@@ -1147,10 +1147,15 @@ def test_codex_recovery_verification_ignores_history_and_requires_composer_clear
         "────────────────────\n• Working (2s · esc to interrupt)\n"
         "› Task DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo"
     )
+    cleared_without_activity = (
+        "• Ran old command\n────────────────────\n"
+        "› Find and fix a bug in @filename\n  gpt-5.4 · /repo"
+    )
 
     assert module.codex_submit_recovery_verified(historical_activity, "delegation-1234") is False
     assert module.codex_submit_recovery_verified(current_activity, "delegation-1234") is True
-    assert module.codex_submit_recovery_verified(active_but_still_queued, "delegation-1234") is False
+    assert module.codex_submit_recovery_verified(active_but_still_queued, "delegation-1234") is True
+    assert module.codex_submit_recovery_verified(cleared_without_activity, "delegation-1234") is True
 
 
 def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp_path) -> None:
@@ -1177,6 +1182,8 @@ def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 2)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
     payload = {
         "op": "recover_codex_submit",
         "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
@@ -1190,11 +1197,59 @@ def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp
 
     assert first["text_sent"] is False
     assert first["enter_sent"] is True
+    assert first["submission"] == "unknown"
     assert first["verified"] is False
     assert sum(command[-1] == "Enter" for command in commands if command) == 1
     encoded_state = state_path.read_text(encoding="utf-8")
     assert "Task DELEGATION_ID" not in encoded_state
     assert not (tmp_path / "caller-controlled.json").exists()
+
+
+def test_codex_recovery_polls_until_tui_redraw_confirms_submission(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 4)
+    sleeps: list[float] = []
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    sep = module._FIELD_SEPARATOR
+    captures = 0
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal captures
+        if "display-message" in args:
+            return _completed(args, stdout=sep.join(["codex-worker", "codex"]) + "\n")
+        if "capture-pane" in args:
+            captures += 1
+            if captures < 4:
+                screen = "› Task DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo\n"
+            else:
+                screen = (
+                    "────────────────────\n• Working (1s · esc to interrupt)\n"
+                    "› Task DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo\n"
+                )
+            return _completed(args, stdout=screen)
+        if "send-keys" in args:
+            return _completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "recover_codex_submit",
+            "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+            "delegation_id": "delegation-1234",
+        }
+    )
+
+    assert result["submission"] == "verified"
+    assert result["verified"] is True
+    assert captures == 4
+    assert sleeps == [module.CODEX_RECOVERY_VERIFY_INTERVAL] * 2
 
 
 def test_codex_recovery_rejects_non_codex_without_sending(monkeypatch, tmp_path) -> None:
@@ -1292,6 +1347,48 @@ def test_ensure_codex_delegates_only_to_fixed_local_helper(monkeypatch, capsys) 
         "codex-rektslug",
     ]
     assert "action=created ready=yes" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("submission", "expected_code"),
+    [("verified", 0), ("unknown", 1)],
+)
+def test_recover_codex_cli_distinguishes_verified_from_unknown(
+    monkeypatch, capsys, submission, expected_code
+) -> None:
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam", name="codex-rektslug", pane_id="%7", pane_command="codex"
+    )
+
+    class FakeClient:
+        endpoint = module.LiveEndpoint("localhost", True, ("sam",))
+
+        def recover_codex_submit(self, selected, delegation_id):
+            assert selected == session
+            return {
+                "owner": "sam",
+                "name": "codex-rektslug",
+                "pane_id": "%7",
+                "delegation_id": delegation_id,
+                "submission": submission,
+                "verified": submission == "verified",
+            }
+
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda _args: (FakeClient(), [session], []),
+    )
+
+    code = module.main(
+        ["--local", "recover-codex-submit", "codex-rektslug", "delegation-1234"]
+    )
+
+    assert code == expected_code
+    output = capsys.readouterr().out
+    assert "enter_delivered=yes" in output
+    assert f"submission={submission}" in output
 
 
 def test_live_tick_plan_requires_exact_wait_selection_and_idle_coordinator() -> None:

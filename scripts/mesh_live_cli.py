@@ -29,6 +29,8 @@ DEFAULT_BOARD_LINES = 20
 DEFAULT_PEEK_LINES = 120
 DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
 DEFAULT_CODEX_RECOVERY_STATE_FILE = "~/.local/state/gobabygo/mesh-live-codex-recovery.json"
+CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
+CODEX_RECOVERY_VERIFY_INTERVAL = 0.25
 MAX_CAPTURE_LINES = 2000
 MAX_SEND_CHARS = 8192
 _FIELD_SEPARATOR = "\x1f"
@@ -535,6 +537,9 @@ def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
 _CODEX_ACTIVITY = re.compile(
     r"(?im)(?:^\s*[•●◦]\s+|working(?:\s*\(|\s+)|esc to interrupt|ctrl\+c to stop)"
 )
+_CODEX_RUNNING = re.compile(
+    r"(?im)(?:working(?:\s*\(|\s+)|esc to interrupt|ctrl\+c to stop)"
+)
 _CODEX_UNSAFE_INPUT = re.compile(
     r"(?im)(?:press enter|\bconfirm(?:ation)?\b|\bapprove\b|\byes/no\b|\by/n\b|"
     r"^\s*›\s*\d+[.)]\s|^\s*[$#%]\s+)"
@@ -590,11 +595,28 @@ def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bo
 
 
 def codex_submit_recovery_verified(visible_screen: str, delegation_id: str) -> bool:
-    composer, _current_region = _codex_visible_regions(visible_screen)
-    return (
-        codex_screen_shows_current_activity(visible_screen)
-        and not _codex_composer_contains_delegation(composer, delegation_id)
+    composer, current_region = _codex_visible_regions(visible_screen)
+    composer_cleared = bool(composer) and not _codex_composer_contains_delegation(
+        composer, delegation_id
     )
+    return composer_cleared or _CODEX_RUNNING.search(current_region) is not None
+
+
+def _poll_codex_submit_verification(
+    target: dict[str, Any], delegation_id: str
+) -> bool:
+    for attempt in range(CODEX_RECOVERY_VERIFY_ATTEMPTS):
+        try:
+            post = _capture_visible_target(target)
+        except LiveReadError:
+            post = None
+        if post is not None and codex_submit_recovery_verified(
+            post["output"], delegation_id
+        ):
+            return True
+        if attempt + 1 < CODEX_RECOVERY_VERIFY_ATTEMPTS:
+            time.sleep(CODEX_RECOVERY_VERIFY_INTERVAL)
+    return False
 
 
 def _codex_recovery_key(target: dict[str, str], delegation_id: str) -> str:
@@ -710,11 +732,12 @@ def _recover_codex_submit(
         )
         if sent.get("error"):
             raise LiveReadError(str(sent["error"]))
-        post = _capture_visible_target(target)
+        verified = _poll_codex_submit_verification(target, delegation_id)
         return {
             **sent,
             "delegation_id": delegation_id,
-            "verified": codex_submit_recovery_verified(post["output"], delegation_id),
+            "submission": "verified" if verified else "unknown",
+            "verified": verified,
         }
 
 
@@ -1914,8 +1937,10 @@ def build_live_coordinator_system_prompt(
             f"one guarded command: `{live_command} recover-codex-submit <session> <DELEGATION_ID>`.",
             "11. The guarded command recaptures only the visible pane, rejects menus, confirmations, shell prompts, "
             "activity, non-Codex processes, mismatched delegations, and every second attempt before sending Enter. "
-            "It accepts no task-text argument. After it returns, peek again; if the delegation is still unsubmitted, "
-            "report it blocked and never fall back to `send --enter` or resend the task.",
+            "It accepts no task-text argument and polls briefly after Enter. `submission=verified` is positive evidence; "
+            "`submission=unknown` means Enter was delivered but redraw evidence was inconclusive. On unknown, continue "
+            "bounded peeks and report uncertainty; do not declare the worker blocked solely from that result; never "
+            "fall back to `send --enter` or resend the task.",
             "12. Monitor with bounded, non-aggressive peeks. Never detect completion by searching the whole capture for "
             "WORKER_DONE or WORKER_BLOCKED: the delegated task and composer may echo both strings. Accept status only "
             "from one exact standalone line with the current DELEGATION_ID in the latest worker-authored response after "
@@ -2385,9 +2410,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 f"[mesh live recover-codex-submit] target={result['owner']}/{result['name']} "
                 f"pane={result['pane_id']} delegation={result['delegation_id']} "
-                f"enter=yes verified={'yes' if result['verified'] else 'no'}"
+                f"enter_delivered=yes submission={result['submission']}"
             )
-            return 0 if result["verified"] else 1
+            return 0 if result["submission"] == "verified" else 1
 
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise LiveReadError("attach requires an interactive terminal")
