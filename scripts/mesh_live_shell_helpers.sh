@@ -43,15 +43,16 @@ _ws_tmux_target_dir() {
 }
 
 _ws_host_reachable() {
-  local target host
+  local target
   target="$1"
-  host="${target#*@}"
-  host="$(printf '%s' "$host" | sed 's/^\[//; s/\]$//')"
-  if command -v nc >/dev/null 2>&1; then
-    nc -z -w 1 "$host" 22 >/dev/null 2>&1
-    return $?
-  fi
-  ping -c 1 "$host" >/dev/null 2>&1
+  [[ -n "$target" ]] || return 1
+  command ssh \
+    -o BatchMode=yes \
+    -o ControlMaster=no \
+    -o ControlPath=none \
+    -o ConnectionAttempts=1 \
+    -o ConnectTimeout="${MESH_WS_PROBE_TIMEOUT:-3}" \
+    "$target" true </dev/null >/dev/null 2>&1
 }
 
 _ws_mosh_host() {
@@ -62,12 +63,12 @@ _ws_mosh_host() {
   fi
   vpn_host="${MESH_WS_VPN_HOST:-sam@10.0.0.2}"
   lan_host="${MESH_WS_LAN_HOST:-sam@172.23.0.42}"
-  if _ws_host_reachable "$vpn_host"; then
-    printf '%s' "$vpn_host"
-    return 0
-  fi
   if _ws_host_reachable "$lan_host"; then
     printf '%s' "$lan_host"
+    return 0
+  fi
+  if _ws_host_reachable "$vpn_host"; then
+    printf '%s' "$vpn_host"
     return 0
   fi
   return 1

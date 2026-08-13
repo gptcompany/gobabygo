@@ -378,7 +378,9 @@ export MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo-runtime/scripts/mesh
 Updating that runtime is a deployment operation; it must not reset, clean, or
 pull through an unrelated dirty worktree.
 
-- Direct reachable VPN/LAN host: `attach` prefers mosh.
+- Direct reachable LAN/VPN host: `attach` prefers mosh. The shell helpers try
+  authenticated SSH over LAN first, then VPN, avoiding a stale VPN UDP path while
+  the operator is on the same LAN.
 - Persistent create/attach runs one short read-only SSH preflight before mosh to
   validate the repo, scoped resume ID, and existing coordinator. This is required
   because mosh does not reliably propagate the remote command's exit status.
@@ -389,7 +391,8 @@ pull through an unrelated dirty worktree.
 - Read-only and send controls use short SSH calls.
 - `MESH_LIVE_HOSTS` can set an explicit comma-separated fallback order for `mesh live`.
 - `MESH_WS_CONTROL_HOST` forces the shell-helper control host.
-- `MESH_MOSH_HOST` must be a trusted direct VPN/LAN endpoint.
+- `MESH_MOSH_HOST` must be a trusted direct VPN/LAN endpoint and overrides the
+  automatic LAN-first selection.
 
 Do not expose mosh as a public bypass around VPN/firewall policy.
 

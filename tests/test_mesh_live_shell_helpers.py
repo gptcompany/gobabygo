@@ -158,32 +158,70 @@ MESH_WS_CONTROL_HOST=forced-host _ws_control_host; printf '\\n'
 
 
 @pytest.mark.parametrize("shell", _shells())
-def test_reachability_probe_handles_user_and_bracketed_hosts(shell: str) -> None:
+def test_reachability_probe_requires_authenticated_ssh(
+    shell: str, tmp_path: Path
+) -> None:
     helper = shlex.quote(str(HELPERS))
+    capture_file = tmp_path / "ssh-args"
+    _fake_capture_command(tmp_path, "ssh")
     proc = _run_shell(
         shell,
         f"""
-exec 3>&1
-nc() {{ printf '<%s>\\n' "$@" >&3; return 0; }}
+export PATH={shlex.quote(str(tmp_path))}:$PATH
+export CAPTURE_FILE={shlex.quote(str(capture_file))}
 source {helper}
 _ws_host_reachable sam@10.0.0.2
-_ws_host_reachable 'sam@[fd00::2]'
 """,
     )
 
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.splitlines() == [
-        "<-z>",
-        "<-w>",
-        "<1>",
-        "<10.0.0.2>",
-        "<22>",
-        "<-z>",
-        "<-w>",
-        "<1>",
-        "<fd00::2>",
-        "<22>",
+    assert proc.stdout == ""
+    assert capture_file.read_text(encoding="utf-8").splitlines() == [
+        "<-o>",
+        "<BatchMode=yes>",
+        "<-o>",
+        "<ControlMaster=no>",
+        "<-o>",
+        "<ControlPath=none>",
+        "<-o>",
+        "<ConnectionAttempts=1>",
+        "<-o>",
+        "<ConnectTimeout=3>",
+        "<sam@10.0.0.2>",
+        "<true>",
     ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_host_prefers_reachable_lan(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_ws_host_reachable() {{ return 0; }}
+_ws_mosh_host
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "sam@172.23.0.42"
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_host_falls_back_to_vpn_when_lan_ssh_probe_fails(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_ws_host_reachable() {{ [[ "$1" == "sam@10.0.0.2" ]]; }}
+_ws_mosh_host
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "sam@10.0.0.2"
 
 
 def test_installer_is_idempotent_and_sources_canonical_live_helpers(tmp_path: Path) -> None:
