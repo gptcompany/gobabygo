@@ -2180,6 +2180,7 @@ def build_live_coordinator_system_prompt(
             *workflow_policy,
             "The workflow projection is policy input only: it does not authorize router use, iTerm2, session creation, or nested AI launch.",
             "Live workflow role boundaries:",
+            "- These boundaries are coordinator contract rules, not filesystem locks or an OS sandbox. Recheck tmux ownership and Git state before and after every delegated write or review.",
             "- You are the final operator-facing adjudicator. Template lead/president/worker roles are desired perspectives, not authority to launch CLIs.",
             "- Keep at most one active writer per repository. You may synthesize requirements, plans, and non-secret delegation briefs, but never edit source code yourself.",
             "- Map template target_cli to a ready existing session when available. Only ensure-codex may create a missing worker; never create Gemini or Claude sessions.",

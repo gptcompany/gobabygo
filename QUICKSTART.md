@@ -296,6 +296,8 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - Speckit live keeps one writer per repo; Codex/Gemini challenger roles use
   different existing sessions when available, and missing perspectives are
   reported as degraded coverage rather than silently skipped
+- workflow role boundaries are coordinator contract rules, not filesystem
+  locks or an OS sandbox; YOLO workers retain their Dell user permissions
 - only `ensure-codex` may create a missing live worker; template roles do not
   authorize Claude/Gemini spawn, nested AI launch, router use, or iTerm2
 - the coordinator reuses existing workers and may bootstrap one deterministic

@@ -191,6 +191,12 @@ technical consistency, Gemini challenges product/UX consequences, and the
 coordinator performs the final operator-facing adjudication.
 
 Template roles are desired perspectives, not permission to spawn processes.
+The following are coordinator contract rules, not filesystem locks or an OS
+sandbox. `mesh live` validates session identity and bounded keyboard delivery,
+but YOLO workers retain every permission of their Dell user. The coordinator
+must recheck tmux ownership and Git state before and after delegated writes or
+reviews.
+
 The live adapter follows these boundaries:
 
 1. Keep one active writer per repository.

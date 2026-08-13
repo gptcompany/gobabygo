@@ -1464,6 +1464,8 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "at most one active writer per repository" in prompt
     assert "different tmux session from the writer" in prompt
     assert "YOLO mode is not a sandbox" in prompt
+    assert "not filesystem locks or an OS sandbox" in prompt
+    assert "Recheck tmux ownership and Git state" in prompt
     assert "never create Gemini or Claude sessions" in prompt
     assert "different session of the same model is an independent context" in prompt
     assert "report degraded coverage" in prompt
