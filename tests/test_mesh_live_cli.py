@@ -1226,6 +1226,69 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
     assert module.codex_composer_has_delegation(screen, "delegation-1234") is expected
 
 
+@pytest.mark.parametrize(
+    ("screen", "expected"),
+    [
+        ("Codex\n› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo", 1085),
+        ("› [Pasted Content 1 char]\n  gpt-5.4 · /repo", 1),
+        ("› prefix [Pasted Content 1085 chars]\n  gpt-5.4 · /repo", None),
+        ("› [Pasted Content 1085 chars] suffix\n  gpt-5.4 · /repo", None),
+        (
+            "• Working (2s)\n› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo",
+            None,
+        ),
+        ("› [Pasted Content 1085 chars]\nPress Enter to confirm", None),
+        ("› [Pasted Content 1085 chars]", None),
+    ],
+)
+def test_codex_recovery_recognizes_only_safe_collapsed_paste(
+    screen: str, expected: int | None
+) -> None:
+    module = _load_module()
+
+    assert module.codex_composer_collapsed_paste_chars(screen) == expected
+
+
+def test_codex_collapsed_paste_receipt_requires_exact_recent_target() -> None:
+    module = _load_module()
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    key = module._codex_recovery_key(target, "delegation-1234")
+    state = {
+        "version": 1,
+        "attempts": {},
+        "deliveries": {
+            key: {
+                **target,
+                "delegation_id": "delegation-1234",
+                "text_chars": 1085,
+                "text_sha256": "a" * 64,
+                "delivered_at": 1000.0,
+            }
+        },
+    }
+
+    assert module._codex_delivery_matches_collapsed_paste(
+        state, target, "delegation-1234", 1085, now=1001.0
+    )
+    assert not module._codex_delivery_matches_collapsed_paste(
+        state, target, "delegation-1234", 1084, now=1001.0
+    )
+    assert not module._codex_delivery_matches_collapsed_paste(
+        state,
+        {**target, "pane_id": "%8"},
+        "delegation-1234",
+        1085,
+        now=1001.0,
+    )
+    assert not module._codex_delivery_matches_collapsed_paste(
+        state,
+        target,
+        "delegation-1234",
+        1085,
+        now=1000.0 + module.CODEX_DELIVERY_RECEIPT_MAX_AGE + 1,
+    )
+
+
 def test_codex_recovery_verification_accepts_clear_composer_or_current_running_state() -> None:
     module = _load_module()
     historical_activity = (
@@ -1249,6 +1312,10 @@ def test_codex_recovery_verification_accepts_clear_composer_or_current_running_s
         "› Explain Working (9s) and esc to interrupt "
         "DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo"
     )
+    collapsed_paste_still_queued = (
+        "────────────────────\n"
+        "› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo"
+    )
 
     assert module.codex_submit_recovery_verified(historical_activity, "delegation-1234") is False
     assert module.codex_submit_recovery_verified(current_activity, "delegation-1234") is True
@@ -1260,6 +1327,113 @@ def test_codex_recovery_verification_accepts_clear_composer_or_current_running_s
         )
         is False
     )
+    assert (
+        module.codex_submit_recovery_verified(
+            collapsed_paste_still_queued, "delegation-1234"
+        )
+        is False
+    )
+
+
+def test_codex_recovery_accepts_matching_collapsed_paste_receipt_once(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    key = module._codex_recovery_key(target, "delegation-1234")
+    state_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "attempts": {},
+                "deliveries": {
+                    key: {
+                        **target,
+                        "delegation_id": "delegation-1234",
+                        "text_chars": 1085,
+                        "text_sha256": "a" * 64,
+                        "delivered_at": module.time.time(),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    sep = module._FIELD_SEPARATOR
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(args, stdout=sep.join(["codex-worker", "codex"]) + "\n")
+        if "capture-pane" in args:
+            return _completed(
+                args,
+                stdout="› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 1)
+
+    first = module.handle_remote_request(
+        {
+            "op": "recover_codex_submit",
+            "target": target,
+            "delegation_id": "delegation-1234",
+        }
+    )
+    with pytest.raises(module.LiveReadError, match="already attempted"):
+        module.handle_remote_request(
+            {
+                "op": "recover_codex_submit",
+                "target": target,
+                "delegation_id": "delegation-1234",
+            }
+        )
+
+    assert first["evidence"] == "collapsed-paste-receipt"
+    assert first["submission"] == "unknown"
+    assert sum(command[-1] == "Enter" for command in commands if command) == 1
+
+
+def test_codex_recovery_refuses_untracked_collapsed_paste_without_input(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(tmp_path / "recovery.json")
+    )
+    sep = module._FIELD_SEPARATOR
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(args, stdout=sep.join(["codex-worker", "codex"]) + "\n")
+        if "capture-pane" in args:
+            return _completed(
+                args,
+                stdout="› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.LiveReadError, match="recent matching"):
+        module.handle_remote_request(
+            {
+                "op": "recover_codex_submit",
+                "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+                "delegation_id": "delegation-1234",
+            }
+        )
+
+    assert not any("send-keys" in command for command in commands)
 
 
 def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp_path) -> None:

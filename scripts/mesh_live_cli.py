@@ -31,6 +31,7 @@ DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
 DEFAULT_CODEX_RECOVERY_STATE_FILE = "~/.local/state/gobabygo/mesh-live-codex-recovery.json"
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
 CODEX_RECOVERY_VERIFY_INTERVAL = 0.25
+CODEX_DELIVERY_RECEIPT_MAX_AGE = 15 * 60
 MAX_CAPTURE_LINES = 2000
 MAX_SEND_CHARS = 8192
 _FIELD_SEPARATOR = "\x1f"
@@ -546,6 +547,10 @@ _CODEX_UNSAFE_INPUT = re.compile(
 )
 _CODEX_FOOTER = re.compile(r"(?im)^\s*gpt-[^\n]*·")
 _CODEX_SEPARATOR = re.compile(r"^\s*[─━-]{8,}\s*$")
+_CODEX_COLLAPSED_PASTE = re.compile(
+    r"^\s*›\s*\[Pasted Content (?P<chars>[1-9][0-9]*) chars?\]\s*$",
+    re.IGNORECASE,
+)
 
 
 def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
@@ -597,10 +602,72 @@ def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bo
     return True
 
 
+def _codex_collapsed_paste_chars(composer: str) -> int | None:
+    content_lines: list[str] = []
+    footer_found = False
+    for line in str(composer or "").splitlines():
+        if _CODEX_FOOTER.search(line):
+            footer_found = True
+            break
+        if line.strip():
+            content_lines.append(line)
+    if not footer_found or len(content_lines) != 1:
+        return None
+    match = _CODEX_COLLAPSED_PASTE.fullmatch(content_lines[0])
+    return int(match.group("chars")) if match else None
+
+
+def codex_composer_collapsed_paste_chars(visible_screen: str) -> int | None:
+    composer, current_region = _codex_visible_regions(visible_screen)
+    if not composer:
+        return None
+    chars = _codex_collapsed_paste_chars(composer)
+    if chars is None:
+        return None
+    if _CODEX_ACTIVITY.search(current_region) or _CODEX_UNSAFE_INPUT.search(composer):
+        return None
+    return chars
+
+
+def _codex_delivery_matches_collapsed_paste(
+    state: dict[str, Any],
+    target: dict[str, str],
+    delegation_id: str,
+    text_chars: int,
+    *,
+    now: float,
+) -> bool:
+    receipt = state["deliveries"].get(_codex_recovery_key(target, delegation_id))
+    if not isinstance(receipt, dict):
+        return False
+    expected = {
+        "owner": target["owner"],
+        "name": target["name"],
+        "pane_id": target["pane_id"],
+        "delegation_id": delegation_id,
+    }
+    if any(str(receipt.get(field) or "") != value for field, value in expected.items()):
+        return False
+    try:
+        receipt_chars = int(receipt.get("text_chars"))
+        delivered_at = float(receipt.get("delivered_at"))
+    except (TypeError, ValueError):
+        return False
+    age = now - delivered_at
+    return (
+        receipt_chars == text_chars
+        and 0 <= age <= CODEX_DELIVERY_RECEIPT_MAX_AGE
+        and re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("text_sha256") or ""))
+        is not None
+    )
+
+
 def codex_submit_recovery_verified(visible_screen: str, delegation_id: str) -> bool:
     composer, _current_region = _codex_visible_regions(visible_screen)
-    composer_cleared = bool(composer) and not _codex_composer_contains_delegation(
-        composer, delegation_id
+    composer_cleared = (
+        bool(composer)
+        and not _codex_composer_contains_delegation(composer, delegation_id)
+        and _codex_collapsed_paste_chars(composer) is None
     )
     return composer_cleared or codex_screen_shows_current_activity(visible_screen)
 
@@ -730,12 +797,23 @@ def _recover_codex_submit(
         raise ValueError("Codex recovery state file is required")
     with _codex_recovery_lock(state_file):
         fresh = _capture_visible_target(target)
-        if not codex_composer_has_delegation(fresh["output"], delegation_id):
+        state = _load_codex_recovery_state(state_file)
+        exact_delegation = codex_composer_has_delegation(
+            fresh["output"], delegation_id
+        )
+        collapsed_chars = codex_composer_collapsed_paste_chars(fresh["output"])
+        correlated_paste = collapsed_chars is not None and _codex_delivery_matches_collapsed_paste(
+            state,
+            fresh,
+            delegation_id,
+            collapsed_chars,
+            now=time.time(),
+        )
+        if not exact_delegation and not correlated_paste:
             raise LiveReadError(
                 "Codex recovery refused: the bottom visible composer does not hold the exact delegation, "
-                "or the pane shows activity or an unsafe prompt"
+                "or a recent matching collapsed-paste receipt, or the pane shows activity or an unsafe prompt"
             )
-        state = _load_codex_recovery_state(state_file)
         key = _codex_recovery_key(fresh, delegation_id)
         attempts = state["attempts"]
         if key in attempts:
@@ -765,6 +843,7 @@ def _recover_codex_submit(
             "delegation_id": delegation_id,
             "submission": "verified" if verified else "unknown",
             "verified": verified,
+            "evidence": "exact-delegation" if exact_delegation else "collapsed-paste-receipt",
         }
 
 
