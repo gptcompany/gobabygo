@@ -524,6 +524,46 @@ def test_remote_send_tracks_codex_delivery_without_storing_text(
     assert message not in state_path.read_text(encoding="utf-8")
 
 
+def test_remote_send_reports_untracked_after_receipt_failure_without_resend(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(
+        module,
+        "_record_codex_delivery",
+        lambda *_args: (_ for _ in ()).throw(module.LiveReadError("state unavailable")),
+    )
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+            "text": "DELEGATION_ID=delegation-1234 read /repo/brief.md",
+            "enter": True,
+            "delegation_id": "delegation-1234",
+        }
+    )
+
+    assert result["text_sent"] is True
+    assert result["enter_sent"] is True
+    assert result["delivery_tracked"] is False
+    assert result["tracking_error"] == "state unavailable"
+    assert sum("send-keys" in command for command in commands) == 2
+
+
 @pytest.mark.parametrize(
     ("text", "enter", "error"),
     [

@@ -902,12 +902,20 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if result.get("error") or not delegation_id:
             return result
-        _record_codex_delivery(
-            result,
-            delegation_id,
-            text,
-            DEFAULT_CODEX_RECOVERY_STATE_FILE,
-        )
+        try:
+            _record_codex_delivery(
+                result,
+                delegation_id,
+                text,
+                DEFAULT_CODEX_RECOVERY_STATE_FILE,
+            )
+        except LiveReadError as exc:
+            return {
+                **result,
+                "delegation_id": delegation_id,
+                "delivery_tracked": False,
+                "tracking_error": redact_capture(str(exc)),
+            }
         return {
             **result,
             "delegation_id": delegation_id,
@@ -2551,8 +2559,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"text_delivered={'yes' if result['text_sent'] else 'no'} "
                 f"enter_delivered={'yes' if result['enter_sent'] else 'no'} "
                 f"submission={'unknown' if result['enter_sent'] else 'not-requested'}"
-                f"{' delegation=' + result['delegation_id'] + ' tracked=yes' if result.get('delivery_tracked') else ''}"
+                f"{' delegation=' + result['delegation_id'] + ' tracked=' + ('yes' if result.get('delivery_tracked') else 'no') if result.get('delegation_id') else ''}"
             )
+            if result.get("tracking_error"):
+                print(
+                    f"Warning: delivery receipt unavailable: {result['tracking_error']}; "
+                    "do not resend; inspect the worker manually",
+                    file=sys.stderr,
+                )
             return 0
 
         if args.cmd == "recover-codex-submit":
