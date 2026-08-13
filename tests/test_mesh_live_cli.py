@@ -1068,6 +1068,9 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "create at most one deterministic Codex tmux worker per repository" in prompt
     assert "create sessions or launch nested AI CLIs by any other mechanism" in prompt
     assert "does not prove the CLI accepted the task" in prompt
+    assert "one literal line and at most 8192 characters" in prompt
+    assert "non-secret brief file inside the target repository" in prompt
+    assert "DELEGATION_ID, absolute brief path" in prompt
     assert "Never resend blindly" in prompt
     assert "Codex paste-settle recovery" in prompt
     assert "exact current DELEGATION_ID" in prompt
@@ -2124,6 +2127,8 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert "MESH_WS_CLOUDFLARE_HOST" in proc.stdout
     assert "does not require the router or iTerm2" in proc.stdout
     assert "only lifecycle operation" in proc.stdout
+    assert "send accepts one literal line" in proc.stdout
+    assert "submission remains unknown" in proc.stdout
 
 
 def test_mesh_dispatcher_runs_live_board_without_router_env() -> None:

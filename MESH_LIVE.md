@@ -161,6 +161,12 @@ to verify CLI acceptance, monitor completion, and inspect result/test evidence.
 A successful tmux send is not treated as delivery: the coordinator must find the
 delegation ID or clear CLI activity and must never resend blindly.
 
+`send` accepts one literal line up to 8192 characters; newlines and control
+characters are rejected. For a long or multi-line delegation, the coordinator
+writes a non-secret brief inside the target repository and sends one line with
+the `DELEGATION_ID`, absolute brief path, and instruction to read and execute
+that file. This keeps remote keyboard input bounded and auditable.
+
 Completion is not a substring search over the pane. Delegation briefs and CLI
 composers can echo both `WORKER_DONE` and `WORKER_BLOCKED`. A status is a
 candidate only when the latest worker-authored response after delegation ends
@@ -182,15 +188,19 @@ mesh live peek <codex-session> 80
 The recovery command accepts no task text. It recaptures only the current visible
 pane, checks the exact bottom composer and Codex process, rejects activity,
 menus, confirmations, shell prompts, mismatched IDs, and records the attempt
-before sending Enter. Its metadata-only state rejects every second attempt for
-the same delegation and pane. The state path is fixed by the workstation code;
+before sending Enter. It then polls the visible TUI for a bounded interval.
+`submission=verified` is positive redraw evidence; `submission=unknown` means
+Enter was delivered but the TUI did not prove acceptance in time. Unknown
+requires bounded follow-up peeks and must not alone mark the worker blocked.
+Its metadata-only state rejects every second attempt for the same delegation and
+pane. The state path is fixed by the workstation code;
 the coordinator cannot redirect that write through a CLI option or request
 payload. This keeps the recovery evidence-driven. Screen
 changes in the final interval between the atomic recapture and tmux input cannot
-be eliminated completely; the command
-narrows that race and verifies the screen again afterward. Any refusal or
-unverified result requires operator review, never fallback to task resend or a
-plain second `send --enter`.
+be eliminated completely; polling narrows that race. A refusal occurs before
+delivery and exits `2`; an inconclusive post-delivery verification exits `1` as
+unknown; verified delivery exits `0`. Never fall back to task resend or a plain
+second `send --enter`.
 
 When no suitable Codex worker exists, the automatic path may run only:
 
@@ -361,8 +371,12 @@ Treat `send` as remote keyboard access, not as a messaging API.
 2. Verify owner, session, repository, receiving prompt, and exact text.
 3. Omit `--enter` unless immediate submission is intended.
 4. Never pipe model/pane output into `wsend`, `eval`, or a shell.
+5. Use one line only. Put long/multi-line briefs in a non-secret repository file
+   and send its absolute path plus the `DELEGATION_ID`.
 
-The send path immediately checks that the pane still belongs to the discovered
+The output fields `text_delivered` and `enter_delivered` mean only that tmux
+accepted those keys; `submission=unknown` is not proof that the CLI accepted
+the task. The send path immediately checks that the pane still belongs to the discovered
 session; automatic tick sends also require a current Claude process. The pane
 can still change after that check, so this narrows but cannot eliminate the
 race. Redaction removes common terminal escapes, credentials, tokens, marked

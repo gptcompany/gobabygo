@@ -607,7 +607,10 @@ Behavior:
   Captured pane output is redacted before display and JSON output.
   ensure-codex is the only lifecycle operation: local-only, one deterministic native
   Codex worker per exact configured Git root, with no task text or send-keys.
-  send is literal and does not submit text unless --enter is explicit.
+  send accepts one literal line (max 8192 characters) and does not submit text unless
+  --enter is explicit. Store long/multi-line briefs in the target repo and send one line
+  containing the DELEGATION_ID, absolute brief path, and instruction to read it.
+  send output reports key delivery only; submission remains unknown until a fresh peek.
   send rechecks the discovered session/pane but still acts as remote keyboard input;
   verify pane state immediately beforehand because a residual race remains.
   recover-codex-submit is the guarded, stateful Enter-only path for one exact delegation.
