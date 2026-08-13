@@ -220,6 +220,11 @@ concurrent calls reuse the atomic winner. The command invokes only the trusted
 use `send-keys`, and is unavailable through the remote live endpoint. If Codex
 authentication or startup fails, the coordinator reports a blocker.
 
+The active `MESH_COORDINATOR_MESH_SCRIPT` checkout is an immutable control-plane
+runtime even when Git reports detached HEAD. `ensure-codex` rejects that exact
+Git root before tmux mutation. Gobabygo development must use a separate clean
+branch checkout or Git worktree; do not create a branch inside the live runtime.
+
 ### Periodic Supervisor
 
 `mesh live tick` is the bounded polling primitive. It must run on the Dell tmux

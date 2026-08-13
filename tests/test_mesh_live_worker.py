@@ -36,6 +36,7 @@ def test_resolve_repo_requires_configured_exact_git_root(monkeypatch, tmp_path) 
     subdir = repo / "src"
     subdir.mkdir()
     monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_control_plane_root", lambda: None)
 
     assert module.resolve_repo("rektslug") == repo
     assert module.resolve_repo(str(repo)) == repo
@@ -52,9 +53,31 @@ def test_resolve_repo_rejects_ambiguous_name(monkeypatch, tmp_path) -> None:
     _git_repo(first / "same")
     _git_repo(second / "same")
     monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", os.pathsep.join([str(first), str(second)]))
+    monkeypatch.setattr(module, "_control_plane_root", lambda: None)
 
     with pytest.raises(module.WorkerEnsureError, match="ambiguous"):
         module.resolve_repo("same")
+
+
+def test_resolve_repo_rejects_active_control_plane_before_tmux(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    runtime = _git_repo(tmp_path / "gobabygo-runtime")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_control_plane_root", lambda: runtime)
+    tmux_called = False
+    real_run = module._run_command
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal tmux_called
+        if args[0] == "tmux":
+            tmux_called = True
+        return real_run(args, timeout=timeout)
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.WorkerEnsureError, match="control-plane checkout"):
+        module.ensure_codex_worker(str(runtime))
+    assert tmux_called is False
 
 
 def test_session_name_is_sanitized_and_bounded() -> None:

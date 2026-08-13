@@ -70,6 +70,16 @@ def _git_root(path: Path) -> Path:
     return Path(proc.stdout.strip()).resolve()
 
 
+def _control_plane_root() -> Path | None:
+    script_path = Path(__file__).resolve()
+    proc = _run_command(
+        ["git", "-C", str(script_path.parent), "rev-parse", "--show-toplevel"]
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return Path(proc.stdout.strip()).resolve()
+
+
 def resolve_repo(value: str) -> Path:
     requested = str(value or "").strip()
     if not requested:
@@ -96,6 +106,12 @@ def resolve_repo(value: str) -> Path:
     git_root = _git_root(repo)
     if git_root != repo:
         raise WorkerEnsureError(f"worker target must be the Git repository root: {git_root}")
+    control_plane_root = _control_plane_root()
+    if control_plane_root is not None and git_root == control_plane_root:
+        raise WorkerEnsureError(
+            "worker target is the active mesh live control-plane checkout; use a separate "
+            "clean development checkout or Git worktree"
+        )
     return repo
 
 
