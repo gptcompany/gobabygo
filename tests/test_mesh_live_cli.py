@@ -2624,6 +2624,25 @@ def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
     assert results[0].verified is True
     assert wake_client.sends[0].startswith("MESH_LIVE_RESET_WAKE id=")
     assert "Resume the interrupted request" in wake_client.sends[0]
+    saved = state["sessions"]["sam/claude-coordinator"]
+    assert saved["session_limit_attempted_at"] == due
+    assert saved["session_limit_verified"] is True
+
+    busy_session = module.replace(session, output="✻ Working\n❯ ")
+    results, changed = module.execute_live_tick_actions(
+        WakeClient(),
+        [busy_session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=due + 60,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert results[0].action == "none"
+    assert changed is True
+    assert "session_limit_attempted_at" not in saved
 
     uncertain_state = {"version": 1, "sessions": {}}
     first = WakeClient()

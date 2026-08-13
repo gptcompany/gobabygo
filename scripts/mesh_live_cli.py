@@ -1927,8 +1927,6 @@ def execute_live_tick_actions(
                 post_state = classify_screen("claude", post.output)
                 verified = token in post.output or post_state == LiveScreenState.busy
                 saved["session_limit_verified"] = verified
-                if verified and post_state != LiveScreenState.session_limit:
-                    _clear_session_limit_state(saved)
                 results.append(
                     TickActionResult(
                         owner=session.owner,

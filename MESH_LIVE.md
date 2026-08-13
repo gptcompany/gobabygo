@@ -385,7 +385,9 @@ The session-limit wake is fail-closed. The banner must include the exact
 timezones, malformed times, non-empty composers, changed panes, or changed
 processes cause no send. The first observation must happen before the declared
 reset so the date is unambiguous. One attempt is recorded before keyboard I/O;
-an uncertain delivery is not retried automatically.
+an uncertain delivery is not retried automatically. The attempt tombstone is
+retained until a later tick observes that the pane is no longer on the exact
+session-limit screen, preventing stale scrollback from triggering a duplicate.
 
 Install the opt-in 30-minute user cron from the clean Dell runtime, not from the
 Mac checkout:
