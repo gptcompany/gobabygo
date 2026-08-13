@@ -71,6 +71,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "never creates a router thread",
         "DELEGATION_ID",
         "successful tmux send is not treated as delivery",
+        "main Codex composer is recognizable, empty, and idle",
+        "refused before any key input or receipt invalidation",
         "bounded paste-settle recovery",
         "one literal line up to 8192 characters",
         "non-secret brief inside the target repository",

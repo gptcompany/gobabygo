@@ -31,6 +31,14 @@ def _record_codex_delivery(module, target, delegation_id, text, state_path) -> N
     module._save_codex_recovery_state(str(state_path), state)
 
 
+def _ready_codex_capture(target: dict[str, str]) -> dict[str, str]:
+    return {
+        **target,
+        "command": "codex",
+        "output": "• Prior task complete\n────────────────────\n› \n  gpt-5.4 · /repo",
+    }
+
+
 def test_reader_discovers_current_users_tmux_session(monkeypatch) -> None:
     module = _load_module()
     sep = module._FIELD_SEPARATOR
@@ -508,6 +516,7 @@ def test_remote_send_tracks_codex_delivery_without_storing_text(
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module, "_capture_visible_target", _ready_codex_capture)
 
     result = module.handle_remote_request(
         {
@@ -570,6 +579,7 @@ def test_remote_send_reports_untracked_after_receipt_failure_without_resend(
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module, "_capture_visible_target", _ready_codex_capture)
     monkeypatch.setattr(
         module,
         "_save_codex_recovery_state",
@@ -614,6 +624,7 @@ def test_tracked_codex_send_records_partial_delivery_when_enter_fails(
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module, "_capture_visible_target", _ready_codex_capture)
 
     result = module.handle_remote_request(
         {
@@ -1457,6 +1468,8 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "every second attempt" in prompt
     assert "accepts no task-text argument" in prompt
     assert "never fall back to `send --enter`, a naked Enter, composer clearing" in prompt
+    assert "refuses a non-empty, active, or ambiguous composer" in prompt
+    assert "never clear or overwrite it" in prompt
     assert "context is nearly exhausted" in prompt
     assert "must not edit source files" in prompt
     assert "Workflow mode: adaptive" in prompt
@@ -1612,6 +1625,72 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
     module = _load_module()
 
     assert module.codex_composer_has_delegation(screen, "delegation-1234") is expected
+
+
+@pytest.mark.parametrize(
+    ("screen", "expected"),
+    [
+        ("────────────────────\n› \n  gpt-5.4 · /repo", True),
+        ("────────────────────\n› draft DEC-8\n  gpt-5.4 · /repo", False),
+        ("────────────────────\n› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo", False),
+        ("────────────────────\n• Working (2s)\n› \n  gpt-5.4 · /repo", False),
+        ("────────────────────\n› 1. Approve\n  2. Cancel\n  gpt-5.4 · /repo", False),
+        ("Codex starting", False),
+    ],
+)
+def test_codex_delegation_requires_empty_idle_composer(screen: str, expected: bool) -> None:
+    module = _load_module()
+
+    assert module.codex_screen_is_ready_for_delegation(screen) is expected
+
+
+def test_tracked_codex_send_refuses_occupied_composer_without_input_or_state_change(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    _record_codex_delivery(
+        module,
+        target,
+        "delegation-prior",
+        "DELEGATION_ID=delegation-prior prior",
+        str(state_path),
+    )
+    state_before = state_path.read_text(encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        if "capture-pane" in args:
+            return _completed(
+                args,
+                stdout="────────────────────\n› draft DEC-8\n  gpt-5.4 · /repo\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": target,
+            "text": "DELEGATION_ID=delegation-next read /repo/brief.md",
+            "enter": True,
+            "delegation_id": "delegation-next",
+        }
+    )
+
+    assert "composer is not empty and idle" in result["error"]
+    assert not any("send-keys" in command for command in commands)
+    assert state_path.read_text(encoding="utf-8") == state_before
 
 
 @pytest.mark.parametrize(

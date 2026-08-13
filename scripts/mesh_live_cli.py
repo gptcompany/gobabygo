@@ -619,6 +619,33 @@ def codex_screen_shows_current_activity(visible_screen: str) -> bool:
     return _CODEX_ACTIVITY.search(activity_region) is not None
 
 
+def codex_screen_is_ready_for_delegation(visible_screen: str) -> bool:
+    """Accept only a recognizable, empty, idle Codex composer."""
+    composer, current_region = _codex_visible_regions(visible_screen)
+    if not composer or _CODEX_ACTIVITY.search(current_region):
+        return False
+    if _CODEX_UNSAFE_INPUT.search(composer):
+        return False
+
+    footer_found = False
+    for index, line in enumerate(composer.splitlines()):
+        if _CODEX_FOOTER.search(line):
+            footer_found = True
+            continue
+        if footer_found:
+            if line.strip():
+                return False
+            continue
+        content = line
+        if index == 0:
+            _prefix, separator, content = line.partition("›")
+            if not separator:
+                return False
+        if content.strip():
+            return False
+    return footer_found
+
+
 def codex_composer_has_delegation(visible_screen: str, delegation_id: str) -> bool:
     """Recognize only the bottom-most visible Codex composer holding this delegation."""
     composer, current_region = _codex_visible_regions(visible_screen)
@@ -973,6 +1000,13 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
                 state = _load_codex_recovery_state(
                     DEFAULT_CODEX_RECOVERY_STATE_FILE
                 )
+                if delegation_id:
+                    fresh = _capture_visible_target(validated)
+                    if not codex_screen_is_ready_for_delegation(fresh["output"]):
+                        raise LiveReadError(
+                            "tracked Codex delivery refused: the visible composer is not empty and idle; "
+                            "inspect it manually or select another authorized idle worker"
+                        )
                 if _discard_codex_deliveries_in_state(state, validated):
                     _save_codex_recovery_state(
                         DEFAULT_CODEX_RECOVERY_STATE_FILE, state
@@ -2226,6 +2260,9 @@ def build_live_coordinator_system_prompt(
             "7. Send the task to the exact worker, then peek again to verify the DELEGATION_ID or clear CLI activity. "
             "For Codex, pass the same `--delegation-id <DELEGATION_ID>` to enable guarded recovery. For another existing CLI, "
             "include the ID in the text but omit the Codex-only tracking option.",
+            "Before tracked Codex text is delivered, send recaptures the pane and refuses a non-empty, active, or ambiguous composer. "
+            "On refusal, never clear or overwrite it: recover only a correlated prior delegation under step 10; otherwise use another "
+            "authorized idle worker or report the manual blocker.",
             "8. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
             "9. If delivery is uncertain, inspect again and report uncertainty. Never resend blindly or duplicate a task.",
             "10. Codex paste-settle recovery: only when an immediate peek shows the exact current DELEGATION_ID, "

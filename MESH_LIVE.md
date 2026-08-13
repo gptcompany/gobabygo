@@ -244,11 +244,18 @@ the live projection never creates a router thread and never takes ownership of
 manual tmux sessions.
 
 Tracked Codex sends serialize receipt invalidation, tmux input, and receipt
-creation under the recovery lock. `submission=not-submitted` means task text was
-delivered but the requested Enter failed; the receipt remains available for the
-guarded recovery, and the task must not be resent. A receipt write failure after
-text delivery is reported as `tracked=no` and also requires manual inspection,
-not resend.
+creation under the recovery lock. Before a tracked send, Mesh recaptures the
+visible pane and proceeds only when the main Codex composer is recognizable,
+empty, and idle. Existing draft text, a collapsed paste, activity, menus,
+confirmations, and ambiguous startup screens are refused before any key input or
+receipt invalidation. Mesh never clears that content automatically; inspect it
+manually or select another authorized idle worker. If the composer contains a
+correlated prior delegation, use only its guarded submit recovery. Otherwise
+report the manual blocker; never overwrite the draft. `submission=not-submitted`
+means task text was delivered but the requested Enter failed; the receipt remains
+available for the guarded recovery, and the task must not be resent. A receipt
+write failure after text delivery is reported as `tracked=no` and also requires
+manual inspection, not resend.
 
 `send` accepts one literal line up to 8192 characters; newlines and control
 characters are rejected. For a long or multi-line delegation, the coordinator
