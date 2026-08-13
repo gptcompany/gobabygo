@@ -651,6 +651,7 @@ _CODEX_COLLAPSED_PASTE_MARKER = re.compile(r"\[Pasted Content\b", re.IGNORECASE)
 _CODEX_EMPTY_COMPOSER_PLACEHOLDERS = frozenset(
     {
         "Improve documentation in @filename",
+        "Write tests for @filename",
     }
 )
 

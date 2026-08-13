@@ -1736,6 +1736,14 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
             "  gpt-5.6-sol xhigh · /repo",
             True,
         ),
+        (
+            "⚠ MCP client for `openmemory` timed out after 30 seconds.\n"
+            "⚠ MCP startup incomplete (failed: openmemory)\n\n"
+            "────────────────────\n"
+            "› Write tests for @filename\n"
+            "  gpt-5.6-sol xhigh · /repo · Context 100%",
+            True,
+        ),
         ("────────────────────\n› draft DEC-8\n  gpt-5.4 · /repo", False),
         (
             "────────────────────\n"
