@@ -606,6 +606,82 @@ def test_codex_delivery_receipt_replaces_prior_receipt_for_same_pane(tmp_path) -
     assert "text_sha256" not in receipts[0]
 
 
+def test_untracked_codex_send_discards_prior_delivery_receipt(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    module._record_codex_delivery(
+        target,
+        "delegation-first",
+        "DELEGATION_ID=delegation-first first",
+        str(state_path),
+    )
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": target,
+            "text": "status?",
+            "enter": True,
+        }
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert result["text_sent"] is True
+    assert state["deliveries"] == {}
+
+
+def test_changed_send_target_does_not_discard_delivery_receipt(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    module._record_codex_delivery(
+        target,
+        "delegation-first",
+        "DELEGATION_ID=delegation-first first",
+        str(state_path),
+    )
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(
+        module,
+        "_run_command",
+        lambda args, timeout=10.0: _completed(
+            args,
+            stdout=module._FIELD_SEPARATOR.join(["another-session", "codex"]) + "\n",
+        ),
+    )
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": target,
+            "text": "status?",
+            "enter": True,
+        }
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "error" in result
+    assert len(state["deliveries"]) == 1
+
+
 @pytest.mark.parametrize(
     ("text", "enter", "error"),
     [

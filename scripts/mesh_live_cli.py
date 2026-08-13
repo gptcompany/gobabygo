@@ -436,6 +436,7 @@ def _send_target(
     *,
     enter: bool,
     expected_commands: Sequence[str] = (),
+    before_input: Callable[[dict[str, str]], None] | None = None,
 ) -> dict[str, Any]:
     owner = str(target.get("owner") or "")
     name = str(target.get("name") or "")
@@ -469,6 +470,15 @@ def _send_target(
                 f"{','.join(sorted(expected))}, found {current_command or '<empty>'}"
             )
         }
+
+    validated_target = {
+        "owner": owner,
+        "name": name,
+        "pane_id": pane_id,
+        "command": current_command,
+    }
+    if before_input is not None:
+        before_input(validated_target)
 
     if text:
         try:
@@ -812,6 +822,34 @@ def _record_codex_delivery(
         _save_codex_recovery_state(state_file, state)
 
 
+def _discard_codex_deliveries(target: dict[str, Any], state_file: str) -> None:
+    state_path = Path(state_file).expanduser()
+    if not state_path.exists():
+        return
+    with _codex_recovery_lock(state_file):
+        state = _load_codex_recovery_state(state_file)
+        deliveries = state["deliveries"]
+        pane_identity = {
+            "owner": str(target.get("owner") or ""),
+            "name": str(target.get("name") or ""),
+            "pane_id": str(target.get("pane_id") or ""),
+        }
+        stale_keys = [
+            key
+            for key, receipt in deliveries.items()
+            if isinstance(receipt, dict)
+            and all(
+                str(receipt.get(field) or "") == value
+                for field, value in pane_identity.items()
+            )
+        ]
+        if not stale_keys:
+            return
+        for key in stale_keys:
+            del deliveries[key]
+        _save_codex_recovery_state(state_file, state)
+
+
 def _recover_codex_submit(
     target: dict[str, Any], delegation_id: str, state_file: str
 ) -> dict[str, Any]:
@@ -922,6 +960,13 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
             text,
             enter=enter,
             expected_commands=expected_commands,
+            before_input=lambda validated: (
+                _discard_codex_deliveries(
+                    validated, DEFAULT_CODEX_RECOVERY_STATE_FILE
+                )
+                if validated["command"] in {"codex", "codex-cli"}
+                else None
+            ),
         )
         if result.get("error") or not delegation_id:
             return result
