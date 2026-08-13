@@ -1704,6 +1704,14 @@ def test_coordinator_system_prompt_keeps_forced_speckit_at_coordinator_scope() -
             True,
         ),
         (
+            "WORKER_BLOCKED prior-delegation\n"
+            "─ Worked for 6m 55s ─────────────────────\n\n"
+            "› DELEGATION_ID: delegation-1234 — read /repo/brief.md\n"
+            "  and complete the review\n\n"
+            "  gpt-5.6-sol xhigh · /repo · Context 36%",
+            True,
+        ),
+        (
             "• Ran old command\n────────────────────\n• Working (2s)\n"
             "› Implement fix DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo",
             False,

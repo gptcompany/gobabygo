@@ -638,7 +638,10 @@ _CODEX_UNSAFE_INPUT = re.compile(
     r"^\s*›\s*\d+[.)]\s|^\s*[$#%]\s+)"
 )
 _CODEX_FOOTER = re.compile(r"(?im)^\s*gpt-[^\n]*·")
-_CODEX_SEPARATOR = re.compile(r"^\s*[─━-]{8,}\s*$")
+_CODEX_SEPARATOR = re.compile(
+    r"^\s*[─━-]{2,}(?:\s+Worked for \d+(?:h|m|s)(?:\s+\d+(?:h|m|s))*\s+)?[─━-]{2,}\s*$",
+    re.IGNORECASE,
+)
 _CODEX_COLLAPSED_PASTE = re.compile(
     r"^\s*›\s*\[Pasted Content (?P<chars>[1-9][0-9]*) chars\]\s*$",
     re.IGNORECASE,
