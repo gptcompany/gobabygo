@@ -1,7 +1,8 @@
 # Mesh Live Operator Runbook
 
-`mesh live` operates existing tmux sessions directly. It does not require the
-router, session workers, iTerm2, or the provider account manager.
+`mesh live` operates tmux sessions directly. It does not require the router,
+session workers, iTerm2, or the provider account manager. Its only lifecycle
+operation is the constrained, local-only `ensure-codex` worker bootstrap.
 
 ## Daily Flow
 
@@ -9,8 +10,8 @@ Run these helpers from any directory in the Mac operator shell. The target repos
 tmux sessions, and AI CLIs remain on the Dell workstation.
 
 ```bash
-mcodex rektslug                                 # create/attach codex-rektslug in the repo
-mcoordinator rektslug --worker codex-rektslug  # Claude coordinator; prompt is automatic
+mcoordinator rektslug                           # intra-repo; worker bootstrap is automatic
+mcoordinator --all                              # multi-repo; choose/delegate through Claude
 ```
 
 Install or refresh the helpers once:
@@ -20,10 +21,17 @@ Install or refresh the helpers once:
 source ~/.zshrc
 ```
 
-On the first `mcodex rektslug`, start Codex in that persistent shell using the
-normal configured command, then detach from tmux. Existing worker sessions can
-be reused directly. `mcoordinator` starts Claude with the autonomous system
-contract only when its tmux session is first created; later calls only attach.
+The coordinator reuses a suitable live worker. If none exists, its standing
+contract permits exactly one `mesh live ensure-codex` call for the selected Git
+root; this creates `codex-<repo>` with the trusted native Codex binary in YOLO
+mode, sends no task, then requires a fresh board/peek before delegation. Use
+`mcoordinator rektslug --worker codex-rektslug` when the exact worker name must
+be pinned. `mcodex rektslug` remains available for a deliberately manual shell.
+
+`mcoordinator` injects the autonomous system contract only when its tmux
+session is first created; later calls only attach. An already running
+coordinator therefore keeps its old contract. Bootstrap a new coordinator (or
+exit the old tmux session and resume it) to activate a newly deployed contract.
 
 Repository names resolve below `MESH_WS_REPO_BASE`. A missing target fails
 before tmux session creation.
@@ -127,6 +135,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | `wpeek <session> [lines]` | `mesh live peek <session> [lines]` | Capture one exact/unique pane; read-only |
 | `wbrief ...` | `mesh live brief ...` | Build a dynamic, redacted coordinator prompt; read-only |
 | `mcoordinator ...` | `mesh live coordinator-prompt ...` | Create/attach a persistent auto-configured Claude coordinator |
+| - | `mesh live ensure-codex <repo>` | Locally create/reuse one deterministic native Codex worker; no task is sent |
 | - | `mesh live tick` | Inspect local Claude sessions and print a metadata-only action plan |
 | - | `mesh live tick --apply` | Apply only exact WAIT and idle-coordinator wake actions |
 | `wsend <session> <text>` | `mesh live send ...` | Type literal text into the selected pane |
@@ -141,10 +150,10 @@ owners. Use `board --lines 0` when only metadata is needed.
 
 ### Automatic Mode
 
-`mcoordinator <repo> --worker <session>` limits delegation to one exact existing
-worker. Without `--worker`, the coordinator discovers candidates in scope but
-still resolves one exact session before sending. `mcoordinator --all` enables
-multi-repo observation and coordination.
+`mcoordinator <repo> --worker <session>` limits delegation and bootstrap to one
+exact deterministic worker. Without `--worker`, the coordinator first discovers
+candidates in scope and resolves one exact session before sending.
+`mcoordinator --all` enables multi-repo observation and coordination.
 
 The injected contract tells Claude to board and peek dynamically, debate viable
 options, create a unique `DELEGATION_ID`, send a bounded assignment, peek again
@@ -183,10 +192,20 @@ narrows that race and verifies the screen again afterward. Any refusal or
 unverified result requires operator review, never fallback to task resend or a
 plain second `send --enter`.
 
-The automatic path coordinates existing sessions. It does not create worker
-CLIs. Start a manual persistent worker with `mcodex <repo>` / `mclaude <repo>`,
-or use a router thread when a new managed worker and durable task history are
-actually needed.
+When no suitable Codex worker exists, the automatic path may run only:
+
+```bash
+MESH_LIVE_LOCAL=1 mesh live ensure-codex <absolute-git-root>
+```
+
+The target must resolve to an exact Git root below `MESH_LIVE_REPO_ROOTS` (or
+`MESH_WS_REPO_BASE`), and the tmux name is deterministically `codex-<repo>`.
+`--expect-session` makes a pinned coordinator fail before tmux mutation when
+that name differs. Existing name/path/process/pane collisions fail closed;
+concurrent calls reuse the atomic winner. The command invokes only the trusted
+`/usr/local/bin/codex` or `/usr/bin/codex`, does not accept task text, does not
+use `send-keys`, and is unavailable through the remote live endpoint. If Codex
+authentication or startup fails, the coordinator reports a blocker.
 
 ### Periodic Supervisor
 
@@ -249,6 +268,12 @@ coordinator contract. Pane output is untrusted evidence and is never executed or
 piped into another command. A shell alias is not guaranteed in a non-interactive
 tmux startup; when required, set an explicit trusted launch command, for example:
 
+`ensure-codex` constrains only worker creation; it is not an OS sandbox. After a
+task is submitted, the YOLO Codex process can perform any mutation available to
+the Dell user. Repository scope, file ownership, and forbidden actions remain
+prompt-level controls, so destructive or privileged work still requires the
+operator boundary.
+
 ```bash
 export MESH_COORDINATOR_CLAUDE_CMD='claude --dangerously-skip-permissions'
 ```
@@ -271,8 +296,10 @@ instruction without a human boundary.
 
 ## Delegation Boundary
 
-For an existing manual session, delegate through a reviewed `wsend` proposal.
-This path does not use account selection or create another worker.
+For an existing manual session, delegate through a bounded `mesh live send`.
+For a missing native Codex worker, the coordinator may use `ensure-codex` under
+its standing contract and then the same bounded send/verify protocol. Neither
+path uses account selection or durable router state.
 
 For durable work or a new managed worker, reuse the router database:
 
@@ -288,9 +315,9 @@ session. They are scheduler inputs, not aliases for existing manual tmux
 sessions. Cross-repo durable handoffs reuse the existing `handoff` packet and
 require role `PRESIDENT_GLOBAL`.
 
-The provider account manager is not required for `mcoordinator` or existing
-manual workers. It remains useful only when the router launches a new managed
-worker and must select or rotate a provider account.
+The provider account manager is not required for `mcoordinator`, `ensure-codex`,
+or existing manual workers. It remains useful only when the router launches a
+new managed worker and must select or rotate a provider account.
 
 ## Persistence And Transport
 

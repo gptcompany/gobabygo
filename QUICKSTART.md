@@ -251,6 +251,7 @@ mesh term key /media/sam/1TB/rektslug boss enter
 mesh term dump /media/sam/1TB/rektslug president --lines 30
 mesh live board rektslug --lines 40
 mesh live peek claude-rektslug 120
+MESH_LIVE_LOCAL=1 mesh live ensure-codex /data/sata/1TB/rektslug
 mesh live send claude-rektslug "status?" --enter
 mesh live attach claude-rektslug
 mesh live brief --repo rektslug
@@ -285,6 +286,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - router DB is authoritative for durable managed orchestration
 - iTerm2 is optional layout/UX
 - `mcoordinator <repo>` is the default automatic intra-repo path; `mcoordinator --all` is multi-repo
+- the coordinator reuses existing workers and may bootstrap one deterministic
+  `codex-<repo>` through local-only `ensure-codex`; it does not ask for a
+  per-worker authorization and sends no task during bootstrap
 - after a reboot use explicit `--continue` or deterministic `--resume <id>`;
   the helper resumes Claude and appends the current Gobabygo system contract in
   the same startup command
@@ -292,6 +296,8 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   and holds a private per-UUID lock while Claude runs; `--continue` cannot offer
   this guarantee because its UUID is selected inside Claude after startup
 - run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
+- a running coordinator retains the contract from its initial bootstrap; start
+  a new coordinator or exit/resume the old tmux session after deploying contract changes
 - valid coordinator sessions are only attached; a shell wrapper with a Claude
   child is valid, while a marked coordinator or older unmarked shell without Claude fails
   closed, so inspect it with `wsattach` or use `--session <fresh-name>` for a

@@ -478,6 +478,7 @@ Usage:
   ./scripts/mesh summary <role>
   ./scripts/mesh live board [query] [--lines N] [--json]
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--expect-session <name>]
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
@@ -529,6 +530,7 @@ Examples:
   ./scripts/mesh live board
   ./scripts/mesh live board rektslug --lines 40
   ./scripts/mesh live peek claude-rektslug 120
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex /data/sata/1TB/rektslug
   ./scripts/mesh live send claude-rektslug "status?" --enter
   ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live brief --repo rektslug
@@ -590,6 +592,7 @@ live_usage() {
 Usage:
   ./scripts/mesh live board [query] [--lines N] [--json]
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--expect-session <name>] [--json]
   ./scripts/mesh live send <session> [text] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
@@ -602,6 +605,8 @@ Behavior:
   mesh live reads tmux directly on the configured workstation.
   It does not require the router or iTerm2.
   Captured pane output is redacted before display and JSON output.
+  ensure-codex is the only lifecycle operation: local-only, one deterministic native
+  Codex worker per exact configured Git root, with no task text or send-keys.
   send is literal and does not submit text unless --enter is explicit.
   send rechecks the discovered session/pane but still acts as remote keyboard input;
   verify pane state immediately beforehand because a residual race remains.
@@ -621,6 +626,7 @@ Env:
   MESH_WS_CLOUDFLARE_HOST  SSH alias fallback (default: dell7670)
   MESH_LIVE_USERS    comma-separated tmux owners to inspect
   MESH_LIVE_LOCAL    set to 1 to inspect tmux on this machine
+  MESH_LIVE_REPO_ROOTS  colon-separated roots allowed for ensure-codex
   MESH_LIVE_TICK_STATE  tick metadata/idempotency state (captures are never stored)
   MESH_MOSH_HOST     optional direct VPN/LAN host for persistent attach
 
@@ -628,6 +634,7 @@ Examples:
   ./scripts/mesh live board
   ./scripts/mesh live board rektslug --lines 40
   ./scripts/mesh live peek claude-rektslug 120
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex /data/sata/1TB/rektslug
   ./scripts/mesh live send claude-rektslug "status?" --enter
   ./scripts/mesh live recover-codex-submit codex-rektslug delegation-1234
   ./scripts/mesh live attach claude-rektslug

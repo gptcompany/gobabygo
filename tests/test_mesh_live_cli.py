@@ -2008,6 +2008,7 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert proc.returncode == 0
     assert "mesh live board" in proc.stdout
     assert "mesh live peek" in proc.stdout
+    assert "mesh live ensure-codex" in proc.stdout
     assert "mesh live send" in proc.stdout
     assert "mesh live attach" in proc.stdout
     assert "mesh live tick" in proc.stdout
@@ -2016,6 +2017,7 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert "MESH_LIVE_HOSTS" in proc.stdout
     assert "MESH_WS_CLOUDFLARE_HOST" in proc.stdout
     assert "does not require the router or iTerm2" in proc.stdout
+    assert "only lifecycle operation" in proc.stdout
 
 
 def test_mesh_dispatcher_runs_live_board_without_router_env() -> None:
