@@ -657,6 +657,110 @@ def test_remote_send_tracks_codex_delivery_without_storing_text(
     assert message not in state_path.read_text(encoding="utf-8")
 
 
+def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> None:
+    module = _load_module()
+    delegation_id = "delegation-agy-1234"
+    message = f"DELEGATION_ID={delegation_id} read /repo/brief.md"
+    idle = (
+        "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    busy = (
+        f"> {message}\nGenerating...\n"
+        + "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\nesc to cancel                           Gemini 3.7 Flash · high\n"
+    )
+    captures = iter([idle, busy])
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["antigravity-worker", "agy"]) + "\n",
+            )
+        return _completed(args)
+
+    def fake_capture(target, *, expected_commands=("codex", "codex-cli")):
+        assert expected_commands == ("agy",)
+        return {**target, "command": "agy", "output": next(captures)}
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module, "_capture_visible_target", fake_capture)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {
+                "owner": "sam",
+                "name": "antigravity-worker",
+                "pane_id": "%8",
+            },
+            "text": message,
+            "enter": True,
+            "delegation_id": delegation_id,
+        }
+    )
+
+    assert result["delivery_tracked"] is True
+    assert result["submission"] == "verified"
+    assert result["verified"] is True
+    assert sum("send-keys" in command for command in commands) == 2
+
+
+def test_tracked_antigravity_send_refuses_occupied_composer_without_input(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+    occupied = (
+        "─" * 80
+        + "\n> DELEGATION_ID=prior pending text\n"
+        + "─" * 80
+        + "\n                                      Gemini 3.7 Flash · high\n"
+    )
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["antigravity-worker", "agy"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(
+        module,
+        "_capture_visible_target",
+        lambda target, **_kwargs: {**target, "command": "agy", "output": occupied},
+    )
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {
+                "owner": "sam",
+                "name": "antigravity-worker",
+                "pane_id": "%8",
+            },
+            "text": "DELEGATION_ID=delegation-next read /repo/brief.md",
+            "enter": True,
+            "delegation_id": "delegation-next",
+        }
+    )
+
+    assert "composer is not empty and idle" in result["error"]
+    assert not any("send-keys" in command for command in commands)
+
+
 def test_codex_delivery_receipt_counts_unicode_characters(tmp_path) -> None:
     module = _load_module()
     state_path = tmp_path / "recovery.json"
@@ -1832,6 +1936,24 @@ def test_codex_delegation_requires_empty_idle_composer(screen: str, expected: bo
     module = _load_module()
 
     assert module.codex_screen_is_ready_for_delegation(screen) is expected
+
+
+def test_antigravity_delegation_requires_current_empty_idle_composer() -> None:
+    module = _load_module()
+    idle = (
+        "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    occupied = idle + "\n> DELEGATION_ID=pending\n" + "─" * 80 + "\n"
+    busy = idle + "\n> DELEGATION_ID=current\nGenerating...\nesc to cancel\n"
+
+    assert module.antigravity_screen_is_ready_for_delegation(idle) is True
+    assert module.antigravity_screen_is_ready_for_delegation(occupied) is False
+    assert module.antigravity_screen_is_ready_for_delegation(busy) is False
+    assert module.antigravity_submit_verified(busy, "current") is True
+    assert module.antigravity_submit_verified(occupied, "pending") is False
 
 
 def test_tracked_codex_send_refuses_occupied_composer_without_input_or_state_change(

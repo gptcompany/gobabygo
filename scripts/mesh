@@ -616,8 +616,10 @@ Behavior:
   send accepts one literal line (max 8192 characters) and does not submit text unless
   --enter is explicit. Store long/multi-line briefs in the target repo and send one line
   containing the DELEGATION_ID, absolute brief path, and instruction to read it.
-  Codex delegations should also pass --delegation-id with that exact ID. The remote side
-  stores metadata only so a matching collapsed paste can receive one guarded recovery Enter.
+  Codex and Antigravity delegations should pass --delegation-id with that exact ID.
+  Codex stores metadata only so a matching collapsed paste can receive one guarded recovery
+  Enter. Antigravity requires an exact idle composer and verifies submission after Enter;
+  it has no automatic submit recovery.
   send output reports key delivery only; submission remains unknown until a fresh peek.
   send rechecks the discovered session/pane but still acts as remote keyboard input;
   verify pane state immediately beforehand because a residual race remains.

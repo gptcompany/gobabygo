@@ -592,7 +592,11 @@ def _send_target(
     return transaction(validated_target, deliver) if transaction else deliver()
 
 
-def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
+def _capture_visible_target(
+    target: dict[str, Any],
+    *,
+    expected_commands: Sequence[str] = ("codex", "codex-cli"),
+) -> dict[str, str]:
     owner = str(target.get("owner") or "")
     name = str(target.get("name") or "")
     pane_id = str(target.get("pane_id") or "")
@@ -614,9 +618,11 @@ def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
         raise LiveReadError("recovery target pane no longer belongs to the discovered session")
 
     current_command = Path(target_parts[1]).name.lower()
-    if current_command not in {"codex", "codex-cli"}:
+    expected = {Path(item).name.lower() for item in expected_commands}
+    if current_command not in expected:
+        provider = "Antigravity" if expected == {"agy"} else "Codex"
         raise LiveReadError(
-            f"recovery target process is not Codex: {current_command or '<empty>'}"
+            f"capture target process is not {provider}: {current_command or '<empty>'}"
         )
     capture_proc = _run_command(
         [*prefix, "tmux", "capture-pane", "-p", "-e", "-t", pane_id]
@@ -658,6 +664,12 @@ _CODEX_EMPTY_COMPOSER_PLACEHOLDERS = frozenset(
         "Improve documentation in @filename",
         "Write tests for @filename",
     }
+)
+_ANTIGRAVITY_IDLE_FOOTER = re.compile(
+    r"(?m)^>[ \t]*\r?\n[^\n]*\r?\n\?[ \t]+for shortcuts[^\n]*\Z"
+)
+_ANTIGRAVITY_CURRENT_ACTIVITY = re.compile(
+    r"(?im)(?:generating\.\.\.|esc to cancel)[^\n]*\Z"
 )
 
 
@@ -709,6 +721,40 @@ def _codex_composer_contains_delegation(composer: str, delegation_id: str) -> bo
         rf"(?<![{token_chars}]){re.escape(delegation_id)}(?![{token_chars}])"
     )
     return exact_id.search(composer) is not None
+
+
+def antigravity_screen_is_ready_for_delegation(visible_screen: str) -> bool:
+    """Accept only the observed empty Antigravity composer and idle footer."""
+    body = _ANSI_ESCAPE.sub("", str(visible_screen or "")).replace("\xa0", " ")
+    return _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip()) is not None
+
+
+def antigravity_submit_verified(visible_screen: str, delegation_id: str) -> bool:
+    """Require the submitted ID plus current activity or a new empty composer."""
+    body = _ANSI_ESCAPE.sub("", str(visible_screen or "")).replace("\xa0", " ")
+    if not _codex_composer_contains_delegation(body, delegation_id):
+        return False
+    return bool(
+        _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip())
+        or _ANTIGRAVITY_CURRENT_ACTIVITY.search(body.rstrip())
+    )
+
+
+def _poll_antigravity_submit_verification(
+    target: dict[str, Any], delegation_id: str
+) -> bool:
+    for attempt in range(CODEX_RECOVERY_VERIFY_ATTEMPTS):
+        try:
+            post = _capture_visible_target(target, expected_commands=("agy",))
+        except (LiveReadError, OSError, subprocess.SubprocessError):
+            post = None
+        if post is not None and antigravity_submit_verified(
+            post["output"], delegation_id
+        ):
+            return True
+        if attempt + 1 < CODEX_RECOVERY_VERIFY_ATTEMPTS:
+            time.sleep(CODEX_RECOVERY_VERIFY_INTERVAL)
+    return False
 
 
 def codex_screen_shows_current_activity(visible_screen: str) -> bool:
@@ -1094,13 +1140,44 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         if raw_delegation_id:
             delegation_id = validate_delegation_id(raw_delegation_id)
             if not enter or not text:
-                raise ValueError("tracked Codex delegation requires text and --enter")
+                raise ValueError("tracked delegation requires text and --enter")
             if not _codex_composer_contains_delegation(text, delegation_id):
                 raise ValueError("send text does not contain the exact delegation ID")
-            expected_commands = ("codex", "codex-cli")
-        def codex_send_transaction(
+            expected_commands = ("codex", "codex-cli", "agy")
+
+        def tracked_send_transaction(
             validated: dict[str, str], deliver: SendFn
         ) -> dict[str, Any]:
+            if validated["command"] == "agy":
+                if delegation_id:
+                    fresh = _capture_visible_target(
+                        validated, expected_commands=("agy",)
+                    )
+                    if not antigravity_screen_is_ready_for_delegation(
+                        fresh["output"]
+                    ):
+                        raise LiveReadError(
+                            "tracked Antigravity delivery refused: the visible composer is not "
+                            "empty and idle; inspect it manually or select another authorized "
+                            "idle worker"
+                        )
+                send_result = deliver()
+                if (
+                    delegation_id
+                    and not send_result.get("error")
+                    and not send_result.get("delivery_error")
+                    and send_result.get("text_sent")
+                    and send_result.get("enter_sent")
+                ):
+                    verified = _poll_antigravity_submit_verification(
+                        validated, delegation_id
+                    )
+                    return {
+                        **send_result,
+                        "submission": "verified" if verified else "unknown",
+                        "verified": verified,
+                    }
+                return send_result
             if validated["command"] not in {"codex", "codex-cli"}:
                 return deliver()
             with _codex_recovery_lock(DEFAULT_CODEX_RECOVERY_STATE_FILE):
@@ -1141,7 +1218,7 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
                 enter=enter,
                 expected_commands=expected_commands,
                 allow_coordinator_wrapper=allow_coordinator_wrapper,
-                transaction=codex_send_transaction,
+                transaction=tracked_send_transaction,
             )
         except LiveReadError as exc:
             return {
@@ -2820,7 +2897,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     send.add_argument(
         "--delegation-id",
         default="",
-        help="Track this exact Codex delegation for guarded collapsed-paste recovery.",
+        help="Guard this exact Codex or Antigravity delegation before submission.",
     )
 
     recover_codex = sub.add_parser(
@@ -3229,7 +3306,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if delegation_id:
                 send_kwargs["delegation_id"] = delegation_id
             result = client.send(selected, message, **send_kwargs)
-            if result["enter_sent"]:
+            if result.get("submission"):
+                submission = str(result["submission"])
+            elif result["enter_sent"]:
                 submission = "unknown"
             elif args.enter:
                 submission = "not-submitted"
