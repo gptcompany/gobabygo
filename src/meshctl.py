@@ -1368,7 +1368,11 @@ worker_prune_parser.add_argument(
 
 submit_parser = sub.add_parser("submit", help="Submit a new task")
 submit_parser.add_argument("--title", required=True, help="Task title")
-submit_parser.add_argument("--cli", default=None, help="Target CLI type (claude/codex/gemini)")
+submit_parser.add_argument(
+    "--cli",
+    default=None,
+    help="Target CLI type (claude/codex/antigravity; gemini is deprecated)",
+)
 submit_parser.add_argument("--account", default=None, help="Target account profile")
 submit_parser.add_argument("--phase", default=None, help="Task phase")
 submit_parser.add_argument("--mode", default=None, help="Execution mode (batch/session)")

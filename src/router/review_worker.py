@@ -44,7 +44,7 @@ class ReviewWorkerConfig:
     task_timeout: int = 1200
     max_review_tasks: int = 100
     dry_run: bool = False
-    target_cli_filter: str = ""  # optional exact match (claude|codex|gemini)
+    target_cli_filter: str = ""  # optional exact match (claude|codex|antigravity)
     target_account_filter: str = ""  # optional exact match
 
     @classmethod

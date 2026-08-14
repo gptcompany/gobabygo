@@ -50,6 +50,13 @@ def test_gemini_remains_readable_for_historical_rows() -> None:
     assert is_runnable_cli_type(task.target_cli) is False
 
 
+def test_antigravity_is_a_runnable_cli_for_new_work() -> None:
+    request = TaskCreateRequest(target_cli="antigravity", title="Review")
+
+    assert request.target_cli == CLIType.antigravity
+    assert is_runnable_cli_type(request.target_cli) is True
+
+
 @pytest.mark.parametrize("request_type", [TaskCreateRequest, ThreadStepRequest])
 def test_new_gemini_work_is_rejected(request_type) -> None:
     kwargs = {"title": "legacy", "target_cli": "gemini"}

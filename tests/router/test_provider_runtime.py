@@ -15,6 +15,15 @@ def test_default_provider_runtime_config_path() -> None:
     assert default_provider_runtime_config_path().endswith("mapping/provider_runtime.yaml")
 
 
+def test_default_antigravity_runtime_is_native_agy() -> None:
+    rules = load_provider_runtime_rules()
+
+    assert rules["antigravity"].strategy == "native_cli"
+    assert rules["antigravity"].command_template == "/home/sam/.local/bin/agy"
+    assert rules["antigravity"].session_service_user == "sam"
+    assert "gemini" not in rules
+
+
 def test_load_provider_runtime_rules_from_yaml(tmp_path) -> None:
     config = tmp_path / "provider_runtime.yaml"
     config.write_text(

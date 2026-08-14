@@ -14,8 +14,8 @@ providers:
       - "codex"
     notes: "Provider-direct today. If you later use multiple Codex accounts, update this file only."
 
-  gemini:
-    default_account: "gemini"
+  antigravity:
+    default_account: "antigravity"
     accounts:
-      - "gemini"
-    notes: "Provider-direct today. If you later use multiple Gemini accounts, update this file only."
+      - "antigravity"
+    notes: "Native Antigravity account state owned by sam. CCS account rotation does not apply."

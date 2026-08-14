@@ -29,7 +29,7 @@
     },
     "target_cli": {
       "type": ["string", "null"],
-      "enum": [null, "claude", "codex", "gemini"]
+      "enum": [null, "claude", "codex", "antigravity", "gemini"]
     },
     "target_account": {
       "type": ["string", "null"]

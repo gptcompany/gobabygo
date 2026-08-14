@@ -70,6 +70,15 @@ class TestRegisterWorker:
         assert msg == "deprecated_cli"
         assert db.get_worker(worker.worker_id) is None
 
+    def test_register_antigravity_worker(self, wm, db):
+        worker = _make_worker(account="antigravity", cli=CLIType.antigravity)
+
+        ok, msg = wm.register_worker(worker, "valid-token-1")
+
+        assert ok is True
+        assert msg == "registered"
+        assert db.get_worker(worker.worker_id).cli_type == CLIType.antigravity
+
     def test_register_account_in_use(self, wm):
         w1 = _make_worker("w1", "work")
         wm.register_worker(w1, "valid-token-1")

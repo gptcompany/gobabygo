@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from src.router.account_pool import get_account_pool, next_account_for_provider
+from src.router.account_pool import (
+    default_account_pool_config_path,
+    get_account_pool,
+    load_account_pools,
+    next_account_for_provider,
+)
+
+
+def test_default_pool_uses_antigravity_not_gemini() -> None:
+    pools = load_account_pools(default_account_pool_config_path())
+
+    assert pools["antigravity"].accounts == ("antigravity",)
+    assert "gemini" not in pools
 
 
 def test_get_account_pool_loads_default_and_accounts(tmp_path) -> None:

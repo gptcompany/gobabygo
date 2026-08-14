@@ -61,6 +61,7 @@ class CommunicationRole(str, Enum):
 class CLIType(str, Enum):
     claude = "claude"
     codex = "codex"
+    antigravity = "antigravity"
     gemini = "gemini"
 
 

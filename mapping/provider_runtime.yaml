@@ -18,11 +18,11 @@ providers:
       - "sam"
     notes: "Provider-direct today. If CCS later exposes stable multi-account routing, edit this template only."
 
-  gemini:
-    strategy: cliproxy_provider
-    command_template: "ccs gemini"
+  antigravity:
+    strategy: native_cli
+    command_template: "/home/sam/.local/bin/agy"
     session_service_user: "sam"
     session_service_group: "sam"
     session_service_supplementary_groups:
       - "mesh"
-    notes: "Provider-direct today via CCS/CLIProxy, but session worker runs as sam to reuse the validated local Gemini runtime."
+    notes: "Native Antigravity CLI. Authentication and workspace state belong to sam; CCS is not used."
