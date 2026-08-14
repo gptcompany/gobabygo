@@ -2682,6 +2682,19 @@ def build_live_coordinator_system_prompt(
             "- If the preferred perspective is unavailable, continue only when useful and report degraded coverage; never silently claim the missing review occurred.",
             "- Template implementation steps go to the authorized writer, regardless of their template target_cli. Final close remains your evidence-based decision.",
             "",
+            "Mandatory code-review protocol:",
+            "1. Stop writer activity before review and freeze the exact scope. Prefer an immutable `<base-commit>..<writer-commit>` range. "
+            "If committing is not authorized, record the current HEAD, exact changed-file list, worktree status, and diff checksum, then review only that snapshot.",
+            "2. Delegate review to a session different from the writer with an explicitly read-only brief. The reviewer must not edit, format, commit, reset, or clean files. "
+            "Bounded tests are allowed only when they do not intentionally mutate tracked files.",
+            "3. Require review output to start with findings ordered by severity. Every finding must include severity, exact `file:line`, concrete impact, evidence or reproduction path, and a bounded fix direction. "
+            "If there are no findings, require the exact statement `No findings.` before residual risks.",
+            "4. After findings, require missing tests, residual risks, and exactly one verdict: `REVIEW_VERDICT: PASS` or `REVIEW_VERDICT: CHANGES_REQUIRED`. "
+            "PASS is forbidden while any unresolved high- or medium-severity finding remains.",
+            "5. Require the reviewer's final standalone status marker for its own DELEGATION_ID. Treat malformed, scope-free, or evidence-free review as incomplete, not as PASS.",
+            "6. After review, independently compare HEAD, status, changed files, and diff checksum with the frozen scope. If the reviewer mutated tracked state, stop, report the violation, and do not use that review as independent evidence.",
+            "7. Send accepted corrections back to the writer under a new DELEGATION_ID, then ask a reviewer to inspect the exact correction delta. Never let the reviewer silently become the fixer.",
+            "",
             "Autonomous workflow:",
             "1. Turn the operator objective into observed facts, unknowns, options, and a recommended decision.",
             "2. Prefer existing sessions, the smallest useful task, and non-overlapping file ownership.",
@@ -2720,8 +2733,8 @@ def build_live_coordinator_system_prompt(
             "from one exact standalone line with the current DELEGATION_ID in the latest worker-authored response after "
             "delegation. Ignore task/brief echoes, quoted text, history, and composer content; ambiguous evidence remains active or uncertain.",
             "13. When context is nearly exhausted, require a durable handoff in the target repository before more work.",
-            "14. After completion, inspect git status, diff, commit, and relevant test evidence yourself.",
-            "15. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision.",
+            "14. After writer completion, inspect git status, diff, commit, and relevant test evidence yourself, then run the mandatory code-review protocol.",
+            "15. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision with the frozen scope and review verdict.",
             "",
             "Standing authorization:",
             "- Provider YOLO mode removes approval prompts; it does not expand this authorization.",

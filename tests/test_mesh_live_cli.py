@@ -1779,6 +1779,18 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "Use Codex in a different tmux session as the primary independent read-only code reviewer" in prompt
     assert "any provider may review when explicitly selected" in prompt
     assert "writer's self-review is never independent review" in prompt
+    assert "Mandatory code-review protocol" in prompt
+    assert "immutable `<base-commit>..<writer-commit>` range" in prompt
+    assert "HEAD, exact changed-file list, worktree status, and diff checksum" in prompt
+    assert "findings ordered by severity" in prompt
+    assert "exact `file:line`" in prompt
+    assert "concrete impact, evidence or reproduction path" in prompt
+    assert "No findings." in prompt
+    assert "REVIEW_VERDICT: PASS" in prompt
+    assert "REVIEW_VERDICT: CHANGES_REQUIRED" in prompt
+    assert "PASS is forbidden while any unresolved high- or medium-severity finding remains" in prompt
+    assert "If the reviewer mutated tracked state" in prompt
+    assert "Never let the reviewer silently become the fixer" in prompt
     assert "Claude remains coordinator and final adjudicator" in prompt
     assert "never swap roles silently" in prompt
 
