@@ -2555,11 +2555,23 @@ def build_live_coordinator_system_prompt(
             f"Your authorized worker target is exactly {worker_session}. "
             "Do not send input to any other session."
         )
+        provider_policy = [
+            "Provider assignment override: the exact worker pin replaces the default Antigravity-writer/Codex-reviewer pairing.",
+            "Use only the pinned session for delegated work and report independent provider review as unavailable unless the operator supplies separate review evidence.",
+        ]
     else:
         worker_policy = (
             "Discover worker candidates from the live board. Before sending, select one exact existing "
             "session inside scope and ensure only one writer owns each repository."
         )
+        provider_policy = [
+            "Default provider assignment unless the operator explicitly overrides it:",
+            "- Use Antigravity as the sole implementation writer for each repository.",
+            "- Use Codex in a different tmux session as the primary independent read-only code reviewer after the writer produces a bounded diff or commit.",
+            "- This is a default, not an exclusive capability map: any provider may review when explicitly selected, but the writer's self-review is never independent review.",
+            "- Claude remains coordinator and final adjudicator; it does not become a source-code writer.",
+            "- If Antigravity or Codex is unavailable, rate-limited, or unsuitable for the specific task, state the role substitution and degraded review coverage before proceeding; never swap roles silently.",
+        ]
     repo_argument = (
         shlex.quote(repo_root)
         if repo and repo_root
@@ -2657,6 +2669,7 @@ def build_live_coordinator_system_prompt(
             "",
             *workflow_policy,
             "The workflow projection is policy input only: it does not authorize router use, iTerm2, session creation, or nested AI launch.",
+            *provider_policy,
             "Live workflow role boundaries:",
             "- These boundaries are coordinator contract rules, not filesystem locks or an OS sandbox. Recheck tmux ownership and Git state before and after every delegated write or review.",
             "- You are the final operator-facing adjudicator. Template lead/president/worker roles are desired perspectives, not authority to launch CLIs.",

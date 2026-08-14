@@ -1748,6 +1748,8 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "For another existing CLI" in prompt
     assert "Antigravity uses only a fixed no-tools bootstrap prompt" in prompt
     assert "It has no recovery command" in prompt
+    assert "exact worker pin replaces the default Antigravity-writer/Codex-reviewer pairing" in prompt
+    assert "Use Antigravity as the sole implementation writer" not in prompt
 
 
 def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
@@ -1773,6 +1775,12 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "do not ask the operator to restate it merely to fill a template placeholder" in prompt
     assert "dependency order" in prompt
     assert "does not authorize router use, iTerm2, session creation" in prompt
+    assert "Use Antigravity as the sole implementation writer" in prompt
+    assert "Use Codex in a different tmux session as the primary independent read-only code reviewer" in prompt
+    assert "any provider may review when explicitly selected" in prompt
+    assert "writer's self-review is never independent review" in prompt
+    assert "Claude remains coordinator and final adjudicator" in prompt
+    assert "never swap roles silently" in prompt
 
 
 def test_coordinator_system_prompt_pins_antigravity_spawn_to_exact_worker() -> None:
@@ -1791,6 +1799,8 @@ def test_coordinator_system_prompt_pins_antigravity_spawn_to_exact_worker() -> N
         "antigravity-rektslug"
     ) in prompt
     assert "ensure-codex /data/sata/1TB/rektslug" not in prompt
+    assert "exact worker pin replaces the default Antigravity-writer/Codex-reviewer pairing" in prompt
+    assert "Use Antigravity as the sole implementation writer" not in prompt
 
 
 def test_coordinator_system_prompt_supports_explicit_direct_mode() -> None:
