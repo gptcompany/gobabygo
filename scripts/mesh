@@ -1399,8 +1399,8 @@ build_pipeline_account_args() {
   if [[ -n "${MESH_ACCOUNT_CODEX:-}" ]]; then
     PIPELINE_ACCOUNT_ARGS+=(--account-codex "$MESH_ACCOUNT_CODEX")
   fi
-  if [[ -n "${MESH_ACCOUNT_GEMINI:-}" ]]; then
-    PIPELINE_ACCOUNT_ARGS+=(--account-gemini "$MESH_ACCOUNT_GEMINI")
+  if [[ -n "${MESH_ACCOUNT_ANTIGRAVITY:-}" ]]; then
+    PIPELINE_ACCOUNT_ARGS+=(--account-antigravity "$MESH_ACCOUNT_ANTIGRAVITY")
   fi
 }
 
