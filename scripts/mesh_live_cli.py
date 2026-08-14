@@ -743,6 +743,7 @@ def antigravity_submit_verified(visible_screen: str, delegation_id: str) -> bool
 def _poll_antigravity_submit_verification(
     target: dict[str, Any], delegation_id: str
 ) -> bool:
+    consecutive_confirmations = 0
     for attempt in range(CODEX_RECOVERY_VERIFY_ATTEMPTS):
         try:
             post = _capture_visible_target(target, expected_commands=("agy",))
@@ -751,7 +752,11 @@ def _poll_antigravity_submit_verification(
         if post is not None and antigravity_submit_verified(
             post["output"], delegation_id
         ):
-            return True
+            consecutive_confirmations += 1
+            if consecutive_confirmations >= 2:
+                return True
+        else:
+            consecutive_confirmations = 0
         if attempt + 1 < CODEX_RECOVERY_VERIFY_ATTEMPTS:
             time.sleep(CODEX_RECOVERY_VERIFY_INTERVAL)
     return False

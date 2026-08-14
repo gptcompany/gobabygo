@@ -674,7 +674,7 @@ def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> No
         + "─" * 80
         + "\nesc to cancel                           Gemini 3.7 Flash · high\n"
     )
-    captures = iter([idle, busy])
+    captures = iter([idle, busy, busy])
     commands: list[list[str]] = []
 
     def fake_run(args: list[str], *, timeout: float = 10.0):
@@ -693,6 +693,7 @@ def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> No
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
     monkeypatch.setattr(module, "_capture_visible_target", fake_capture)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
 
     result = module.handle_remote_request(
         {
@@ -712,6 +713,41 @@ def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> No
     assert result["submission"] == "verified"
     assert result["verified"] is True
     assert sum("send-keys" in command for command in commands) == 2
+
+
+def test_antigravity_submit_rejects_transient_positive_redraw(monkeypatch) -> None:
+    module = _load_module()
+    delegation_id = "delegation-agy-transient"
+    transient = (
+        f"> DELEGATION_ID={delegation_id} queued\n"
+        + "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    idle_without_delegation = (
+        "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    captures = iter([transient, idle_without_delegation, idle_without_delegation])
+
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 3)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(
+        module,
+        "_capture_visible_target",
+        lambda target, **_kwargs: {**target, "command": "agy", "output": next(captures)},
+    )
+
+    assert (
+        module._poll_antigravity_submit_verification(
+            {"owner": "sam", "name": "antigravity-worker", "pane_id": "%8"},
+            delegation_id,
+        )
+        is False
+    )
 
 
 def test_tracked_antigravity_send_refuses_occupied_composer_without_input(
