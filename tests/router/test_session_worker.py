@@ -16,6 +16,7 @@ from src.router.session_worker import (
     MeshSessionWorker,
     SessionNotFoundError,
     SessionWorkerConfig,
+    _build_cli_launch_command,
     _build_claude_mesh_hook_settings,
     _build_claude_gbg_command,
     _claude_router_hook_script_path,
@@ -54,6 +55,30 @@ from src.router.session_worker import (
 def test_sanitize_session_name() -> None:
     name = _sanitize_session_name("mesh/claude work:task#1")
     assert name == "mesh-claude-work-task-1"
+
+
+def test_antigravity_launch_uses_prompt_interactive_without_stdin() -> None:
+    command, initial_stdin = _build_cli_launch_command(
+        "/home/sam/.local/bin/agy",
+        ["--model", "gemini-3.5-pro"],
+        "Review the current diff; do not commit.",
+        prompt_delivery="prompt_interactive",
+    )
+
+    assert command == (
+        "/home/sam/.local/bin/agy --model gemini-3.5-pro "
+        "--prompt-interactive 'Review the current diff; do not commit.'"
+    )
+    assert initial_stdin is None
+
+
+def test_antigravity_runtime_does_not_preseed_claude_state() -> None:
+    worker = _make_worker(cli_type="antigravity", account_profile="antigravity")
+
+    with patch.object(worker, "_preseed_claude_runtime") as preseed:
+        worker._prepare_cli_runtime("/tmp/repo", "antigravity")
+
+    preseed.assert_not_called()
 
 
 def test_success_file_matches_rejects_stale_artifact(tmp_path) -> None:

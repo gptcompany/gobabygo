@@ -7,6 +7,11 @@ providers:
     session_service_group: "sam"
     session_service_supplementary_groups:
       - "mesh"
+    prompt_delivery: "append_system_prompt"
+    screen_profile: "claude"
+    runtime_preseed: "claude"
+    supports_claude_hooks: true
+    exit_command: "/exit"
     notes: "Claude isolation uses real CCS account profiles created via `ccs auth create <profile>`."
 
   codex:
@@ -16,6 +21,11 @@ providers:
     session_service_group: "mesh"
     session_service_supplementary_groups:
       - "sam"
+    prompt_delivery: "stdin"
+    screen_profile: "claude"
+    runtime_preseed: "claude"
+    supports_claude_hooks: false
+    exit_command: "/exit"
     notes: "Provider-direct today. If CCS later exposes stable multi-account routing, edit this template only."
 
   antigravity:
@@ -25,4 +35,9 @@ providers:
     session_service_group: "sam"
     session_service_supplementary_groups:
       - "mesh"
+    prompt_delivery: "prompt_interactive"
+    screen_profile: "antigravity"
+    runtime_preseed: "none"
+    supports_claude_hooks: false
+    exit_command: "/exit"
     notes: "Native Antigravity CLI. Authentication and workspace state belong to sam; CCS is not used."

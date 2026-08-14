@@ -1,4 +1,4 @@
-"""Interactive session worker (tmux-backed) for Claude/Codex/Gemini CLIs.
+"""Interactive session worker for Claude, Codex, and Antigravity CLIs.
 
 Unlike the batch worker (`worker_client.py`), this worker launches a long-lived
 interactive CLI session inside tmux, persists a session record in the router DB
@@ -39,7 +39,7 @@ from src.router.cli_screen import (
     looks_like_start_screen as _shared_looks_like_start_screen,
 )
 from src.router.models import CrossRoleMessageType, MessageEnvelope, RoleState
-from src.router.provider_runtime import resolve_cli_command
+from src.router.provider_runtime import resolve_cli_command, resolve_cli_runtime_behavior
 from src.router.workdir_guard import parse_allowed_work_dirs, resolve_work_dir
 
 logger = logging.getLogger("mesh.session_worker")
@@ -321,6 +321,27 @@ def _coerce_string_list(value: object) -> list[str]:
         return items
     item = str(value).strip()
     return [item] if item else []
+
+
+def _build_cli_launch_command(
+    cmd_base: str,
+    cli_args: list[str],
+    prompt: str,
+    *,
+    prompt_delivery: str,
+) -> tuple[str, str | None]:
+    """Build one CLI command and optional stdin bootstrap without executing it."""
+    args = list(cli_args)
+    initial_stdin: str | None = None
+    if prompt and prompt_delivery == "append_system_prompt":
+        args.extend(["--append-system-prompt", prompt])
+    elif prompt and prompt_delivery == "prompt_interactive":
+        args.extend(["--prompt-interactive", prompt])
+    elif prompt and prompt_delivery == "stdin":
+        initial_stdin = prompt
+    if args:
+        cmd_base = " ".join([cmd_base, *[shlex.quote(arg) for arg in args]])
+    return cmd_base, initial_stdin
 
 
 def _coerce_relay_config(value: object) -> dict[str, object]:
@@ -617,11 +638,11 @@ def _extract_clean_response(text: str, *, max_chars: int = 1200) -> str:
     return summary[-max(1, int(max_chars)) :]
 
 
-def _relay_mode_uses_claude_hooks(relay: dict[str, object], cli_type: str) -> bool:
+def _relay_mode_uses_claude_hooks(
+    relay: dict[str, object], *, supports_claude_hooks: bool
+) -> bool:
     mode = str(relay.get("mode", "")).strip()
-    if mode != "claude_hooks":
-        return False
-    return str(cli_type or "").strip() in {"claude", "gemini"}
+    return mode == "claude_hooks" and supports_claude_hooks
 
 
 @dataclass
@@ -916,9 +937,8 @@ class MeshSessionWorker:
         success_file_path = str(payload.get("success_file_path") or "").strip()
         success_file_contains = str(payload.get("success_file_contains") or "")
         success_file_min_mtime_ns = time.time_ns() if success_file_path else None
-        exit_command = str(payload.get("exit_command") or "/exit").strip() or "/exit"
+        requested_exit_command = str(payload.get("exit_command") or "").strip()
         cli_args = _coerce_string_list(payload.get("cli_args"))
-        relay_uses_claude_hooks = _relay_mode_uses_claude_hooks(relay, self.config.cli_type)
         preallocated_session_id = str(uuid.uuid4())
 
         logger.info("Starting interactive task %s (%s)", task_id, task.get("title", "untitled"))
@@ -932,6 +952,15 @@ class MeshSessionWorker:
         final_snapshot = ""
 
         try:
+            runtime_behavior = resolve_cli_runtime_behavior(
+                self.config.cli_type,
+                config_path=self.config.provider_runtime_config,
+            )
+            exit_command = requested_exit_command or runtime_behavior.exit_command
+            relay_uses_claude_hooks = _relay_mode_uses_claude_hooks(
+                relay,
+                supports_claude_hooks=runtime_behavior.supports_claude_hooks,
+            )
             if execution_mode != "session":
                 self._report_failure(task_id, f"unsupported execution_mode={execution_mode} for session worker")
                 return
@@ -961,10 +990,12 @@ class MeshSessionWorker:
                 fallback_command=self.config.cli_command,
                 config_path=self.config.provider_runtime_config,
             )
-            if prompt and self.config.cli_type != "codex":
-                cli_args = [*cli_args, "--append-system-prompt", prompt]
-            if cli_args:
-                cmd_base = " ".join([cmd_base, *[shlex.quote(arg) for arg in cli_args]])
+            cmd_base, initial_stdin = _build_cli_launch_command(
+                cmd_base,
+                cli_args,
+                prompt,
+                prompt_delivery=runtime_behavior.prompt_delivery,
+            )
             if relay_uses_claude_hooks:
                 hook_settings_path = _ensure_claude_mesh_hook_settings(
                     work_dir,
@@ -996,7 +1027,7 @@ class MeshSessionWorker:
                 )
             self._prepare_cli_runtime(work_dir, target_account)
             tmux_session_name = self._tmux_session_name(task_id, target_account)
-            bootstrap_prompt_via_stdin = bool(prompt) and self.config.cli_type == "codex"
+            bootstrap_prompt_via_stdin = initial_stdin is not None
             prompt_delivery_requires_composer = bootstrap_prompt_via_stdin
             if self._tmux_has_session(tmux_session_name):
                 logger.warning(
@@ -1008,7 +1039,7 @@ class MeshSessionWorker:
                 tmux_session_name,
                 work_dir,
                 cmd_base,
-                initial_stdin=prompt if bootstrap_prompt_via_stdin else None,
+                initial_stdin=initial_stdin,
                 extra_env={
                     "MESH_UI_GROUP_ID": ui_group_id,
                     "MESH_UI_ROLE": ui_role,
@@ -1377,9 +1408,12 @@ class MeshSessionWorker:
 
     def _prepare_cli_runtime(self, work_dir: str, target_account: str) -> None:
         """Preseed provider runtime metadata needed for unattended session startup."""
-        if self.config.cli_type not in {"claude", "gemini", "codex"}:
-            return
-        self._preseed_claude_runtime(work_dir, target_account)
+        behavior = resolve_cli_runtime_behavior(
+            self.config.cli_type,
+            config_path=self.config.provider_runtime_config,
+        )
+        if behavior.runtime_preseed == "claude":
+            self._preseed_claude_runtime(work_dir, target_account)
 
     def _preseed_claude_runtime(self, work_dir: str, target_account: str) -> None:
         """Mark onboarding/trust/MCP state as accepted for the current project.

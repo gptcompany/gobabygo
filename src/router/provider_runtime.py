@@ -17,6 +17,12 @@ import yaml
 logger = logging.getLogger("mesh.provider_runtime")
 
 
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class ProviderRuntimeRule:
     """Concrete runtime rule for a provider."""
@@ -26,6 +32,58 @@ class ProviderRuntimeRule:
     session_service_user: str = ""
     session_service_group: str = ""
     session_service_supplementary_groups: tuple[str, ...] = ()
+    prompt_delivery: str = ""
+    screen_profile: str = ""
+    runtime_preseed: str = ""
+    supports_claude_hooks: bool = False
+    exit_command: str = ""
+
+
+@dataclass(frozen=True)
+class CLIRuntimeBehavior:
+    """Provider-specific behavior used by the interactive session worker."""
+
+    prompt_delivery: str
+    screen_profile: str
+    runtime_preseed: str
+    supports_claude_hooks: bool
+    exit_command: str
+
+
+_DEFAULT_BEHAVIORS = {
+    "claude": CLIRuntimeBehavior(
+        prompt_delivery="append_system_prompt",
+        screen_profile="claude",
+        runtime_preseed="claude",
+        supports_claude_hooks=True,
+        exit_command="/exit",
+    ),
+    "codex": CLIRuntimeBehavior(
+        prompt_delivery="stdin",
+        screen_profile="claude",
+        runtime_preseed="claude",
+        supports_claude_hooks=False,
+        exit_command="/exit",
+    ),
+    "antigravity": CLIRuntimeBehavior(
+        prompt_delivery="prompt_interactive",
+        screen_profile="antigravity",
+        runtime_preseed="none",
+        supports_claude_hooks=False,
+        exit_command="/exit",
+    ),
+    # Historical CCS Gemini sessions used the Claude Code frontend.
+    "gemini": CLIRuntimeBehavior(
+        prompt_delivery="append_system_prompt",
+        screen_profile="claude",
+        runtime_preseed="claude",
+        supports_claude_hooks=True,
+        exit_command="/exit",
+    ),
+}
+_PROMPT_DELIVERY_MODES = {"append_system_prompt", "stdin", "prompt_interactive"}
+_SCREEN_PROFILES = {"claude", "antigravity"}
+_RUNTIME_PRESEED_MODES = {"claude", "none"}
 
 
 def default_provider_runtime_config_path() -> str:
@@ -81,6 +139,11 @@ def load_provider_runtime_rules(
             session_service_user=str(entry.get("session_service_user", "")).strip(),
             session_service_group=str(entry.get("session_service_group", "")).strip(),
             session_service_supplementary_groups=supplementary_groups,
+            prompt_delivery=str(entry.get("prompt_delivery", "")).strip(),
+            screen_profile=str(entry.get("screen_profile", "")).strip(),
+            runtime_preseed=str(entry.get("runtime_preseed", "")).strip(),
+            supports_claude_hooks=_as_bool(entry.get("supports_claude_hooks", False)),
+            exit_command=str(entry.get("exit_command", "")).strip(),
         )
     return rules
 
@@ -147,3 +210,35 @@ def resolve_session_service_identity(
         "group": rule.session_service_group,
         "supplementary_groups": list(rule.session_service_supplementary_groups),
     }
+
+
+def resolve_cli_runtime_behavior(
+    cli_type: str,
+    *,
+    config_path: str | None = None,
+) -> CLIRuntimeBehavior:
+    """Resolve validated interactive behavior for *cli_type*."""
+    name = str(cli_type or "").strip()
+    default = _DEFAULT_BEHAVIORS.get(name)
+    if default is None:
+        raise ValueError(f"unsupported CLI runtime behavior: {name or '<empty>'}")
+
+    rule = load_provider_runtime_rules(config_path).get(name)
+    behavior = CLIRuntimeBehavior(
+        prompt_delivery=(rule.prompt_delivery if rule else "") or default.prompt_delivery,
+        screen_profile=(rule.screen_profile if rule else "") or default.screen_profile,
+        runtime_preseed=(rule.runtime_preseed if rule else "") or default.runtime_preseed,
+        supports_claude_hooks=(
+            rule.supports_claude_hooks if rule else default.supports_claude_hooks
+        ),
+        exit_command=(rule.exit_command if rule else "") or default.exit_command,
+    )
+    if behavior.prompt_delivery not in _PROMPT_DELIVERY_MODES:
+        raise ValueError(f"invalid prompt_delivery for {name}: {behavior.prompt_delivery}")
+    if behavior.screen_profile not in _SCREEN_PROFILES:
+        raise ValueError(f"invalid screen_profile for {name}: {behavior.screen_profile}")
+    if behavior.runtime_preseed not in _RUNTIME_PRESEED_MODES:
+        raise ValueError(f"invalid runtime_preseed for {name}: {behavior.runtime_preseed}")
+    if not behavior.exit_command:
+        raise ValueError(f"missing exit_command for {name}")
+    return behavior

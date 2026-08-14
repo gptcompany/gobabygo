@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import textwrap
 
+import pytest
+
 from src.router.provider_runtime import (
     default_provider_runtime_config_path,
     load_provider_runtime_rules,
     render_command_template,
     resolve_cli_command,
+    resolve_cli_runtime_behavior,
     resolve_session_service_identity,
 )
 
@@ -22,6 +25,35 @@ def test_default_antigravity_runtime_is_native_agy() -> None:
     assert rules["antigravity"].command_template == "/home/sam/.local/bin/agy"
     assert rules["antigravity"].session_service_user == "sam"
     assert "gemini" not in rules
+
+
+def test_default_antigravity_behavior_is_native_tui() -> None:
+    behavior = resolve_cli_runtime_behavior("antigravity")
+
+    assert behavior.prompt_delivery == "prompt_interactive"
+    assert behavior.screen_profile == "antigravity"
+    assert behavior.runtime_preseed == "none"
+    assert behavior.supports_claude_hooks is False
+    assert behavior.exit_command == "/exit"
+
+
+def test_invalid_runtime_behavior_fails_closed(tmp_path) -> None:
+    config = tmp_path / "provider_runtime.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """
+            providers:
+              antigravity:
+                strategy: native_cli
+                command_template: agy
+                prompt_delivery: unsafe-magic
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid prompt_delivery"):
+        resolve_cli_runtime_behavior("antigravity", config_path=str(config))
 
 
 def test_load_provider_runtime_rules_from_yaml(tmp_path) -> None:
