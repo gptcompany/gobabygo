@@ -61,6 +61,15 @@ class TestRegisterWorker:
         assert ok is False
         assert msg == "invalid_token"
 
+    def test_register_deprecated_gemini_worker_is_rejected(self, wm, db):
+        worker = _make_worker(cli=CLIType.gemini)
+
+        ok, msg = wm.register_worker(worker, "valid-token-1")
+
+        assert ok is False
+        assert msg == "deprecated_cli"
+        assert db.get_worker(worker.worker_id) is None
+
     def test_register_account_in_use(self, wm):
         w1 = _make_worker("w1", "work")
         wm.register_worker(w1, "valid-token-1")

@@ -3,7 +3,16 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.router.models import CrossRoleMessageType, MessageEnvelope, RoleState
+from src.router.models import (
+    CLIType,
+    CrossRoleMessageType,
+    MessageEnvelope,
+    RoleState,
+    Task,
+    TaskCreateRequest,
+    ThreadStepRequest,
+    is_runnable_cli_type,
+)
 
 
 def test_message_envelope_accepts_valid_payload() -> None:
@@ -32,3 +41,20 @@ def test_message_envelope_rejects_invalid_session_uuid() -> None:
 
 def test_role_state_enum_values_are_minimal_first_release() -> None:
     assert {state.value for state in RoleState} == {"idle", "responding", "awaiting_input"}
+
+
+def test_gemini_remains_readable_for_historical_rows() -> None:
+    task = Task(target_cli=CLIType.gemini)
+
+    assert task.target_cli == CLIType.gemini
+    assert is_runnable_cli_type(task.target_cli) is False
+
+
+@pytest.mark.parametrize("request_type", [TaskCreateRequest, ThreadStepRequest])
+def test_new_gemini_work_is_rejected(request_type) -> None:
+    kwargs = {"title": "legacy", "target_cli": "gemini"}
+    if request_type is ThreadStepRequest:
+        kwargs["step_index"] = 0
+
+    with pytest.raises(ValidationError, match="deprecated"):
+        request_type(**kwargs)

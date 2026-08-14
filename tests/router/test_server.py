@@ -188,6 +188,20 @@ class TestRegisterEndpoint:
         assert resp.status_code == 201
         assert resp.json()["worker_id"] == "ws-claude-work-01"
 
+    def test_register_deprecated_gemini_worker_is_rejected(self, server_url):
+        resp = requests.post(
+            f"{server_url}/register",
+            json={
+                "worker_id": "ws-gemini-work-01",
+                "machine": "workstation",
+                "cli_type": "gemini",
+                "account_profile": "gemini",
+            },
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "deprecated_cli"
+
     def test_register_reregisters_existing(self, server_url, db):
         """Re-registration of same worker_id returns 200."""
         worker = Worker(worker_id="w1", cli_type="claude", account_profile="work")
@@ -1715,6 +1729,16 @@ class TestPostTasksEndpoint:
         )
         assert resp.status_code == 400
         assert resp.json()["error"] == "invalid_task"
+
+    def test_post_tasks_rejects_deprecated_gemini(self, server_url):
+        resp = requests.post(
+            f"{server_url}/tasks",
+            json={"title": "Legacy task", "target_cli": "gemini"},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_task"
+        assert "deprecated" in resp.json()["detail"]
 
     def test_post_tasks_missing_title(self, server_url):
         """POST /tasks without required title field returns 400."""

@@ -64,6 +64,28 @@ class CLIType(str, Enum):
     gemini = "gemini"
 
 
+DEPRECATED_CLI_TYPES = frozenset({CLIType.gemini})
+
+
+def is_runnable_cli_type(value: CLIType | str) -> bool:
+    """Return whether *value* may execute new work.
+
+    Deprecated values remain in ``CLIType`` so historical database rows can be
+    loaded without a destructive migration.
+    """
+    try:
+        cli_type = value if isinstance(value, CLIType) else CLIType(str(value))
+    except ValueError:
+        return False
+    return cli_type not in DEPRECATED_CLI_TYPES
+
+
+def _validate_runnable_cli_type(value: CLIType) -> CLIType:
+    if not is_runnable_cli_type(value):
+        raise ValueError(f"CLI '{value.value}' is deprecated and cannot run new work")
+    return value
+
+
 class ExecutionMode(str, Enum):
     batch = "batch"
     session = "session"
@@ -137,6 +159,8 @@ class ThreadStepRequest(BaseModel):
     critical: bool = False
     on_failure: OnFailurePolicy = OnFailurePolicy.abort
 
+    _target_cli_is_runnable = field_validator("target_cli")(_validate_runnable_cli_type)
+
 
 class TaskCreateRequest(BaseModel):
     """Public API schema for task submission. Subset of Task fields."""
@@ -155,6 +179,8 @@ class TaskCreateRequest(BaseModel):
     not_before: str | None = None
     critical: bool = False
     idempotency_key: str = Field(default_factory=_uuid4)
+
+    _target_cli_is_runnable = field_validator("target_cli")(_validate_runnable_cli_type)
 
 
 class TaskEvent(BaseModel):

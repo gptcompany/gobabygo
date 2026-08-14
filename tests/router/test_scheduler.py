@@ -499,36 +499,16 @@ providers:
         t = db.get_task("t1")
         assert t.status == TaskStatus.failed
 
-    def test_gemini_account_exhausted_rotates_target_account(self, db, tmp_path):
-        account_config = tmp_path / "account_pools.yaml"
-        account_config.write_text(
-            """
-providers:
-  gemini:
-    default_account: gemini-a
-    accounts:
-      - gemini-a
-      - gemini-b
-""".strip()
-            + "\n",
-            encoding="utf-8",
-        )
-        sched = Scheduler(db=db, lease_duration_s=300, account_pool_config=str(account_config))
+    def test_historical_gemini_task_is_not_dispatched(self, db):
+        sched = Scheduler(db=db, lease_duration_s=300)
         _add_worker(db, "w1", "work", cli=CLIType.gemini, capabilities=["account:*"])
         _add_task(db, "t1", target_cli=CLIType.gemini, target_account="gemini-a")
-        sched.dispatch()
-        sched.ack_task("t1", "w1")
 
-        assert sched.report_failure(
-            "t1",
-            "w1",
-            "RESOURCE_EXHAUSTED: quota exceeded",
-            error_kind="account_exhausted",
-        ) is True
+        assert sched.dispatch() is None
 
         t = db.get_task("t1")
         assert t.status == TaskStatus.queued
-        assert t.target_account == "gemini-b"
+        assert db.get_worker("w1").status == "idle"
 
 
 class TestDrainingAutoRetire:

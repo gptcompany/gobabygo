@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from src.router.db import RouterDB
 from src.router.longpoll import LongPollRegistry
-from src.router.models import TaskEvent, TaskStatus, Worker
+from src.router.models import TaskEvent, TaskStatus, Worker, is_runnable_cli_type
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,9 @@ class WorkerManager:
         if not self._dev_mode or self._tokens:
             if not self.validate_token(token):
                 return False, "invalid_token"
+
+        if not is_runnable_cli_type(worker.cli_type):
+            return False, "deprecated_cli"
 
         with self._db.transaction() as conn:
             # Check account uniqueness (atomic within transaction)

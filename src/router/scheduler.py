@@ -22,7 +22,15 @@ from src.router.dependency import check_dependencies
 from src.router.failure_classifier import classify_cli_failure
 from src.router.fsm import TransitionRequest, apply_transition, validate_transition
 from src.router.longpoll import LongPollRegistry
-from src.router.models import CLIType, Lease, Task, TaskEvent, TaskStatus, Worker
+from src.router.models import (
+    CLIType,
+    Lease,
+    Task,
+    TaskEvent,
+    TaskStatus,
+    Worker,
+    is_runnable_cli_type,
+)
 from src.router.topology import Topology
 from src.router.verifier import VerifierGate
 
@@ -113,6 +121,10 @@ class Scheduler:
         return []
 
     def _worker_matches_task(self, worker: Worker, task: Task, *, task_mode: str) -> bool:
+        if not is_runnable_cli_type(task.target_cli) or not is_runnable_cli_type(
+            worker.cli_type
+        ):
+            return False
         if worker.cli_type != task.target_cli:
             return False
         if not self._worker_matches_account(worker, task.target_account):
