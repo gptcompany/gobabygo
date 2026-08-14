@@ -618,7 +618,9 @@ def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
         raise LiveReadError(
             f"recovery target process is not Codex: {current_command or '<empty>'}"
         )
-    capture_proc = _run_command([*prefix, "tmux", "capture-pane", "-p", "-t", pane_id])
+    capture_proc = _run_command(
+        [*prefix, "tmux", "capture-pane", "-p", "-e", "-t", pane_id]
+    )
     if capture_proc.returncode != 0:
         detail = (capture_proc.stderr or capture_proc.stdout or f"exit {capture_proc.returncode}").strip()
         raise LiveReadError(detail)
@@ -634,6 +636,8 @@ def _capture_visible_target(target: dict[str, Any]) -> dict[str, str]:
 _CODEX_ACTIVITY = re.compile(
     r"(?im)(?:^\s*[•●◦]\s+|working(?:\s*\(|\s+)|esc to interrupt|ctrl\+c to stop)"
 )
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_CODEX_DIM_PLACEHOLDER = re.compile(r"\x1b\[2m[^\x1b\n]+\x1b\[0m\s*$")
 _CODEX_UNSAFE_INPUT = re.compile(
     r"(?im)(?:press enter|\bconfirm(?:ation)?\b|\bapprove\b|\byes/no\b|\by/n\b|"
     r"^\s*›\s*\d+[.)]\s|^\s*[$#%]\s+)"
@@ -658,7 +662,7 @@ _CODEX_EMPTY_COMPOSER_PLACEHOLDERS = frozenset(
 
 
 def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
-    body = str(visible_screen or "").replace("\xa0", " ")
+    body = _ANSI_ESCAPE.sub("", str(visible_screen or "")).replace("\xa0", " ")
     lines = body.splitlines()
     prompt_indexes = [
         index for index, line in enumerate(lines) if line.lstrip().startswith("›")
@@ -683,6 +687,22 @@ def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
     return "\n".join(lines[composer_index:]), "\n".join(lines[current_start:])
 
 
+def _codex_composer_is_dim_placeholder(visible_screen: str) -> bool:
+    lines = str(visible_screen or "").splitlines()
+    prompt_lines = [
+        line
+        for line in lines
+        if _ANSI_ESCAPE.sub("", line).lstrip().startswith("›")
+    ]
+    if not prompt_lines:
+        return False
+    match = _CODEX_DIM_PLACEHOLDER.search(prompt_lines[-1])
+    if match is None:
+        return False
+    prefix = _ANSI_ESCAPE.sub("", prompt_lines[-1][: match.start()]).strip()
+    return prefix == "›"
+
+
 def _codex_composer_contains_delegation(composer: str, delegation_id: str) -> bool:
     token_chars = r"A-Za-z0-9_.:-"
     exact_id = re.compile(
@@ -701,6 +721,7 @@ def codex_screen_shows_current_activity(visible_screen: str) -> bool:
 
 def codex_screen_is_ready_for_delegation(visible_screen: str) -> bool:
     """Accept only a recognizable, empty, idle Codex composer."""
+    dim_placeholder = _codex_composer_is_dim_placeholder(visible_screen)
     composer, current_region = _codex_visible_regions(visible_screen)
     if not composer or _CODEX_ACTIVITY.search(current_region):
         return False
@@ -722,7 +743,11 @@ def codex_screen_is_ready_for_delegation(visible_screen: str) -> bool:
             if not separator:
                 return False
         stripped = content.strip()
-        if stripped and stripped not in _CODEX_EMPTY_COMPOSER_PLACEHOLDERS:
+        if (
+            stripped
+            and stripped not in _CODEX_EMPTY_COMPOSER_PLACEHOLDERS
+            and not (index == 0 and dim_placeholder)
+        ):
             return False
     return footer_found
 

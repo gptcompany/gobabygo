@@ -247,7 +247,13 @@ Tracked Codex sends serialize receipt invalidation, tmux input, and receipt
 creation under the recovery lock. Before a tracked send, Mesh recaptures the
 visible pane and proceeds only when the main Codex composer is recognizable,
 empty, and idle. A recognized stock placeholder counts as empty. MCP startup
-warnings do not by themselves make the composer occupied.
+warnings do not by themselves make the composer occupied. The transactional
+preflight preserves tmux terminal styles internally: any single-line composer
+suggestion rendered entirely with Codex's dim placeholder style counts as
+empty, so rotating suggestions do not require a text whitelist. Normal styled
+text remains occupied. Public board and peek output stays plain and redacted;
+when style evidence is unavailable, only known exact placeholders count as
+empty.
 Existing draft text, a collapsed paste, activity, menus,
 confirmations, and ambiguous startup screens are refused before any key input or
 receipt invalidation. Mesh never clears that content automatically; inspect it

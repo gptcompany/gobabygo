@@ -586,6 +586,38 @@ def test_send_accepts_claude_child_only_for_marked_coordinator_wrapper(monkeypat
     assert not any("send-keys" in command for command in commands)
 
 
+def test_codex_preflight_capture_preserves_terminal_style(monkeypatch) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"])
+                + "\n",
+            )
+        return _completed(
+            args,
+            stdout=(
+                "\x1b[1m›\x1b[0m \x1b[2mSummarize recent commits\x1b[0m\n"
+                "  gpt-5.6-sol high · /repo\n"
+            ),
+        )
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    captured = module._capture_visible_target(
+        {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    )
+
+    assert captured["output"].startswith("\x1b[1m›")
+    capture_command = next(command for command in commands if "capture-pane" in command)
+    assert capture_command == ["tmux", "capture-pane", "-p", "-e", "-t", "%7"]
+
+
 def test_remote_send_tracks_codex_delivery_without_storing_text(
     monkeypatch, tmp_path
 ) -> None:
@@ -1743,6 +1775,24 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
             "› Write tests for @filename\n"
             "  gpt-5.6-sol xhigh · /repo · Context 100%",
             True,
+        ),
+        (
+            "────────────────────\n"
+            "\x1b[1m›\x1b[0m \x1b[2mSummarize recent commits\x1b[0m\n"
+            "  \x1b[38;2;246;226;183mgpt-5.6-sol high\x1b[2m\x1b[39m · /repo",
+            True,
+        ),
+        (
+            "────────────────────\n"
+            "\x1b[1m›\x1b[0m Summarize recent commits\n"
+            "  \x1b[38;2;246;226;183mgpt-5.6-sol high\x1b[2m\x1b[39m · /repo",
+            False,
+        ),
+        (
+            "────────────────────\n"
+            "\x1b[1m›\x1b[0m typed text \x1b[2mghost suffix\x1b[0m\n"
+            "  gpt-5.6-sol high · /repo",
+            False,
         ),
         (
             "• Old completed response\n"
