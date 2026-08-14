@@ -82,7 +82,16 @@ elif [ "$router_systemd_active" -eq 0 ] && [ "$router_docker_active" -eq 0 ]; th
     ((WARN++)) || true
 fi
 
-for svc in mesh-worker@claude-work mesh-worker@codex-work mesh-worker@gemini-work; do
+for svc in mesh-worker@claude-work mesh-worker@codex-work; do
+    if systemctl list-unit-files "${svc}.service" &>/dev/null 2>&1; then
+        warn_check "${svc} active" systemctl is-active --quiet "${svc}.service"
+    fi
+done
+
+for svc in \
+    mesh-session-worker@mesh-session-claude-work \
+    mesh-session-worker@mesh-session-codex-work \
+    mesh-session-worker@mesh-session-antigravity-work; do
     if systemctl list-unit-files "${svc}.service" &>/dev/null 2>&1; then
         warn_check "${svc} active" systemctl is-active --quiet "${svc}.service"
     fi

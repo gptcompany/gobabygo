@@ -15,7 +15,7 @@ Workers remain host-level `systemd` services in both modes:
 - `mesh-session-worker@*.service`
 - `mesh-review-worker@*.service`
 
-Reason: Claude/Codex/Gemini/CCS auth, home-directory state, tmux sessions, and local CLI approvals must stay on the host.
+Reason: Claude/Codex/Antigravity/CCS auth, home-directory state, tmux sessions, and local CLI approvals must stay on the host.
 
 ## VPS Startup Sequence
 
@@ -36,7 +36,7 @@ This section assumes the `systemd` router path.
    - Each instance registers with router on start
    - Heartbeat begins immediately (5s interval)
    - Stale detection at 35s (WireGuard keepalive 25s)
-   - `mesh-session-worker@*.service` is the interactive/tmux variant (Claude/Codex session workers)
+   - `mesh-session-worker@*.service` is the interactive/tmux variant (Claude/Codex/Antigravity session workers)
    - `mesh-review-worker@*.service` is the verifier variant (approve/reject review tasks via API)
 
 ## MacBook (.112) Control Terminal Sequence (iTerm2)
@@ -93,11 +93,12 @@ sudo systemctl status mesh-worker@claude-work
 journalctl -u mesh-worker@claude-work -f
 
 # Batch workers (optional fallback only)
-sudo systemctl start mesh-worker@claude-work mesh-worker@codex-work mesh-worker@gemini-work
+sudo systemctl start mesh-worker@claude-work mesh-worker@codex-work
 
 # Interactive session workers (tmux-backed, primary)
 sudo systemctl start mesh-session-worker@mesh-session-claude-work
 sudo systemctl start mesh-session-worker@mesh-session-codex-work
+sudo systemctl start mesh-session-worker@mesh-session-antigravity-work
 
 # External verifier worker (Codex review)
 sudo systemctl start mesh-review-worker@mesh-review-codex
@@ -105,6 +106,6 @@ sudo systemctl start mesh-review-worker@mesh-review-codex
 # MacBook (.112) quick checks (operator machine, VPN-first)
 ./deploy/check-mac-112-cli.sh
 # or explicit (VPN)
-ssh sam@10.0.0.112 'zsh -lic "command -v claude codex gemini"'
+ssh sam@10.0.0.112 'zsh -lic "command -v claude codex agy"'
 ssh sam@10.0.0.112 'zsh -lic "python3 - <<\"PY\"\nimport json, os; print(json.load(open(os.path.expanduser(\"~/.claude/settings.json\"))).get(\"env\",{}).get(\"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\"))\nPY"'
 ```

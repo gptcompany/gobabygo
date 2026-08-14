@@ -13,9 +13,9 @@ MESH_ENV_SOURCES=(
   "/etc/mesh-worker/common.env"
   "/etc/mesh-worker/mesh-session-claude-work.env"
   "/etc/mesh-worker/mesh-session-codex-work.env"
+  "/etc/mesh-worker/mesh-session-antigravity-work.env"
   "/etc/mesh-worker/mesh-worker-claude-work.env"
   "/etc/mesh-worker/mesh-worker-codex-work.env"
-  "/etc/mesh-worker/mesh-worker-gemini-work.env"
   "${FALLBACK_EXPORTS}"
   "${ENV_FILE}"
 )
@@ -1978,7 +1978,6 @@ done
 if [[ "$stop_batch" == "1" ]]; then
   sudo systemctl stop mesh-worker@claude-work || true
   sudo systemctl stop mesh-worker@codex-work || true
-  sudo systemctl stop mesh-worker@gemini-work || true
   echo "[OK] batch workers stopped"
 fi
 
@@ -2223,7 +2222,6 @@ if [[ "$restart_batch" == "1" ]]; then
   if systemctl list-unit-files 2>/dev/null | grep -q '^mesh-worker@\.service'; then
     sudo systemctl restart mesh-worker@claude-work || true
     sudo systemctl restart mesh-worker@codex-work || true
-    sudo systemctl restart mesh-worker@gemini-work || true
   else
     echo "[deploy] mesh-worker@.service not found; skipping batch restart"
   fi

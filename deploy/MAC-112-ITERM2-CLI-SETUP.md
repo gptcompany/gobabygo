@@ -47,14 +47,16 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 Use a login shell so PATH includes `nvm`, npm-global bin, etc.:
 
 ```bash
-ssh sam@10.0.0.112 'zsh -lic "command -v claude codex gemini"'
-ssh sam@10.0.0.112 'zsh -lic "claude --version; codex --version; gemini version"'
+ssh sam@10.0.0.112 'zsh -lic "command -v claude codex agy"'
+ssh sam@10.0.0.112 'zsh -lic "claude --version; codex --version; agy --version"'
 ```
 
-If `gemini --version` is noisy or interactive due local config, use:
+`agy` is not an npm package. Install it with the official Antigravity installer,
+then complete Google OAuth as the same OS user that runs the worker. Use npm only
+for Claude and Codex:
 
 ```bash
-ssh sam@10.0.0.112 'zsh -lic "npm -g ls --depth=0 | egrep \"(claude|codex|gemini|anthropic|openai)\""' 
+ssh sam@10.0.0.112 'zsh -lic "npm -g ls --depth=0 | egrep \"(claude|codex|anthropic|openai)\""'
 ```
 
 ## Install / Update (npm-global path)
@@ -70,13 +72,13 @@ ssh sam@10.0.0.112 'zsh -lic "npm config get prefix"'
 Install/update targeted CLIs:
 
 ```bash
-ssh sam@10.0.0.112 'zsh -lic "npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli"'
+ssh sam@10.0.0.112 'zsh -lic "npm install -g @anthropic-ai/claude-code @openai/codex"'
 ```
 
 Verify after install/update:
 
 ```bash
-ssh sam@10.0.0.112 'zsh -lic "claude --version; codex --version; gemini version || gemini --version || true"'
+ssh sam@10.0.0.112 'zsh -lic "claude --version; codex --version; agy --version"'
 ```
 
 ## iTerm2 Operator Layout (Recommended)
@@ -85,7 +87,7 @@ ssh sam@10.0.0.112 'zsh -lic "claude --version; codex --version; gemini version 
 - Pane 2 (VPS): queue / worker status (`meshctl status` or API polling)
 - Pane 3 (WS `10.0.0.111`): session worker logs / tmux attach (Claude)
 - Pane 4 (WS `10.0.0.111`): session worker logs / tmux attach (Codex)
-- Pane 5 (WS `10.0.0.111`): optional Gemini reviewer batch logs
+- Pane 5 (WS `10.0.0.111`): optional Antigravity session worker logs
 
 Quick helper:
 

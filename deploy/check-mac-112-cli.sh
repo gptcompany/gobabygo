@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify macOS operator host (.112) has Claude/Codex/Gemini CLIs and Claude Agent Teams flag.
+# Verify macOS operator host (.112) has Claude/Codex/Antigravity CLIs and Claude Agent Teams flag.
 # VPN-first: tries 10.0.0.112 before LAN fallback 192.168.1.112.
 set -euo pipefail
 
@@ -29,7 +29,7 @@ sw_vers 2>/dev/null || true
 echo
 
 echo "== CLI PATHS =="
-for c in claude codex gemini; do
+for c in claude codex agy; do
   printf "[%s] " "$c"
   command -v "$c" || echo NOT_FOUND
 done
@@ -38,11 +38,11 @@ echo
 echo "== Versions =="
 claude --version || true
 codex --version || codex version || true
-gemini --version || gemini version || true
+agy --version || true
 echo
 
 echo "== npm globals (filtered) =="
-npm -g ls --depth=0 2>/dev/null | egrep "(@anthropic-ai/claude-code|@openai/codex|@google/gemini-cli)" || true
+npm -g ls --depth=0 2>/dev/null | egrep "(@anthropic-ai/claude-code|@openai/codex)" || true
 echo
 
 echo "== Claude Agent Teams Flag =="

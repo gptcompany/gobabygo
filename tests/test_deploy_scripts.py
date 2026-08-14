@@ -187,7 +187,6 @@ class TestEnvironmentFiles:
     @pytest.mark.parametrize("worker_env", [
         "mesh-worker-claude-work.env",
         "mesh-worker-codex-work.env",
-        "mesh-worker-gemini-work.env",
     ])
     def test_worker_env_exists(self, worker_env):
         path = DEPLOY_DIR / worker_env
@@ -196,7 +195,6 @@ class TestEnvironmentFiles:
     @pytest.mark.parametrize("worker_env", [
         "mesh-worker-claude-work.env",
         "mesh-worker-codex-work.env",
-        "mesh-worker-gemini-work.env",
     ])
     def test_worker_env_omits_shared_router_fields(self, worker_env):
         content = (DEPLOY_DIR / worker_env).read_text()
@@ -248,7 +246,7 @@ class TestEnvironmentFiles:
     @pytest.mark.parametrize("session_env", [
         "mesh-session-claude-work.env",
         "mesh-session-codex-work.env",
-        "mesh-session-gemini-work.env",
+        "mesh-session-antigravity-work.env",
     ])
     def test_session_worker_env_exists(self, session_env):
         path = DEPLOY_DIR / session_env
@@ -257,7 +255,7 @@ class TestEnvironmentFiles:
     @pytest.mark.parametrize("session_env", [
         "mesh-session-claude-work.env",
         "mesh-session-codex-work.env",
-        "mesh-session-gemini-work.env",
+        "mesh-session-antigravity-work.env",
     ])
     def test_session_worker_env_omits_shared_router_fields(self, session_env):
         content = (DEPLOY_DIR / session_env).read_text()
@@ -266,6 +264,17 @@ class TestEnvironmentFiles:
         assert "MESH_ROUTER_URL" not in content
         assert "MESH_AUTH_TOKEN" not in content
         assert "MESH_ALLOWED_WORK_DIRS" not in content
+
+    def test_antigravity_session_worker_uses_native_cli(self):
+        content = (DEPLOY_DIR / "mesh-session-antigravity-work.env").read_text()
+        assert "MESH_CLI_TYPE=antigravity" in content
+        assert "MESH_ACCOUNT_PROFILE=antigravity" in content
+        assert "MESH_CLI_COMMAND=/home/sam/.local/bin/agy" in content
+        assert "/home/sam/.local/bin" in content
+
+    def test_deprecated_gemini_worker_templates_are_absent(self):
+        assert not (DEPLOY_DIR / "mesh-worker-gemini-work.env").exists()
+        assert not (DEPLOY_DIR / "mesh-session-gemini-work.env").exists()
 
     def test_review_worker_env_omits_shared_router_fields(self):
         content = (DEPLOY_DIR / "mesh-review-codex.env").read_text()

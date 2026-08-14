@@ -272,7 +272,7 @@ for worker in "${BATCH_WORKERS[@]}"; do
     echo "  ${worker}.env: OK"
 done
 
-# Optional interactive session worker env templates (claude/codex/gemini if present)
+# Optional interactive session worker env templates (Claude/Codex/Antigravity).
 for SRC_ENV in "${PROJECT_ROOT}"/deploy/mesh-session-*.env; do
     [ -f "$SRC_ENV" ] || continue
     name="$(basename "$SRC_ENV" .env)"

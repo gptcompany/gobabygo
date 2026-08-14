@@ -3,7 +3,7 @@
 ## Decisione
 
 Router + Matrix bridge in Docker per stabilita, restart automatico, build riproducibile.
-Worker restano systemd — i CLI (claude/codex/gemini) richiedono host diretto.
+Worker restano systemd — i CLI (Claude/Codex/Antigravity) richiedono host diretto.
 
 Regola operativa:
 
@@ -19,13 +19,13 @@ CF Tunnel --> 127.0.0.1:8780 --> [Docker: mesh-router]
                                        |  HTTP      |  HTTP API polling
                      [systemd: mesh-worker@claude-work]   [Docker: mesh-matrix-bridge]
                      [systemd: mesh-worker@codex-work]
-                     [systemd: mesh-worker@gemini-work]
+                     [systemd: mesh-session-worker@mesh-session-antigravity-work]
 ```
 
 ## Perche solo router in Docker
 
 - Router: stateless Python + SQLite, perfetto per container
-- Worker: invocano CLI reali (claude, codex, gemini) con auth locale,
+- Worker: invocano CLI reali (`claude`, `codex`, `agy`) con auth locale,
   sessioni, config in ~/.claude/ — Docker aggiungerebbe solo frizione
 - Porta bindata su 127.0.0.1 (Docker bypassa UFW, non esporre a 0.0.0.0)
 - CF Tunnel si connette a localhost:8780
