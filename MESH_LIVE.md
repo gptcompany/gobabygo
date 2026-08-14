@@ -23,13 +23,15 @@ attaches the Claude coordinator there, and uses mosh/SSH only as transport. The
 same helper can run on the Dell; local `mesh live` operations use
 `MESH_LIVE_LOCAL=1` automatically inside the injected coordinator contract.
 
-Then talk to the coordinator normally, for example: "Use Codex as the writer
-and Antigravity as an independent read-only challenger; debate the options,
-delegate bounded work, verify tests and Git evidence, then recommend the final
-decision." The coordinator boards and peeks itself, creates a missing provider
-worker only through an authorized ensure command, sends a tracked delegation,
-and verifies the latest worker-authored result. It does not require per-task
-copy/paste by the operator.
+Then state the objective normally. Without an explicit override, the coordinator
+uses Antigravity as the sole writer and Codex in a different session as the
+primary independent read-only reviewer. Claude coordinates and adjudicates.
+This is a default, not an exclusive capability map: every provider may review
+when explicitly selected, but a writer's self-review is not independent review.
+The coordinator boards and peeks itself, creates missing provider workers only
+through authorized ensure commands, sends tracked delegations, and verifies the
+latest worker-authored results. It does not require per-task copy/paste by the
+operator.
 
 Install or refresh the helpers once:
 
@@ -252,21 +254,34 @@ reviews.
 The live adapter follows these boundaries:
 
 1. Keep one active writer per repository.
-2. Use a different tmux session for each reviewer/challenger and give it an
+2. By default use Antigravity as writer and Codex as primary reviewer. An
+   explicit operator choice or `--worker` pin overrides this preference; a
+   provider failure may justify a declared substitution with degraded coverage.
+3. Use a different tmux session for each reviewer/challenger and give it an
    explicitly read-only brief. YOLO mode is not an OS sandbox, so verify Git
    afterward and stop if a reviewer changed the worktree.
-3. Prefer model-diverse review. A second session of the same model provides an
+4. Prefer model-diverse review. A second session of the same model provides an
    independent context but must not be reported as a different model view.
-4. Fan out only after dependencies complete, with distinct delegation IDs and
+5. Fan out only after dependencies complete, with distinct delegation IDs and
    shared immutable evidence paths or commit IDs.
-5. Map a template `target_cli` to an existing ready session. Only
+6. Map a template `target_cli` to an existing ready session. Only
    `ensure-codex` or `ensure-antigravity` may create a missing worker; the
    coordinator does not create Claude sessions.
-6. Report missing preferred reviewers as degraded coverage. Never claim an
+7. Report missing preferred reviewers as degraded coverage. Never claim an
    unavailable perspective ran.
-7. Send implementation to the authorized writer even when the router template
+8. Send implementation to the authorized writer even when the router template
    names a different lead. The coordinator synthesizes and adjudicates but does
    not edit source code.
+
+Every code review freezes an exact commit range or a recorded HEAD, changed-file
+list, status, and diff checksum after writer activity stops. Findings come first,
+ordered by severity. Each finding includes exact `file:line`, impact, evidence
+or reproduction, and bounded fix direction. The reviewer then reports missing
+tests, residual risks, and exactly one `REVIEW_VERDICT: PASS` or
+`REVIEW_VERDICT: CHANGES_REQUIRED`; unresolved high/medium findings forbid PASS.
+The coordinator verifies afterward that the read-only reviewer did not mutate
+tracked state. Corrections return to the writer under a new delegation ID and
+the reviewer inspects the exact correction delta.
 
 The router/database remains optional for durable managed orchestration. Loading
 the live projection never creates a router thread and never takes ownership of

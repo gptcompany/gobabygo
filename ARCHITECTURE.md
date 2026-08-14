@@ -145,6 +145,11 @@ Meaning:
 - Antigravity is used as an independent worker challenger/validator where available
 - `antigravity_team_demo` exercises the native third-provider lane
 
+Those are router-template perspectives. The simpler unpinned Mesh Live
+coordinator defaults to Antigravity as the sole implementation writer and Codex
+as the primary independent reviewer. The operator or a pinned worker may
+override that preference; all providers remain eligible reviewers.
+
 ## Session Bus
 
 The bus is not a replacement for a PTY.

@@ -291,6 +291,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - router DB is authoritative for durable managed orchestration
 - iTerm2 is optional layout/UX
 - `mcoordinator <repo>` is the default automatic intra-repo path; `mcoordinator --all` is multi-repo
+- without an explicit override, Mesh Live assigns Antigravity as the sole writer
+  and Codex in a different session as the primary read-only reviewer; all
+  providers may still review when explicitly selected
 - `adaptive` is the default workflow: direct for incidents/audits/narrow fixes,
   Speckit for features, architecture, ambiguity, and independent challenge
 - `mesh live workflow show speckit` projects the canonical
@@ -304,6 +307,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - Speckit live keeps one writer per repo; Codex/Antigravity challenger roles use
   different existing sessions when available, and missing perspectives are
   reported as degraded coverage rather than silently skipped
+- code review is scoped to an exact commit range or recorded diff snapshot;
+  findings must be severity-ordered with `file:line`, impact, evidence, missing
+  tests, residual risks, and an explicit PASS or CHANGES_REQUIRED verdict
 - workflow role boundaries are coordinator contract rules, not filesystem
   locks or an OS sandbox; YOLO workers retain their Dell user permissions
 - only `ensure-codex` and `ensure-antigravity` may create a missing live worker;
