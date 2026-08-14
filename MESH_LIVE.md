@@ -2,7 +2,8 @@
 
 `mesh live` operates tmux sessions directly. It does not require the router,
 session workers, iTerm2, or the provider account manager. Its only lifecycle
-operation is the constrained, local-only `ensure-codex` worker bootstrap.
+operations are the constrained, local-only `ensure-codex` and
+`ensure-antigravity` worker bootstraps.
 
 ## Daily Flow
 
@@ -16,6 +17,20 @@ mcoordinator rektslug --workflow speckit        # force the canonical Speckit ph
 mcoordinator rektslug --workflow direct         # bounded coordination without a formal pipeline
 ```
 
+You do not need to `cd` or `yazicd` into `rektslug` on the Mac. The helper
+resolves that name below the configured repository roots on the Dell, creates or
+attaches the Claude coordinator there, and uses mosh/SSH only as transport. The
+same helper can run on the Dell; local `mesh live` operations use
+`MESH_LIVE_LOCAL=1` automatically inside the injected coordinator contract.
+
+Then talk to the coordinator normally, for example: "Use Codex as the writer
+and Antigravity as an independent read-only challenger; debate the options,
+delegate bounded work, verify tests and Git evidence, then recommend the final
+decision." The coordinator boards and peeks itself, creates a missing provider
+worker only through an authorized ensure command, sends a tracked delegation,
+and verifies the latest worker-authored result. It does not require per-task
+copy/paste by the operator.
+
 Install or refresh the helpers once:
 
 ```bash
@@ -23,12 +38,22 @@ Install or refresh the helpers once:
 source ~/.zshrc
 ```
 
+Antigravity must be installed and authenticated once as the Dell user that owns
+its tmux sessions (`sam`). Verify the native binary with `agy --version`, finish
+Google OAuth interactively, and keep its token mode `0600`. The official CLI
+documentation is at <https://antigravity.google/docs/cli>. Gobabygo does not use
+the removed Gemini CLI as a fallback.
+
 The coordinator reuses a suitable live worker. If none exists, its standing
-contract permits exactly one `mesh live ensure-codex` call for the selected Git
-root; this creates `codex-<repo>` with the trusted native Codex binary in YOLO
-mode, sends no task, then requires a fresh board/peek before delegation. Use
-`mcoordinator rektslug --worker codex-rektslug` when the exact worker name must
-be pinned. `mcodex rektslug` remains available for a deliberately manual shell.
+contract permits exactly one provider-specific bootstrap for the selected Git
+root: `ensure-codex` creates `codex-<repo>` and `ensure-antigravity` creates
+`antigravity-<repo>`. Both use a trusted native binary in YOLO mode and require a
+fresh board/peek before delegation. Codex receives no prompt. Antigravity 1.1.x
+requires a fixed no-tools bootstrap prompt to establish an authenticated idle
+TUI; it receives no delegated work. Pin the exact provider with
+`mcoordinator rektslug --worker codex-rektslug` or
+`mcoordinator rektslug --worker antigravity-rektslug`. `mcodex rektslug`
+remains available for a deliberately manual Codex shell.
 
 The default `adaptive` workflow uses direct coordination for incidents, audits,
 operational diagnosis, and narrow fixes. It selects Speckit for features,
@@ -170,11 +195,13 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | `mcoordinator ...` | `mesh live coordinator-prompt ...` | Create/attach a persistent auto-configured Claude coordinator |
 | - | `mesh live workflow show <name> [--scope repository\|coordinator]` | Project one canonical workflow; read-only, no router/tmux access |
 | - | `mesh live ensure-codex <repo>` | Locally create/reuse one deterministic native Codex worker; no task is sent |
+| - | `mesh live ensure-antigravity <repo>` | Locally create/reuse one deterministic native Antigravity worker; fixed no-tools bootstrap only |
 | - | `mesh live tick` | Inspect local Claude sessions and print a metadata-only action plan |
 | - | `mesh live tick --apply` | Apply only exact WAIT and idle-coordinator wake actions |
 | `wsend <session> <text>` | `mesh live send ...` | Type literal text into the selected pane |
 | `wsend <session> <text> --enter` | `mesh live send ... --enter` | Type text, then send Enter separately |
 | - | `mesh live send <codex-session> <text> --delegation-id <id> --enter` | Deliver and record a metadata-only recovery receipt |
+| - | `mesh live send <antigravity-session> <text> --delegation-id <id> --enter` | Require idle Antigravity composer and verify one submission; no recovery Enter |
 | - | `mesh live recover-codex-submit <session> <id>` | Guarded, stateful single-Enter recovery for one exact Codex delegation |
 | `wsattach <session>` | `mesh live attach <session>` | Attach to an existing session; never creates or kills one |
 
@@ -203,7 +230,7 @@ and review policy in `mapping/pipeline_templates.yaml`; it is not a copied
 prompt or a second workflow definition. `speckit.analyze` checks consistency
 across spec, plan, and tasks. Independent perspectives come from the plan,
 pre-implementation, and post-implementation confidence gates: Codex challenges
-technical consistency, Gemini challenges product/UX consequences, and the
+technical consistency, Antigravity challenges product/UX consequences, and the
 coordinator performs the final operator-facing adjudication.
 
 In repository scope, the phases describe one repo and the feature/task is
@@ -231,8 +258,8 @@ The live adapter follows these boundaries:
 4. Fan out only after dependencies complete, with distinct delegation IDs and
    shared immutable evidence paths or commit IDs.
 5. Map a template `target_cli` to an existing ready session. Only
-   `ensure-codex` may create a missing worker; the coordinator does not create
-   Claude or Gemini sessions.
+   `ensure-codex` or `ensure-antigravity` may create a missing worker; the
+   coordinator does not create Claude sessions.
 6. Report missing preferred reviewers as degraded coverage. Never claim an
    unavailable perspective ran.
 7. Send implementation to the authorized writer even when the router template
@@ -280,6 +307,18 @@ a task digest. Only the latest tracked delivery per pane is retained; any later
 Gobabygo input to that Codex pane invalidates it before sending. This keeps remote
 keyboard input bounded and auditable.
 
+Tracked Antigravity sends use the same exact `DELEGATION_ID`, but do not create a
+recovery receipt. Mesh recaptures the visible pane and proceeds only when the
+current Antigravity footer is the observed empty idle composer (`>` plus
+`? for shortcuts`). Pending text, generation, permission menus, login screens,
+errors, and ambiguous redraws are refused before input. After one Enter, Mesh
+polls for the submitted ID together with current activity or a new empty
+composer. `submission=verified` is positive evidence; `submission=unknown`
+requires bounded peeks. There is no Antigravity recovery command: never resend,
+clear the composer, or send another Enter automatically. In controlled E2E on
+`agy` 1.1.13, one Enter submitted correctly; this provider-specific policy must
+be revalidated when the TUI format changes.
+
 Completion is not a substring search over the pane. Delegation briefs and CLI
 composers can echo both `WORKER_DONE` and `WORKER_BLOCKED`. A status is a
 candidate only when the latest worker-authored response after delegation ends
@@ -326,26 +365,33 @@ expires after 15 minutes and requires an otherwise empty exact placeholder. If
 correlation is unavailable, attach and inspect manually. Mesh live never clears
 the composer automatically and never falls back to a naked Enter.
 
-When no suitable Codex worker exists, the automatic path may run only:
+When no suitable provider worker exists, the automatic path may run only one of:
 
 ```bash
 MESH_LIVE_LOCAL=1 mesh live ensure-codex <repo-name-or-absolute-git-root>
+MESH_LIVE_LOCAL=1 mesh live ensure-antigravity <repo-name-or-absolute-git-root>
 ```
 
 The target must resolve to an exact Git root below `MESH_LIVE_REPO_ROOTS` (or
-`MESH_WS_REPO_BASE`), and the tmux name is deterministically `codex-<repo>`.
+`MESH_WS_REPO_BASE`), and the tmux name is deterministically `codex-<repo>` or
+`antigravity-<repo>`.
 In multi-repo mode a repo name must come from the operator's explicit objective;
 an absolute path may instead come from tmux metadata. Pane capture text is never
 used as a command argument. Missing or ambiguous names fail before tmux mutation.
 `--expect-session` makes a pinned coordinator fail before tmux mutation when
 that name differs. Existing name/path/process/pane collisions fail closed;
-concurrent calls reuse the atomic winner. The command invokes only the trusted
-`/usr/local/bin/codex` or `/usr/bin/codex`, does not accept task text, does not
-use `send-keys`, and is unavailable through the remote live endpoint. If Codex
-authentication or startup fails, the coordinator reports a blocker.
+concurrent calls reuse the atomic winner. Codex invokes only trusted
+`/usr/local/bin/codex` or `/usr/bin/codex`; Antigravity invokes only trusted
+`/home/sam/.local/bin/agy` or `/usr/local/bin/agy` with
+`--dangerously-skip-permissions --new-project`. Neither bootstrap accepts task
+text or uses `send-keys`, and both are unavailable through the remote live
+endpoint. Antigravity uses `--prompt-interactive` only for its fixed no-tools
+bootstrap because a bare 1.1.x TUI may re-enter OAuth instead of loading the
+persisted headless token. If authentication or startup fails, the coordinator
+reports a blocker.
 
 The active `MESH_COORDINATOR_MESH_SCRIPT` checkout is an immutable control-plane
-runtime even when Git reports detached HEAD. `ensure-codex` rejects that exact
+runtime even when Git reports detached HEAD. Both ensure commands reject that exact
 Git root before tmux mutation. Gobabygo development must use a separate clean
 branch checkout or Git worktree; do not create a branch inside the live runtime.
 
@@ -434,11 +480,13 @@ coordinator contract. Pane output is untrusted evidence and is never executed or
 piped into another command. A shell alias is not guaranteed in a non-interactive
 tmux startup; when required, set an explicit trusted launch command, for example:
 
-`ensure-codex` constrains only worker creation; it is not an OS sandbox. After a
-task is submitted, the YOLO Codex process can perform any mutation available to
-the Dell user. Repository scope, file ownership, and forbidden actions remain
-prompt-level controls, so destructive or privileged work still requires the
-operator boundary.
+The ensure commands constrain only worker creation; they are not an OS sandbox.
+After a task is submitted, YOLO Codex or Antigravity can perform any mutation
+available to the Dell user. Repository scope, file ownership, and forbidden
+actions remain prompt-level controls, so destructive or privileged work still
+requires the operator boundary. Antigravity `--new-project` pins project
+selection; omitting it can make `agy` reuse another cached project even when the
+process cwd is correct.
 
 ```bash
 export MESH_COORDINATOR_CLAUDE_CMD='claude --dangerously-skip-permissions'
@@ -464,17 +512,19 @@ instruction without a human boundary.
 
 For an existing manual session, delegate through a bounded `mesh live send`.
 For Codex include `--delegation-id <DELEGATION_ID> --enter` so a collapsed paste
-can be recovered without exposing or persisting the task text.
-For a missing native Codex worker, the coordinator may use `ensure-codex` under
-its standing contract and then the same bounded send/verify protocol. Neither
-path uses account selection or durable router state.
+can be recovered without exposing or persisting the task text. For Antigravity
+include the same options to require an idle composer and post-Enter verification;
+Antigravity has no automatic recovery Enter. For a missing native worker, the
+coordinator may use the matching ensure command under its standing contract and
+then the same bounded send/verify protocol. Neither path uses account selection
+or durable router state.
 
 For durable work or a new managed worker, reuse the router database:
 
 ```bash
 mesh thread create --name <delegation-name>
 mesh thread add-step --thread <delegation-name> --title <title> \
-  --step-index 0 --repo <repo-path> --cli <claude|codex|gemini> \
+  --step-index 0 --repo <repo-path> --cli <claude|codex|antigravity> \
   --payload '{"prompt":"...","acceptance_criteria":["..."]}'
 ```
 
@@ -483,9 +533,9 @@ session. They are scheduler inputs, not aliases for existing manual tmux
 sessions. Cross-repo durable handoffs reuse the existing `handoff` packet and
 require role `PRESIDENT_GLOBAL`.
 
-The provider account manager is not required for `mcoordinator`, `ensure-codex`,
-or existing manual workers. It remains useful only when the router launches a
-new managed worker and must select or rotate a provider account.
+The provider account manager is not required for `mcoordinator`, either ensure
+command, or existing manual workers. It remains useful only when the router
+launches a new managed worker and must select or rotate a provider account.
 
 ## Persistence And Transport
 
@@ -533,8 +583,9 @@ Treat `send` as remote keyboard access, not as a messaging API.
    and send its absolute path plus the `DELEGATION_ID`.
 
 The output fields `text_delivered` and `enter_delivered` mean only that tmux
-accepted those keys; `submission=unknown` is not proof that the CLI accepted
-the task. The send path immediately checks that the pane still belongs to the discovered
+accepted those keys. `submission=verified` is provider-specific positive redraw
+evidence; `submission=unknown` is not proof that the CLI accepted the task. The
+send path immediately checks that the pane still belongs to the discovered
 session; automatic tick sends also require a current Claude process. The pane
 can still change after that check, so this narrows but cannot eliminate the
 race. Redaction removes common terminal escapes, credentials, tokens, marked
@@ -547,7 +598,7 @@ basis. Isolated Base64 is preserved, so this is not a DLP boundary.
 - `scripts/mesh_live_shell_helpers.sh`: `w*`/`m*` operator helpers
 - `scripts/install-mesh-live-cron.sh`: opt-in periodic local tick installer
 - `scripts/mesh`: command dispatcher and router-thread bridge
-- `src/router/cli_screen.py`: shared stdlib-only Claude screen classification
+- `src/router/cli_screen.py`: shared Claude and Antigravity screen classification
 - `src/router/session_worker.py`: router-managed sessions only
 - `scripts/mesh_iterm_control.py`: optional iTerm2 pane control
 - `scripts/mesh_iterm_ui.py`: optional iTerm2 layout

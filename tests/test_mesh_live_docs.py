@@ -11,6 +11,7 @@ def test_mesh_live_runbook_is_linked_from_primary_docs() -> None:
     assert "[MESH_LIVE.md](MESH_LIVE.md)" in readme
     assert "[MESH_LIVE.md](MESH_LIVE.md)" in quickstart
     assert "mesh live recover-codex-submit <session> <id>" in quickstart
+    assert "mesh live ensure-antigravity" in quickstart
 
 
 def test_mesh_live_runbook_covers_operator_contract() -> None:
@@ -36,15 +37,19 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "`--continue` cannot provide the per-UUID guarantee",
         "does not depend on Mac aliases",
         "mesh live ensure-codex <repo>",
+        "mesh live ensure-antigravity <repo>",
+        "antigravity-<repo>",
+        "fixed no-tools bootstrap prompt",
+        "--dangerously-skip-permissions --new-project",
         "MESH_LIVE_REPO_ROOTS",
-        "does not accept task text",
+        "Neither bootstrap accepts task text",
         "unavailable through the remote live endpoint",
         "operator's explicit objective",
         "ambiguous names fail before tmux mutation",
         "immutable control-plane runtime",
-        "rejects that exact Git root before tmux mutation",
+        "Both ensure commands reject that exact Git root before tmux mutation",
         "do not create a branch inside the live runtime",
-        "it is not an OS sandbox",
+        "they are not an OS sandbox",
         "already running coordinator therefore keeps its old contract",
         "The default `adaptive` workflow",
         "MESH_COORDINATOR_WORKFLOW",
@@ -66,12 +71,15 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "recheck tmux ownership and Git state",
         "independent context but must not be reported as a different model view",
         "distinct delegation IDs",
-        "Only `ensure-codex` may create a missing worker",
+        "`ensure-codex` or `ensure-antigravity` may create a missing worker",
         "degraded coverage",
         "never creates a router thread",
         "DELEGATION_ID",
         "successful tmux send is not treated as delivery",
         "main Codex composer is recognizable, empty, and idle",
+        "current Antigravity footer",
+        "There is no Antigravity recovery command",
+        "submission=verified",
         "recognized stock placeholder",
         "MCP startup warnings do not by themselves make the composer occupied",
         "refused before any key input or receipt invalidation",

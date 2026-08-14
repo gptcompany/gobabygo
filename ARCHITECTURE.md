@@ -52,17 +52,17 @@ Example current downstream target:
 Current intended topology:
 
 ```text
-Mac (.112)
+Mac operator
   - iTerm2
   - operator shell
   - optional mesh UI forwarding
 
-WS (.111)
+Dell 7670 workstation (.2)
   - target repos (for example /media/sam/1TB/rektslug)
   - session workers
   - batch/review workers
   - tmux sessions
-  - provider runtimes (Claude/Codex/Gemini, CCS)
+  - provider runtimes (Claude/Codex/Antigravity; CCS where applicable)
 
 Router (.100)
   - mesh router HTTP service
@@ -78,7 +78,7 @@ Operator UI layout:
   - `lead`
   - `worker-claude`
   - `worker-codex`
-  - `worker-gemini`
+  - `worker-antigravity` (target role; legacy iTerm configs may still display deprecated `worker-gemini`)
   - `verifier`
 - if the router already has an open session for the same repo and matching role/provider, `mesh ui` attaches that pane to the live tmux session; otherwise it falls back to the static role shell bootstrap
 
@@ -127,7 +127,7 @@ Canonical built-in workflow templates are now session-native too:
 - `gsd`
 - `speckit`
 - `speckit_codex`
-- `gemini_team_demo`
+- `antigravity_team_demo`
 
 `mesh live` projects these templates as coordinator policy without creating a
 router workflow instance. Repository scope binds one repo at startup.
@@ -142,8 +142,8 @@ Meaning:
 - it no longer relies on live `session-only` policy to silently override `batch` steps
 - Claude is used primarily for `lead` creative work
 - Codex is used primarily for `president` adjudication/review and worker-side verification
-- Gemini is used as an independent worker challenger/validator where available
-- `gemini_team_demo` exists specifically for cheap smoke/demo validation without touching Claude/Codex quota
+- Antigravity is used as an independent worker challenger/validator where available
+- `antigravity_team_demo` exercises the native third-provider lane
 
 ## Session Bus
 
@@ -175,7 +175,7 @@ Current default policy:
 
 - `claude` -> `ccs {target_account}`
 - `codex` -> `ccs codex`
-- `gemini` -> `ccs gemini`
+- `antigravity` -> `/home/sam/.local/bin/agy`
 
 Important distinction:
 
@@ -188,7 +188,7 @@ Current Unix-user policy:
 
 - Claude session worker -> `sam`
 - Codex session worker -> `mesh-worker`
-- Gemini session worker -> `sam`
+- Antigravity session worker -> `sam`
 
 This matters because provider auth/state lives under the Unix user running the session worker.
 
@@ -246,7 +246,7 @@ These decisions are already reflected in code/docs:
 
 - `deregister_worker()` no longer requeues active `assigned`/`running` tasks. It now fails them terminally and clears assignment metadata until a real remote kill/ack path exists for live tmux sessions.
 - startup recovery now routes state repair through `fsm.apply_transition()` inside the same DB transaction instead of bypassing FSM invariants
-- account pool rotation is no longer Claude-only; Codex and Gemini now classify quota/rate-limit failures as `account_exhausted` too
+- account exhaustion classification covers Claude, Codex, and Antigravity; Gemini remains historical and is not schedulable
 - tmux session naming uses a longer task fragment to reduce collision risk under parallel load
 
 ## Current Live Continuation State

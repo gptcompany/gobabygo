@@ -176,10 +176,10 @@ Canonical template policy:
 - built-in `gsd` and `speckit` now run as interactive teams, not mixed batch/session pipelines
 - `lead` defaults to Claude for research, planning, artifact generation, and implementation
 - `president` defaults to Codex for adjudication and review-heavy checkpoints
-- `worker` sessions use Codex and Gemini for challenge, analyze, verify, and validate steps
+- `worker` sessions use Codex and Antigravity for challenge, analyze, verify, and validate steps
 - `speckit_codex` remains the fallback template when Claude is unavailable
-- `gemini_team_demo` is the canonical smoke/demo template and should be used for all future tests to avoid consuming Claude/Codex quota
-- `gemini_team_demo` writes `lead_plan.md`, `worker_review.md`, and `president_decision.md`, each with deterministic success markers and automatic session exit
+- `antigravity_team_demo` is the canonical third-provider smoke/demo template
+- `antigravity_team_demo` writes `lead_plan.md`, `worker_review.md`, and `president_decision.md`, each with deterministic success markers and automatic session exit
 - text-marker auto-exit without `success_file_path` is now opt-in only and only matches standalone marker lines, not arbitrary substrings printed by tools
 
 Pipeline orchestration example (from BOSS terminal):
@@ -252,6 +252,7 @@ mesh term dump /media/sam/1TB/rektslug president --lines 30
 mesh live board rektslug --lines 40
 mesh live peek claude-rektslug 120
 MESH_LIVE_LOCAL=1 mesh live ensure-codex /data/sata/1TB/rektslug
+MESH_LIVE_LOCAL=1 mesh live ensure-antigravity /data/sata/1TB/rektslug
 mesh live send claude-rektslug "status?" --enter
 mesh live attach claude-rektslug
 mesh live brief --repo rektslug
@@ -300,16 +301,16 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   delegation, so no single pair is required at startup
 - coordinator scope does not create a router pipeline: the router/database is
   optional persistence for selected tasks and handoffs
-- Speckit live keeps one writer per repo; Codex/Gemini challenger roles use
+- Speckit live keeps one writer per repo; Codex/Antigravity challenger roles use
   different existing sessions when available, and missing perspectives are
   reported as degraded coverage rather than silently skipped
 - workflow role boundaries are coordinator contract rules, not filesystem
   locks or an OS sandbox; YOLO workers retain their Dell user permissions
-- only `ensure-codex` may create a missing live worker; template roles do not
-  authorize Claude/Gemini spawn, nested AI launch, router use, or iTerm2
+- only `ensure-codex` and `ensure-antigravity` may create a missing live worker;
+  template roles do not authorize Claude spawn, nested AI launch, router use, or iTerm2
 - the coordinator reuses existing workers and may bootstrap one deterministic
-  `codex-<repo>` through local-only `ensure-codex`; it does not ask for a
-  per-worker authorization and sends no task during bootstrap
+  `codex-<repo>` or `antigravity-<repo>` through the matching local-only ensure
+  command; it does not ask for per-worker authorization
 - after a reboot use explicit `--continue` or deterministic `--resume <id>`;
   the helper resumes Claude and appends the current Gobabygo system contract in
   the same startup command
@@ -385,9 +386,9 @@ mapping/provider_runtime.yaml
 Default behavior:
 - `claude` -> real CCS account profile: `ccs {target_account}`
 - `codex` -> provider direct: `ccs codex`
-- `gemini` -> provider direct: `ccs gemini`
+- `antigravity` -> native CLI: `/home/sam/.local/bin/agy`
 - Claude session worker service user -> `sam`
-- Gemini session worker service user -> `sam`
+- Antigravity session worker service user -> `sam`
 
 Operator UI policy:
 
@@ -480,18 +481,18 @@ If Claude is disabled, switch to codex-only pipeline:
 export MESH_PIPELINE_TEMPLATE=speckit_codex
 ```
 
-For smoke/demo tests, use Gemini only:
+For third-provider smoke/demo tests, use Antigravity:
 
 ```bash
-export MESH_PIPELINE_TEMPLATE=gemini_team_demo
+export MESH_PIPELINE_TEMPLATE=antigravity_team_demo
 mesh start "snake game demo"
 ```
 
 Canonical E2E smoke expectation:
-- step 0 (`lead`) writes `lead_plan.md` with `GEMINI_LEAD_OK`
-- step 1 (`worker`) writes `worker_review.md` with `GEMINI_WORKER_OK`
-- step 2 (`president`) writes `president_decision.md` with `GEMINI_TEAM_OK`
-- each Gemini session auto-exits when its expected file marker is present
+- step 0 (`lead`) writes `lead_plan.md` with `ANTIGRAVITY_LEAD_OK`
+- step 1 (`worker`) writes `worker_review.md` with `ANTIGRAVITY_WORKER_OK`
+- step 2 (`president`) writes `president_decision.md` with `ANTIGRAVITY_TEAM_OK`
+- each Antigravity session auto-exits when its expected file marker is present
 
 If you need explicit path/name mode:
 
@@ -551,7 +552,7 @@ Verified live behavior on the current stack:
 - long-lived interactive sessions now renew leases on heartbeat and are not requeued after the 5-minute lease window
 - real account-scoped Claude CCS profiles are supported (`ccs <profile>`, not `ccs claude`)
 - Claude limit recovery now rotates across those isolated profiles on retry when worker output matches `429`, `You've hit your limit`, `You're out of extra usage`, or `rate limit error`
-- Codex/Gemini quota detection now feeds the same `account_exhausted` retry path when their output matches provider-specific rate-limit or quota strings
+- Codex/Antigravity quota detection feeds the same `account_exhausted` retry path when output matches provider-specific rate-limit or quota strings
 - scheduler dispatch now requires a fresh worker heartbeat before leasing work to an `idle` worker
 - Docker router reachability is controlled by `MESH_ROUTER_BIND_HOST` in `deploy/compose.yml`; for multi-host WS/router setups it must not stay pinned to `127.0.0.1`
 
@@ -560,7 +561,7 @@ Known operational gaps:
 - brand-new CCS profiles still require one real login/bootstrap under the Unix user that runs that provider
 - if `GET /sessions/messages` returns `500 {"details":"bad parameter or other API misuse"}`, the live router is still running the pre-fix session DB path and needs redeploy
 - session workers preseed Claude project trust/onboarding/MCP metadata automatically; remaining drift is provider/profile bootstrap, not the router bus
-- `ccs codex` and `ccs gemini` still present Claude Code UX. If the prompt is visibly typed but not submitted, treat it as a tmux/TUI timing issue first.
+- `ccs codex` retains the existing frontend. Native `agy` has its own TUI; tracked Mesh Live sends require its exact idle footer and verify submission after Enter.
 
 Current real pipeline snapshot:
 
@@ -632,12 +633,12 @@ For ad-hoc live validation against a session worker, prefer explicit session mod
 ```bash
 source ~/.mesh/router.env
 python -m src.meshctl submit \
-  --title "Gemini Smoke" \
-  --cli gemini \
-  --account gemini \
+  --title "Antigravity Smoke" \
+  --cli antigravity \
+  --account antigravity \
   --phase test \
   --mode session \
-  --payload '{"prompt":"Reply with exactly GEMINI_SMOKE_OK.","working_dir":"/media/sam/1TB/gobabygo","auto_exit_on_success":true,"success_marker":"GEMINI_SMOKE_OK"}'
+  --payload '{"prompt":"Reply with exactly ANTIGRAVITY_SMOKE_OK.","working_dir":"/media/sam/1TB/gobabygo","auto_exit_on_success":true,"success_marker":"ANTIGRAVITY_SMOKE_OK"}'
 ```
 
 Note:
@@ -655,7 +656,7 @@ Note:
 | `MESH_AUTH_TOKEN` | `""` | Bearer token (shared by router, worker, meshctl) |
 | `MESH_WORKER_ID` | `ws-unknown-01` | Unique worker identifier |
 | `MESH_ROUTER_URL` | `http://localhost:8780` | Router URL (worker + meshctl) |
-| `MESH_CLI_TYPE` | `claude` | Worker CLI type: `claude\|codex\|gemini` |
+| `MESH_CLI_TYPE` | `claude` | Worker CLI type: `claude\|codex\|antigravity` (`gemini` is historical only) |
 | `MESH_ACCOUNT_PROFILE` | `work` | Worker default account/profile identifier (still valid for exact-match routing) |
 | `MESH_ALLOWED_ACCOUNTS` | `""` | Optional CSV allowlist published as capabilities (`foo,bar,*` -> `account:foo`, `account:bar`, `account:*`) for dynamic target account routing |
 | `MESH_PROVIDER_RUNTIME_CONFIG` | repo default | Optional provider runtime policy file. `""` disables central policy and falls back to `MESH_CLI_COMMAND`. |

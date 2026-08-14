@@ -109,14 +109,14 @@ Current expectation:
 
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
 - Default operator multi-panel bootstrap is centralized in [mapping/operator_ui.yaml](/media/sam/1TB/gobabygo/mapping/operator_ui.yaml).
-- Canonical built-in `gsd` and `speckit` templates are now session-only team templates. They use `lead=claude`, `president=codex`, and `worker=codex/gemini` to keep planning/implementation interactive while challenge, validation, and adjudication happen in parallel sessions.
+- Canonical built-in `gsd` and `speckit` templates are session-only team templates. Active provider lanes are Claude, Codex, and Antigravity; Gemini is retained only for historical row deserialization and is rejected for new work.
 - For Claude, use isolated CCS account profiles such as `claude-samuele` and launch them from the target repo directory with `ccs <profile>`.
 - Claude account autoswitch is router-driven, not CCS-provider-driven: worker failures tagged as `account_exhausted` rotate the next task attempt to the next isolated profile from `mapping/account_pools.yaml`.
-- `ccs codex` and `ccs gemini` keep the Claude Code frontend and route inference through a provider bridge. MCP, memory, slash commands, and session UX stay Claude Code-native.
+- `ccs codex` keeps the existing provider bridge. Antigravity uses the native `agy` CLI as user `sam`, with `--new-project` to pin the selected repository; it does not use CCS or Claude hooks.
 - For existing manual sessions, use `mesh live`; tmux is authoritative for live pane/process state. For router-managed tasks and sessions, the router DB remains authoritative. iTerm2 is only an optional view.
 - `mcoordinator <repo> --worker <session>` bootstraps the default adaptive tmux coordinator; `mcoordinator --all` handles multi-repo scope without requiring iTerm2 or the router. Adaptive mode uses direct coordination for bounded operational work and projects the canonical `speckit` template for feature/architecture work with independent challenge and adjudication; `--workflow direct|speckit|adaptive` is explicit override. Repo scope binds one repository, while `--all` keeps the specification and decisions at coordinator level and late-binds repo plus feature/task for each concrete delegation.
 - `mesh ui <repo>` is part of the router-managed operator flow and opens role panels. It boots each pane through central role policy and may attach to a matching router-backed tmux session.
-- `mesh ui` now defaults to a repo-centric `2 tabs x 3 panes` operator layout (`boss`, `president`, `lead`, `worker-codex`, `worker-gemini`, `verifier`); `worker-claude` is opened only when you ask for it explicitly.
+- `mesh ui` remains an optional legacy iTerm2 layout. Any `worker-gemini` role in that path is deprecated and cannot create new router work; use `mesh live ensure-antigravity` for the active third-provider lane.
 - `mesh` with no arguments now opens a small interactive launcher for the current repo root (`attach`, `sessions`, `ui`, `start`, plus `attach --all`).
 - For a simpler one-session workflow, `mesh sessions` and `mesh attach` are router-backed operator commands: they default to live sessions for the current repo, support `--all` for cross-repo selection, and only use tmux at the final attach step.
 - The Matrix bridge now supports explicit room commands (`!mesh approve`, `!mesh reject`, `!mesh send`, `!mesh enter`, `!mesh interrupt`) resolved against the router API/DB, scoped to the repo room when topology maps one.
@@ -125,7 +125,7 @@ Current expectation:
 - Runtime roles are now `boss`, `president`, `lead`, and `worker`. `lead` is first-class in the router policy layer and acts as a coordinator between `president` and workers while direct `president` ↔ `worker` communication remains allowed for compatibility.
 - Worker execution paths are now bounded by `MESH_ALLOWED_WORK_DIRS`. Session and batch workers reject task payloads that resolve outside those roots.
 - Worker deregistration is now conservative: active tasks are failed, not requeued, until there is a real remote-kill handshake for live tmux sessions. This avoids dual execution on the same repo.
-- Account exhaustion rotation now applies to `claude`, `codex`, and `gemini` when their failure output matches configured quota/rate-limit signatures.
+- Account exhaustion classification applies to active `claude`, `codex`, and `antigravity` workers when their failure output matches configured quota/rate-limit signatures.
 - Scheduler dispatch now requires a fresh worker heartbeat before leasing work, reducing 5-minute blackholes on recently-dead workers.
 - Historical architecture notes remain in [kiss_mesh/README.md](kiss_mesh/README.md).
 - Canonical architecture is in [ARCHITECTURE.md](ARCHITECTURE.md).
