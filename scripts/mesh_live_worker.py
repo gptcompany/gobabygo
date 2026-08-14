@@ -25,6 +25,12 @@ _ANTIGRAVITY_BOOTSTRAP_PROMPT = (
 )
 _CODEX_STARTUP_ATTEMPTS = 20
 _ANTIGRAVITY_STARTUP_ATTEMPTS = 300
+_ANTIGRAVITY_UI_ATTEMPTS = 160
+_ANTIGRAVITY_UI_INTERVAL = 0.25
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_ANTIGRAVITY_IDLE_FOOTER = re.compile(
+    r"(?m)^>[ \t]*\r?\n[^\n]*\r?\n\?[ \t]+for shortcuts[^\n]*\Z"
+)
 
 
 class WorkerEnsureError(RuntimeError):
@@ -265,6 +271,40 @@ def _wait_for_reusable_session(
     raise WorkerEnsureError(f"{provider.title()} worker {session} did not become ready")
 
 
+def _antigravity_bootstrap_is_ready(visible_screen: str) -> bool:
+    body = _ANSI_ESCAPE.sub("", str(visible_screen or "")).replace("\xa0", " ")
+    normalized = " ".join(body.split())
+    return (
+        _ANTIGRAVITY_BOOTSTRAP_PROMPT in normalized
+        and _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip()) is not None
+    )
+
+
+def _wait_for_antigravity_bootstrap(session: str, repo: Path) -> None:
+    exact_target = f"={session}:0.0"
+    consecutive_confirmations = 0
+    for attempt in range(_ANTIGRAVITY_UI_ATTEMPTS):
+        existing = _inspect_session(session)
+        if existing is None:
+            raise WorkerEnsureError(
+                f"Antigravity worker {session} exited during UI bootstrap; "
+                "inspect Antigravity authentication/configuration"
+            )
+        _validate_reusable(existing, repo, provider="antigravity")
+        capture = _run_command(["tmux", "capture-pane", "-p", "-e", "-t", exact_target])
+        if capture.returncode == 0 and _antigravity_bootstrap_is_ready(capture.stdout):
+            consecutive_confirmations += 1
+            if consecutive_confirmations >= 2:
+                return
+        else:
+            consecutive_confirmations = 0
+        if attempt + 1 < _ANTIGRAVITY_UI_ATTEMPTS:
+            time.sleep(_ANTIGRAVITY_UI_INTERVAL)
+    raise WorkerEnsureError(
+        f"Antigravity worker {session} did not reach a stable idle composer after bootstrap"
+    )
+
+
 def _ensure_worker(
     repo_value: str,
     *,
@@ -335,6 +375,8 @@ def _ensure_worker(
             )
         else:
             _validate_reusable(existing, repo, provider=provider)
+        if provider == "antigravity":
+            _wait_for_antigravity_bootstrap(session, repo)
         return {"session": session, "repo": str(repo), "created": False, "ready": True}
 
     attempts = (
@@ -343,6 +385,8 @@ def _ensure_worker(
         else _CODEX_STARTUP_ATTEMPTS
     )
     _wait_for_reusable_session(session, repo, provider=provider, attempts=attempts)
+    if provider == "antigravity":
+        _wait_for_antigravity_bootstrap(session, repo)
     return {"session": session, "repo": str(repo), "created": True, "ready": True}
 
 

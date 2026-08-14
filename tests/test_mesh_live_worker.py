@@ -211,9 +211,21 @@ def test_ensure_antigravity_creates_repo_pinned_yolo_worker_without_send_keys(
     commands: list[list[str]] = []
     created = False
     displays = 0
+    captures = 0
+    idle = (
+        "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    bootstrapped = (
+        "> Initialize this repository session and wait idle for a coordinator\n"
+        "  delegation. Do not inspect or modify files and do not run commands.\n"
+        + idle
+    )
 
     def fake_run(args: list[str], *, timeout: float = 10.0):
-        nonlocal created, displays
+        nonlocal created, displays, captures
         if args[:2] == ["git", "-C"]:
             return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
         commands.append(args)
@@ -230,9 +242,13 @@ def test_ensure_antigravity_creates_repo_pinned_yolo_worker_without_send_keys(
                 ["antigravity-rektslug", pane_path, command, "0", "1"]
             )
             return _completed(args, stdout=fields + "\n")
+        if args[:2] == ["tmux", "capture-pane"]:
+            captures += 1
+            return _completed(args, stdout=idle if captures == 1 else bootstrapped)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
 
     result = module.ensure_antigravity_worker(
         str(repo), expected_session="antigravity-rektslug"
@@ -254,6 +270,7 @@ def test_ensure_antigravity_creates_repo_pinned_yolo_worker_without_send_keys(
     assert module._ANTIGRAVITY_BOOTSTRAP_PROMPT in startup
     assert "Do not inspect or modify files and do not run commands." in startup
     assert not any("send-keys" in command for command in commands)
+    assert captures == 3
 
 
 def test_ensure_codex_reuses_matching_live_worker(monkeypatch, tmp_path) -> None:
