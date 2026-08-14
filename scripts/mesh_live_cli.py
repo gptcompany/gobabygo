@@ -2553,7 +2553,7 @@ def build_live_coordinator_system_prompt(
             "- These boundaries are coordinator contract rules, not filesystem locks or an OS sandbox. Recheck tmux ownership and Git state before and after every delegated write or review.",
             "- You are the final operator-facing adjudicator. Template lead/president/worker roles are desired perspectives, not authority to launch CLIs.",
             "- Keep at most one active writer per repository. You may synthesize requirements, plans, and non-secret delegation briefs, but never edit source code yourself.",
-            "- Map template target_cli to a ready existing session when available. Only ensure-codex may create a missing worker; never create Gemini or Claude sessions.",
+            "- Map template target_cli to a ready existing session when available. Only ensure-codex may create a missing worker; never create Antigravity or Claude sessions.",
             "- A reviewer or challenger must use a different tmux session from the writer and receive an explicitly read-only brief. YOLO mode is not a sandbox; inspect Git afterward and stop if a reviewer mutated the worktree.",
             "- Prefer model-diverse review. A different session of the same model is an independent context, not a model-diverse perspective; label it accurately.",
             "- Fan out only steps whose dependencies have completed. Give every role a distinct DELEGATION_ID and shared immutable evidence paths or commit IDs.",

@@ -81,7 +81,7 @@ def _pipeline_create_args(
     account_scope: str = "config",
     account_claude: str | None = None,
     account_codex: str | None = None,
-    account_gemini: str | None = None,
+    account_antigravity: str | None = None,
     dry_run: bool = False,
     json_output: bool = False,
 ) -> argparse.Namespace:
@@ -98,7 +98,7 @@ def _pipeline_create_args(
         account_scope=account_scope,
         account_claude=account_claude,
         account_codex=account_codex,
-        account_gemini=account_gemini,
+        account_antigravity=account_antigravity,
         dry_run=dry_run,
         json_output=json_output,
     )
@@ -303,10 +303,10 @@ providers:
     default_account: codex
     accounts:
       - codex
-  gemini:
-    default_account: gemini
+  antigravity:
+    default_account: antigravity
     accounts:
-      - gemini
+      - antigravity
 """,
             encoding="utf-8",
         )
@@ -447,12 +447,12 @@ templates:
         template_file.write_text(
             """version: 1
 templates:
-  gemini-demo:
+  antigravity-demo:
     steps:
       - name: demo-step
-        title: "Gemini Demo {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        title: "Antigravity Demo {feature}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         critical: false
         on_failure: abort
@@ -471,12 +471,12 @@ templates:
             _mock_response(201, {"task_id": "task-1"}),
         ]
         args = _pipeline_create_args(
-            template="gemini-demo",
+            template="antigravity-demo",
             template_file=str(template_file),
             repo="/repo/demo",
             project="SnakeDemo",
             feature="snake game",
-            thread_name="gemini-demo-thread",
+            thread_name="antigravity-demo-thread",
         )
         cmd_pipeline_create(args)
         step_call = mock_post.call_args_list[1]

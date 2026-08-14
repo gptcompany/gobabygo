@@ -107,13 +107,13 @@ def _resolve_default_accounts(
         return {
             "claude": f"claude-{repo_slug}",
             "codex": f"codex-{repo_slug}",
-            "gemini": f"gemini-{repo_slug}",
+            "antigravity": f"antigravity-{repo_slug}",
         }
 
     static_defaults = {
         "claude": "work-claude",
         "codex": "work-codex",
-        "gemini": "work-gemini",
+        "antigravity": "work-antigravity",
     }
     if account_scope == "static":
         return static_defaults
@@ -791,7 +791,9 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
 
     account_claude = (args.account_claude or default_accounts["claude"]).strip()
     account_codex = (args.account_codex or default_accounts["codex"]).strip()
-    account_gemini = (args.account_gemini or default_accounts["gemini"]).strip()
+    account_antigravity = (
+        args.account_antigravity or default_accounts["antigravity"]
+    ).strip()
 
     variables = {
         "repo": args.repo,
@@ -800,18 +802,18 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
         "feature": args.feature,
         "claude_account": account_claude,
         "codex_account": account_codex,
-        "gemini_account": account_gemini,
+        "antigravity_account": account_antigravity,
     }
 
     prepared_steps: list[dict[str, object]] = []
-    valid_cli = {"claude", "codex", "gemini"}
+    valid_cli = {"claude", "codex", "antigravity"}
     valid_modes = {"batch", "session"}
     valid_failure = {"abort", "skip", "retry"}
     default_mode_from_env, enforce_session_only = _pipeline_execution_policy_from_env()
     default_account_template = {
         "claude": "{claude_account}",
         "codex": "{codex_account}",
-        "gemini": "{gemini_account}",
+        "antigravity": "{antigravity_account}",
     }
 
     for idx, raw in enumerate(raw_steps):
@@ -932,7 +934,7 @@ def cmd_pipeline_create(args: argparse.Namespace) -> None:
             "accounts": {
                 "claude": account_claude,
                 "codex": account_codex,
-                "gemini": account_gemini,
+                "antigravity": account_antigravity,
             },
             "policy": {
                 "default_execution_mode": default_mode_from_env,
@@ -1470,7 +1472,9 @@ pipeline_create_parser.add_argument(
     "--account-codex", default=None, help="Override account profile for Codex steps.",
 )
 pipeline_create_parser.add_argument(
-    "--account-gemini", default=None, help="Override account profile for Gemini steps.",
+    "--account-antigravity",
+    default=None,
+    help="Override account profile for Antigravity steps.",
 )
 pipeline_create_parser.add_argument(
     "--dry-run", action="store_true", help="Render and print pipeline plan without API calls",

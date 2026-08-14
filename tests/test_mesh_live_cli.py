@@ -1600,7 +1600,7 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "YOLO mode is not a sandbox" in prompt
     assert "not filesystem locks or an OS sandbox" in prompt
     assert "Recheck tmux ownership and Git state" in prompt
-    assert "never create Gemini or Claude sessions" in prompt
+    assert "never create Antigravity or Claude sessions" in prompt
     assert "different session of the same model is an independent context" in prompt
     assert "report degraded coverage" in prompt
     assert "For Codex, pass the same `--delegation-id" in prompt
@@ -2340,7 +2340,7 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
     assert projection["steps"][0]["name"] == "speckit.specify"
     assert projection["steps"][1]["depends_on_steps"] == [0]
     assert projection["steps"][4]["target_cli"] == "codex"
-    assert projection["steps"][5]["target_cli"] == "gemini"
+    assert projection["steps"][5]["target_cli"] == "antigravity"
     assert projection["steps"][6]["depends_on_steps"] == [4, 5]
     assert projection["live_policy"] == {
         "coordinator_role": "final-adjudicator",

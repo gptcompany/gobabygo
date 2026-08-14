@@ -1,7 +1,7 @@
 version: 1
 templates:
   confidence_gate_team:
-    description: "Interactive confidence gate team: Claude lead collects evidence, Codex/Gemini challenge, Codex president adjudicates."
+    description: "Interactive confidence gate team: Claude lead collects evidence, Codex/Antigravity challenge, Codex president adjudicates."
     steps:
       - name: confidence-gate.collector
         title: "Confidence Gate Collector {feature}"
@@ -28,8 +28,8 @@ templates:
 
       - name: confidence-gate.challenger-b
         title: "Confidence Gate Challenger B {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [0]
@@ -51,7 +51,7 @@ templates:
         prompt: "Act as president-level adjudicator for feature '{feature}' in repo {repo}. Reconcile the challengers output, decide PASS/FAIL, and produce decision rationale with mandatory follow-up actions."
 
   gsd:
-    description: "Session-first GSD team template: Claude lead executes phases, Codex president adjudicates, Codex/Gemini workers challenge and validate."
+    description: "Session-first GSD team template: Claude lead executes phases, Codex president adjudicates, Codex/Antigravity workers challenge and validate."
     steps:
       - name: gsd:research-phase
         title: "GSD Research Phase {phase}"
@@ -100,15 +100,15 @@ templates:
 
       - name: confidence-gate-context.challenger-b
         title: "Confidence Gate Context Challenger B {phase}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [2]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as Gemini challenger for GSD context phase {phase} in repo {repo}. Provide an independent critique focused on product edge cases, alternative solution paths, and gaps in context coverage."
+        prompt: "Act as Antigravity challenger for GSD context phase {phase} in repo {repo}. Provide an independent critique focused on product edge cases, alternative solution paths, and gaps in context coverage."
 
       - name: confidence-gate-context.adjudicator
         title: "Confidence Gate Context Adjudication {phase}"
@@ -158,15 +158,15 @@ templates:
 
       - name: confidence-gate-plan.challenger-b
         title: "Confidence Gate Plan Challenger B {phase}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [7]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as Gemini challenger for GSD plan phase {phase} in repo {repo}. Focus on product fit, UX consequences, and alternate decomposition strategies."
+        prompt: "Act as Antigravity challenger for GSD plan phase {phase} in repo {repo}. Focus on product fit, UX consequences, and alternate decomposition strategies."
 
       - name: confidence-gate-plan.adjudicator
         title: "Confidence Gate Plan Adjudication {phase}"
@@ -205,8 +205,8 @@ templates:
 
       - name: validate
         title: "Validate {phase}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [11]
@@ -241,15 +241,15 @@ templates:
 
       - name: confidence-gate-impl.challenger-b
         title: "Confidence Gate Implementation Challenger B {phase}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [14]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as Gemini challenger for GSD implementation phase {phase} in repo {repo}. Focus on UX/product coherence, scenario coverage, and missing non-functional acceptance criteria."
+        prompt: "Act as Antigravity challenger for GSD implementation phase {phase} in repo {repo}. Focus on UX/product coherence, scenario coverage, and missing non-functional acceptance criteria."
 
       - name: confidence-gate-impl.adjudicator
         title: "Confidence Gate Implementation Adjudication {phase}"
@@ -264,7 +264,7 @@ templates:
         prompt: "Act as president-level adjudicator for GSD implementation phase {phase} in repo {repo}. Decide whether the implementation is ready to close, and specify mandatory remediation if not."
 
   speckit:
-    description: "Session-first Speckit team template: Claude lead drives artifacts and implementation, Codex president adjudicates, Codex/Gemini workers challenge and validate."
+    description: "Session-first Speckit team template: Claude lead drives artifacts and implementation, Codex president adjudicates, Codex/Antigravity workers challenge and validate."
     steps:
       - name: speckit.specify
         title: "Speckit Specify {feature}"
@@ -324,15 +324,15 @@ templates:
 
       - name: confidence-gate-plan.challenger-b
         title: "Confidence Gate Plan Challenger B {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [3]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as Gemini challenger for the Speckit plan of feature '{feature}' in repo {repo}. Focus on product alignment, UX consequences, and alternative decomposition options."
+        prompt: "Act as Antigravity challenger for the Speckit plan of feature '{feature}' in repo {repo}. Focus on product alignment, UX consequences, and alternative decomposition options."
 
       - name: confidence-gate-plan.adjudicator
         title: "Confidence Gate Plan Adjudication {feature}"
@@ -394,15 +394,15 @@ templates:
 
       - name: confidence-gate-pre-impl.challenger-b
         title: "Confidence Gate Pre-Implementation Challenger B {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [9]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as Gemini challenger for pre-implementation readiness of feature '{feature}' in repo {repo}. Focus on missing user journeys, non-functional criteria, and spec-to-task gaps."
+        prompt: "Act as Antigravity challenger for pre-implementation readiness of feature '{feature}' in repo {repo}. Focus on missing user journeys, non-functional criteria, and spec-to-task gaps."
 
       - name: confidence-gate-pre-impl.adjudicator
         title: "Confidence Gate Pre-Implementation Adjudication {feature}"
@@ -441,8 +441,8 @@ templates:
 
       - name: validate
         title: "Validate {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [13]
@@ -477,15 +477,15 @@ templates:
 
       - name: confidence-gate-post-impl.challenger-b
         title: "Confidence Gate Post-Implementation Challenger B {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [16]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as Gemini challenger for post-implementation review of feature '{feature}' in repo {repo}. Focus on UX coherence, acceptance coverage, and hidden product regressions."
+        prompt: "Act as Antigravity challenger for post-implementation review of feature '{feature}' in repo {repo}. Focus on UX coherence, acceptance coverage, and hidden product regressions."
 
       - name: confidence-gate-post-impl.adjudicator
         title: "Confidence Gate Post-Implementation Adjudication {feature}"
@@ -612,52 +612,52 @@ templates:
         review_policy: none
         prompt: "Run confidence-gate post-implementation checks for feature '{feature}' in repo {repo}."
 
-  gemini_team_demo:
-    description: "Gemini-only team template for smoke/demo runs. Use this to validate router/session/tmux orchestration without consuming Claude/Codex quota."
+  antigravity_team_demo:
+    description: "Antigravity-only team template for smoke/demo runs. Use this to validate router/session/tmux orchestration without consuming Claude/Codex quota."
     steps:
-      - name: gemini.demo.lead
-        title: "Gemini Lead {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+      - name: antigravity.demo.lead
+        title: "Antigravity Lead {feature}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: lead
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as team lead for demo feature '{feature}' in repo {repo}. Write a concise implementation plan to lead_plan.md and include the exact marker GEMINI_LEAD_OK in the file."
+        prompt: "Act as team lead for demo feature '{feature}' in repo {repo}. Write a concise implementation plan to lead_plan.md and include the exact marker ANTIGRAVITY_LEAD_OK in the file."
         payload:
           auto_exit_on_success: true
           success_file_path: "lead_plan.md"
-          success_file_contains: "GEMINI_LEAD_OK"
+          success_file_contains: "ANTIGRAVITY_LEAD_OK"
 
-      - name: gemini.demo.worker
-        title: "Gemini Worker {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+      - name: antigravity.demo.worker
+        title: "Antigravity Worker {feature}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
         depends_on_steps: [0]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as worker reviewer for demo feature '{feature}' in repo {repo}. Read lead_plan.md, critique it, and write concrete risks plus corrections to worker_review.md. Include the exact marker GEMINI_WORKER_OK in the file."
+        prompt: "Act as worker reviewer for demo feature '{feature}' in repo {repo}. Read lead_plan.md, critique it, and write concrete risks plus corrections to worker_review.md. Include the exact marker ANTIGRAVITY_WORKER_OK in the file."
         payload:
           auto_exit_on_success: true
           success_file_path: "worker_review.md"
-          success_file_contains: "GEMINI_WORKER_OK"
+          success_file_contains: "ANTIGRAVITY_WORKER_OK"
 
-      - name: gemini.demo.president
-        title: "Gemini President {feature}"
-        target_cli: gemini
-        target_account: "{gemini_account}"
+      - name: antigravity.demo.president
+        title: "Antigravity President {feature}"
+        target_cli: antigravity
+        target_account: "{antigravity_account}"
         execution_mode: session
         role: president
         depends_on_steps: [1]
         critical: false
         on_failure: abort
         review_policy: none
-        prompt: "Act as president for demo feature '{feature}' in repo {repo}. Read lead_plan.md and worker_review.md, then write a go/no-go decision plus follow-up actions to president_decision.md. Include the exact marker GEMINI_TEAM_OK in the file."
+        prompt: "Act as president for demo feature '{feature}' in repo {repo}. Read lead_plan.md and worker_review.md, then write a go/no-go decision plus follow-up actions to president_decision.md. Include the exact marker ANTIGRAVITY_TEAM_OK in the file."
         payload:
           auto_exit_on_success: true
           success_file_path: "president_decision.md"
-          success_file_contains: "GEMINI_TEAM_OK"
+          success_file_contains: "ANTIGRAVITY_TEAM_OK"
