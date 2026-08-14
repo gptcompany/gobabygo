@@ -50,7 +50,9 @@ root: `ensure-codex` creates `codex-<repo>` and `ensure-antigravity` creates
 `antigravity-<repo>`. Both use a trusted native binary in YOLO mode and require a
 fresh board/peek before delegation. Codex receives no prompt. Antigravity 1.1.x
 requires a fixed no-tools bootstrap prompt to establish an authenticated idle
-TUI; it receives no delegated work. Pin the exact provider with
+TUI; `ensure-antigravity` reports `ready=yes` only after that prompt is visible
+in history and the empty composer is stable across consecutive captures. It
+receives no delegated work. Pin the exact provider with
 `mcoordinator rektslug --worker codex-rektslug` or
 `mcoordinator rektslug --worker antigravity-rektslug`. `mcodex rektslug`
 remains available for a deliberately manual Codex shell.
@@ -313,11 +315,12 @@ current Antigravity footer is the observed empty idle composer (`>` plus
 `? for shortcuts`). Pending text, generation, permission menus, login screens,
 errors, and ambiguous redraws are refused before input. After one Enter, Mesh
 polls for the submitted ID together with current activity or a new empty
-composer. `submission=verified` is positive evidence; `submission=unknown`
-requires bounded peeks. There is no Antigravity recovery command: never resend,
-clear the composer, or send another Enter automatically. In controlled E2E on
-`agy` 1.1.13, one Enter submitted correctly; this provider-specific policy must
-be revalidated when the TUI format changes.
+composer. `submission=verified` requires that positive evidence in two
+consecutive captures; a single transient redraw remains
+`submission=unknown` and requires bounded peeks. There is no Antigravity
+recovery command: never resend, clear the composer, or send another Enter
+automatically. In controlled E2E on `agy` 1.1.13, one Enter submitted correctly;
+this provider-specific policy must be revalidated when the TUI format changes.
 
 Completion is not a substring search over the pane. Delegation briefs and CLI
 composers can echo both `WORKER_DONE` and `WORKER_BLOCKED`. A status is a
