@@ -36,6 +36,9 @@ providers:
     session_service_supplementary_groups:
       - "mesh"
     prompt_delivery: "prompt_interactive"
+    launch_args:
+      - "--dangerously-skip-permissions"
+      - "--new-project"
     screen_profile: "antigravity"
     runtime_preseed: "none"
     supports_claude_hooks: false

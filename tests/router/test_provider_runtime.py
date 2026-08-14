@@ -23,6 +23,10 @@ def test_default_antigravity_runtime_is_native_agy() -> None:
 
     assert rules["antigravity"].strategy == "native_cli"
     assert rules["antigravity"].command_template == "/home/sam/.local/bin/agy"
+    assert rules["antigravity"].launch_args == (
+        "--dangerously-skip-permissions",
+        "--new-project",
+    )
     assert rules["antigravity"].session_service_user == "sam"
     assert "gemini" not in rules
 
@@ -35,6 +39,10 @@ def test_default_antigravity_behavior_is_native_tui() -> None:
     assert behavior.runtime_preseed == "none"
     assert behavior.supports_claude_hooks is False
     assert behavior.exit_command == "/exit"
+    assert behavior.launch_args == (
+        "--dangerously-skip-permissions",
+        "--new-project",
+    )
 
 
 def test_invalid_runtime_behavior_fails_closed(tmp_path) -> None:
@@ -54,6 +62,29 @@ def test_invalid_runtime_behavior_fails_closed(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="invalid prompt_delivery"):
         resolve_cli_runtime_behavior("antigravity", config_path=str(config))
+
+
+def test_invalid_launch_args_shape_keeps_safe_antigravity_defaults(tmp_path) -> None:
+    config = tmp_path / "provider_runtime.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """
+            providers:
+              antigravity:
+                strategy: native_cli
+                command_template: agy
+                launch_args: "--new-project"
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    behavior = resolve_cli_runtime_behavior("antigravity", config_path=str(config))
+
+    assert behavior.launch_args == (
+        "--dangerously-skip-permissions",
+        "--new-project",
+    )
 
 
 def test_load_provider_runtime_rules_from_yaml(tmp_path) -> None:

@@ -37,6 +37,7 @@ class ProviderRuntimeRule:
     runtime_preseed: str = ""
     supports_claude_hooks: bool = False
     exit_command: str = ""
+    launch_args: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class CLIRuntimeBehavior:
     runtime_preseed: str
     supports_claude_hooks: bool
     exit_command: str
+    launch_args: tuple[str, ...]
 
 
 _DEFAULT_BEHAVIORS = {
@@ -57,6 +59,7 @@ _DEFAULT_BEHAVIORS = {
         runtime_preseed="claude",
         supports_claude_hooks=True,
         exit_command="/exit",
+        launch_args=(),
     ),
     "codex": CLIRuntimeBehavior(
         prompt_delivery="stdin",
@@ -64,6 +67,7 @@ _DEFAULT_BEHAVIORS = {
         runtime_preseed="claude",
         supports_claude_hooks=False,
         exit_command="/exit",
+        launch_args=(),
     ),
     "antigravity": CLIRuntimeBehavior(
         prompt_delivery="prompt_interactive",
@@ -71,6 +75,7 @@ _DEFAULT_BEHAVIORS = {
         runtime_preseed="none",
         supports_claude_hooks=False,
         exit_command="/exit",
+        launch_args=("--dangerously-skip-permissions", "--new-project"),
     ),
     # Historical CCS Gemini sessions used the Claude Code frontend.
     "gemini": CLIRuntimeBehavior(
@@ -79,6 +84,7 @@ _DEFAULT_BEHAVIORS = {
         runtime_preseed="claude",
         supports_claude_hooks=True,
         exit_command="/exit",
+        launch_args=(),
     ),
 }
 _PROMPT_DELIVERY_MODES = {"append_system_prompt", "stdin", "prompt_interactive"}
@@ -133,6 +139,16 @@ def load_provider_runtime_rules(
             for group in (entry.get("session_service_supplementary_groups") or [])
             if str(group).strip()
         )
+        raw_launch_args = entry.get("launch_args")
+        launch_args = (
+            tuple(
+                str(arg).strip()
+                for arg in raw_launch_args
+                if str(arg).strip()
+            )
+            if isinstance(raw_launch_args, (list, tuple))
+            else ()
+        )
         rules[str(cli_type).strip()] = ProviderRuntimeRule(
             strategy=strategy,
             command_template=command_template,
@@ -144,6 +160,7 @@ def load_provider_runtime_rules(
             runtime_preseed=str(entry.get("runtime_preseed", "")).strip(),
             supports_claude_hooks=_as_bool(entry.get("supports_claude_hooks", False)),
             exit_command=str(entry.get("exit_command", "")).strip(),
+            launch_args=launch_args,
         )
     return rules
 
@@ -232,6 +249,7 @@ def resolve_cli_runtime_behavior(
             rule.supports_claude_hooks if rule else default.supports_claude_hooks
         ),
         exit_command=(rule.exit_command if rule else "") or default.exit_command,
+        launch_args=(rule.launch_args if rule and rule.launch_args else default.launch_args),
     )
     if behavior.prompt_delivery not in _PROMPT_DELIVERY_MODES:
         raise ValueError(f"invalid prompt_delivery for {name}: {behavior.prompt_delivery}")

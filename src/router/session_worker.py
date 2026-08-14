@@ -329,9 +329,10 @@ def _build_cli_launch_command(
     prompt: str,
     *,
     prompt_delivery: str,
+    runtime_args: tuple[str, ...] = (),
 ) -> tuple[str, str | None]:
     """Build one CLI command and optional stdin bootstrap without executing it."""
-    args = list(cli_args)
+    args = [*runtime_args, *cli_args]
     initial_stdin: str | None = None
     if prompt and prompt_delivery == "append_system_prompt":
         args.extend(["--append-system-prompt", prompt])
@@ -995,6 +996,7 @@ class MeshSessionWorker:
                 cli_args,
                 prompt,
                 prompt_delivery=runtime_behavior.prompt_delivery,
+                runtime_args=runtime_behavior.launch_args,
             )
             if relay_uses_claude_hooks:
                 hook_settings_path = _ensure_claude_mesh_hook_settings(

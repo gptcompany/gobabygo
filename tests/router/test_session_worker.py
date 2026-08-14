@@ -63,10 +63,12 @@ def test_antigravity_launch_uses_prompt_interactive_without_stdin() -> None:
         ["--model", "gemini-3.5-pro"],
         "Review the current diff; do not commit.",
         prompt_delivery="prompt_interactive",
+        runtime_args=("--dangerously-skip-permissions", "--new-project"),
     )
 
     assert command == (
-        "/home/sam/.local/bin/agy --model gemini-3.5-pro "
+        "/home/sam/.local/bin/agy --dangerously-skip-permissions --new-project "
+        "--model gemini-3.5-pro "
         "--prompt-interactive 'Review the current diff; do not commit.'"
     )
     assert initial_stdin is None
