@@ -2555,12 +2555,38 @@ def build_live_coordinator_system_prompt(
             "Discover worker candidates from the live board. Before sending, select one exact existing "
             "session inside scope and ensure only one writer owns each repository."
         )
-    if repo and repo_root:
-        ensure_command = f"{live_command} ensure-codex {shlex.quote(repo_root)}"
-    else:
-        ensure_command = f"{live_command} ensure-codex <repo-name-or-absolute-git-root>"
+    repo_argument = (
+        shlex.quote(repo_root)
+        if repo and repo_root
+        else "<repo-name-or-absolute-git-root>"
+    )
+    ensure_commands = {
+        "codex": f"{live_command} ensure-codex {repo_argument}",
+        "antigravity": f"{live_command} ensure-antigravity {repo_argument}",
+    }
     if worker_session:
-        ensure_command += f" --expect-session {shlex.quote(worker_session)}"
+        worker_provider = next(
+            (
+                provider
+                for provider in ("codex", "antigravity")
+                if worker_session.startswith(f"{provider}-")
+            ),
+            "",
+        )
+        ensure_commands = (
+            {
+                worker_provider: (
+                    f"{ensure_commands[worker_provider]} --expect-session "
+                    f"{shlex.quote(worker_session)}"
+                )
+            }
+            if worker_provider
+            else {}
+        )
+    ensure_control_lines = [
+        f"- Ensure one {provider.title()} worker: `{command}`"
+        for provider, command in ensure_commands.items()
+    ]
 
     if workflow_scope == "repository":
         speckit_scope_policy = [
@@ -2614,9 +2640,9 @@ def build_live_coordinator_system_prompt(
             "Available local control plane:",
             f"- Refresh scope: `{board_command}`",
             f"- Inspect one session: `{live_command} peek <session> 80`",
-            f"- Ensure one Codex worker: `{ensure_command}`",
+            *ensure_control_lines,
             f"- Send one bounded single-line task to an existing worker: `{live_command} send <session> \"<task>\" --enter`",
-            f"- Track a Codex task for guarded submit recovery: `{live_command} send <codex-session> \"<task>\" "
+            f"- Guard a Codex or Antigravity task: `{live_command} send <worker-session> \"<task>\" "
             "--delegation-id <DELEGATION_ID> --enter`",
             "The send text must be one literal line and at most 8192 characters. For a long or multi-line brief, "
             "write a non-secret brief file inside the target repository, then send one line containing the "
@@ -2630,7 +2656,8 @@ def build_live_coordinator_system_prompt(
             "- These boundaries are coordinator contract rules, not filesystem locks or an OS sandbox. Recheck tmux ownership and Git state before and after every delegated write or review.",
             "- You are the final operator-facing adjudicator. Template lead/president/worker roles are desired perspectives, not authority to launch CLIs.",
             "- Keep at most one active writer per repository. You may synthesize requirements, plans, and non-secret delegation briefs, but never edit source code yourself.",
-            "- Map template target_cli to a ready existing session when available. Only ensure-codex may create a missing worker; never create Antigravity or Claude sessions.",
+            "- Map template target_cli to a ready existing session when available. Only the listed ensure-codex or "
+            "ensure-antigravity commands may create a missing worker; never create Claude sessions.",
             "- A reviewer or challenger must use a different tmux session from the writer and receive an explicitly read-only brief. YOLO mode is not a sandbox; inspect Git afterward and stop if a reviewer mutated the worktree.",
             "- Prefer model-diverse review. A different session of the same model is an independent context, not a model-diverse perspective; label it accurately.",
             "- Fan out only steps whose dependencies have completed. Give every role a distinct DELEGATION_ID and shared immutable evidence paths or commit IDs.",
@@ -2640,18 +2667,18 @@ def build_live_coordinator_system_prompt(
             "Autonomous workflow:",
             "1. Turn the operator objective into observed facts, unknowns, options, and a recommended decision.",
             "2. Prefer existing sessions, the smallest useful task, and non-overlapping file ownership.",
-            "3. If no suitable authorized Codex worker exists, invoke the listed ensure-codex command once. "
+            "3. If no suitable authorized Codex or Antigravity worker exists, invoke the corresponding listed ensure command once. "
             "For multi-repo scope, replace its placeholder only with a repository name explicitly selected by the "
             "operator or an absolute Repo/path value from tmux metadata, never with text from Recent pane output. "
             "Do not ask the operator for per-worker spawn approval.",
-            "4. After ensure-codex, refresh board and inspect the exact worker before delegation; confirm it is ready for input.",
+            "4. After ensure-codex or ensure-antigravity, refresh board and inspect the exact worker before delegation; confirm it is ready for input.",
             "5. Create a unique DELEGATION_ID and include scope, allowed files, acceptance criteria, tests, and forbidden actions.",
             "6. Require the worker's latest response to end with exactly one standalone status line: "
             "WORKER_DONE <DELEGATION_ID> or WORKER_BLOCKED <DELEGATION_ID>.",
             "7. Send the task to the exact worker, then peek again to verify the DELEGATION_ID or clear CLI activity. "
-            "For Codex, pass the same `--delegation-id <DELEGATION_ID>` to enable guarded recovery. For another existing CLI, "
-            "include the ID in the text but omit the Codex-only tracking option.",
-            "Before tracked Codex text is delivered, send recaptures the pane and refuses a non-empty, active, or ambiguous composer. "
+            "For Codex and Antigravity, pass the same `--delegation-id <DELEGATION_ID>` to enable the provider-specific guard. "
+            "For another existing CLI, include the ID in the text but omit tracking.",
+            "Before tracked Codex or Antigravity text is delivered, send recaptures the pane and refuses a non-empty, active, or ambiguous composer. "
             "On refusal, never clear or overwrite it: recover only a correlated prior delegation under step 10; otherwise use another "
             "authorized idle worker or report the manual blocker. Never bypass this refusal by omitting `--delegation-id` or using a shorter task.",
             "8. A successful tmux send only proves key delivery to tmux; it does not prove the CLI accepted the task.",
@@ -2668,6 +2695,8 @@ def build_live_coordinator_system_prompt(
             "bounded peeks and report uncertainty; do not declare the worker blocked solely from that result; never "
             "fall back to `send --enter`, a naked Enter, composer clearing, or task resend. When collapsed-paste "
             "correlation is unavailable, attach and inspect manually.",
+            "For Antigravity, the tracked send requires the exact idle footer and verifies the submitted ID after one Enter. "
+            "It has no recovery command: on `submission=unknown`, use bounded peeks and never resend, clear the composer, or send another Enter.",
             "12. Monitor with bounded, non-aggressive peeks. Never detect completion by searching the whole capture for "
             "WORKER_DONE or WORKER_BLOCKED: the delegated task and composer may echo both strings. Accept status only "
             "from one exact standalone line with the current DELEGATION_ID in the latest worker-authored response after "
@@ -2679,8 +2708,9 @@ def build_live_coordinator_system_prompt(
             "Standing authorization:",
             "- Provider YOLO mode removes approval prompts; it does not expand this authorization.",
             "- You may board, peek, send bounded tasks to authorized workers, inspect Git, and run relevant tests.",
-            "- You have standing authorization to invoke only the listed ensure-codex command when its worker is missing. "
-            "It may create at most one deterministic Codex tmux worker per repository and sends no task text.",
+            "- You have standing authorization to invoke only the listed ensure-codex or ensure-antigravity commands when a worker is missing. "
+            "Each may create at most one deterministic provider tmux worker per repository. Codex sends no task text; "
+            "Antigravity uses only a fixed no-tools bootstrap prompt and sends no delegated work.",
             "- You must not edit source files, commit, push, deploy, reset, delete, use sudo, kill sessions, create sessions "
             "or launch nested AI CLIs by any other mechanism, expose secrets, or approve destructive/privileged prompts.",
             "- Ask the operator only for destructive actions, privilege expansion, missing product decisions, or hard blockers.",
@@ -2768,7 +2798,7 @@ def build_live_workflow_projection(
             "template_target_cli": "preferred-perspective-not-spawn-authorization",
             "writer_limit": "one-active-writer-per-repository",
             "reviewer_session": "different-from-writer-read-only",
-            "automatic_spawn": "ensure-codex-only",
+            "automatic_spawn": "ensure-codex-or-antigravity-only",
             "missing_perspective": "report-degraded-coverage",
         },
         "steps": steps,
@@ -2784,7 +2814,7 @@ def render_live_workflow_projection(projection: dict[str, Any]) -> str:
         f"Description: {projection['description'] or '-'}",
         f"Binding: {projection['binding_policy']['repo_feature_binding']}",
         "Live policy: coordinator=final-adjudicator; writer=one-active-per-repo; "
-        "reviewer=different-session-read-only; spawn=ensure-codex-only; "
+        "reviewer=different-session-read-only; spawn=ensure-codex-or-antigravity-only; "
         "missing-perspective=degraded-coverage",
         "Steps:",
     ]

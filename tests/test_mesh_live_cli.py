@@ -1672,9 +1672,10 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
         "ensure-codex /data/sata/1TB/rektslug --expect-session codex-rektslug-worker"
         in prompt
     )
+    assert "Ensure one Antigravity worker:" not in prompt
     assert "Do not ask the operator for per-worker spawn approval" in prompt
-    assert "standing authorization to invoke only the listed ensure-codex command" in prompt
-    assert "create at most one deterministic Codex tmux worker per repository" in prompt
+    assert "standing authorization to invoke only the listed ensure-codex or ensure-antigravity commands" in prompt
+    assert "create at most one deterministic provider tmux worker per repository" in prompt
     assert "create sessions or launch nested AI CLIs by any other mechanism" in prompt
     assert "does not prove the CLI accepted the task" in prompt
     assert "one literal line and at most 8192 characters" in prompt
@@ -1704,11 +1705,13 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "YOLO mode is not a sandbox" in prompt
     assert "not filesystem locks or an OS sandbox" in prompt
     assert "Recheck tmux ownership and Git state" in prompt
-    assert "never create Antigravity or Claude sessions" in prompt
+    assert "never create Claude sessions" in prompt
     assert "different session of the same model is an independent context" in prompt
     assert "report degraded coverage" in prompt
-    assert "For Codex, pass the same `--delegation-id" in prompt
+    assert "For Codex and Antigravity, pass the same `--delegation-id" in prompt
     assert "For another existing CLI" in prompt
+    assert "Antigravity uses only a fixed no-tools bootstrap prompt" in prompt
+    assert "It has no recovery command" in prompt
 
 
 def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
@@ -1734,6 +1737,24 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "do not ask the operator to restate it merely to fill a template placeholder" in prompt
     assert "dependency order" in prompt
     assert "does not authorize router use, iTerm2, session creation" in prompt
+
+
+def test_coordinator_system_prompt_pins_antigravity_spawn_to_exact_worker() -> None:
+    module = _load_module()
+
+    prompt = module.build_live_coordinator_system_prompt(
+        repo="rektslug",
+        repo_root="/data/sata/1TB/rektslug",
+        coordinator_session="claude-rektslug-coordinator",
+        worker_session="antigravity-rektslug",
+        mesh_script="/opt/gobabygo/scripts/mesh",
+    )
+
+    assert (
+        "ensure-antigravity /data/sata/1TB/rektslug --expect-session "
+        "antigravity-rektslug"
+    ) in prompt
+    assert "ensure-codex /data/sata/1TB/rektslug" not in prompt
 
 
 def test_coordinator_system_prompt_supports_explicit_direct_mode() -> None:
@@ -2421,6 +2442,11 @@ def test_main_prints_multi_repo_coordinator_system_prompt(capsys) -> None:
         "/opt/gobabygo/scripts/mesh live ensure-codex <repo-name-or-absolute-git-root>"
         in output
     )
+    assert (
+        "/opt/gobabygo/scripts/mesh live ensure-antigravity "
+        "<repo-name-or-absolute-git-root>"
+        in output
+    )
     assert "repository name explicitly selected by the operator" in output
     assert "Discover worker candidates" in output
 
@@ -2469,7 +2495,7 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
         "template_target_cli": "preferred-perspective-not-spawn-authorization",
         "writer_limit": "one-active-writer-per-repository",
         "reviewer_session": "different-from-writer-read-only",
-        "automatic_spawn": "ensure-codex-only",
+        "automatic_spawn": "ensure-codex-or-antigravity-only",
         "missing_perspective": "report-degraded-coverage",
     }
 
@@ -2487,7 +2513,10 @@ def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> Non
     assert rc == 0
     output = json.loads(capsys.readouterr().out)
     assert output["name"] == "speckit"
-    assert output["live_policy"]["automatic_spawn"] == "ensure-codex-only"
+    assert (
+        output["live_policy"]["automatic_spawn"]
+        == "ensure-codex-or-antigravity-only"
+    )
     assert output["steps"][19]["name"] == "confidence-gate-post-impl.adjudicator"
 
 
