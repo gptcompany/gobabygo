@@ -84,6 +84,10 @@ def test_session_name_is_sanitized_and_bounded() -> None:
     module = _load_module()
 
     assert module.session_name_for_repo(Path("My Repo")) == "codex-my-repo"
+    assert (
+        module.session_name_for_repo(Path("My Repo"), "antigravity")
+        == "antigravity-my-repo"
+    )
     with pytest.raises(module.WorkerEnsureError, match="cannot form"):
         module.session_name_for_repo(Path("---"))
     with pytest.raises(module.WorkerEnsureError, match="too long"):
@@ -104,6 +108,24 @@ def test_codex_executable_accepts_only_fixed_executable_candidates(
     trusted.chmod(0o644)
     with pytest.raises(module.WorkerEnsureError, match="trusted Codex executable"):
         module._codex_executable()
+
+
+def test_antigravity_executable_accepts_only_fixed_candidates(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    trusted = tmp_path / "agy"
+    trusted.write_text("#!/bin/sh\n", encoding="utf-8")
+    trusted.chmod(0o755)
+    monkeypatch.setattr(
+        module,
+        "_ANTIGRAVITY_CANDIDATES",
+        (str(tmp_path / "missing"), str(trusted)),
+    )
+
+    assert module._antigravity_executable() == str(trusted)
+
+    trusted.chmod(0o644)
+    with pytest.raises(module.WorkerEnsureError, match="trusted Antigravity executable"):
+        module._antigravity_executable()
 
 
 @pytest.mark.parametrize(
@@ -179,6 +201,61 @@ def test_ensure_codex_creates_fixed_yolo_worker_without_send_keys(monkeypatch, t
     assert not any("send-keys" in command for command in commands)
 
 
+def test_ensure_antigravity_creates_repo_pinned_yolo_worker_without_send_keys(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_antigravity_executable", lambda: "/home/sam/.local/bin/agy")
+    commands: list[list[str]] = []
+    created = False
+    displays = 0
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal created, displays
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        commands.append(args)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=0 if created else 1)
+        if args[:2] == ["tmux", "new-session"]:
+            created = True
+            return _completed(args)
+        if args[:2] == ["tmux", "display-message"]:
+            displays += 1
+            command = "tmux" if displays == 1 else "agy"
+            pane_path = "/home/sam" if displays == 1 else str(repo)
+            fields = module._FIELD_SEPARATOR.join(
+                ["antigravity-rektslug", pane_path, command, "0", "1"]
+            )
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.ensure_antigravity_worker(
+        str(repo), expected_session="antigravity-rektslug"
+    )
+
+    assert result == {
+        "session": "antigravity-rektslug",
+        "repo": str(repo),
+        "created": True,
+        "ready": True,
+    }
+    launch = next(command for command in commands if command[:2] == ["tmux", "new-session"])
+    startup = launch[-1]
+    assert launch[3:7] == ["-s", "antigravity-rektslug", "-c", str(repo)]
+    assert startup.startswith(
+        "exec /home/sam/.local/bin/agy --dangerously-skip-permissions --new-project "
+        "--prompt-interactive "
+    )
+    assert module._ANTIGRAVITY_BOOTSTRAP_PROMPT in startup
+    assert "Do not inspect or modify files and do not run commands." in startup
+    assert not any("send-keys" in command for command in commands)
+
+
 def test_ensure_codex_reuses_matching_live_worker(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "rektslug")
@@ -202,6 +279,39 @@ def test_ensure_codex_reuses_matching_live_worker(monkeypatch, tmp_path) -> None
 
     assert result["created"] is False
     assert result["ready"] is True
+
+
+def test_ensure_antigravity_waits_for_existing_startup_path_transition(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    displays = 0
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal displays
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args)
+        if args[:2] == ["tmux", "display-message"]:
+            displays += 1
+            pane_path = "/home/sam" if displays == 1 else str(repo)
+            fields = module._FIELD_SEPARATOR.join(
+                ["antigravity-rektslug", pane_path, "agy", "0", "1"]
+            )
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.ensure_antigravity_worker("rektslug")
+
+    assert result["created"] is False
+    assert result["ready"] is True
+    assert displays == 2
 
 
 def test_ensure_codex_reuses_concurrent_atomic_winner(monkeypatch, tmp_path) -> None:
@@ -430,3 +540,19 @@ def test_main_emits_json_and_bounded_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(module, "ensure_codex_worker", fail)
     assert module.main(["rektslug"]) == 2
     assert "Error: bounded failure" in capsys.readouterr().err
+
+
+def test_main_dispatches_antigravity_provider(monkeypatch, capsys) -> None:
+    module = _load_module()
+    result = {
+        "session": "antigravity-rektslug",
+        "repo": "/data/sata/1TB/rektslug",
+        "created": False,
+        "ready": True,
+    }
+    monkeypatch.setattr(
+        module, "ensure_antigravity_worker", lambda *_args, **_kwargs: result
+    )
+
+    assert module.main(["rektslug", "--provider", "antigravity"]) == 0
+    assert "[mesh live ensure-antigravity]" in capsys.readouterr().out

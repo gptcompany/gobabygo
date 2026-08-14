@@ -596,6 +596,7 @@ Usage:
   ./scripts/mesh live board [query] [--lines N] [--json]
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
   MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--expect-session <name>] [--json]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-antigravity <repo> [--expect-session <name>] [--json]
   ./scripts/mesh live send <session> [text] [--delegation-id <id>] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
@@ -609,8 +610,9 @@ Behavior:
   mesh live reads tmux directly on the configured workstation.
   It does not require the router or iTerm2.
   Captured pane output is redacted before display and JSON output.
-  ensure-codex is the only lifecycle operation: local-only, one deterministic native
-  Codex worker per exact configured Git root, with no task text or send-keys.
+  ensure-codex and ensure-antigravity are the only lifecycle operations: local-only,
+  one deterministic native worker per exact configured Git root, with no delegated task
+  or send-keys. Antigravity uses a fixed no-tools bootstrap prompt to reach its idle TUI.
   send accepts one literal line (max 8192 characters) and does not submit text unless
   --enter is explicit. Store long/multi-line briefs in the target repo and send one line
   containing the DELEGATION_ID, absolute brief path, and instruction to read it.
@@ -640,7 +642,7 @@ Env:
   MESH_WS_CLOUDFLARE_HOST  SSH alias fallback (default: dell7670)
   MESH_LIVE_USERS    comma-separated tmux owners to inspect
   MESH_LIVE_LOCAL    set to 1 to inspect tmux on this machine
-  MESH_LIVE_REPO_ROOTS  colon-separated roots allowed for ensure-codex
+  MESH_LIVE_REPO_ROOTS  colon-separated roots allowed for ensure-codex/ensure-antigravity
   MESH_LIVE_TICK_STATE  tick metadata/idempotency state (captures are never stored)
   MESH_MOSH_HOST     optional direct VPN/LAN host for persistent attach
   MESH_COORDINATOR_WORKFLOW  coordinator policy: direct|speckit|adaptive (default: adaptive)
@@ -650,6 +652,7 @@ Examples:
   ./scripts/mesh live board rektslug --lines 40
   ./scripts/mesh live peek claude-rektslug 120
   MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex /data/sata/1TB/rektslug
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-antigravity /data/sata/1TB/rektslug
   ./scripts/mesh live send claude-rektslug "status?" --enter
   ./scripts/mesh live send codex-rektslug "DELEGATION_ID=delegation-1234 read /repo/brief.md" --delegation-id delegation-1234 --enter
   ./scripts/mesh live recover-codex-submit codex-rektslug delegation-1234

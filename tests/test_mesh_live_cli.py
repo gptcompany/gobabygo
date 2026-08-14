@@ -2440,6 +2440,14 @@ def test_ensure_codex_is_local_only(monkeypatch, capsys) -> None:
     assert "must run on the tmux workstation" in capsys.readouterr().err
 
 
+def test_ensure_antigravity_is_local_only(monkeypatch, capsys) -> None:
+    module = _load_module()
+    monkeypatch.delenv("MESH_LIVE_LOCAL", raising=False)
+
+    assert module.main(["ensure-antigravity", "/data/sata/1TB/rektslug"]) == 2
+    assert "must run on the tmux workstation" in capsys.readouterr().err
+
+
 def test_ensure_codex_delegates_only_to_fixed_local_helper(monkeypatch, capsys) -> None:
     module = _load_module()
     commands: list[list[str]] = []
@@ -2472,6 +2480,44 @@ def test_ensure_codex_delegates_only_to_fixed_local_helper(monkeypatch, capsys) 
         "/data/sata/1TB/rektslug",
         "--expect-session",
         "codex-rektslug",
+    ]
+    assert "action=created ready=yes" in capsys.readouterr().out
+
+
+def test_ensure_antigravity_delegates_to_fixed_local_helper(monkeypatch, capsys) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        return _completed(
+            args,
+            stdout=(
+                "[mesh live ensure-antigravity] session=antigravity-rektslug "
+                "repo=/data/sata/1TB/rektslug action=created ready=yes\n"
+            ),
+        )
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    assert module.main(
+        [
+            "--local",
+            "ensure-antigravity",
+            "/data/sata/1TB/rektslug",
+            "--expect-session",
+            "antigravity-rektslug",
+        ]
+    ) == 0
+    command = commands[0]
+    assert command[0] == sys.executable
+    assert command[1].endswith("/scripts/mesh_live_worker.py")
+    assert command[2:] == [
+        "/data/sata/1TB/rektslug",
+        "--provider",
+        "antigravity",
+        "--expect-session",
+        "antigravity-rektslug",
     ]
     assert "action=created ready=yes" in capsys.readouterr().out
 
@@ -3679,6 +3725,7 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert "mesh live board" in proc.stdout
     assert "mesh live peek" in proc.stdout
     assert "mesh live ensure-codex" in proc.stdout
+    assert "mesh live ensure-antigravity" in proc.stdout
     assert "mesh live send" in proc.stdout
     assert "mesh live attach" in proc.stdout
     assert "mesh live tick" in proc.stdout

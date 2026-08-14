@@ -2845,6 +2845,22 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     ensure_codex.add_argument("--json", action="store_true", help="Emit structured JSON.")
 
+    ensure_antigravity = sub.add_parser(
+        "ensure-antigravity",
+        help="Create or reuse one deterministic local Antigravity worker for a Git repository.",
+    )
+    ensure_antigravity.add_argument(
+        "repo", help="Configured Git repository root or repo name."
+    )
+    ensure_antigravity.add_argument(
+        "--expect-session",
+        default="",
+        help="Fail unless the deterministic worker has this exact session name.",
+    )
+    ensure_antigravity.add_argument(
+        "--json", action="store_true", help="Emit structured JSON."
+    )
+
     attach = sub.add_parser("attach", help="Attach to an existing live session.")
     attach.add_argument("session", help="Exact session name or unique prefix.")
     attach.add_argument("--owner", default="", help="Disambiguate sessions owned by different users.")
@@ -3034,18 +3050,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
             return 0
-        if args.cmd == "ensure-codex":
+        if args.cmd in {"ensure-codex", "ensure-antigravity"}:
             if not args.local:
-                raise ValueError("ensure-codex must run on the tmux workstation with --local")
+                raise ValueError(f"{args.cmd} must run on the tmux workstation with --local")
             worker_script = Path(__file__).with_name("mesh_live_worker.py")
             if not worker_script.is_file():
                 raise LiveReadError(f"missing local worker helper: {worker_script}")
             command = [sys.executable, str(worker_script), args.repo]
+            if args.cmd == "ensure-antigravity":
+                command.extend(["--provider", "antigravity"])
             if args.expect_session:
                 command.extend(["--expect-session", args.expect_session])
             if args.json:
                 command.append("--json")
-            proc = _run_command(command, timeout=15.0)
+            proc = _run_command(
+                command,
+                timeout=45.0 if args.cmd == "ensure-antigravity" else 15.0,
+            )
             if proc.returncode != 0:
                 detail = redact_capture(
                     (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()

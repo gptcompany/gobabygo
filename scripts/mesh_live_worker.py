@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create or reuse one constrained local Codex tmux worker."""
+"""Create or reuse one constrained local tmux worker."""
 
 from __future__ import annotations
 
@@ -11,13 +11,20 @@ import re
 import shlex
 import subprocess
 import time
-from typing import Sequence
+from typing import Callable, Sequence
 
 
 _FIELD_SEPARATOR = "\x1f"
 _SAFE_SESSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _DEFAULT_REPO_ROOTS = ("/data/sata/1TB", "/media/sam/1TB", "/media/sam/1TB1")
 _CODEX_CANDIDATES = ("/usr/local/bin/codex", "/usr/bin/codex")
+_ANTIGRAVITY_CANDIDATES = ("/home/sam/.local/bin/agy", "/usr/local/bin/agy")
+_ANTIGRAVITY_BOOTSTRAP_PROMPT = (
+    "Initialize this repository session and wait idle for a coordinator delegation. "
+    "Do not inspect or modify files and do not run commands."
+)
+_CODEX_STARTUP_ATTEMPTS = 20
+_ANTIGRAVITY_STARTUP_ATTEMPTS = 300
 
 
 class WorkerEnsureError(RuntimeError):
@@ -115,11 +122,11 @@ def resolve_repo(value: str) -> Path:
     return repo
 
 
-def session_name_for_repo(repo: Path) -> str:
+def session_name_for_repo(repo: Path, provider: str = "codex") -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", repo.name).strip("-.").lower()
     if not slug:
         raise WorkerEnsureError(f"repository name cannot form a tmux session name: {repo.name}")
-    session = f"codex-{slug}"
+    session = f"{provider}-{slug}"
     if len(session) > 80:
         raise WorkerEnsureError("repository name is too long for a deterministic tmux session")
     if not _SAFE_SESSION.fullmatch(session):
@@ -133,6 +140,16 @@ def _codex_executable() -> str:
         if path.is_file() and os.access(path, os.X_OK):
             return str(path)
     raise WorkerEnsureError("trusted Codex executable not found in /usr/local/bin or /usr/bin")
+
+
+def _antigravity_executable() -> str:
+    for candidate in _ANTIGRAVITY_CANDIDATES:
+        path = Path(candidate)
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    raise WorkerEnsureError(
+        "trusted Antigravity executable not found in /home/sam/.local/bin or /usr/local/bin"
+    )
 
 
 def _tmux_error(proc: subprocess.CompletedProcess[str], fallback: str) -> str:
@@ -169,7 +186,12 @@ def _inspect_session(session: str) -> dict[str, str] | None:
     }
 
 
-def _validate_reusable(existing: dict[str, str], repo: Path) -> None:
+def _validate_reusable(
+    existing: dict[str, str],
+    repo: Path,
+    *,
+    provider: str = "codex",
+) -> None:
     try:
         existing_repo = Path(existing["repo"]).resolve()
     except (OSError, RuntimeError) as exc:
@@ -182,28 +204,76 @@ def _validate_reusable(existing: dict[str, str], repo: Path) -> None:
         raise WorkerEnsureError(
             f"session {existing['session']} is not one live single-pane worker"
         )
-    if existing["command"] not in {"codex", "codex-cli"}:
+    expected_commands = {
+        "codex": {"codex", "codex-cli"},
+        "antigravity": {"agy"},
+    }[provider]
+    if existing["command"] not in expected_commands:
         raise WorkerEnsureError(
             f"session {existing['session']} exists but its active process is "
-            f"{existing['command'] or '<empty>'}, not Codex"
+            f"{existing['command'] or '<empty>'}, not {provider.title()}"
         )
 
 
-def _startup_transition_pending(existing: dict[str, str], repo: Path) -> bool:
+def _startup_transition_pending(
+    existing: dict[str, str],
+    repo: Path,
+    *,
+    provider: str = "codex",
+) -> bool:
     if existing["dead"] != "0" or existing["panes"] != "1":
         return False
-    if existing["command"] not in {"sh", "bash", "zsh", "codex", "codex-cli"}:
+    provider_commands = {
+        "codex": {"codex", "codex-cli"},
+        "antigravity": {"agy"},
+    }[provider]
+    if existing["command"] not in {"sh", "bash", "zsh", "tmux", *provider_commands}:
         return False
     try:
         existing_repo = Path(existing["repo"]).resolve()
     except (OSError, RuntimeError):
         return False
-    return existing["command"] in {"sh", "bash", "zsh"} or existing_repo != repo
+    return existing["command"] in {"sh", "bash", "zsh", "tmux"} or existing_repo != repo
 
 
-def ensure_codex_worker(repo_value: str, *, expected_session: str = "") -> dict[str, object]:
+def _wait_for_reusable_session(
+    session: str,
+    repo: Path,
+    *,
+    provider: str,
+    attempts: int,
+) -> dict[str, str]:
+    last_error: WorkerEnsureError | None = None
+    for _ in range(attempts):
+        existing = _inspect_session(session)
+        if existing is None:
+            raise WorkerEnsureError(
+                f"{provider.title()} worker {session} exited during startup; "
+                f"inspect {provider.title()} authentication/configuration"
+            )
+        try:
+            _validate_reusable(existing, repo, provider=provider)
+        except WorkerEnsureError as exc:
+            last_error = exc
+            if _startup_transition_pending(existing, repo, provider=provider):
+                time.sleep(0.1)
+                continue
+            raise
+        return existing
+    if last_error is not None:
+        raise last_error
+    raise WorkerEnsureError(f"{provider.title()} worker {session} did not become ready")
+
+
+def _ensure_worker(
+    repo_value: str,
+    *,
+    provider: str,
+    executable_resolver: Callable[[], str],
+    expected_session: str = "",
+) -> dict[str, object]:
     repo = resolve_repo(repo_value)
-    session = session_name_for_repo(repo)
+    session = session_name_for_repo(repo, provider)
     if expected_session:
         if not _SAFE_SESSION.fullmatch(expected_session) or expected_session != session:
             raise WorkerEnsureError(
@@ -212,12 +282,38 @@ def ensure_codex_worker(repo_value: str, *, expected_session: str = "") -> dict[
 
     existing = _inspect_session(session)
     if existing is not None:
-        _validate_reusable(existing, repo)
+        if provider == "antigravity" and _startup_transition_pending(
+            existing, repo, provider=provider
+        ):
+            _wait_for_reusable_session(
+                session,
+                repo,
+                provider=provider,
+                attempts=_ANTIGRAVITY_STARTUP_ATTEMPTS,
+            )
+        else:
+            _validate_reusable(existing, repo, provider=provider)
         return {"session": session, "repo": str(repo), "created": False, "ready": True}
 
-    codex = _codex_executable()
-    codex_argv = [codex, "--dangerously-bypass-approvals-and-sandbox", "-C", str(repo)]
-    startup = "exec " + shlex.join(codex_argv)
+    executable = executable_resolver()
+    if provider == "codex":
+        launch_argv = [
+            executable,
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-C",
+            str(repo),
+        ]
+    elif provider == "antigravity":
+        launch_argv = [
+            executable,
+            "--dangerously-skip-permissions",
+            "--new-project",
+            "--prompt-interactive",
+            _ANTIGRAVITY_BOOTSTRAP_PROMPT,
+        ]
+    else:
+        raise WorkerEnsureError(f"unsupported worker provider: {provider}")
+    startup = "exec " + shlex.join(launch_argv)
     created = _run_command(
         ["tmux", "new-session", "-d", "-s", session, "-c", str(repo), startup]
     )
@@ -225,30 +321,62 @@ def ensure_codex_worker(repo_value: str, *, expected_session: str = "") -> dict[
         # tmux session creation is atomic. A concurrent winner may now be reusable.
         existing = _inspect_session(session)
         if existing is None:
-            raise WorkerEnsureError(_tmux_error(created, "cannot create Codex worker session"))
-        _validate_reusable(existing, repo)
+            raise WorkerEnsureError(
+                _tmux_error(created, f"cannot create {provider.title()} worker session")
+            )
+        if provider == "antigravity" and _startup_transition_pending(
+            existing, repo, provider=provider
+        ):
+            _wait_for_reusable_session(
+                session,
+                repo,
+                provider=provider,
+                attempts=_ANTIGRAVITY_STARTUP_ATTEMPTS,
+            )
+        else:
+            _validate_reusable(existing, repo, provider=provider)
         return {"session": session, "repo": str(repo), "created": False, "ready": True}
 
-    for _ in range(20):
-        existing = _inspect_session(session)
-        if existing is None:
-            raise WorkerEnsureError(
-                f"Codex worker {session} exited during startup; inspect Codex authentication/configuration"
-            )
-        try:
-            _validate_reusable(existing, repo)
-        except WorkerEnsureError as exc:
-            if _startup_transition_pending(existing, repo):
-                time.sleep(0.1)
-                continue
-            raise exc
-        return {"session": session, "repo": str(repo), "created": True, "ready": True}
-    raise WorkerEnsureError(f"Codex worker {session} did not become ready")
+    attempts = (
+        _ANTIGRAVITY_STARTUP_ATTEMPTS
+        if provider == "antigravity"
+        else _CODEX_STARTUP_ATTEMPTS
+    )
+    _wait_for_reusable_session(session, repo, provider=provider, attempts=attempts)
+    return {"session": session, "repo": str(repo), "created": True, "ready": True}
+
+
+def ensure_codex_worker(repo_value: str, *, expected_session: str = "") -> dict[str, object]:
+    return _ensure_worker(
+        repo_value,
+        provider="codex",
+        executable_resolver=_codex_executable,
+        expected_session=expected_session,
+    )
+
+
+def ensure_antigravity_worker(
+    repo_value: str,
+    *,
+    expected_session: str = "",
+) -> dict[str, object]:
+    return _ensure_worker(
+        repo_value,
+        provider="antigravity",
+        executable_resolver=_antigravity_executable,
+        expected_session=expected_session,
+    )
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create or reuse one local Codex tmux worker.")
+    parser = argparse.ArgumentParser(description="Create or reuse one local tmux worker.")
     parser.add_argument("repo", help="Configured Git repository root or unambiguous repo name.")
+    parser.add_argument(
+        "--provider",
+        choices=("codex", "antigravity"),
+        default="codex",
+        help="Worker CLI provider (default: codex).",
+    )
     parser.add_argument("--expect-session", default="", help="Require this deterministic name.")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON.")
     return parser.parse_args(argv)
@@ -257,7 +385,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
-        result = ensure_codex_worker(args.repo, expected_session=args.expect_session)
+        ensure = (
+            ensure_antigravity_worker if args.provider == "antigravity" else ensure_codex_worker
+        )
+        result = ensure(args.repo, expected_session=args.expect_session)
     except (OSError, subprocess.SubprocessError, WorkerEnsureError) as exc:
         print(f"Error: {exc}", file=os.sys.stderr)
         return 2
@@ -266,7 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         action = "created" if result["created"] else "reused"
         print(
-            f"[mesh live ensure-codex] session={result['session']} repo={result['repo']} "
+            f"[mesh live ensure-{args.provider}] session={result['session']} repo={result['repo']} "
             f"action={action} ready=yes"
         )
     return 0
