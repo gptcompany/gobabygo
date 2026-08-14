@@ -34,6 +34,13 @@ _PROVIDER_ACCOUNT_EXHAUSTED_PATTERNS = {
         "exceeded your current quota",
         "429 resource",
     ),
+    "antigravity": (
+        "resource_exhausted",
+        "resource exhausted",
+        "quota exceeded",
+        "exceeded your current quota",
+        "429 resource",
+    ),
 }
 
 

@@ -32,7 +32,9 @@ import yaml
 
 from src.router.failure_classifier import classify_cli_failure
 from src.router.cli_screen import (
+    LiveScreenState,
     capture_shows_activity as _shared_capture_shows_activity,
+    classify_live_screen as _shared_classify_live_screen,
     detect_interactive_failure_screen as _shared_detect_interactive_failure_screen,
     last_prompt_line_has_content as _shared_last_prompt_line_has_content,
     line_shows_activity as _shared_line_shows_activity,
@@ -436,9 +438,11 @@ def _wrap_cli_command_with_relay_proxy(
     return " ".join(command)
 
 
-def _prompt_is_idle(captured: str) -> bool:
-    """Return True when Claude Code is back at an empty ready prompt."""
+def _prompt_is_idle(captured: str, cli_type: str = "claude") -> bool:
+    """Return True when the selected CLI is back at an empty ready prompt."""
     body = str(captured or "")
+    if str(cli_type or "").strip().lower() == "antigravity":
+        return _shared_classify_live_screen("antigravity", body) == LiveScreenState.idle
     return "❯" in body and not _last_prompt_line_has_content(body)
 
 
@@ -479,11 +483,12 @@ def _should_auto_exit_on_success(
     *,
     baseline_capture: str = "",
     delta_text: str = "",
+    cli_type: str = "claude",
 ) -> bool:
     """Return True when the requested success markers are visible at an idle prompt."""
     if not success_markers:
         return False
-    if not _prompt_is_idle(captured):
+    if not _prompt_is_idle(captured, cli_type):
         return False
     baseline = str(baseline_capture or "")
     delta = str(delta_text or "")
@@ -603,9 +608,16 @@ def _sanitize_terminal_notice(text: str) -> str:
     return value.strip()
 
 
-def _detect_role_state(captured: str) -> RoleState:
+def _detect_role_state(captured: str, cli_type: str = "claude") -> RoleState:
     body = str(captured or "")
     if not body.strip():
+        return RoleState.awaiting_input
+    if str(cli_type or "").strip().lower() == "antigravity":
+        state = _shared_classify_live_screen("antigravity", body)
+        if state == LiveScreenState.idle:
+            return RoleState.idle
+        if state == LiveScreenState.busy:
+            return RoleState.responding
         return RoleState.awaiting_input
     if _capture_shows_activity(body):
         return RoleState.responding
@@ -1199,7 +1211,7 @@ class MeshSessionWorker:
                         session_id, captured, last_emitted_capture
                     )
                     if ui_group_id and ui_role and not relay_uses_claude_hooks:
-                        new_state = _detect_role_state(captured)
+                        new_state = _detect_role_state(captured, self.config.cli_type)
                         if new_state != last_role_state:
                             self._emit_state_change(
                                 session_id=session_id,
@@ -1278,6 +1290,7 @@ class MeshSessionWorker:
                             success_markers,
                             baseline_capture=auto_exit_baseline_capture,
                             delta_text=delta_text,
+                            cli_type=self.config.cli_type,
                         )
                     ):
                         logger.info(

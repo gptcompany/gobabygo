@@ -546,6 +546,26 @@ def test_prompt_is_idle_and_auto_exit_success_detection() -> None:
     assert _should_auto_exit_on_success(captured, ["OTHER"], delta_text="● GEMINI_OK") is False
 
 
+def test_antigravity_idle_enables_success_auto_exit() -> None:
+    captured = (
+        "ANTIGRAVITY_OK\n"
+        + "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    assert _prompt_is_idle(captured, "antigravity") is True
+    assert (
+        _should_auto_exit_on_success(
+            captured,
+            ["ANTIGRAVITY_OK"],
+            delta_text="ANTIGRAVITY_OK",
+            cli_type="antigravity",
+        )
+        is True
+    )
+
+
 def test_auto_exit_success_detection_ignores_marker_present_only_in_prompt() -> None:
     baseline = "❯ Reply with exactly GEMINI_E2E_OK.\n\n❯ "
     captured = baseline

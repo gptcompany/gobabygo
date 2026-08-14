@@ -26,6 +26,20 @@ _CLAUDE_SESSION_LIMIT = re.compile(
 _CLAUDE_COMPLETED_ACTIVITY = re.compile(
     r"(?im)^[ \t]*✻[ \t]+(?:crunched|worked)[^\n]*$"
 )
+_ANTIGRAVITY_AWAITING_INPUT_MARKERS = (
+    "requesting permission for:",
+    "do you want to proceed?",
+    "select login method:",
+    "press any key to go back.",
+    "token exchange failed:",
+)
+_ANTIGRAVITY_BUSY_MARKERS = (
+    "generating...",
+    "esc to cancel",
+)
+_ANTIGRAVITY_IDLE_FOOTER = re.compile(
+    r"(?m)^>[ \t]*\r?\n[^\n]*\r?\n\?[ \t]+for shortcuts[^\n]*\Z"
+)
 
 
 class LiveScreenState(str, Enum):
@@ -117,9 +131,28 @@ def detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
     if failure_kind != "account_exhausted":
         return ""
     body = str(captured or "").lower()
+    if str(cli_type or "").strip().lower() == "antigravity":
+        return failure_kind
     if any(marker in body for marker in _CLAUDE_RATE_LIMIT_SCREEN_MARKERS):
         return failure_kind
     return ""
+
+
+def antigravity_screen_state(captured: str) -> LiveScreenState:
+    """Classify a current Antigravity TUI capture using observed 1.1.x markers."""
+    body = str(captured or "")
+    if not body.strip():
+        return LiveScreenState.awaiting_input
+    lowered = body.lower()
+    if _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip()):
+        return LiveScreenState.idle
+    if any(marker in lowered for marker in _ANTIGRAVITY_AWAITING_INPUT_MARKERS):
+        return LiveScreenState.awaiting_input
+    if detect_interactive_failure_screen("antigravity", body):
+        return LiveScreenState.rate_limit
+    if any(marker in lowered for marker in _ANTIGRAVITY_BUSY_MARKERS):
+        return LiveScreenState.busy
+    return LiveScreenState.unknown
 
 
 def claude_wait_option_selected(captured: str) -> bool:
@@ -184,7 +217,10 @@ def claude_session_limit_reset(captured: str) -> tuple[str, str] | None:
 
 def classify_live_screen(cli_type: str, captured: str) -> LiveScreenState:
     body = str(captured or "")
-    if str(cli_type or "").strip().lower() == "claude" and claude_session_limit_reset(body):
+    provider = str(cli_type or "").strip().lower()
+    if provider == "antigravity":
+        return antigravity_screen_state(body)
+    if provider == "claude" and claude_session_limit_reset(body):
         return LiveScreenState.session_limit
     if detect_interactive_failure_screen(cli_type, body):
         return LiveScreenState.rate_limit
