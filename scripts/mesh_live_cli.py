@@ -1874,7 +1874,11 @@ def _tick_session_limit_wake_message(token: str) -> str:
     return (
         f"MESH_LIVE_RESET_WAKE id={token}: the session-limit reset time shown by this "
         "Claude session has passed. Resume the interrupted request from existing context; "
-        "do not broaden scope or duplicate completed work."
+        "do not broaden scope or duplicate completed work. Treat monitor notifications as "
+        "hints only: completion requires the exact current marker and screen=idle in two fresh "
+        "board/peek observations at least 5 seconds apart. Treat idle workers as reusable; "
+        "activity_age alone never authorizes rotation, and this wake never terminates or replaces "
+        "a session."
     )
 
 

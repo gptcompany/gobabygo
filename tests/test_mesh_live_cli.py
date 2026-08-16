@@ -3186,6 +3186,8 @@ def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
     assert results[0].verified is True
     assert wake_client.sends[0].startswith("MESH_LIVE_RESET_WAKE id=")
     assert "Resume the interrupted request" in wake_client.sends[0]
+    assert "completion requires the exact current marker and screen=idle" in wake_client.sends[0]
+    assert "activity_age alone never authorizes rotation" in wake_client.sends[0]
     saved = state["sessions"]["sam/claude-coordinator"]
     assert saved["session_limit_attempted_at"] == due
     assert saved["session_limit_verified"] is True
