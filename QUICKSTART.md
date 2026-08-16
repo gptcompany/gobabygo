@@ -347,6 +347,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   inspection; mesh live does not auto-clear it or send a naked Enter
 - on the Dell runtime, `mesh live tick` is read-only and `tick --apply` only
   handles an exact selected Claude WAIT menu or wakes an exactly idle coordinator
+- board reports provider `screen` state and tmux `activity_age`; completion needs
+  the exact marker plus stable idle state in two observations, while age alone
+  never triggers worker replacement
 - install optional 30-minute polling with
   `./scripts/install-mesh-live-cron.sh --mesh-script "$PWD/scripts/mesh"`; it
   defaults to the current tmux owner and must not target router-managed owners

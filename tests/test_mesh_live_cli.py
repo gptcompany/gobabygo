@@ -1822,6 +1822,12 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "PASS is forbidden while any unresolved high- or medium-severity finding remains" in prompt
     assert "If the reviewer mutated tracked state" in prompt
     assert "Never let the reviewer silently become the fixer" in prompt
+    assert "Worker idle/stale lifecycle policy" in prompt
+    assert "`screen=idle` means available for input, not completed and not obsolete" in prompt
+    assert "Age alone never authorizes closing or replacing a session" in prompt
+    assert "ROTATION_CANDIDATE <session> <reason>" in prompt
+    assert "context at or below 20%" in prompt
+    assert "does not authorize session termination or automatic replacement" in prompt
     assert "Claude remains coordinator and final adjudicator" in prompt
     assert "never swap roles silently" in prompt
 

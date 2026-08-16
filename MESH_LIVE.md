@@ -421,6 +421,14 @@ inspects tmux sessions owned by the user running it, so it does not compete with
 router-owned `mesh-worker`/`mesh` sessions and their `session_worker` retry and
 account-rotation policy.
 
+Board headers expose the current provider `screen` classification and tmux
+`activity_age`. These are operational signals, not completion claims. A monitor
+notification is only a hint: before reporting completion the coordinator must
+observe the exact current status marker and `screen=idle` in two fresh
+board/peek cycles at least five seconds apart. Docker builds, tests, tool
+activity, changing output, `busy`, `unknown`, or `awaiting_input` remain active
+or uncertain.
+
 ```bash
 MESH_LIVE_LOCAL=1 mesh live tick --json
 MESH_LIVE_LOCAL=1 mesh live tick --apply
@@ -449,6 +457,15 @@ throttles retries by screen fingerprint or coordinator wake time. Ambiguous or
 stale rate-limit screens are reported as `manual_rate_limit` and are never
 submitted. Tick does not create sessions, choose new tasks, or blindly resend a
 delegation.
+
+An idle worker is reusable by default. Activity age alone never makes it stale.
+The coordinator may report `ROTATION_CANDIDATE` only for a detached, stably idle
+worker with an additional reason such as context at or below 20%, persistent
+degraded TUI/provider configuration, or an explicit fresh-context request.
+Before rotation it must verify no active delegation, an empty composer, no
+build/test/tool activity, and clean or fully accounted Git plus durable handoff
+evidence. The current contract does not authorize `kill-session` or automatic
+replacement; those remain an explicit guarded operator lifecycle action.
 
 The session-limit wake is guarded. The banner must include the exact
 `/upgrade to increase your usage limit.` line and an empty prompt. Unknown
