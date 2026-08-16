@@ -1853,7 +1853,11 @@ def _tick_wake_message(token: str) -> str:
     return (
         f"MESH_LIVE_TICK id={token}: inspect authorized sessions now with mesh live board/peek. "
         "Resume coordination only when there is actionable work, verify delivery before follow-up, "
-        "and never duplicate an existing delegation. Reply TICK_IDLE when no action is needed."
+        "and never duplicate an existing delegation. Treat monitor notifications as hints, never as "
+        "completion. Before reporting a worker ready or complete, require the exact current status "
+        "marker and screen=idle in two fresh board/peek observations at least 5 seconds apart; busy, "
+        "unknown, awaiting_input, changed output, or a missing marker remains active or uncertain. "
+        "Reply TICK_IDLE when no action is needed."
     )
 
 
@@ -2784,7 +2788,11 @@ def build_live_coordinator_system_prompt(
             "correlation is unavailable, attach and inspect manually.",
             "For Antigravity, the tracked send requires the exact idle footer and verifies the submitted ID after one Enter. "
             "It has no recovery command: on `submission=unknown`, use bounded peeks and never resend, clear the composer, or send another Enter.",
-            "12. Monitor with bounded, non-aggressive peeks. Never detect completion by searching the whole capture for "
+            "12. Monitor events and background notifications are hints only; never report a worker ready or complete from the event text. "
+            "Run a fresh board and exact worker peek, wait at least 5 seconds, then repeat both. Require the same pane, "
+            "the exact current standalone status marker in the latest worker-authored response, and `screen=idle` in both observations. "
+            "Any `screen=busy`, `screen=unknown`, `screen=awaiting_input`, changing output, missing marker, or Docker/build/test activity remains active or uncertain. "
+            "Never detect completion by searching the whole capture for "
             "WORKER_DONE or WORKER_BLOCKED: the delegated task and composer may echo both strings. Accept status only "
             "from one exact standalone line with the current DELEGATION_ID in the latest worker-authored response after "
             "delegation. Ignore task/brief echoes, quoted text, history, and composer content; ambiguous evidence remains active or uncertain.",
