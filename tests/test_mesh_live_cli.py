@@ -3391,6 +3391,8 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
     assert "never duplicate an existing delegation" in client.sends[1][1]
     assert "Treat monitor notifications as hints" in client.sends[1][1]
     assert "screen=idle in two fresh board/peek observations" in client.sends[1][1]
+    assert "activity_age alone never authorizes rotation" in client.sends[1][1]
+    assert "never terminate or replace a session from this tick" in client.sends[1][1]
     encoded_state = json.dumps(state)
     assert "not-persisted" not in encoded_state
     assert "You've hit" not in encoded_state

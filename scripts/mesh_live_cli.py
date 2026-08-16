@@ -1863,6 +1863,9 @@ def _tick_wake_message(token: str) -> str:
         "completion. Before reporting a worker ready or complete, require the exact current status "
         "marker and screen=idle in two fresh board/peek observations at least 5 seconds apart; busy, "
         "unknown, awaiting_input, changed output, or a missing marker remains active or uncertain. "
+        "Treat idle workers as reusable; activity_age alone never authorizes rotation. Report a "
+        "ROTATION_CANDIDATE only with an additional verified reason, and never terminate or replace "
+        "a session from this tick. "
         "Reply TICK_IDLE when no action is needed."
     )
 
