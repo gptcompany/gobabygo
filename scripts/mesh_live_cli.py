@@ -1576,6 +1576,55 @@ def _load_cli_screen_api() -> tuple[Any, Any, Any, Any]:
     )
 
 
+def session_screen_state(session: LiveSession) -> str:
+    """Classify only the currently visible provider UI, never task completion."""
+    if session.capture_error:
+        return "capture_error"
+    commands = {
+        Path(session.pane_command or "").name.lower(),
+        Path(session.pane_child_command or "").name.lower(),
+    }
+    if commands & {"codex", "codex-cli"}:
+        if codex_screen_is_ready_for_delegation(session.output):
+            return "idle"
+        if codex_screen_shows_current_activity(session.output):
+            return "busy"
+        composer, _current = _codex_visible_regions(session.output)
+        return "awaiting_input" if composer.strip() else "unknown"
+    provider = ""
+    if "agy" in commands:
+        provider = "antigravity"
+    elif commands & {"claude", "claude-code"}:
+        provider = "claude"
+    if not provider:
+        return "unknown"
+    _state_type, _wait_selected, _session_limit_reset, classify_screen = (
+        _load_cli_screen_api()
+    )
+    return str(classify_screen(provider, session.output).value)
+
+
+def session_activity_age_seconds(
+    session: LiveSession, *, now: float | None = None
+) -> int | None:
+    if session.activity_at <= 0:
+        return None
+    observed_at = time.time() if now is None else now
+    return max(0, int(observed_at - session.activity_at))
+
+
+def _format_duration(seconds: int | None) -> str:
+    if seconds is None:
+        return "unknown"
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, remainder = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{remainder:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
 def _is_claude_session(session: LiveSession) -> bool:
     command = Path(session.pane_command or "").name.lower()
     return command in {"claude", "claude-code"} or session.name.lower().startswith("claude-")
@@ -2183,7 +2232,7 @@ def resolve_session(
     raise SessionResolutionError(f"tmux session '{name}' not found{scope}")
 
 
-def render_board(sessions: Sequence[LiveSession]) -> str:
+def render_board(sessions: Sequence[LiveSession], *, now: float | None = None) -> str:
     if not sessions:
         return "No live tmux sessions matched."
     blocks: list[str] = []
@@ -2192,9 +2241,12 @@ def render_board(sessions: Sequence[LiveSession]) -> str:
         command = session.pane_command or "unknown"
         location = session.pane_path or session.repo_name or "unknown"
         role = f" | role={session.role}" if session.role else ""
+        screen_state = session_screen_state(session)
+        activity_age = _format_duration(session_activity_age_seconds(session, now=now))
         blocks.append(
             f"=== {session.owner}/{session.name} | {state} | windows={session.windows} "
-            f"| cmd={command}{role} | {location} ==="
+            f"| cmd={command}{role} | screen={screen_state} | activity_age={activity_age} "
+            f"| {location} ==="
         )
         if session.capture_error:
             blocks.append(f"[capture error] {redact_capture(session.capture_error)}")
@@ -2424,10 +2476,14 @@ def redact_capture(text: str) -> str:
     return "\n".join(output)
 
 
-def redacted_session_dict(session: LiveSession) -> dict[str, Any]:
+def redacted_session_dict(
+    session: LiveSession, *, now: float | None = None
+) -> dict[str, Any]:
     payload = asdict(session)
     payload["output"] = redact_capture(session.output)
     payload["capture_error"] = redact_capture(session.capture_error)
+    payload["screen_state"] = session_screen_state(session)
+    payload["activity_age_seconds"] = session_activity_age_seconds(session, now=now)
     return payload
 
 

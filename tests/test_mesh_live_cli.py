@@ -1630,6 +1630,33 @@ def test_redacted_session_dict_does_not_expose_raw_capture_or_error() -> None:
     assert "[REDACTED]" in encoded
 
 
+def test_board_exposes_provider_state_and_activity_age_without_claiming_completion() -> None:
+    module = _load_module()
+    worker = module.LiveSession(
+        owner="sam",
+        name="codex-rektslug",
+        activity_at=900,
+        pane_id="%7",
+        pane_path="/data/sata/1TB/rektslug",
+        pane_command="codex",
+        output=(
+            "────────────────────\n"
+            "• Working (2s · esc to interrupt)\n"
+            "› Write tests for @filename\n"
+            "  gpt-5.6-sol high · /data/sata/1TB/rektslug"
+        ),
+    )
+
+    rendered = module.render_board([worker], now=1000)
+    payload = module.redacted_session_dict(worker, now=1000)
+
+    assert "screen=busy" in rendered
+    assert "activity_age=1m40s" in rendered
+    assert "ready" not in rendered.lower()
+    assert payload["screen_state"] == "busy"
+    assert payload["activity_age_seconds"] == 100
+
+
 def test_uri_redaction_bounds_host_checks_for_many_at_signs(monkeypatch) -> None:
     module = _load_module()
     original = module._authority_host_is_valid
