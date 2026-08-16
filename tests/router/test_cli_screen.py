@@ -123,6 +123,12 @@ def test_antigravity_rate_limit_text_in_history_does_not_override_idle() -> None
 def test_rate_limit_detector_reuses_account_exhausted_classification() -> None:
     assert detect_interactive_failure_screen("claude", RATE_LIMIT_SELECTED) == "account_exhausted"
     assert detect_interactive_failure_screen("claude", "API Error: 429") == ""
+    assert (
+        detect_interactive_failure_screen(
+            "codex", "You've hit your usage limit. Upgrade to Pro or try again later."
+        )
+        == "account_exhausted"
+    )
 
 
 def test_wait_action_requires_visible_selected_option() -> None:

@@ -1657,6 +1657,21 @@ def test_board_exposes_provider_state_and_activity_age_without_claiming_completi
     assert payload["activity_age_seconds"] == 100
 
 
+def test_board_classifies_codex_usage_limit_before_idle_placeholder() -> None:
+    module = _load_module()
+    worker = module.LiveSession(
+        owner="sam",
+        name="codex-monitoring-stack",
+        pane_command="codex",
+        output=(
+            "You've hit your usage limit. Upgrade to Pro, visit settings, or try again later.\n\n"
+            "› Explain this codebase\n\n  gpt-5.6-sol high · /repo"
+        ),
+    )
+
+    assert module.session_screen_state(worker) == "rate_limit"
+
+
 def test_uri_redaction_bounds_host_checks_for_many_at_signs(monkeypatch) -> None:
     module = _load_module()
     original = module._authority_host_is_valid
@@ -1994,6 +2009,12 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
             "────────────────────\n"
             "› Write tests for @filename\n"
             "  gpt-5.6-sol xhigh · /repo · Context 100%",
+            True,
+        ),
+        (
+            "WORKER_DONE delegation-1234\n\n"
+            "› Explain this codebase\n\n"
+            "  gpt-5.6-sol high · /repo",
             True,
         ),
         (

@@ -661,6 +661,7 @@ _CODEX_COLLAPSED_PASTE = re.compile(
 _CODEX_COLLAPSED_PASTE_MARKER = re.compile(r"\[Pasted Content\b", re.IGNORECASE)
 _CODEX_EMPTY_COMPOSER_PLACEHOLDERS = frozenset(
     {
+        "Explain this codebase",
         "Improve documentation in @filename",
         "Write tests for @filename",
     }
@@ -1585,6 +1586,11 @@ def session_screen_state(session: LiveSession) -> str:
         Path(session.pane_child_command or "").name.lower(),
     }
     if commands & {"codex", "codex-cli"}:
+        state_type, _wait_selected, _session_limit_reset, classify_screen = (
+            _load_cli_screen_api()
+        )
+        if classify_screen("codex", session.output) == state_type.rate_limit:
+            return "rate_limit"
         if codex_screen_is_ready_for_delegation(session.output):
             return "idle"
         if codex_screen_shows_current_activity(session.output):

@@ -131,7 +131,7 @@ def detect_interactive_failure_screen(cli_type: str, captured: str) -> str:
     if failure_kind != "account_exhausted":
         return ""
     body = str(captured or "").lower()
-    if str(cli_type or "").strip().lower() == "antigravity":
+    if str(cli_type or "").strip().lower() in {"antigravity", "codex"}:
         return failure_kind
     if any(marker in body for marker in _CLAUDE_RATE_LIMIT_SCREEN_MARKERS):
         return failure_kind

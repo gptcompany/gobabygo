@@ -21,6 +21,8 @@ _GENERIC_ACCOUNT_EXHAUSTED_PATTERNS = (
 
 _PROVIDER_ACCOUNT_EXHAUSTED_PATTERNS = {
     "codex": (
+        "you've hit your usage limit",
+        "you have hit your usage limit",
         "rate_limit_exceeded",
         "rate limit reached",
         "rate limit exceeded",
