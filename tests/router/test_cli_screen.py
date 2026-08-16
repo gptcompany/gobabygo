@@ -48,6 +48,21 @@ SESSION_LIMIT = """⎿  You've hit your session limit · resets 12am (Asia/Bangk
 
 ❯
 """
+SESSION_LIMIT_MONITOR_EVENT = """● Monitor event: worker quiet check
+  ⎿ \xa0You've hit your session limit · resets 1:20pm (Asia/Bangkok)
+     /upgrade to increase your usage limit.
+
+✻ Worked for 0s · 1 shell, 2 monitors still running
+
+47 tasks (28 done, 4 in progress, 15 open)
+  ◼ Continue the active work
+  ◻ Review the remaining tasks
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  bypass permissions on · 1 shell, 2 monitors · ← for agents
+"""
 
 
 def test_classifies_live_cli_states() -> None:
@@ -135,3 +150,14 @@ def test_session_limit_requires_exact_current_banner_and_empty_prompt() -> None:
     ) is None
     assert claude_session_limit_reset(f"{SESSION_LIMIT}\n" + "history\n" * 31) is None
     assert classify_live_screen("codex", SESSION_LIMIT) != LiveScreenState.session_limit
+
+
+def test_session_limit_accepts_nbsp_in_monitor_event_banner() -> None:
+    assert claude_session_limit_reset(SESSION_LIMIT_MONITOR_EVENT) == (
+        "1:20pm",
+        "Asia/Bangkok",
+    )
+    assert (
+        classify_live_screen("claude", SESSION_LIMIT_MONITOR_EVENT)
+        == LiveScreenState.session_limit
+    )

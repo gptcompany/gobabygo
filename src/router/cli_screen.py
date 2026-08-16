@@ -195,7 +195,7 @@ def claude_wait_option_selected(captured: str) -> bool:
 
 def claude_session_limit_reset(captured: str) -> tuple[str, str] | None:
     """Return the current session-limit reset label and IANA timezone."""
-    body = str(captured or "")
+    body = str(captured or "").replace("\xa0", " ")
     matches = list(_CLAUDE_SESSION_LIMIT.finditer(body))
     if not matches:
         return None
