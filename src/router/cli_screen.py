@@ -26,6 +26,7 @@ _CLAUDE_SESSION_LIMIT = re.compile(
 _CLAUDE_COMPLETED_ACTIVITY = re.compile(
     r"(?im)^[ \t]*✻[ \t]+(?:crunched|worked)[^\n]*$"
 )
+_CLAUDE_SEPARATOR = re.compile(r"^[ \t]*[─━-]{20,}.*$")
 _ANTIGRAVITY_AWAITING_INPUT_MARKERS = (
     "requesting permission for:",
     "do you want to proceed?",
@@ -109,6 +110,42 @@ def capture_shows_activity(captured: str) -> bool:
 def prompt_is_idle(captured: str) -> bool:
     body = str(captured or "")
     return "❯" in body and not capture_shows_activity(body) and not last_prompt_line_has_content(body)
+
+
+def claude_current_region(captured: str) -> str:
+    """Return the composer/status region, excluding completed transcript history."""
+    body = str(captured or "").replace("\xa0", " ")
+    lines = body.splitlines()
+    prompt_indexes = [
+        index for index, line in enumerate(lines) if line.lstrip().startswith("❯")
+    ]
+    if not prompt_indexes:
+        return body
+    prompt_index = prompt_indexes[-1]
+    separator_indexes = [
+        index
+        for index, line in enumerate(lines[:prompt_index])
+        if _CLAUDE_SEPARATOR.match(line)
+    ]
+    start = separator_indexes[-1] + 1 if separator_indexes else 0
+    return "\n".join(lines[start:])
+
+
+def claude_screen_state(captured: str) -> LiveScreenState:
+    """Classify Claude from its current composer/status region, not transcript words."""
+    body = str(captured or "")
+    if claude_session_limit_reset(body):
+        return LiveScreenState.session_limit
+    if detect_interactive_failure_screen("claude", body):
+        return LiveScreenState.rate_limit
+    current = claude_current_region(body)
+    if capture_shows_activity(current):
+        return LiveScreenState.busy
+    if prompt_is_idle(current):
+        return LiveScreenState.idle
+    if looks_like_start_screen(current) or last_prompt_line_has_content(current):
+        return LiveScreenState.awaiting_input
+    return LiveScreenState.unknown if body.strip() else LiveScreenState.awaiting_input
 
 
 def looks_like_start_screen(captured: str) -> bool:
@@ -220,8 +257,8 @@ def classify_live_screen(cli_type: str, captured: str) -> LiveScreenState:
     provider = str(cli_type or "").strip().lower()
     if provider == "antigravity":
         return antigravity_screen_state(body)
-    if provider == "claude" and claude_session_limit_reset(body):
-        return LiveScreenState.session_limit
+    if provider == "claude":
+        return claude_screen_state(body)
     if detect_interactive_failure_screen(cli_type, body):
         return LiveScreenState.rate_limit
     if capture_shows_activity(body):

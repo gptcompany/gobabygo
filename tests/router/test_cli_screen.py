@@ -1,6 +1,7 @@
 from src.router.cli_screen import (
     LiveScreenState,
     antigravity_screen_state,
+    claude_screen_state,
     claude_session_limit_reset,
     claude_wait_option_selected,
     classify_live_screen,
@@ -71,6 +72,28 @@ def test_classifies_live_cli_states() -> None:
     assert classify_live_screen("claude", "header\n❯ pending") == LiveScreenState.awaiting_input
     assert classify_live_screen("claude", RATE_LIMIT_SELECTED) == LiveScreenState.rate_limit
     assert classify_live_screen("claude", SESSION_LIMIT) == LiveScreenState.session_limit
+
+
+def test_claude_state_ignores_monitor_transcript_before_current_status_bar() -> None:
+    idle_with_historical_monitor = """● Monitor event: worker quiet check
+  ⎿ Waiting for agents appeared in worker prose
+
+✻ Worked for 23s · 1 shell, 2 monitors still running
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  bypass permissions on · 1 shell, 2 monitors · ← for agents
+"""
+    active_main_turn = """old transcript
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+✻ Working… esc to interrupt
+"""
+
+    assert claude_screen_state(idle_with_historical_monitor) == LiveScreenState.idle
+    assert claude_screen_state(active_main_turn) == LiveScreenState.busy
 
 
 def test_classifies_observed_antigravity_tui_states() -> None:
