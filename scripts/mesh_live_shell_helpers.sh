@@ -603,9 +603,31 @@ mcodex() {
   _ws_mosh_attach_or_start "$session" "$(_ws_tmux_target_dir "$label")"
 }
 
+_ws_remote_speckit_status() {
+  local mesh_script target_dir control_host remote_script remote_command opt
+  local -a ssh_opts=()
+  mesh_script="$1"
+  target_dir="$2"
+  control_host="$(_ws_control_host)" || return $?
+  if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
+    while IFS= read -r -d '' opt; do
+      ssh_opts+=("$opt")
+    done < <(_mesh_collect_ssh_opts)
+  fi
+  remote_script='if [[ ! -x "$MESH_SCRIPT" || ! -d "$TARGET_DIR" ]]; then exit 3; fi
+output="$("$MESH_SCRIPT" speckit status "$TARGET_DIR" --json)"
+rc=$?
+if [[ $rc -ne 0 && $rc -ne 1 ]]; then exit $rc; fi
+printf "%s" "$output"'
+  printf -v remote_command 'MESH_SCRIPT=%q TARGET_DIR=%q bash -lc %q' \
+    "$mesh_script" "$target_dir" "$remote_script"
+  command ssh "${ssh_opts[@]}" -o BatchMode=yes -o ConnectTimeout=10 \
+    "$control_host" "$remote_command"
+}
+
 mcoordinator() {
   local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh
-  local prompt claude_cmd startup usage
+  local prompt claude_cmd startup usage speckit_status_json
   local -a prompt_args=()
   usage="Usage: mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
   repo=""
@@ -700,6 +722,15 @@ mcoordinator() {
     prompt_args=(live coordinator-prompt --all --session "$session" --mesh-script "$remote_mesh" --workflow "$workflow")
   fi
   [[ -n "$worker" ]] && prompt_args+=(--worker "$worker")
+  if [[ -n "${MESH_COORDINATOR_SPECKIT_STATUS_JSON+x}" ]]; then
+    speckit_status_json="$MESH_COORDINATOR_SPECKIT_STATUS_JSON"
+  else
+    speckit_status_json="$(_ws_remote_speckit_status "$remote_mesh" "$target_dir" 2>/dev/null || true)"
+  fi
+  if [[ ${#speckit_status_json} -gt 16384 ]]; then
+    speckit_status_json=""
+  fi
+  [[ -n "$speckit_status_json" ]] && prompt_args+=(--speckit-status-json "$speckit_status_json")
   prompt="$(_mesh_live_run "${prompt_args[@]}")" || return $?
   claude_cmd="${MESH_COORDINATOR_CLAUDE_CMD:-claude}"
   if [[ "$continue_mode" -eq 1 ]]; then

@@ -19,12 +19,15 @@ def _shells() -> list[str]:
 
 
 def _run_shell(shell: str, body: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["MESH_COORDINATOR_SPECKIT_STATUS_JSON"] = ""
     return subprocess.run(
         [shell, "-c", body],
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -431,6 +434,68 @@ mcoordinator --all --resume {resume_id}
     assert "FRESH" in lines[2]
     assert lines[3] == f"resume={resume_id}"
     assert lines[4] == "kind=coordinator"
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_forwards_fresh_speckit_status_on_resume(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    prompt_args_file = tmp_path / "prompt-args"
+    resume_id = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
+    status = '{"schema":"mesh.speckit.status.v1","aligned":true}'
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'FRESH CONTRACT'; }}
+_ws_mosh_attach_or_start() {{ :; }}
+MESH_COORDINATOR_SPECKIT_STATUS_JSON={shlex.quote(status)}
+MESH_WS_REPO_BASE=/data/sata/1TB
+mcoordinator rektslug --resume {resume_id}
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    args = prompt_args_file.read_text(encoding="utf-8")
+    assert "<--speckit-status-json>" in args
+    assert f"<{status}>" in args
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_remote_speckit_status_uses_one_read_only_ssh_command(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "ssh")
+    capture = tmp_path / "ssh-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+unset MESH_COORDINATOR_SPECKIT_STATUS_JSON
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_control_host() {{ printf '%s' 'dell-vpn'; }}
+_ws_remote_speckit_status /data/sata/1TB/gobabygo/scripts/mesh /data/sata/1TB/rektslug
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "<dell-vpn>" in command
+    assert "speckit" in command
+    assert "status" in command
+    assert "--json" in command
+    assert "BatchMode=yes" in command
+    assert "ConnectTimeout=10" in command
+    assert "send-keys" not in command
+    assert "tmux" not in command
+    assert " install " not in command
+    assert " upgrade " not in command
 
 
 @pytest.mark.parametrize("shell", _shells())

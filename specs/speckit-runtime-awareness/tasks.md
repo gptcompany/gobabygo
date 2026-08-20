@@ -126,7 +126,7 @@ Done when:
 
 ### T004. Make coordinator startup and resume capability-aware
 
-Status: todo
+Status: done
 
 Depends on: T001, T002
 
