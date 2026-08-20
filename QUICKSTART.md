@@ -327,6 +327,7 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - exact `--resume <id>` rejects the same UUID in another active tmux coordinator
   and holds a private per-UUID lock while Claude runs; `--continue` cannot offer
   this guarantee because its UUID is selected inside Claude after startup
+
 - run `mcoordinator` from any Mac directory after installing the shell helpers; the CLIs stay on the Dell
 - a running coordinator retains the contract from its initial bootstrap; start
   a new coordinator or exit/resume the old tmux session after deploying contract changes
@@ -359,6 +360,27 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   defaults to the current tmux owner and must not target router-managed owners
 - tick state contains metadata only; use `install-mesh-live-cron.sh --remove`
   to remove its marked crontab block without touching unrelated entries
+
+### Git hook chaining
+
+Git supports one effective `core.hooksPath`. On the Dell, keep the global value
+at `~/.claude/hooks`; do not run `git config core.hooksPath .githooks` inside a
+repository because that silently disables the global review.
+
+Install or inspect the Gobabygo dispatcher explicitly:
+
+```bash
+./scripts/install-mesh-git-hook.sh
+./scripts/install-mesh-git-hook.sh --apply
+git config --global --get core.hooksPath
+```
+
+The dispatcher replays the exact pre-push stdin and arguments first to
+`~/.claude/hooks/pre-push-review.py`, then to an executable
+`<repo>/.githooks/pre-push` when present. A failure in either check blocks the
+push; unknown existing global hooks are not replaced without explicit
+`--replace`. This is local feedback only: CI remains the authoritative gate, and
+Git hooks are not a security boundary because users can bypass them.
 
 Current canonical UI slice:
 

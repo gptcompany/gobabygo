@@ -266,6 +266,28 @@ Done when:
 - occupied coordinators and all workers receive no unsolicited input
 - cron installation is explicit and syntax-tested
 
+### T008H. Chain global and repository pre-push hooks
+
+Status: done
+
+Depends on: T000
+
+Scope:
+
+- keep one global `core.hooksPath` and never require per-repository overrides
+- run the existing global review first, then an executable repository
+  `.githooks/pre-push` when present
+- replay exact Git hook arguments and stdin to both checks
+- retain CI as the authoritative gate; local hooks are fast feedback only
+- install explicitly and refuse replacement of unknown global hook content
+
+Done when:
+
+- either hook failure blocks the push and repository hooks cannot bypass global review
+- repositories without a local hook keep the current global behavior
+- tests cover stdin replay, arguments, failure ordering, and safe installation
+- Dell installation is validated without performing a push
+
 ### T009. Run local and Dell-canary E2E validation
 
 Status: todo
