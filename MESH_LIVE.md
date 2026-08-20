@@ -264,8 +264,9 @@ current integration manifest. Migrate them one clean repository at a time with
 and installs the Claude, Codex, and AGY skill integrations together only after
 explicit `--apply`. Existing specifications and constitution remain local and
 are preserved. A pre-`.specify` `memory/constitution.md` is copied into the
-current path; retained legacy Claude commands are reported and require a later
-manual decision rather than automatic deletion.
+current path only when that path is absent; if both exist, neither is overwritten
+and the historical path is reported as unmigrated. Retained legacy Claude
+commands require a later manual decision rather than automatic deletion.
 
 Before a Spec Kit task is delegated, the coordinator generates one compact,
 provider-neutral envelope from the target repository:

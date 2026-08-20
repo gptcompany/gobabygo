@@ -389,7 +389,8 @@ Claude, Codex, and AGY integrations in a temporary sandbox, preserves existing
 `memory/constitution.md` into the current location, and refuses custom skill or
 ignored-output collisions. Existing legacy `.claude/commands` are listed but
 never deleted; archive them only after verifying that no operator still invokes
-them. New-project `init` uses the same sandbox, lock, and rollback path. Review
+them. If both constitution paths exist, neither is overwritten and the old path
+is reported as unmigrated. New-project `init` uses the same sandbox, lock, and rollback path. Review
 and commit the resulting diff before migrating the next repository.
 `~/.local/bin/specify` is discovered explicitly for non-interactive SSH
 sessions; no shell startup file is required.

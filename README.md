@@ -130,8 +130,10 @@ clean repository at a time: inspect the plan first, then add
 replacements. Migration installs Claude, Codex, and AGY together, preserves
 existing `specs/` and `.specify/memory/constitution.md`, and blocks collisions
 with custom skills. A historical `memory/constitution.md` is copied byte-for-byte
-to the current path. Legacy `.claude/commands` are retained and reported for
-manual review; migration never deletes them. Later releases use `project upgrade`.
+only when the current constitution is absent; if both exist, the historical path
+is reported as unmigrated and neither file is overwritten. Legacy
+`.claude/commands` are retained and reported for manual review; migration never
+deletes them. Later releases use `project upgrade`.
 
 `mesh speckit context` creates the bounded, provider-neutral phase/artifact
 envelope used for worker delegation. Intra-repo specs remain in that repo;

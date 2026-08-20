@@ -863,6 +863,7 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
     generated = 0
     total_size = 0
     constitution_migrations: dict[str, str] = {}
+    constitution_unmigrated: list[str] = []
     content_digests: dict[str, str] = {}
     for source in sorted(staging.rglob("*")):
         if ".git" in source.relative_to(staging).parts:
@@ -881,6 +882,12 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
         relative = source.relative_to(staging).as_posix()
         target = repo / relative
         legacy_constitution = repo / _LEGACY_CONSTITUTION_PATH
+        if (
+            relative == ".specify/memory/constitution.md"
+            and target.exists()
+            and (legacy_constitution.exists() or legacy_constitution.is_symlink())
+        ):
+            constitution_unmigrated.append(_LEGACY_CONSTITUTION_PATH)
         if (
             relative == ".specify/memory/constitution.md"
             and not target.exists()
@@ -918,6 +925,7 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
         "protected_preserved": preserved,
         "blocking_collisions": collisions,
         "legacy_constitution_migrations": constitution_migrations,
+        "legacy_constitution_unmigrated": constitution_unmigrated,
         "legacy_commands_preserved": _legacy_command_paths(repo),
         "generated_content_sha256": content_digests,
     }
@@ -1431,6 +1439,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "blocking_collisions",
                 "ignored_generated_paths",
                 "legacy_commands_preserved",
+                "legacy_constitution_unmigrated",
             ):
                 print(f"{label}={','.join(migration[label]) or '-'}")
             constitution_moves = migration["legacy_constitution_migrations"]

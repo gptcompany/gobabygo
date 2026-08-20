@@ -616,6 +616,7 @@ def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(
             "protected_preserved": [],
             "blocking_collisions": [],
             "legacy_constitution_migrations": {},
+            "legacy_constitution_unmigrated": [],
             "legacy_commands_preserved": [],
             "generated_content_sha256": {
                 ".specify/integration.json": "example"
@@ -720,6 +721,7 @@ def test_migration_plan_reports_updates_preservation_and_additions(
         "blocking_collisions": [],
         "ignored_generated_paths": [],
         "legacy_constitution_migrations": {},
+        "legacy_constitution_unmigrated": [],
         "legacy_commands_preserved": [],
         "generated_content_sha256": {
             ".claude/skills/speckit-plan/SKILL.md": hashlib.sha256(
@@ -1065,6 +1067,32 @@ def test_migration_apply_moves_historical_constitution_to_current_path(
         ".claude/commands/plan.md"
     ]
     assert legacy_command.read_text(encoding="utf-8") == "# Historical plan command\n"
+
+
+def test_migration_inventory_reports_unmigrated_historical_constitution(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    staging = tmp_path / "staging"
+    historical = repo / "memory" / "constitution.md"
+    current = repo / ".specify" / "memory" / "constitution.md"
+    generated = staging / ".specify" / "memory" / "constitution.md"
+    for path in (historical, current, generated):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    historical.write_text("historical\n", encoding="utf-8")
+    current.write_text("current\n", encoding="utf-8")
+    generated.write_text("generated\n", encoding="utf-8")
+
+    inventory = module._migration_inventory_from_tree(repo, staging)
+
+    assert inventory["legacy_constitution_migrations"] == {}
+    assert inventory["legacy_constitution_unmigrated"] == [
+        "memory/constitution.md"
+    ]
+    assert inventory["protected_preserved"] == [
+        ".specify/memory/constitution.md"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1572,6 +1600,7 @@ def test_cli_project_without_apply_only_prints_plan(monkeypatch, tmp_path, capsy
             "protected_preserved": [],
             "blocking_collisions": [],
             "legacy_constitution_migrations": {},
+            "legacy_constitution_unmigrated": [],
             "legacy_commands_preserved": [],
             "ignored_generated_paths": [],
         },

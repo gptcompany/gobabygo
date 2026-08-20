@@ -35,6 +35,7 @@ def test_speckit_migration_docs_include_required_consent_and_legacy_policy() -> 
         normalized = " ".join(document.split())
         assert "memory/constitution.md" in normalized
         assert "legacy" in normalized.lower()
+        assert "reported as unmigrated" in normalized
 
 
 def test_mesh_live_runbook_covers_operator_contract() -> None:
