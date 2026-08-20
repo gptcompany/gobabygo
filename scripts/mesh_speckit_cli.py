@@ -1032,10 +1032,27 @@ def build_project_plan(
 def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if plan.get("action") in {"init", "migrate"} and plan.get("migration"):
         return apply_migration_plan(plan)
+    if plan.get("action") != "upgrade":
+        raise SpeckitRuntimeError("project plan action must be init, migrate, or upgrade")
+    root = _git_root(Path(plan["repo"]))
+    with _migration_lock(root):
+        return _apply_upgrade_plan_locked(plan, root)
+
+
+def _apply_upgrade_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, Any]:
+    if _git_status(root):
+        raise SpeckitRuntimeError("project worktree changed after upgrade planning")
+    if _git_head(root) != plan.get("base_head"):
+        raise SpeckitRuntimeError("project HEAD changed after upgrade planning")
     _require_pinned_runtime(str(plan.get("required_version", "")))
-    root = Path(plan["repo"])
     results: list[dict[str, Any]] = []
     for command in plan["commands"]:
+        if _git_head(root) != plan.get("base_head"):
+            changed = _git_status(root)
+            raise SpeckitRuntimeError(
+                "project HEAD changed during Spec Kit upgrade; "
+                f"partial changed paths: {', '.join(changed) or '-'}"
+            )
         proc = _run_command(command, cwd=root)
         results.append({"command": command, "returncode": proc.returncode})
         if proc.returncode != 0:

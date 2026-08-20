@@ -1435,8 +1435,10 @@ def test_project_apply_reports_partial_changed_paths(monkeypatch, tmp_path) -> N
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
     plan = {
+        "action": "upgrade",
         "repo": str(repo),
         "required_version": "0.16.5",
+        "base_head": module._git_head(repo),
         "commands": [["specify", "first"], ["specify", "second"]],
     }
     calls = 0
@@ -1467,8 +1469,10 @@ def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_pa
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
     plan = {
+        "action": "upgrade",
         "repo": str(repo),
         "required_version": "0.16.5",
+        "base_head": module._git_head(repo),
         "commands": [["specify", "integration", "upgrade", "claude"]],
     }
     monkeypatch.setattr(
@@ -1476,14 +1480,53 @@ def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_pa
         "installed_version",
         lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.6", "error": None},
     )
-    monkeypatch.setattr(
-        module,
-        "_run_command",
-        lambda *_args, **_kwargs: pytest.fail("project command ran with runtime drift"),
-    )
+    real_run = module._run_command
+
+    def refuse_project_command(args, **kwargs):
+        if args[0] == "git":
+            return real_run(args, **kwargs)
+        pytest.fail("project command ran with runtime drift")
+
+    monkeypatch.setattr(module, "_run_command", refuse_project_command)
 
     with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 0.16.5"):
         module.apply_project_plan(plan)
+
+
+def test_project_upgrade_apply_rejects_drift_and_parallel_apply(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    plan = {
+        "action": "upgrade",
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "base_head": module._git_head(repo),
+        "commands": [["specify", "integration", "upgrade", "claude"]],
+    }
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+    real_run = module._run_command
+
+    def refuse_upgrade(args, **kwargs):
+        if args[0] == "git":
+            return real_run(args, **kwargs)
+        pytest.fail("upgrade command ran after drift")
+
+    monkeypatch.setattr(module, "_run_command", refuse_upgrade)
+    (repo / "drift.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(module.SpeckitRuntimeError, match="worktree changed"):
+        module.apply_project_plan(plan)
+
+    (repo / "drift.txt").unlink()
+    with module._migration_lock(repo):
+        with pytest.raises(module.SpeckitRuntimeError, match="another Spec Kit migration"):
+            module.apply_project_plan(plan)
 
 
 def test_cli_install_without_apply_only_prints_plan(monkeypatch, tmp_path, capsys) -> None:
