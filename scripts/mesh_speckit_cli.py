@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -568,6 +569,55 @@ def _git_head(repo: Path) -> str:
     return value
 
 
+def _git_ignored_paths(repo: Path, paths: Sequence[str]) -> list[str]:
+    if not paths:
+        return []
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "check-ignore", "--stdin", "-z"],
+        input="\0".join(paths) + "\0",
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if proc.returncode not in {0, 1}:
+        raise SpeckitRuntimeError(f"cannot inspect ignored paths for {repo}")
+    return sorted({path for path in proc.stdout.split("\0") if path})
+
+
+def _git_internal_path(repo: Path, name: str) -> Path:
+    proc = _run_command(
+        ["git", "-C", str(repo), "rev-parse", "--git-path", name], timeout=10
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise SpeckitRuntimeError(f"cannot resolve Git internal path for {repo}")
+    path = Path(proc.stdout.strip())
+    return path if path.is_absolute() else (repo / path).resolve()
+
+
+@contextmanager
+def _migration_lock(repo: Path):
+    lock_path = _git_internal_path(repo, "mesh-speckit-migrate.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    locked = False
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except BlockingIOError as exc:
+            raise SpeckitRuntimeError(
+                f"another Spec Kit migration is active for {repo}"
+            ) from exc
+        yield
+    finally:
+        try:
+            if locked:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
 def build_install_plan(version: str, lock: dict[str, Any]) -> dict[str, Any]:
     requested = _version_from_text(version)
     if requested is None or version not in {requested, f"v{requested}"}:
@@ -727,7 +777,16 @@ def _migration_inventory(repo: Path, commands: Sequence[Sequence[str]]) -> dict[
     with tempfile.TemporaryDirectory(prefix="mesh-speckit-migrate-") as temporary:
         staging = Path(temporary)
         _generate_migration_tree(staging, commands)
-        return _migration_inventory_from_tree(repo, staging)
+        return _migration_inventory_with_git(repo, staging)
+
+
+def _migration_inventory_with_git(repo: Path, staging: Path) -> dict[str, Any]:
+    inventory = _migration_inventory_from_tree(repo, staging)
+    writable = inventory["additions"] + inventory["generated_updates"]
+    return {
+        **inventory,
+        "ignored_generated_paths": _git_ignored_paths(repo, writable),
+    }
 
 
 def build_project_plan(
@@ -803,8 +862,10 @@ def build_project_plan(
         "base_head": _git_head(root),
     }
     if migration is not None:
-        ready = not migration["blocking_collisions"] and (
-            accept_generated_updates or not migration["generated_updates"]
+        ready = (
+            not migration["blocking_collisions"]
+            and not migration["ignored_generated_paths"]
+            and (accept_generated_updates or not migration["generated_updates"])
         )
         plan.update(
             {
@@ -923,6 +984,11 @@ def _restore_migration_file(target: Path, backup: tuple[bytes, int] | None) -> N
 
 def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
     root = _git_root(Path(plan["repo"]))
+    with _migration_lock(root):
+        return _apply_migration_plan_locked(plan, root)
+
+
+def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, Any]:
     if _git_status(root):
         raise SpeckitRuntimeError("project worktree changed after migration planning")
     if _git_head(root) != plan.get("base_head"):
@@ -931,6 +997,11 @@ def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
         migration = plan.get("migration", {})
         if migration.get("blocking_collisions"):
             raise SpeckitRuntimeError("migration has blocking collisions")
+        if migration.get("ignored_generated_paths"):
+            raise SpeckitRuntimeError(
+                "migration generated paths are ignored by Git: "
+                + ",".join(migration["ignored_generated_paths"])
+            )
         raise SpeckitRuntimeError(
             "migration generated updates require --accept-generated-updates"
         )
@@ -949,7 +1020,7 @@ def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
             raise SpeckitRuntimeError(
                 "project changed while preparing the migration sandbox"
             )
-        inventory = _migration_inventory_from_tree(root, staging)
+        inventory = _migration_inventory_with_git(root, staging)
         if inventory != plan.get("migration"):
             raise SpeckitRuntimeError("migration inventory changed after planning")
 
@@ -1149,6 +1220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "generated_updates",
                 "protected_preserved",
                 "blocking_collisions",
+                "ignored_generated_paths",
             ):
                 print(f"{label}={','.join(migration[label]) or '-'}")
             print(f"ready_to_apply={'yes' if output['ready_to_apply'] else 'no'}")

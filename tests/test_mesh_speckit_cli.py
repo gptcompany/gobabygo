@@ -560,6 +560,7 @@ def test_migration_plan_reports_updates_preservation_and_additions(
         "generated_updates": [".specify/templates/spec-template.md"],
         "protected_preserved": [".specify/memory/constitution.md"],
         "blocking_collisions": [],
+        "ignored_generated_paths": [],
     }
     assert plan["ready_to_apply"] is False
     assert accepted["ready_to_apply"] is True
@@ -642,6 +643,24 @@ def test_migration_inventory_reports_symlink_paths_as_collisions(
     ]
 
 
+def test_migration_inventory_reports_generated_paths_ignored_by_git(tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    (repo / ".gitignore").write_text(".agents/\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".gitignore"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "ignore agents"], check=True)
+    staging = tmp_path / "staging"
+    generated = staging / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("official\n", encoding="utf-8")
+
+    inventory = module._migration_inventory_with_git(repo, staging)
+
+    assert inventory["ignored_generated_paths"] == [
+        ".agents/skills/speckit-plan/SKILL.md"
+    ]
+
+
 def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
@@ -703,7 +722,7 @@ def test_migration_apply_installs_all_providers_and_preserves_constitution(
     with tempfile.TemporaryDirectory() as temporary:
         staged = Path(temporary)
         write_bundle(staged, [])
-        inventory = module._migration_inventory_from_tree(repo, staged)
+        inventory = module._migration_inventory_with_git(repo, staged)
     head = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
         check=True,
@@ -762,7 +781,7 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
     with tempfile.TemporaryDirectory() as temporary:
         staged = Path(temporary)
         write_bundle(staged, [])
-        inventory = module._migration_inventory_from_tree(repo, staged)
+        inventory = module._migration_inventory_with_git(repo, staged)
     head = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
         check=True,
@@ -877,7 +896,7 @@ def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> N
     with tempfile.TemporaryDirectory() as temporary:
         staged = Path(temporary)
         write_incomplete_bundle(staged, [])
-        inventory = module._migration_inventory_from_tree(repo, staged)
+        inventory = module._migration_inventory_with_git(repo, staged)
     head = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
         check=True,
@@ -930,6 +949,35 @@ def test_migration_apply_refuses_unaccepted_generated_updates(tmp_path) -> None:
 
     with pytest.raises(module.SpeckitRuntimeError, match="accept-generated-updates"):
         module.apply_migration_plan(plan)
+
+
+def test_migration_apply_refuses_ignored_paths_and_parallel_apply(tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan = {
+        "action": "migrate",
+        "repo": str(repo),
+        "base_head": head,
+        "migration": {
+            "blocking_collisions": [],
+            "generated_updates": [],
+            "ignored_generated_paths": [".agents/skills/speckit-plan/SKILL.md"],
+        },
+        "ready_to_apply": False,
+    }
+
+    with pytest.raises(module.SpeckitRuntimeError, match="ignored by Git"):
+        module.apply_migration_plan(plan)
+
+    with module._migration_lock(repo):
+        with pytest.raises(module.SpeckitRuntimeError, match="another Spec Kit migration"):
+            module.apply_migration_plan(plan)
 
 
 def test_migration_apply_refuses_repo_change_during_sandbox_generation(
