@@ -761,6 +761,44 @@ def test_migration_inventory_reports_symlink_paths_as_collisions(
     ]
 
 
+@pytest.mark.parametrize("target_kind", ["source-parent", "target", "target-parent"])
+def test_historical_constitution_rejects_source_and_target_symlinks(
+    tmp_path, target_kind
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    staging = tmp_path / "staging"
+    repo.mkdir()
+    generated = staging / ".specify" / "memory" / "constitution.md"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("default\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "constitution.md").write_text("external secret\n", encoding="utf-8")
+
+    if target_kind == "source-parent":
+        (repo / "memory").symlink_to(outside, target_is_directory=True)
+    else:
+        source = repo / "memory" / "constitution.md"
+        source.parent.mkdir()
+        source.write_text("historical\n", encoding="utf-8")
+        if target_kind == "target":
+            target = repo / ".specify" / "memory" / "constitution.md"
+            target.parent.mkdir(parents=True)
+            target.symlink_to(repo / "missing")
+        else:
+            parent = repo / ".specify" / "memory"
+            parent.parent.mkdir()
+            parent.symlink_to(outside, target_is_directory=True)
+
+    inventory = module._migration_inventory_from_tree(repo, staging)
+
+    assert inventory["legacy_constitution_migrations"] == {}
+    assert inventory["blocking_collisions"] == [
+        ".specify/memory/constitution.md"
+    ]
+
+
 def test_migration_inventory_reports_generated_paths_ignored_by_git(tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")

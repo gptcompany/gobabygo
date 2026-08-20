@@ -814,6 +814,15 @@ def _migration_path_collides(repo: Path, relative: str) -> bool:
     return target.is_symlink() or (target.exists() and not target.is_file())
 
 
+def _migration_path_has_symlink(repo: Path, relative: str) -> bool:
+    current = repo
+    for part in Path(relative).parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
 def _generate_migration_tree(staging: Path, commands: Sequence[Sequence[str]]) -> None:
     if _specify_executable() is None:
         raise SpeckitRuntimeError("specify CLI is required to inspect a legacy migration")
@@ -860,7 +869,11 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
             and not target.exists()
             and (legacy_constitution.exists() or legacy_constitution.is_symlink())
         ):
-            if legacy_constitution.is_symlink() or not legacy_constitution.is_file():
+            if (
+                _migration_path_collides(repo, relative)
+                or _migration_path_has_symlink(repo, _LEGACY_CONSTITUTION_PATH)
+                or not legacy_constitution.is_file()
+            ):
                 collisions.append(relative)
             else:
                 additions.append(relative)
