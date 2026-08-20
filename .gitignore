@@ -41,5 +41,9 @@ env/
 .serena/
 .swarm/
 
+# Local Mesh runtime output
+.mesh/
+mesh_ui.log
+
 # Keep committed CI badge payload
 !.github/badges/coverage.json
