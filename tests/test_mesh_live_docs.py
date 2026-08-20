@@ -14,6 +14,29 @@ def test_mesh_live_runbook_is_linked_from_primary_docs() -> None:
     assert "mesh live ensure-antigravity" in quickstart
 
 
+def test_speckit_migration_docs_include_required_consent_and_legacy_policy() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    quickstart = (ROOT / "QUICKSTART.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "MESH_LIVE.md").read_text(encoding="utf-8")
+
+    assert (
+        "mesh speckit project migrate /data/sata/1TB/rektslug \\\n"
+        "  --allow-multi-install-force"
+    ) in readme
+    assert (
+        "mesh speckit project init /data/sata/1TB/rektslug \\\n"
+        "  --allow-multi-install-force"
+    ) in quickstart
+    assert (
+        "mesh speckit project migrate /data/sata/1TB/rektslug \\\n"
+        "  --allow-multi-install-force --accept-generated-updates --apply"
+    ) in quickstart
+    for document in (readme, quickstart, runbook):
+        normalized = " ".join(document.split())
+        assert "memory/constitution.md" in normalized
+        assert "legacy" in normalized.lower()
+
+
 def test_mesh_live_runbook_covers_operator_contract() -> None:
     runbook = (ROOT / "MESH_LIVE.md").read_text(encoding="utf-8")
     normalized = " ".join(runbook.split())
