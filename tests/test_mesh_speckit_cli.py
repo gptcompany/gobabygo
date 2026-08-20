@@ -190,6 +190,92 @@ def test_status_does_not_treat_older_cache_as_update(monkeypatch, tmp_path) -> N
     assert result["update_available"] is False
 
 
+def test_delegation_context_is_provider_neutral_and_repository_bounded(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    _project(repo)
+    feature = repo / "specs" / "001-runtime"
+    feature.mkdir(parents=True)
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    writer = module.build_delegation_context(
+        repo,
+        phase="plan",
+        feature_dir=Path("specs/001-runtime"),
+        artifacts=[Path("tasks.md"), Path("spec.md")],
+        role="writer",
+        lock_file=lock,
+    )
+    reviewer = module.build_delegation_context(
+        repo,
+        phase="plan",
+        feature_dir=Path("specs/001-runtime"),
+        artifacts=[Path("spec.md"), Path("tasks.md")],
+        role="reviewer",
+        review_scope="commit:" + ("a" * 40) + ".." + ("b" * 40),
+        lock_file=lock,
+    )
+
+    assert writer == {
+        "schema": "mesh.speckit.context.v1",
+        "version": "0.16.5",
+        "phase": "plan",
+        "feature_dir": "specs/001-runtime",
+        "allowed_artifacts": ["specs/001-runtime/spec.md", "specs/001-runtime/tasks.md"],
+        "role": "writer",
+        "review_scope": "not-applicable",
+        "review_policy": "different-provider-required",
+    }
+    assert reviewer["version"] == writer["version"]
+    assert reviewer["phase"] == writer["phase"]
+    assert reviewer["feature_dir"] == writer["feature_dir"]
+    assert reviewer["allowed_artifacts"] == writer["allowed_artifacts"]
+    assert reviewer["review_policy"] == "read-only-independent-provider"
+    assert "provider" not in writer
+
+
+def test_delegation_context_rejects_unsupported_phase_paths_and_mutable_review_scope(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    _project(repo)
+    feature = repo / "specs" / "001-runtime"
+    feature.mkdir(parents=True)
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+    base = {
+        "repo": repo,
+        "feature_dir": Path("specs/001-runtime"),
+        "artifacts": [Path("spec.md")],
+        "role": "writer",
+        "lock_file": lock,
+    }
+
+    with pytest.raises(module.SpeckitRuntimeError, match="phase is not enabled"):
+        module.build_delegation_context(phase="implement", **base)
+    with pytest.raises(module.SpeckitRuntimeError, match="inside the feature directory"):
+        module.build_delegation_context(
+            phase="plan", **{**base, "artifacts": [Path("../../README.md")]}
+        )
+    with pytest.raises(module.SpeckitRuntimeError, match="reviewer requires"):
+        module.build_delegation_context(
+            phase="plan",
+            **{**base, "role": "reviewer", "review_scope": "working-tree"},
+        )
+
+
 def test_update_check_persists_allowlisted_metadata_only(monkeypatch, tmp_path) -> None:
     module = _load_module()
     state = tmp_path / "state" / "latest.json"

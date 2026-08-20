@@ -2688,6 +2688,7 @@ def build_live_coordinator_system_prompt(
     workflow_command = (
         f"{live_command} workflow show speckit --scope {workflow_scope} --json"
     )
+    speckit_context_command = f"{shlex.quote(mesh_script)} speckit context"
     if worker_session:
         worker_policy = (
             f"Your authorized worker target is exactly {worker_session}. "
@@ -2832,6 +2833,13 @@ def build_live_coordinator_system_prompt(
             *speckit_runtime_policy,
             "",
             *workflow_policy,
+            "For every Spec Kit delegation, derive a provider-neutral bounded envelope before sending: "
+            f"`{speckit_context_command} <repo-root> --phase <enabled-phase> --feature-dir "
+            "<feature-dir> --artifact <feature-relative-path> --role <writer|reviewer> "
+            "[--review-scope commit:<sha>[..<sha>]|diff-sha256:<digest>]`.",
+            "Include the rendered SPECKIT_CONTEXT in the task or non-secret brief. Never invent a phase, "
+            "copy the full capability inventory, or delegate when context generation fails. Reviewer context "
+            "must use an immutable scope and remain read-only.",
             "The workflow projection is policy input only: it does not authorize router use, iTerm2, session creation, or nested AI launch.",
             *provider_policy,
             "Live workflow role boundaries:",

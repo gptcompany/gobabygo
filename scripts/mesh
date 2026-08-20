@@ -741,6 +741,7 @@ speckit_usage() {
 Usage:
   ./scripts/mesh speckit status [repo-path] [--json]
   ./scripts/mesh speckit capabilities [repo-path] [--json]
+  ./scripts/mesh speckit context <repo-path> --phase <phase> --feature-dir <dir> --artifact <path> --role <writer|reviewer> [--review-scope <scope>] [--json]
   ./scripts/mesh speckit update-check [--json]
   ./scripts/mesh speckit install <version> [--apply] [--json]
   ./scripts/mesh speckit project <init|upgrade> <repo-path> [--apply] [--json]
@@ -803,7 +804,7 @@ run_speckit_short() {
     exit 0
   fi
   case "$subcmd" in
-    status|capabilities|update-check|install|project)
+    status|capabilities|context|update-check|install|project)
       run_speckit_runtime "$@"
       exit $?
       ;;

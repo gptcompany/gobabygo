@@ -35,6 +35,9 @@ INTEGRATION_SKILL_ROOTS = {
 _VERSION = re.compile(r"(?<![0-9])v?(0|[1-9][0-9]*)\.(0|[0-9]+)\.(0|[0-9]+)(?![0-9])")
 _SAFE_INTEGRATION = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _SAFE_CAPABILITY = re.compile(r"^[a-z][a-z0-9.-]{0,79}$")
+_IMMUTABLE_REVIEW_SCOPE = re.compile(
+    r"^(?:commit:[0-9a-f]{40}(?:\.\.[0-9a-f]{40})?|diff-sha256:[0-9a-f]{64})$"
+)
 _MAX_RELEASE_BYTES = 1024 * 1024
 
 
@@ -254,6 +257,90 @@ def build_status(
         "runtime_aligned": installed["version"] == lock["version"],
         "project": project,
         "aligned": installed["version"] == lock["version"] and project["state"] == "aligned",
+    }
+
+
+def _bounded_repo_path(root: Path, value: Path, *, label: str) -> tuple[Path, str]:
+    candidate = value if value.is_absolute() else root / value
+    resolved = candidate.resolve()
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as exc:
+        raise SpeckitRuntimeError(f"{label} must stay inside the repository") from exc
+    if not relative.parts:
+        raise SpeckitRuntimeError(f"{label} cannot be the repository root")
+    return resolved, relative.as_posix()
+
+
+def build_delegation_context(
+    repo: Path,
+    *,
+    phase: str,
+    feature_dir: Path,
+    artifacts: Sequence[Path],
+    role: str,
+    review_scope: str = "",
+    lock_file: Path = DEFAULT_LOCK_FILE,
+) -> dict[str, Any]:
+    """Build a provider-neutral, repository-derived delegation envelope."""
+    root = _git_root(repo)
+    lock = load_lock(lock_file)
+    installed = installed_version()
+    project = inspect_project(root, lock["integrations"])
+    normalized_phase = str(phase or "").strip()
+    if installed["version"] != lock["version"] or project["state"] != "aligned":
+        raise SpeckitRuntimeError("Spec Kit runtime and project must be aligned")
+    if normalized_phase not in project["enabled_capabilities"]:
+        raise SpeckitRuntimeError(
+            f"Spec Kit phase is not enabled for this project: {normalized_phase or '-'}"
+        )
+    if role not in {"writer", "reviewer"}:
+        raise SpeckitRuntimeError("delegation role must be writer or reviewer")
+
+    feature_path, feature_relative = _bounded_repo_path(
+        root, feature_dir, label="feature directory"
+    )
+    if not feature_path.is_dir():
+        raise SpeckitRuntimeError(f"feature directory does not exist: {feature_relative}")
+    if not artifacts or len(artifacts) > 32:
+        raise SpeckitRuntimeError("one to 32 allowed artifacts are required")
+    allowed: list[str] = []
+    for artifact in artifacts:
+        artifact_path, artifact_relative = _bounded_repo_path(
+            root,
+            artifact if artifact.is_absolute() else feature_path / artifact,
+            label="allowed artifact",
+        )
+        try:
+            artifact_path.relative_to(feature_path)
+        except ValueError as exc:
+            raise SpeckitRuntimeError(
+                "allowed artifacts must stay inside the feature directory"
+            ) from exc
+        if artifact_relative not in allowed:
+            allowed.append(artifact_relative)
+    allowed.sort()
+
+    immutable_scope = str(review_scope or "").strip().lower()
+    if role == "reviewer":
+        if not _IMMUTABLE_REVIEW_SCOPE.fullmatch(immutable_scope):
+            raise SpeckitRuntimeError(
+                "reviewer requires --review-scope commit:<sha>[..<sha>] or diff-sha256:<digest>"
+            )
+    elif immutable_scope:
+        raise SpeckitRuntimeError("--review-scope is valid only for reviewer context")
+
+    return {
+        "schema": "mesh.speckit.context.v1",
+        "version": lock["version"],
+        "phase": normalized_phase,
+        "feature_dir": feature_relative,
+        "allowed_artifacts": allowed,
+        "role": role,
+        "review_scope": immutable_scope or "not-applicable",
+        "review_policy": (
+            "read-only-independent-provider" if role == "reviewer" else "different-provider-required"
+        ),
     }
 
 
@@ -508,6 +595,19 @@ def _render_status(payload: dict[str, Any]) -> str:
     )
 
 
+def _render_context(payload: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"SPECKIT_CONTEXT version={payload['version']} phase={payload['phase']}",
+            f"feature_dir={payload['feature_dir']}",
+            f"role={payload['role']}",
+            f"review_scope={payload['review_scope']}",
+            f"review_policy={payload['review_policy']}",
+            "allowed_artifacts=" + ",".join(payload["allowed_artifacts"]),
+        ]
+    )
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock-file", type=Path, default=DEFAULT_LOCK_FILE)
@@ -531,6 +631,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         project_action.add_argument("--apply", action="store_true")
         project_action.add_argument("--json", action="store_true")
         project_action.add_argument("--allow-multi-install-force", action="store_true")
+    context = sub.add_parser("context")
+    context.add_argument("repo", type=Path)
+    context.add_argument("--phase", required=True)
+    context.add_argument("--feature-dir", type=Path, required=True)
+    context.add_argument("--artifact", action="append", type=Path, required=True)
+    context.add_argument("--role", choices=("writer", "reviewer"), required=True)
+    context.add_argument("--review-scope", default="")
+    context.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -540,6 +648,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "install":
             plan = build_install_plan(args.version, load_lock(args.lock_file))
             output = apply_install_plan(plan) if args.apply else {**plan, "applied": False}
+            aligned = True
+        elif args.command == "context":
+            output = build_delegation_context(
+                args.repo,
+                phase=args.phase,
+                feature_dir=args.feature_dir,
+                artifacts=args.artifact,
+                role=args.role,
+                review_scope=args.review_scope,
+                lock_file=args.lock_file,
+            )
             aligned = True
         elif args.command == "project":
             plan = build_project_plan(
@@ -582,6 +701,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Changed paths:")
             for path in output["changed_paths"]:
                 print(f"  {path}")
+    elif args.command == "context":
+        print(_render_context(output))
     else:
         print(_render_status(status))
     return 0 if aligned else 1

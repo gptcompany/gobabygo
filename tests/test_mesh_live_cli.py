@@ -1948,6 +1948,9 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "PASS is forbidden while any unresolved high- or medium-severity finding remains" in prompt
     assert "If the reviewer mutated tracked state" in prompt
     assert "Never let the reviewer silently become the fixer" in prompt
+    assert "speckit context <repo-root> --phase <enabled-phase>" in prompt
+    assert "Include the rendered SPECKIT_CONTEXT" in prompt
+    assert "Reviewer context must use an immutable scope" in prompt
     assert "Worker idle/stale lifecycle policy" in prompt
     assert "`screen=idle` means available for input, not completed and not obsolete" in prompt
     assert "Age alone never authorizes closing or replacing a session" in prompt

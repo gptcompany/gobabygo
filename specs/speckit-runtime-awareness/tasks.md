@@ -157,7 +157,7 @@ Done when:
 
 ### T005. Add phase-aware worker delegation context
 
-Status: todo
+Status: done
 
 Depends on: T004
 

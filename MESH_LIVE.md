@@ -244,6 +244,37 @@ final decisions stay global, while each implementation or review lane receives
 its exact repo and feature/task only at delegation time. Read-only evidence
 lanes may span repositories before any writer is selected.
 
+`mcoordinator` reads one bounded `mesh speckit status <repo> --json` snapshot
+from the Dell at every new, continue, or exact-resume startup. Invalid or
+unavailable status disables claims about installed Spec Kit phases but does not
+disable direct board, peek, incident coordination, or read-only review.
+
+Before a Spec Kit task is delegated, the coordinator generates one compact,
+provider-neutral envelope from the target repository:
+
+```bash
+mesh speckit context /data/sata/1TB/rektslug \
+  --phase plan \
+  --feature-dir specs/001-feature \
+  --artifact spec.md \
+  --artifact tasks.md \
+  --role writer
+
+mesh speckit context /data/sata/1TB/rektslug \
+  --phase plan \
+  --feature-dir specs/001-feature \
+  --artifact spec.md \
+  --role reviewer \
+  --review-scope commit:<base-sha>..<writer-sha>
+```
+
+The command succeeds only for an installed common phase in an aligned project.
+Artifacts are feature-relative and cannot escape the feature directory. A
+reviewer requires an immutable commit range, commit, or recorded diff SHA-256.
+The resulting `SPECKIT_CONTEXT` contains no provider name, pane output, release
+notes, or full capability inventory, so Codex and Antigravity can receive the
+same artifact identity while retaining different writer/reviewer rules.
+
 Template roles are desired perspectives, not permission to spawn processes.
 The following are coordinator contract rules, not filesystem locks or an OS
 sandbox. `mesh live` validates session identity and bounded keyboard delivery,
