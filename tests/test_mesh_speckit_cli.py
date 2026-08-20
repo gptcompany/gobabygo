@@ -1106,6 +1106,25 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
         raise failure
 
     monkeypatch.setattr(module, "_atomic_copy_migration_file", partial_write)
+    handlers = {}
+    previous = {
+        module.signal.SIGINT: object(),
+        module.signal.SIGTERM: object(),
+    }
+    monkeypatch.setattr(module.signal, "getsignal", lambda value: previous[value])
+    monkeypatch.setattr(
+        module.signal,
+        "signal",
+        lambda value, handler: handlers.__setitem__(value, handler),
+    )
+    real_restore = module._restore_migration_file
+
+    def guarded_restore(target, backup):
+        assert handlers[module.signal.SIGINT] is not previous[module.signal.SIGINT]
+        assert handlers[module.signal.SIGTERM] is not previous[module.signal.SIGTERM]
+        real_restore(target, backup)
+
+    monkeypatch.setattr(module, "_restore_migration_file", guarded_restore)
 
     with pytest.raises(module.SpeckitRuntimeError, match="was rolled back"):
         module.apply_migration_plan(plan)
@@ -1135,12 +1154,12 @@ def test_migration_signal_guard_defers_sigterm_until_critical_section_exits(
     )
     inside_completed = False
 
-    with pytest.raises(module._MigrationInterrupted, match="SIGTERM"):
-        with module._defer_migration_signals():
-            handlers[module.signal.SIGTERM](module.signal.SIGTERM, None)
-            inside_completed = True
+    with module._defer_migration_signals() as pending:
+        handlers[module.signal.SIGTERM](module.signal.SIGTERM, None)
+        inside_completed = True
 
     assert inside_completed is True
+    assert pending == [module.signal.SIGTERM]
     assert handlers == previous
 
 

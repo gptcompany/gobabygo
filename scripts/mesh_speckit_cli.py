@@ -106,12 +106,12 @@ def _defer_migration_signals():
             "migration apply must run in the main process thread"
         ) from exc
     try:
-        yield
+        yield pending
     finally:
         for signal_number, handler in previous.items():
-            signal.signal(signal_number, handler)
-    if pending:
-        raise _MigrationInterrupted(pending[0])
+            signal.signal(
+                signal_number, signal.SIG_DFL if handler is None else handler
+            )
 
 
 def _specify_executable() -> str | None:
@@ -1197,8 +1197,8 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
             copy_paths.extend(inventory["generated_updates"])
         backups: dict[Path, tuple[bytes, int] | None] = {}
         created_dirs: list[Path] = []
-        try:
-            with _defer_migration_signals():
+        with _defer_migration_signals() as pending_signals:
+            try:
                 for relative in sorted(copy_paths):
                     legacy_source = inventory["legacy_constitution_migrations"].get(
                         relative
@@ -1235,20 +1235,30 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
                         "migration output is not aligned with the pinned runtime"
                     )
                 changed_paths = _git_status(root)
-        except BaseException as exc:
-            rollback_errors: list[str] = []
-            for target, backup in reversed(list(backups.items())):
-                try:
-                    _restore_migration_file(target, backup)
-                except BaseException as rollback_exc:  # pragma: no cover - filesystem failure
-                    rollback_errors.append(f"{target}: {rollback_exc}")
-            for directory in reversed(created_dirs):
-                try:
-                    directory.rmdir()
-                except OSError:
-                    pass
-            detail = f"; rollback errors: {', '.join(rollback_errors)}" if rollback_errors else ""
-            raise SpeckitRuntimeError(f"migration apply failed and was rolled back: {exc}{detail}") from exc
+                if pending_signals:
+                    raise _MigrationInterrupted(pending_signals[0])
+            except BaseException as exc:
+                rollback_errors: list[str] = []
+                for target, backup in reversed(list(backups.items())):
+                    try:
+                        _restore_migration_file(target, backup)
+                    except BaseException as rollback_exc:  # pragma: no cover - filesystem failure
+                        rollback_errors.append(f"{target}: {rollback_exc}")
+                for directory in reversed(created_dirs):
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
+                if pending_signals and not isinstance(exc, _MigrationInterrupted):
+                    exc = _MigrationInterrupted(pending_signals[0])
+                detail = (
+                    f"; rollback errors: {', '.join(rollback_errors)}"
+                    if rollback_errors
+                    else ""
+                )
+                raise SpeckitRuntimeError(
+                    f"migration apply failed and was rolled back: {exc}{detail}"
+                ) from exc
 
     return {
         **plan,
