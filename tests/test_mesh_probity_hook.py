@@ -90,6 +90,20 @@ def test_ambiguous_config_denies_without_running_probity(monkeypatch, tmp_path) 
     assert "multiple" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_symlink_config_denies_without_running_probity(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    external = tmp_path / "external.mjs"
+    external.write_text("export default {}\n", encoding="utf-8")
+    (repo / "probity.config.mjs").symlink_to(external)
+    monkeypatch.setattr(module, "_probity_executable", lambda: (_ for _ in ()).throw(AssertionError()))
+
+    response = json.loads(module.dispatch(_payload(repo)))
+
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "regular file" in response["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 def test_missing_runtime_denies_only_an_opted_in_repo(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
@@ -100,6 +114,22 @@ def test_missing_runtime_denies_only_an_opted_in_repo(monkeypatch, tmp_path) -> 
 
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "unavailable" in response["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_pinned_version_mismatch_denies_before_execution(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    (repo / "probity.config.ts").write_text("export default {}\n", encoding="utf-8")
+    fake = tmp_path / "probity"
+    fake.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("MESH_PROBITY_EXPECTED_VERSION", "1.10.0")
+    monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
+
+    response = json.loads(module.dispatch(_payload(repo)))
+
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "pinned version" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_invalid_probity_output_fails_closed(monkeypatch, tmp_path) -> None:

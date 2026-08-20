@@ -125,13 +125,28 @@ def _git_root(path: Path) -> Path:
 
 def inspect_project(repo: Path) -> dict[str, Any]:
     root = _git_root(repo)
-    configs = [name for name in CONFIG_NAMES if (root / name).is_file()]
-    state = "enabled" if len(configs) == 1 else "missing" if not configs else "ambiguous"
+    candidates = [
+        name
+        for name in CONFIG_NAMES
+        if (root / name).exists() or (root / name).is_symlink()
+    ]
+    unsafe = [name for name in candidates if (root / name).is_symlink() or not (root / name).is_file()]
+    configs = [name for name in candidates if name not in unsafe]
+    state = (
+        "unsafe"
+        if unsafe
+        else "enabled"
+        if len(configs) == 1
+        else "missing"
+        if not configs
+        else "ambiguous"
+    )
     return {
         "root": str(root),
         "state": state,
         "config": configs[0] if len(configs) == 1 else None,
-        "config_candidates": configs,
+        "config_candidates": candidates,
+        "unsafe_config_candidates": unsafe,
     }
 
 
@@ -328,7 +343,11 @@ def install_codex(
         if found is None:
             raise ProbityRuntimeError("python3 is required for the Probity dispatcher")
         python = Path(found)
-    command = f"{shlex.quote(str(python))} {shlex.quote(str(hook_path))}"
+    command = (
+        f"MESH_PROBITY_EXPECTED_VERSION={shlex.quote(lock['version'])} "
+        f"MESH_PROBITY_BIN={shlex.quote(str(executable))} "
+        f"{shlex.quote(str(python))} {shlex.quote(str(hook_path))}"
+    )
     config_path = codex_home / "config.toml"
     hooks_path = codex_home / "hooks.json"
     config_content = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""

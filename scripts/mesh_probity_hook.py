@@ -91,6 +91,23 @@ def _probity_executable() -> str | None:
     return None
 
 
+def _runtime_matches_expected(executable: str, expected: str) -> bool:
+    if not expected:
+        return True
+    package_json = Path(executable).resolve().parent.parent / "package.json"
+    try:
+        if package_json.stat().st_size > 1024 * 1024:
+            return False
+        payload = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("name") == "@nizos/probity"
+        and payload.get("version") == expected
+    )
+
+
 def dispatch(raw: bytes) -> str:
     payload = _decode_payload(raw)
     if payload is None or payload.get("hook_event_name") != "PreToolUse":
@@ -101,7 +118,10 @@ def dispatch(raw: bytes) -> str:
     root = _git_root(cwd)
     if root is None:
         return _allow()
-    configs = [root / name for name in CONFIG_NAMES if (root / name).is_file()]
+    candidates = [root / name for name in CONFIG_NAMES if (root / name).exists() or (root / name).is_symlink()]
+    if any(path.is_symlink() or not path.is_file() for path in candidates):
+        return _deny("probity.config must be one regular file at the Git root")
+    configs = candidates
     if not configs:
         return _allow()
     if len(configs) != 1:
@@ -109,6 +129,9 @@ def dispatch(raw: bytes) -> str:
     executable = _probity_executable()
     if executable is None:
         return _deny("repository opted in but the pinned Probity runtime is unavailable")
+    expected = os.environ.get("MESH_PROBITY_EXPECTED_VERSION", "").strip()
+    if not _runtime_matches_expected(executable, expected):
+        return _deny("installed Probity package does not match the pinned version")
     try:
         proc = subprocess.run(
             [executable, "--agent", "codex", "--config", str(configs[0])],

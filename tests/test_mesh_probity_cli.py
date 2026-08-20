@@ -49,6 +49,20 @@ def test_project_requires_one_root_config(tmp_path) -> None:
     assert result["config"] is None
 
 
+def test_project_rejects_symlink_config(tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    external = tmp_path / "external.mjs"
+    external.write_text("export default {}\n", encoding="utf-8")
+    (repo / "probity.config.mjs").symlink_to(external)
+
+    result = module.inspect_project(repo)
+
+    assert result["state"] == "unsafe"
+    assert result["unsafe_config_candidates"] == ["probity.config.mjs"]
+    assert result["config"] is None
+
+
 def test_status_is_read_only_and_reports_missing_runtime(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
