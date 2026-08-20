@@ -499,6 +499,9 @@ Usage:
   ./scripts/mesh term speckit-team-run <repo-path> --feature text [--allow-write] [--auto-approve-prompts] [--no-handoff]
   ./scripts/mesh speckit run <repo-path> --feature text [--auto] [--allow-edit path]
   ./scripts/mesh speckit smoke <repo-path> [--print-command]
+  ./scripts/mesh probity status [repo-path] [--json]
+  ./scripts/mesh probity install [--apply] [--json]
+  ./scripts/mesh probity smoke [--json]
   ./scripts/mesh lite <subcommand> [...]
   ./scripts/mesh ui close <repo-name|repo-path>
   ./scripts/mesh ui attach [repo-name|repo-path]
@@ -787,6 +790,36 @@ Behavior:
   The smoke variant uses the validated local regression defaults:
     --allow-write --auto-approve-prompts --allow-dirty --max-turns 1 --no-handoff
 EOF
+}
+
+probity_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/mesh probity status [repo-path] [--json]
+  ./scripts/mesh probity install [--apply] [--json]
+  ./scripts/mesh probity smoke [--executable <path>] [--json]
+
+Behavior:
+  Probity is pinned centrally but enabled only by one probity.config.* at a
+  target Git root. install is plan-only unless --apply is explicit. Applying
+  installs the pinned runtime and one global Codex dispatcher; repositories
+  without a Probity config remain unaffected. Existing Codex sessions must be
+  restarted after hook installation. Antigravity is not exposed as a supported
+  agent by the pinned Probity CLI and remains on delegation/evidence TDD policy.
+EOF
+}
+
+run_probity_runtime() {
+  local py_bin="${MESH_PROBITY_PYTHON:-}"
+  local runtime_cli="${REPO_ROOT}/scripts/mesh_probity_cli.py"
+  if [[ ! -f "$runtime_cli" ]]; then
+    echo "Error: missing Probity runtime CLI at $runtime_cli" >&2
+    return 1
+  fi
+  if [[ -z "$py_bin" ]]; then
+    py_bin="$(detect_python)" || return $?
+  fi
+  command "$py_bin" "$runtime_cli" "$@"
 }
 
 run_speckit_runtime() {
@@ -1777,6 +1810,22 @@ PY
   speckit)
     shift
     run_speckit_short "$@"
+    ;;
+  probity)
+    shift
+    case "${1:-}" in
+      ""|-h|--help)
+        probity_usage
+        ;;
+      status|install|smoke)
+        run_probity_runtime "$@"
+        ;;
+      *)
+        echo "Error: unsupported probity subcommand '${1:-}'" >&2
+        probity_usage >&2
+        exit 2
+        ;;
+    esac
     ;;
   lite)
     shift

@@ -117,6 +117,18 @@ def test_invalid_probity_output_fails_closed(monkeypatch, tmp_path) -> None:
     assert "invalid JSON" in response["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_empty_probity_stdout_is_codex_allow(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    (repo / "probity.config.ts").write_text("export default {}\n", encoding="utf-8")
+    fake = tmp_path / "probity"
+    fake.write_text("#!/bin/sh\ncat >/dev/null\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
+
+    assert json.loads(module.dispatch(_payload(repo))) == {}
+
+
 def test_invalid_or_non_pretool_payload_is_a_noop() -> None:
     module = _load_module()
 

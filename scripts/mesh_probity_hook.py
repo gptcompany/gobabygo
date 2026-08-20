@@ -124,6 +124,8 @@ def dispatch(raw: bytes) -> str:
         return _deny(f"cannot execute Probity: {exc}")
     if len(proc.stdout) > MAX_RESPONSE_BYTES:
         return _deny("Probity response exceeds 1 MiB")
+    if proc.returncode == 0 and not proc.stdout.strip():
+        return _allow()
     try:
         response = json.loads(proc.stdout.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError):
