@@ -300,8 +300,39 @@ fi
 MESH_REMOTE_COORDINATOR_GIT_GUARD
 }
 
+_ws_remote_tmux_create() {
+  command cat <<'MESH_REMOTE_TMUX_CREATE'
+if [[ -n "$STARTUP" ]]; then
+  start_dir="$HOME/.local/state/gobabygo/mesh-live-session-start"
+  mkdir -p "$start_dir"
+  if [[ -L "$start_dir" ]]; then
+    echo "[tmux] refusing symlinked startup directory: $start_dir" >&2
+    exit 8
+  fi
+  chmod 700 "$start_dir"
+  start_file="$(mktemp "$start_dir/start.XXXXXX")"
+  chmod 600 "$start_file"
+  if [[ "$session_handles_shell" -ne 1 ]]; then
+    session_command="$session_command; exec \$SHELL -l"
+  fi
+  {
+    printf "#!/usr/bin/env bash\n"
+    printf "rm -f -- \\\"%s\\\"\n" "$start_file"
+    printf "%s\n" "$session_command"
+  } >"$start_file"
+  printf -v start_file_q "%q" "$start_file"
+  if ! tmux new-session -d -s "$SESSION" -c "$TARGET_DIR" "bash $start_file_q"; then
+    rm -f -- "$start_file"
+    exit 1
+  fi
+else
+  tmux new-session -d -s "$SESSION" -c "$TARGET_DIR"
+fi
+MESH_REMOTE_TMUX_CREATE
+}
+
 _ws_ssh_attach_or_start_once() {
-  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup git_guard
+  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup git_guard tmux_create
   local -a ssh_opts=()
   session="$1"
   target_dir="$2"
@@ -311,6 +342,7 @@ _ws_ssh_attach_or_start_once() {
   resume_guard="$(_ws_remote_resume_guard)"
   locked_startup="$(_ws_remote_locked_startup)"
   git_guard="$(_ws_remote_coordinator_git_guard)"
+  tmux_create="$(_ws_remote_tmux_create)"
   ws_host="$(_ws_control_host)" || return $?
   if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
     local opt
@@ -375,15 +407,7 @@ if [[ -n \"\$RESUME_ID\" ]]; then
   fi
 fi
 $locked_startup
-if [[ -n \"\$STARTUP\" ]]; then
-  if [[ \"\$session_handles_shell\" -eq 1 ]]; then
-    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command\"
-  else
-    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command; exec \\$SHELL -l\"
-  fi
-else
-  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\"
-fi
+$tmux_create
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
   if [[ -n \"\$RESUME_ID\" ]]; then
@@ -479,9 +503,58 @@ fi
 '"
 }
 
+_ws_stage_mosh_command() {
+  local direct_host remote_command stage_command
+  local -a ssh_opts=()
+  direct_host="$1"
+  remote_command="$2"
+  if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
+    local opt
+    while IFS= read -r -d '' opt; do
+      ssh_opts+=("$opt")
+    done < <(_mesh_collect_ssh_opts)
+  fi
+  stage_command='set -e
+launch_dir="$HOME/.local/state/gobabygo/mesh-live-launch"
+mkdir -p "$launch_dir"
+if [ -L "$launch_dir" ]; then
+  echo "[mosh] refusing symlinked launch directory: $launch_dir" >&2
+  exit 1
+fi
+chmod 700 "$launch_dir"
+launch_file="$(mktemp "$launch_dir/launch.XXXXXX")"
+chmod 600 "$launch_file"
+printf "rm -f -- \\\"%s\\\"\\n" "$launch_file" >"$launch_file"
+if ! cat >>"$launch_file"; then
+  rm -f -- "$launch_file"
+  exit 1
+fi
+printf "%s" "$launch_file"'
+  {
+    printf '%s\n' "$remote_command"
+  } | command ssh "${ssh_opts[@]}" -o BatchMode=yes -o ConnectTimeout=10 \
+    "$direct_host" "$stage_command"
+}
+
+_ws_remove_staged_mosh_command() {
+  local direct_host launch_file
+  local -a ssh_opts=()
+  direct_host="$1"
+  launch_file="$2"
+  [[ -n "$launch_file" ]] || return 0
+  if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
+    local opt
+    while IFS= read -r -d '' opt; do
+      ssh_opts+=("$opt")
+    done < <(_mesh_collect_ssh_opts)
+  fi
+  command ssh "${ssh_opts[@]}" -o BatchMode=yes -o ConnectTimeout=10 \
+    "$direct_host" "rm -f -- $(printf '%q' "$launch_file")" </dev/null >/dev/null 2>&1
+}
+
 _ws_mosh_attach_or_start() {
-  local session target_dir startup resume_id session_kind direct_host remote_command rc
-  local resume_guard locked_startup git_guard
+  local session target_dir startup resume_id session_kind direct_host remote_command remote_script rc
+  local resume_guard locked_startup git_guard tmux_create
   session="$1"
   target_dir="$2"
   startup="${3:-}"
@@ -490,6 +563,7 @@ _ws_mosh_attach_or_start() {
   resume_guard="$(_ws_remote_resume_guard)"
   locked_startup="$(_ws_remote_locked_startup)"
   git_guard="$(_ws_remote_coordinator_git_guard)"
+  tmux_create="$(_ws_remote_tmux_create)"
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -z "$direct_host" || -z "$(command -v mosh 2>/dev/null)" ]]; then
     _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
@@ -567,15 +641,7 @@ if [[ -n \"\$RESUME_ID\" ]]; then
   fi
 fi
 $locked_startup
-if [[ -n \"\$STARTUP\" ]]; then
-  if [[ \"\$session_handles_shell\" -eq 1 ]]; then
-    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command\"
-  else
-    tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\" \"\$session_command; exec \\$SHELL -l\"
-  fi
-else
-  tmux new-session -d -s \"\$SESSION\" -c \"\$TARGET_DIR\"
-fi
+$tmux_create
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
   if [[ -n \"\$RESUME_ID\" ]]; then
@@ -584,14 +650,24 @@ if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
 fi
 exec tmux attach -t \"\$SESSION\"
 "
+  if remote_script="$(_ws_stage_mosh_command "$direct_host" "$remote_command")"; then
+    :
+  else
+    rc=$?
+    printf '\n[ws] mosh command staging failed (exit %s); falling back to SSH.\n' "$rc" >&2
+    _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
+    return $?
+  fi
   if LANG="${MESH_MOSH_LANG:-en_US.UTF-8}" LC_ALL="${MESH_MOSH_LOCALE:-en_US.UTF-8}" \
     command mosh \
       --ssh="ssh -o ControlMaster=no -o ControlPath=none -o ServerAliveInterval=10 -o ServerAliveCountMax=18" \
-      "$direct_host" -- bash -lc "$remote_command"; then
+      "$direct_host" -- bash "$remote_script"; then
+    _ws_remove_staged_mosh_command "$direct_host" "$remote_script" || true
     return 0
   else
     rc=$?
   fi
+  _ws_remove_staged_mosh_command "$direct_host" "$remote_script" || true
   case "$rc" in
     130|143) return "$rc" ;;
   esac

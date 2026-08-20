@@ -652,6 +652,9 @@ pull through an unrelated dirty worktree.
 - Persistent create/attach runs one short read-only SSH preflight before mosh to
   validate the repo, scoped resume ID, and existing coordinator. This is required
   because mosh does not reliably propagate the remote command's exit status.
+- Launch and tmux startup commands are staged over SSH in private remote files
+  and unlinked as execution begins, avoiding mosh and tmux command-length limits
+  for coordinator prompts.
 - A mosh transport failure falls back to SSH without changing the tmux session.
 - Validation failures, stale coordinator detection, and operator interruption do
   not trigger a second attach attempt through SSH.

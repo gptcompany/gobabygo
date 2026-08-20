@@ -607,6 +607,8 @@ source {helper}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
 _ws_mosh_preflight_attach_or_start() {{ return 0; }}
+_ws_stage_mosh_command() {{ printf '%s' '/tmp/mesh-live-launch'; }}
+_ws_remove_staged_mosh_command() {{ :; }}
 _ws_ssh_attach_or_start() {{ printf '<%s>\n' "$@"; }}
 _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
   'claude --name claude-coordinator' resume-id coordinator
@@ -615,6 +617,35 @@ _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
 
     assert proc.returncode == 0, proc.stderr
     assert "mosh attach failed (exit 1); falling back to SSH" in proc.stderr
+    assert proc.stdout.splitlines() == [
+        "<claude-coordinator>",
+        "</data/sata/1TB>",
+        "<claude --name claude-coordinator>",
+        "<resume-id>",
+        "<coordinator>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_staging_failure_falls_back_without_launching_mosh(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+mosh() {{ echo unexpected-mosh; }}
+_ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_ws_mosh_preflight_attach_or_start() {{ return 0; }}
+_ws_stage_mosh_command() {{ return 42; }}
+_ws_ssh_attach_or_start() {{ printf '<%s>\n' "$@"; }}
+_ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
+  'claude --name claude-coordinator' resume-id coordinator
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "unexpected-mosh" not in proc.stdout
+    assert "mosh command staging failed (exit 42); falling back to SSH" in proc.stderr
     assert proc.stdout.splitlines() == [
         "<claude-coordinator>",
         "</data/sata/1TB>",
@@ -642,6 +673,8 @@ source {helper}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_mosh_host() {{ printf '%s' 'sam@172.23.0.42'; }}
 _ws_mosh_preflight_attach_or_start() {{ return 0; }}
+_ws_stage_mosh_command() {{ printf '%s' '/tmp/mesh-live-launch'; }}
+_ws_remove_staged_mosh_command() {{ :; }}
 _ws_ssh_attach_or_start() {{ echo unexpected-ssh; }}
 _ws_mosh_attach_or_start claude-coordinator /data/sata/1TB \
   'claude --name claude-coordinator' '' coordinator
@@ -988,6 +1021,10 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
     assert "exit 5" in command
     assert "tmux set-environment" in command
     assert "tmux kill-session" not in command
+    assert "mesh-live-session-start" in command
+    assert 'chmod 600 "$start_file"' in command
+    assert '"bash $start_file_q"' in command
+    assert "rm -f --" in command
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -997,23 +1034,70 @@ def test_mosh_start_fails_closed_for_missing_repo(shell: str, tmp_path: Path) ->
     fake_bin.mkdir()
     _fake_capture_command(fake_bin, "mosh")
     capture = tmp_path / "mosh-args"
+    stage_capture = tmp_path / "staged-command"
     proc = _run_shell(
         shell,
         f"""
 source {helper}
 export CAPTURE_FILE={shlex.quote(str(capture))}
+export STAGE_CAPTURE={shlex.quote(str(stage_capture))}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_mosh_host() {{ printf '%s' 'sam@10.0.0.2'; }}
 _ws_mosh_preflight_attach_or_start() {{ return 0; }}
+_ws_stage_mosh_command() {{ printf '%s' "$2" >"$STAGE_CAPTURE"; printf '%s' '/tmp/mesh-live-launch'; }}
+_ws_remove_staged_mosh_command() {{ :; }}
 _ws_mosh_attach_or_start claude-typo /data/sata/1TB/typo ''
 """,
     )
 
     assert proc.returncode == 0, proc.stderr
-    command = capture.read_text(encoding="utf-8")
+    command = stage_capture.read_text(encoding="utf-8")
     assert "missing repo dir" in command
     assert "exit 3" in command
     assert 'TARGET_DIR="/data/sata/1TB"' not in command
+    mosh_args = capture.read_text(encoding="utf-8")
+    assert "<bash>" in mosh_args
+    assert "</tmp/mesh-live-launch>" in mosh_args
+    assert "missing repo dir" not in mosh_args
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_staging_uses_private_self_cleaning_remote_file(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    staged_input = tmp_path / "staged-input"
+    staged_args = tmp_path / "staged-args"
+    ssh = fake_bin / "ssh"
+    ssh.write_text(
+        "#!/bin/sh\nprintf '<%s>\\n' \"$@\" >\"$STAGED_ARGS\"\n"
+        "cat >\"$STAGED_INPUT\"\nprintf '%s' "
+        "'/home/sam/.local/state/gobabygo/mesh-live-launch/launch.test'\n",
+        encoding="utf-8",
+    )
+    ssh.chmod(0o755)
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+export STAGED_INPUT={shlex.quote(str(staged_input))}
+export STAGED_ARGS={shlex.quote(str(staged_args))}
+_ws_stage_mosh_command sam@172.23.0.42 'printf a-very-long-command'
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "/home/sam/.local/state/gobabygo/mesh-live-launch/launch.test"
+    staged = staged_input.read_text(encoding="utf-8")
+    assert "printf a-very-long-command" in staged
+    assert "trap " not in staged
+    stage_command = staged_args.read_text(encoding="utf-8")
+    assert "rm -f --" in stage_command
+    assert 'chmod 700 "$launch_dir"' in stage_command
+    assert 'chmod 600 "$launch_file"' in stage_command
 
 
 @pytest.mark.parametrize("shell", _shells())
