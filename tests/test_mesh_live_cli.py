@@ -1997,7 +1997,7 @@ def test_coordinator_system_prompt_supports_explicit_direct_mode() -> None:
     assert "do not manufacture a formal pipeline" in prompt
 
 
-def test_coordinator_system_prompt_adapts_without_forcing_speckit() -> None:
+def test_coordinator_system_prompt_forces_durable_program_state_for_handoffs() -> None:
     module = _load_module()
 
     prompt = module.build_live_coordinator_system_prompt(
@@ -2013,6 +2013,8 @@ def test_coordinator_system_prompt_adapts_without_forcing_speckit() -> None:
     assert "bounded incidents, audits, operational diagnosis, and narrow fixes" in prompt
     assert "new features, architecture changes, ambiguous requirements" in prompt
     assert "otherwise do not manufacture a formal pipeline" in prompt
+    assert "multi-task or multi-repository handoff is Speckit program work" in prompt
+    assert "do not classify the entire program as an incident" in prompt
     assert (
         "MESH_LIVE_LOCAL=1 /opt/gobabygo/scripts/mesh live workflow show speckit "
         "--scope coordinator --json"
@@ -2020,6 +2022,10 @@ def test_coordinator_system_prompt_adapts_without_forcing_speckit() -> None:
     )
     assert "Speckit scope: coordinator" in prompt
     assert "Keep the global objective, specification, dependency graph" in prompt
+    assert "handoff containing multiple tasks, multiple repositories" in prompt
+    assert "reconcile versioned specification, plan, decision, and task artifacts" in prompt
+    assert "does not replace program tracking" in prompt
+    assert "before declaring recovery or the enclosing objective complete" in prompt
     assert "Do not require or ask for one global {repo} plus {feature} pair" in prompt
     assert "late-bound delegation fields" in prompt
     assert "read-only evidence collection may span repositories" in prompt

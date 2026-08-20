@@ -252,6 +252,12 @@ final decisions stay global, while each implementation or review lane receives
 its exact repo and feature/task only at delegation time. Read-only evidence
 lanes may span repositories before any writer is selected.
 
+In adaptive coordinator scope, a handoff with multiple tasks, repositories, or
+durable decisions is always program work and must be reconciled into versioned
+Spec Kit specification, plan, decision, and task artifacts. An urgent backup,
+push-safety, containment, or recovery lane may run directly, but it cannot
+replace that durable state or close the enclosing objective.
+
 `mcoordinator` reads one bounded `mesh speckit status <repo> --json` snapshot
 from the Dell at every new, continue, or exact-resume startup. Invalid or
 unavailable status disables claims about installed Spec Kit phases but does not

@@ -300,6 +300,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   providers may still review when explicitly selected
 - `adaptive` is the default workflow: direct for incidents/audits/narrow fixes,
   Speckit for features, architecture, ambiguity, and independent challenge
+- in multi-repo coordinator scope, a multi-task handoff always keeps durable
+  Spec Kit specification, decisions, dependencies, and tasks; urgent direct
+  recovery lanes do not replace that program state
 - `mesh live workflow show speckit` projects the canonical
   `mapping/pipeline_templates.yaml` phases without router, tmux discovery, or iTerm2
 - `mcoordinator <repo>` binds Speckit to that repository and derives the

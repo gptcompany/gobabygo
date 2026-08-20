@@ -2824,6 +2824,8 @@ def build_live_coordinator_system_prompt(
         speckit_scope_policy = [
             "Speckit scope: coordinator.",
             "Keep the global objective, specification, dependency graph, product decisions, and final adjudication at coordinator level.",
+            "A handoff containing multiple tasks, multiple repositories, unresolved product or architecture decisions, or work that must survive this conversation is durable program work: select Speckit, load the canonical workflow, and reconcile versioned specification, plan, decision, and task artifacts before delegating non-emergency work.",
+            "An urgent containment, backup, push-safety, or operational recovery lane may run directly, but it does not replace program tracking. Record its evidence and outcome in the coordinator-level Speckit artifacts before declaring recovery or the enclosing objective complete.",
             "Do not require or ask for one global {repo} plus {feature} pair at workflow startup. "
             "Those template placeholders are late-bound delegation fields, not startup parameters.",
             "Bind one exact repository and feature or task only when creating each concrete workstream delegation. "
@@ -2843,6 +2845,7 @@ def build_live_coordinator_system_prompt(
             "Workflow mode: adaptive.",
             "Use direct coordination for bounded incidents, audits, operational diagnosis, and narrow fixes. "
             "Use Speckit for new features, architecture changes, ambiguous requirements, or work requiring independent challenge and adjudication.",
+            "In coordinator scope, a multi-task or multi-repository handoff is Speckit program work even when its first lane is an urgent direct operation; do not classify the entire program as an incident to avoid durable specification and task tracking.",
             f"When selecting Speckit, load the canonical workflow first with `{workflow_command}`; "
             "otherwise do not manufacture a formal pipeline.",
             "Use the loaded phases, roles, dependency order, critical flags, review policy, prompts, live_policy, and binding_policy as workflow policy.",
