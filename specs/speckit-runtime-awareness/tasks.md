@@ -341,6 +341,31 @@ Done when:
 - runtime checkout is clean and at the reviewed revision
 - final review reports no unresolved high or medium findings
 
+### T011. Migrate pre-manifest Spec Kit repositories conservatively
+
+Status: done
+
+Depends on: T010
+
+Scope:
+
+- distinguish current legacy artifacts from a genuinely missing integration
+- generate pinned Claude, Codex, and AGY output in a temporary sandbox
+- report additions, generated updates, preserved constitution, and collisions
+- require a clean exact Git root, stable HEAD, and explicit update acceptance
+- apply files atomically and roll back files touched by a failed migration
+- validate project manifest version as part of aligned status
+- discover `~/.local/bin/specify` in non-interactive SSH sessions
+- exercise a legacy canary on the Dell without mutating operational repositories
+
+Done when:
+
+- legacy `specs/`, constitution, and custom commands remain unchanged
+- official generated templates change only after explicit acceptance
+- all three provider integrations expose the same common capabilities
+- runtime drift, concurrent repo changes, and skill collisions fail closed
+- migration behavior and residual provider smoke gaps are recorded
+
 ## Plan Review
 
 Verdict: approved for incremental implementation after the following corrections.

@@ -47,3 +47,51 @@ Reviewed commit: `363d1034dd1e`
   hook chaining. CI remains authoritative in either state.
 - Runtime deployment is not part of this canary step; rollback of T010 is a
   clean detached checkout of the previously recorded runtime revision.
+
+## Legacy Migration Addendum
+
+Date: 2026-08-20
+Reviewed range: `d1b64d1..27ef0cd`
+
+### Validation
+
+- Final local focused Spec Kit/Mesh Live suite: `321 passed`.
+- Dell migration unit/shell suite: `44 passed`; only pre-existing pytest
+  cleanup permission warnings were emitted.
+- Control checkout:
+  `/data/sata/1TB/gobabygo-speckit-migrate-e2e-e04c79e7bde6`.
+- Legacy canary:
+  `/data/sata/1TB/speckit-legacy-canary-e04c79e7bde6`.
+- Canary transitioned from `legacy` to `aligned` with integrations exactly
+  `claude`, `codex`, and `agy` and ten common capabilities.
+- Dry-run reported the legacy template update and preserved constitution; apply
+  replaced the template only after explicit acceptance.
+- Existing constitution, feature spec, tasks, and legacy Claude command remained
+  byte-identical. Git status contained only expected generated integration files.
+- Writer and immutable reviewer contexts used identical feature/artifact identity.
+- Non-interactive SSH discovered `/home/sam/.local/bin/specify` version `0.16.5`.
+- A real read-only Codex turn read the installed plan skill and returned the
+  exact expected marker without changing Git state.
+
+### Provider Limits
+
+- Claude CLI and skill integration were discovered, but no model turn ran while
+  the account was rate-limited until 16:40 Asia/Bangkok.
+- AGY CLI `1.1.15` and its installed skill were verified. Headless `agy --print`
+  attempted a command required by its inherited instructions and the wrapper
+  denied it because print mode cannot prompt. The repository remained unchanged;
+  global command permissions were not weakened to make the smoke pass.
+- Interactive AGY worker operation remains covered by the existing Mesh Live
+  worker path; fixing its separate headless permission policy is not part of
+  Spec Kit project migration.
+
+### Operational Repositories
+
+- `UTXOracle`, `rektslug`, `nautilus_dev`, and `gobabygo-runtime` are detected as
+  current legacy projects. `ccxt-data-pipeline` has historical Spec Kit commits
+  but no current legacy artifacts, so the current checkout is `missing`.
+- Rektslug dry-run: 33 additions, eight generated script/template updates,
+  constitution preserved, no blocking collisions.
+- Gobabygo runtime dry-run: 42 additions and no collisions or replacements.
+- UTXOracle, CCXT, and Nautilus currently have dirty worktrees and must not be
+  migrated until their active changes are resolved and committed.
