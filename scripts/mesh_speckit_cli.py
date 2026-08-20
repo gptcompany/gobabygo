@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -57,6 +59,40 @@ _PROTECTED_MIGRATION_FILES = {".specify/memory/constitution.md"}
 
 class SpeckitRuntimeError(RuntimeError):
     pass
+
+
+class _MigrationInterrupted(BaseException):
+    def __init__(self, signal_number: int) -> None:
+        self.signal_number = signal_number
+        super().__init__(f"received {signal.Signals(signal_number).name}")
+
+
+@contextmanager
+def _defer_migration_signals():
+    pending: list[int] = []
+    previous: dict[int, Any] = {}
+
+    def defer(signal_number: int, _frame: Any) -> None:
+        if not pending:
+            pending.append(signal_number)
+
+    try:
+        for signal_number in (signal.SIGINT, signal.SIGTERM):
+            previous[signal_number] = signal.getsignal(signal_number)
+            signal.signal(signal_number, defer)
+    except ValueError as exc:
+        for signal_number, handler in previous.items():
+            signal.signal(signal_number, handler)
+        raise SpeckitRuntimeError(
+            "migration apply must run in the main process thread"
+        ) from exc
+    try:
+        yield
+    finally:
+        for signal_number, handler in previous.items():
+            signal.signal(signal_number, handler)
+    if pending:
+        raise _MigrationInterrupted(pending[0])
 
 
 def _specify_executable() -> str | None:
@@ -821,20 +857,33 @@ def _safe_migration_target(root: Path, relative: str) -> tuple[Path, list[Path]]
     return target, created
 
 
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(path, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def _atomic_copy_migration_file(source: Path, target: Path) -> None:
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
-        with source.open("rb") as source_handle, os.fdopen(fd, "wb") as target_handle:
+        target_handle = os.fdopen(fd, "wb")
+        fd = -1
+        with source.open("rb") as source_handle, target_handle:
             shutil.copyfileobj(source_handle, target_handle)
             target_handle.flush()
             os.fsync(target_handle.fileno())
             os.fchmod(target_handle.fileno(), source.stat().st_mode & 0o777)
         os.replace(temporary, target)
-    except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+        _fsync_directory(target.parent)
+    except BaseException:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(temporary)
         except OSError:
@@ -845,21 +894,26 @@ def _atomic_copy_migration_file(source: Path, target: Path) -> None:
 def _restore_migration_file(target: Path, backup: tuple[bytes, int] | None) -> None:
     if backup is None:
         target.unlink(missing_ok=True)
+        _fsync_directory(target.parent)
         return
     data, mode = backup
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.restore.", dir=target.parent)
     try:
-        with os.fdopen(fd, "wb") as handle:
+        handle = os.fdopen(fd, "wb")
+        fd = -1
+        with handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
             os.fchmod(handle.fileno(), mode)
         os.replace(temporary, target)
-    except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+        _fsync_directory(target.parent)
+    except BaseException:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(temporary)
         except OSError:
@@ -905,35 +959,41 @@ def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
         backups: dict[Path, tuple[bytes, int] | None] = {}
         created_dirs: list[Path] = []
         try:
-            for relative in sorted(copy_paths):
-                source = staging / relative
-                target, created = _safe_migration_target(root, relative)
-                created_dirs.extend(created)
-                backups[target] = (
-                    (target.read_bytes(), target.stat().st_mode & 0o777)
-                    if target.exists()
-                    else None
+            with _defer_migration_signals():
+                for relative in sorted(copy_paths):
+                    source = staging / relative
+                    target, created = _safe_migration_target(root, relative)
+                    created_dirs.extend(created)
+                    backups[target] = (
+                        (target.read_bytes(), target.stat().st_mode & 0o777)
+                        if target.exists()
+                        else None
+                    )
+                    _atomic_copy_migration_file(source, target)
+                project = inspect_project(
+                    root, ALLOWED_INTEGRATIONS, plan["required_version"]
                 )
-                _atomic_copy_migration_file(source, target)
-            project = inspect_project(
-                root, ALLOWED_INTEGRATIONS, plan["required_version"]
-            )
-            manifest = _load_json_object(
-                root / ".specify" / "integration.json",
-                label="Spec Kit integration manifest",
-            )
-            manifest_version = _version_from_text(str(manifest.get("version", "")))
-            if project["state"] != "aligned" or manifest_version != plan["required_version"]:
-                raise SpeckitRuntimeError(
-                    "migration output is not aligned with the pinned runtime"
+                manifest = _load_json_object(
+                    root / ".specify" / "integration.json",
+                    label="Spec Kit integration manifest",
                 )
-            changed_paths = _git_status(root)
-        except Exception as exc:
+                manifest_version = _version_from_text(
+                    str(manifest.get("version", ""))
+                )
+                if (
+                    project["state"] != "aligned"
+                    or manifest_version != plan["required_version"]
+                ):
+                    raise SpeckitRuntimeError(
+                        "migration output is not aligned with the pinned runtime"
+                    )
+                changed_paths = _git_status(root)
+        except BaseException as exc:
             rollback_errors: list[str] = []
             for target, backup in reversed(list(backups.items())):
                 try:
                     _restore_migration_file(target, backup)
-                except Exception as rollback_exc:  # pragma: no cover - filesystem failure
+                except BaseException as rollback_exc:  # pragma: no cover - filesystem failure
                     rollback_errors.append(f"{target}: {rollback_exc}")
             for directory in reversed(created_dirs):
                 try:

@@ -738,8 +738,13 @@ def test_migration_apply_installs_all_providers_and_preserves_constitution(
     assert (repo / ".agents" / "skills" / "speckit-plan" / "SKILL.md").is_file()
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [OSError("simulated copy failure"), KeyboardInterrupt()],
+    ids=["os-error", "keyboard-interrupt"],
+)
 def test_migration_apply_rolls_back_only_its_own_partial_writes(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, failure
 ) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
@@ -783,7 +788,7 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
 
     def partial_write(_source, target):
         target.write_text("partial\n", encoding="utf-8")
-        raise OSError("simulated copy failure")
+        raise failure
 
     monkeypatch.setattr(module, "_atomic_copy_migration_file", partial_write)
 
@@ -796,6 +801,54 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
         capture_output=True,
         text=True,
     ).stdout == ""
+
+
+def test_migration_signal_guard_defers_sigterm_until_critical_section_exits(
+    monkeypatch
+) -> None:
+    module = _load_module()
+    handlers = {}
+    previous = {
+        module.signal.SIGINT: object(),
+        module.signal.SIGTERM: object(),
+    }
+    monkeypatch.setattr(module.signal, "getsignal", lambda value: previous[value])
+    monkeypatch.setattr(
+        module.signal,
+        "signal",
+        lambda value, handler: handlers.__setitem__(value, handler),
+    )
+    inside_completed = False
+
+    with pytest.raises(module._MigrationInterrupted, match="SIGTERM"):
+        with module._defer_migration_signals():
+            handlers[module.signal.SIGTERM](module.signal.SIGTERM, None)
+            inside_completed = True
+
+    assert inside_completed is True
+    assert handlers == previous
+
+
+def test_atomic_migration_copy_and_restore_preserve_mode_and_cleanup(tmp_path) -> None:
+    module = _load_module()
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.write_text("new\n", encoding="utf-8")
+    source.chmod(0o750)
+
+    module._atomic_copy_migration_file(source, target)
+
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert target.stat().st_mode & 0o777 == 0o750
+    assert list(tmp_path.glob(".target.*")) == []
+
+    module._restore_migration_file(target, (b"old\n", 0o640))
+    assert target.read_text(encoding="utf-8") == "old\n"
+    assert target.stat().st_mode & 0o777 == 0o640
+    assert list(tmp_path.glob(".target.restore.*")) == []
+
+    module._restore_migration_file(target, None)
+    assert not target.exists()
 
 
 def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> None:
