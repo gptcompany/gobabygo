@@ -329,6 +329,12 @@ $git_guard
 $resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
+    pane_path=\"\$(tmux display-message -p -t \"\$SESSION\" \"#{pane_current_path}\" 2>/dev/null || true)\"
+    pane_real=\"\$(cd \"\$pane_path\" 2>/dev/null && pwd -P)\"
+    if [[ -z \"\$pane_real\" || \"\$pane_real\" != \"\$target_real\" ]]; then
+      echo \"[tmux] existing coordinator session \$SESSION targets a different Git root\" >&2
+      exit 5
+    fi
     marker=\"\$(tmux show-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 2>/dev/null || true)\"
     current=\"\$(tmux display-message -p -t \"\$SESSION\" \"#{pane_current_command}\" 2>/dev/null || true)\"
     current=\"\${current##*/}\"
@@ -425,6 +431,12 @@ $git_guard
 $resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
+    pane_path=\"\$(tmux display-message -p -t \"\$SESSION\" \"#{pane_current_path}\" 2>/dev/null || true)\"
+    pane_real=\"\$(cd \"\$pane_path\" 2>/dev/null && pwd -P)\"
+    if [[ -z \"\$pane_real\" || \"\$pane_real\" != \"\$target_real\" ]]; then
+      echo \"[tmux] existing coordinator session \$SESSION targets a different Git root\" >&2
+      exit 5
+    fi
     marker=\"\$(tmux show-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 2>/dev/null || true)\"
     current=\"\$(tmux display-message -p -t \"\$SESSION\" \"#{pane_current_command}\" 2>/dev/null || true)\"
     current=\"\${current##*/}\"
@@ -509,6 +521,12 @@ $git_guard
 $resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
+    pane_path=\"\$(tmux display-message -p -t \"\$SESSION\" \"#{pane_current_path}\" 2>/dev/null || true)\"
+    pane_real=\"\$(cd \"\$pane_path\" 2>/dev/null && pwd -P)\"
+    if [[ -z \"\$pane_real\" || \"\$pane_real\" != \"\$target_real\" ]]; then
+      echo \"[tmux] existing coordinator session \$SESSION targets a different Git root\" >&2
+      exit 5
+    fi
     marker=\"\$(tmux show-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 2>/dev/null || true)\"
     current=\"\$(tmux display-message -p -t \"\$SESSION\" \"#{pane_current_command}\" 2>/dev/null || true)\"
     current=\"\${current##*/}\"

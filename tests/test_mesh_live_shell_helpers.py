@@ -768,8 +768,9 @@ def test_mosh_preflight_distinguishes_wrapped_claude_from_stale_shell(
         "case \"$1:$last\" in\n"
         "  has-session:*) exit 0 ;;\n"
         f"  show-environment:*) [[ -n {shlex.quote(marker)} ]] && echo {shlex.quote(marker)}; "
-        f"[[ -n {shlex.quote(marker)} ]] ;;\n"
-        "  display-message:'#{pane_current_command}') echo bash ;;\n"
+            f"[[ -n {shlex.quote(marker)} ]] ;;\n"
+            f"  display-message:'#{{pane_current_path}}') echo {shlex.quote(str(tmp_path.resolve()))} ;;\n"
+            "  display-message:'#{pane_current_command}') echo bash ;;\n"
         "  display-message:'#{pane_pid}') echo 12345 ;;\n"
         "esac\n",
         encoding="utf-8",
@@ -792,6 +793,50 @@ _ws_mosh_preflight_attach_or_start claude-coordinator {shlex.quote(str(tmp_path)
         assert "no longer has a running Claude process" in proc.stderr
     else:
         assert "not a Claude coordinator" in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mosh_preflight_rejects_coordinator_bound_to_another_git_root(
+    shell: str, tmp_path: Path
+) -> None:
+    target = tmp_path / "target"
+    other = tmp_path / "other"
+    target.mkdir()
+    other.mkdir()
+    subprocess.run(["git", "init", "-q", str(target)], check=True)
+    subprocess.run(["git", "init", "-q", str(other)], check=True)
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ssh = fake_bin / "ssh"
+    ssh.write_text(
+        "#!/bin/bash\nfor remote; do :; done\nexec bash -c \"$remote\"\n",
+        encoding="utf-8",
+    )
+    ssh.chmod(0o755)
+    tmux = fake_bin / "tmux"
+    tmux.write_text(
+        "#!/bin/bash\nlast=''\nfor last; do :; done\n"
+        "case \"$1:$last\" in\n"
+        "  has-session:*) exit 0 ;;\n"
+        f"  display-message:'#{{pane_current_path}}') echo {shlex.quote(str(other.resolve()))} ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    tmux.chmod(0o755)
+
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_mosh_preflight_attach_or_start claude-coordinator {shlex.quote(str(target))} \
+  '' coordinator sam@172.23.0.42
+""",
+    )
+
+    assert proc.returncode == 5
+    assert "targets a different Git root" in proc.stderr
 
 
 @pytest.mark.parametrize("shell", _shells())
