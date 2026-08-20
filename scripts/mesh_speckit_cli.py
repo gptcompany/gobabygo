@@ -149,6 +149,16 @@ def installed_version(
     }
 
 
+def _require_pinned_runtime(required_version: str) -> dict[str, Any]:
+    runtime = installed_version()
+    if runtime["version"] != required_version:
+        raise SpeckitRuntimeError(
+            f"operation requires pinned Spec Kit {required_version}; "
+            f"installed={runtime['version'] or 'missing'}"
+        )
+    return runtime
+
+
 def _manifest_integrations(payload: dict[str, Any]) -> tuple[list[str], str | None]:
     raw = payload.get("installed_integrations")
     installed: list[str] = []
@@ -711,12 +721,7 @@ def build_project_plan(
                 "AGY multi-install in Spec Kit v0.16.5 requires explicit "
                 "--allow-multi-install-force"
             )
-        runtime = installed_version()
-        if runtime["version"] != lock["version"]:
-            raise SpeckitRuntimeError(
-                "legacy migration requires pinned Spec Kit "
-                f"{lock['version']}; installed={runtime['version'] or 'missing'}"
-            )
+        _require_pinned_runtime(lock["version"])
         commands = _project_init_commands()
         migration = _migration_inventory(root, commands)
     elif action == "upgrade":
@@ -732,8 +737,9 @@ def build_project_plan(
                 "project is missing required integrations: "
                 + ",".join(project["missing_integrations"])
             )
+        specify = _specify_executable() or "specify"
         commands = [
-            ["specify", "integration", "upgrade", integration]
+            [specify, "integration", "upgrade", integration]
             for integration in lock["integrations"]
         ]
         migration = None
@@ -767,8 +773,7 @@ def build_project_plan(
 def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if plan.get("action") == "migrate":
         return apply_migration_plan(plan)
-    if _specify_executable() is None:
-        raise SpeckitRuntimeError("specify CLI is not installed")
+    _require_pinned_runtime(str(plan.get("required_version", "")))
     root = Path(plan["repo"])
     results: list[dict[str, Any]] = []
     for command in plan["commands"]:
@@ -865,9 +870,12 @@ def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
             "migration generated updates require --accept-generated-updates"
         )
 
-    runtime = installed_version()
-    if runtime["version"] != plan.get("required_version"):
-        raise SpeckitRuntimeError("Spec Kit runtime changed after migration planning")
+    try:
+        _require_pinned_runtime(str(plan.get("required_version", "")))
+    except SpeckitRuntimeError as exc:
+        raise SpeckitRuntimeError(
+            "Spec Kit runtime changed after migration planning"
+        ) from exc
 
     with tempfile.TemporaryDirectory(prefix="mesh-speckit-migrate-apply-") as temporary:
         staging = Path(temporary)

@@ -930,9 +930,18 @@ def test_project_upgrade_rejects_missing_or_unsupported_integrations(tmp_path) -
 def test_project_apply_reports_partial_changed_paths(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
-    plan = {"repo": str(repo), "commands": [["specify", "first"], ["specify", "second"]]}
+    plan = {
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "first"], ["specify", "second"]],
+    }
     calls = 0
     monkeypatch.setattr(module.shutil, "which", lambda _name: "/bin/specify")
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
 
     def fake_run(args, **kwargs):
         nonlocal calls
@@ -947,6 +956,29 @@ def test_project_apply_reports_partial_changed_paths(monkeypatch, tmp_path) -> N
     monkeypatch.setattr(module, "_run_command", fake_run)
 
     with pytest.raises(module.SpeckitRuntimeError, match=r"partial changed paths: \?\? generated.txt"):
+        module.apply_project_plan(plan)
+
+
+def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    plan = {
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "integration", "upgrade", "claude"]],
+    }
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.6", "error": None},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_command",
+        lambda *_args, **_kwargs: pytest.fail("project command ran with runtime drift"),
+    )
+
+    with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 0.16.5"):
         module.apply_project_plan(plan)
 
 
