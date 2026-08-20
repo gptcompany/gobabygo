@@ -266,6 +266,30 @@ or operational work without a meaningful behavior test. Codex and AGY receive
 the same RED/GREEN evidence contract; Gobabygo does not claim they run the
 Claude-specific TDD Guard hook.
 
+For selected Codex coding repositories, `mesh probity` can turn that contract
+into a pre-tool gate. Runtime and hook wiring are central, but activation and
+path policy stay in one reviewed `probity.config.*` at the target Git root:
+
+```bash
+mesh probity install              # inspect the plan
+mesh probity install --apply      # one-time user-level Codex integration
+mesh probity smoke --json
+mesh probity status <repo> --json
+```
+
+The dispatcher returns immediately for every repository without a config. An
+opted-in repository fails closed when its config is ambiguous or the runtime is
+missing. Existing Codex sessions do not reload hook configuration and must be
+restarted normally; Mesh Live never kills them during installation. The pinned
+Probity CLI does not expose its packaged Antigravity adapter, so AGY remains on
+brief-level TDD policy and test evidence. Claude continues to use its existing
+TDD Guard rather than a second overlapping hook.
+
+Keep this optional. `enforceTdd()` can invoke a model validator for matching
+writes and therefore adds latency and usage. A Probity config is executable
+project code and must be reviewed before Codex trusts it. CI and an independent
+reviewer remain authoritative; YOLO permissions are unchanged.
+
 `mcoordinator` reads one bounded `mesh speckit status <repo> --json` snapshot
 from the Dell at every new, continue, or exact-resume startup. Invalid or
 unavailable status disables claims about installed Spec Kit phases but does not

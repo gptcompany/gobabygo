@@ -141,6 +141,31 @@ multi-repo specs, decisions, tasks, and handoffs live in the exact Git root
 `/data/sata/1TB/coordination`. Mesh Live still owns tmux delivery and review;
 Spec Kit does not launch nested CLI workers. See [MESH_LIVE.md](MESH_LIVE.md).
 
+### Optional Codex TDD gate
+
+Gobabygo pins Probity but does not enable TDD enforcement globally. The engine
+and one Codex dispatcher are user-level; a repository opts in only by committing
+exactly one `probity.config.ts|mts|js|mjs` at its Git root.
+
+```bash
+mesh probity install --json        # plan only
+mesh probity install --apply       # pinned install + Codex hook merge
+mesh probity smoke --json          # temporary repo; deterministic allow/block
+mesh probity status /data/sata/1TB/rektslug --json
+```
+
+Add a reviewed project-specific config only where strict TDD is useful. Scope
+`enforceTdd()` to the repository's real code and test paths; do not copy broad
+globs across unrelated repositories. Restart existing Codex sessions after the
+one-time hook install. Repositories without a config remain unaffected.
+
+Probity `1.10.0` exposes Codex but not Antigravity through its CLI. Claude keeps
+the existing Claude-specific TDD Guard, and AGY follows the provider-neutral
+`TDD_MODE` plus RED/GREEN evidence contract. Do not stack Probity and TDD Guard
+on the same Claude session. Probity configs execute as code and matching TDD
+writes may invoke a model validator, so opt in only after config review and a
+smoke; this is a guardrail, not an OS sandbox or a replacement for tests/CI.
+
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
 - Default operator multi-panel bootstrap is centralized in [mapping/operator_ui.yaml](/media/sam/1TB/gobabygo/mapping/operator_ui.yaml).
 - Canonical built-in `gsd` and `speckit` templates are session-only team templates. Active provider lanes are Claude, Codex, and Antigravity; Gemini is retained only for historical row deserialization and is rejected for new work.
