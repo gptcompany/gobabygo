@@ -202,6 +202,42 @@ def test_legacy_detection_recognizes_pre_dot_specify_layout(tmp_path) -> None:
     assert result["legacy_commands"] == [".claude/commands/plan.md"]
 
 
+def test_inspect_project_contains_unreadable_legacy_commands(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    commands = repo / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    original_iterdir = module.Path.iterdir
+
+    def guarded_iterdir(path):
+        if path == commands:
+            raise PermissionError("commands denied")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(module.Path, "iterdir", guarded_iterdir)
+    result = module.inspect_project(repo, module.ALLOWED_INTEGRATIONS)
+
+    assert result["state"] == "invalid"
+    assert result["error"] == "cannot inspect project commands: commands denied"
+
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": False, "executable": None, "version": None, "error": None},
+    )
+    rc = module.main(
+        ["--lock-file", str(lock), "status", str(repo), "--json"]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert json.loads(captured.out)["project"]["state"] == "invalid"
+    assert "Traceback" not in captured.err
+
+
 def test_project_capabilities_are_intersection_of_installed_skills(tmp_path) -> None:
     module = _load_module()
     repo = _project(tmp_path / "repo")

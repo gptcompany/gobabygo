@@ -325,18 +325,27 @@ def inspect_project(
         result["state"] = "invalid"
         result["error"] = "project directory does not exist"
         return result
-    result["legacy_commands"] = _legacy_command_paths(root)
+    try:
+        result["legacy_commands"] = _legacy_command_paths(root)
+    except OSError as exc:
+        result["state"] = "invalid"
+        result["error"] = f"cannot inspect project commands: {exc}"
+        return result
     try:
         payload = _load_json_object(manifest_path, label="Spec Kit integration manifest")
     except SpeckitRuntimeError as exc:
-        if manifest_path.exists():
+        try:
+            if manifest_path.exists():
+                result["state"] = "invalid"
+                result["error"] = str(exc)
+            else:
+                evidence = _legacy_project_evidence(root)
+                if evidence:
+                    result["state"] = "legacy"
+                    result["legacy_evidence"] = evidence
+        except OSError as inspect_exc:
             result["state"] = "invalid"
-            result["error"] = str(exc)
-        else:
-            evidence = _legacy_project_evidence(root)
-            if evidence:
-                result["state"] = "legacy"
-                result["legacy_evidence"] = evidence
+            result["error"] = f"cannot inspect legacy project: {inspect_exc}"
         return result
 
     installed, default = _manifest_integrations(payload)
@@ -346,13 +355,18 @@ def inspect_project(
     missing = [item for item in required if item not in installed]
     unsupported = [item for item in installed if item not in ALLOWED_INTEGRATIONS]
     capabilities: dict[str, list[str]] = {}
-    for integration in required:
-        if integration not in installed:
-            capabilities[integration] = []
-            continue
-        capabilities[integration] = _skill_capabilities(
-            root / INTEGRATION_SKILL_ROOTS[integration]
-        )
+    try:
+        for integration in required:
+            if integration not in installed:
+                capabilities[integration] = []
+                continue
+            capabilities[integration] = _skill_capabilities(
+                root / INTEGRATION_SKILL_ROOTS[integration]
+            )
+    except OSError as exc:
+        result["state"] = "invalid"
+        result["error"] = f"cannot inspect project skills: {exc}"
+        return result
     enabled_sets = [set(capabilities[item]) for item in required if item in installed]
     enabled = sorted(set.intersection(*enabled_sets)) if enabled_sets and not missing else []
     has_empty = any(not capabilities[item] for item in required if item in installed)
