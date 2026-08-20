@@ -12,6 +12,7 @@ def test_readme_documents_probity_as_repo_opt_in() -> None:
     assert "Repositories without a config remain unaffected" in text
     assert "not Antigravity through its CLI" in text
     assert "Do not stack Probity and TDD Guard" in text
+    assert "use `/hooks` to review and trust" in text
 
 
 def test_mesh_live_documents_runtime_boundaries() -> None:
@@ -21,3 +22,5 @@ def test_mesh_live_documents_runtime_boundaries() -> None:
     assert "Existing Codex sessions do not reload hook configuration" in text
     assert "Mesh Live never kills them during installation" in text
     assert "YOLO permissions are unchanged" in text
+    assert "Until then Codex reports the hook as" in text
+    assert "Do not make routine workers use" in text

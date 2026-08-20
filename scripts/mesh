@@ -804,8 +804,10 @@ Behavior:
   target Git root. install is plan-only unless --apply is explicit. Applying
   installs the pinned runtime and one global Codex dispatcher; repositories
   without a Probity config remain unaffected. Existing Codex sessions must be
-  restarted after hook installation. Antigravity is not exposed as a supported
-  agent by the pinned Probity CLI and remains on delegation/evidence TDD policy.
+  restarted after hook installation. Review and trust the exact hook once with
+  /hooks; untrusted or changed hooks are skipped. Antigravity is not exposed as
+  a supported agent by the pinned Probity CLI and remains on delegation/evidence
+  TDD policy.
 EOF
 }
 

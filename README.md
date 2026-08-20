@@ -156,8 +156,11 @@ mesh probity status /data/sata/1TB/rektslug --json
 
 Add a reviewed project-specific config only where strict TDD is useful. Scope
 `enforceTdd()` to the repository's real code and test paths; do not copy broad
-globs across unrelated repositories. Restart existing Codex sessions after the
-one-time hook install. Repositories without a config remain unaffected.
+globs across unrelated repositories. After installation, start Codex once and
+use `/hooks` to review and trust the exact user hook; Codex skips untrusted or
+changed hooks. Then restart any older Codex worker that should use it.
+Repositories without a config remain unaffected after this one-time user hook
+trust.
 
 Probity `1.10.0` exposes Codex but not Antigravity through its CLI. Claude keeps
 the existing Claude-specific TDD Guard, and AGY follows the provider-neutral

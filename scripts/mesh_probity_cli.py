@@ -330,6 +330,7 @@ def install_codex(
         "codex_config": str(codex_home / "config.toml"),
         "codex_hooks": str(codex_home / "hooks.json"),
         "restart_required": True,
+        "trust_review_required": True,
     }
     if not apply:
         return plan

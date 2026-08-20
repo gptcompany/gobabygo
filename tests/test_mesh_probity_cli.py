@@ -188,6 +188,7 @@ def test_install_plan_does_not_touch_targets(tmp_path) -> None:
 
     assert plan["schema"] == "mesh.probity.install.v1"
     assert plan["version"] == "1.10.0"
+    assert plan["trust_review_required"] is True
     assert not codex_home.exists()
     assert not prefix.exists()
     assert not hook.exists()

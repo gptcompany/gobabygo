@@ -285,6 +285,13 @@ Probity CLI does not expose its packaged Antigravity adapter, so AGY remains on
 brief-level TDD policy and test evidence. Claude continues to use its existing
 TDD Guard rather than a second overlapping hook.
 
+Codex requires one explicit trust review whenever the installed hook hash
+changes. Open a fresh Codex CLI, run `/hooks`, inspect the absolute dispatcher
+command, and trust that exact entry. Until then Codex reports the hook as
+untrusted and skips it. Do not make routine workers use
+`--dangerously-bypass-hook-trust`; that flag is reserved for an isolated,
+already-reviewed smoke and does not persist trust.
+
 Keep this optional. `enforceTdd()` can invoke a model validator for matching
 writes and therefore adds latency and usage. A Probity config is executable
 project code and must be reviewed before Codex trusts it. CI and an independent
