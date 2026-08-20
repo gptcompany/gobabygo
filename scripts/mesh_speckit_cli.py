@@ -98,10 +98,14 @@ def _defer_migration_signals():
     try:
         for signal_number in (signal.SIGINT, signal.SIGTERM):
             previous[signal_number] = signal.getsignal(signal_number)
+            if previous[signal_number] == signal.SIG_IGN:
+                continue
             signal.signal(signal_number, defer)
     except ValueError as exc:
         for signal_number, handler in previous.items():
-            signal.signal(signal_number, handler)
+            signal.signal(
+                signal_number, signal.SIG_DFL if handler is None else handler
+            )
         raise SpeckitRuntimeError(
             "migration apply must run in the main process thread"
         ) from exc
@@ -112,6 +116,11 @@ def _defer_migration_signals():
             signal.signal(
                 signal_number, signal.SIG_DFL if handler is None else handler
             )
+
+
+def _redeliver_migration_signal(signal_number: int) -> None:
+    os.kill(os.getpid(), signal_number)
+    raise SystemExit(128 + signal_number)
 
 
 def _specify_executable() -> str | None:
@@ -1261,6 +1270,9 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
             copy_paths.extend(inventory["generated_updates"])
         backups: dict[Path, tuple[bytes, int] | None] = {}
         created_dirs: list[Path] = []
+        failure: SpeckitRuntimeError | None = None
+        failure_cause: BaseException | None = None
+        interrupted_signal: int | None = None
         with _defer_migration_signals() as pending_signals:
             try:
                 for relative in sorted(copy_paths):
@@ -1313,16 +1325,22 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
                         directory.rmdir()
                     except OSError:
                         pass
-                if pending_signals and not isinstance(exc, _MigrationInterrupted):
-                    exc = _MigrationInterrupted(pending_signals[0])
                 detail = (
                     f"; rollback errors: {', '.join(rollback_errors)}"
                     if rollback_errors
                     else ""
                 )
-                raise SpeckitRuntimeError(
-                    f"migration apply failed and was rolled back: {exc}{detail}"
-                ) from exc
+                if pending_signals:
+                    interrupted_signal = pending_signals[0]
+                else:
+                    failure = SpeckitRuntimeError(
+                        f"migration apply failed and was rolled back: {exc}{detail}"
+                    )
+                    failure_cause = exc
+        if interrupted_signal is not None:
+            _redeliver_migration_signal(interrupted_signal)
+        if failure is not None:
+            raise failure from failure_cause
 
     return {
         **plan,

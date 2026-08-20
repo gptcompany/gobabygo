@@ -1210,6 +1210,38 @@ def test_migration_signal_guard_defers_sigterm_until_critical_section_exits(
     assert handlers == previous
 
 
+def test_migration_signal_is_redelivered_after_handlers_are_restored(
+    monkeypatch
+) -> None:
+    module = _load_module()
+    handlers = {}
+    previous = {
+        module.signal.SIGINT: object(),
+        module.signal.SIGTERM: object(),
+    }
+    delivered = []
+    monkeypatch.setattr(module.signal, "getsignal", lambda value: previous[value])
+    monkeypatch.setattr(
+        module.signal,
+        "signal",
+        lambda value, handler: handlers.__setitem__(value, handler),
+    )
+
+    def record_kill(pid, signal_number):
+        assert pid == module.os.getpid()
+        assert handlers == previous
+        delivered.append(signal_number)
+
+    monkeypatch.setattr(module.os, "kill", record_kill)
+
+    with module._defer_migration_signals() as pending:
+        handlers[module.signal.SIGTERM](module.signal.SIGTERM, None)
+    with pytest.raises(SystemExit, match=str(128 + module.signal.SIGTERM)):
+        module._redeliver_migration_signal(pending[0])
+
+    assert delivered == [module.signal.SIGTERM]
+
+
 def test_atomic_migration_copy_and_restore_preserve_mode_and_cleanup(tmp_path) -> None:
     module = _load_module()
     source = tmp_path / "source"
