@@ -752,6 +752,21 @@ def test_migration_inventory_reports_generated_paths_ignored_by_git(tmp_path) ->
     ]
 
 
+def test_generated_metadata_digest_ignores_only_allowlisted_timestamps() -> None:
+    module = _load_module()
+    relative = ".specify/integrations/claude.manifest.json"
+    first = b'{"integration":"claude","version":"0.16.5","installed_at":"one"}'
+    later = b'{"installed_at":"two","version":"0.16.5","integration":"claude"}'
+    changed = b'{"integration":"claude","version":"0.16.6","installed_at":"two"}'
+
+    assert module._normalized_generated_digest(
+        first, relative
+    ) == module._normalized_generated_digest(later, relative)
+    assert module._normalized_generated_digest(
+        first, relative
+    ) != module._normalized_generated_digest(changed, relative)
+
+
 def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
@@ -976,7 +991,7 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
         lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
     )
 
-    def partial_write(_source, target, _expected_digest):
+    def partial_write(_source, target, _expected_digest, _relative):
         target.write_text("partial\n", encoding="utf-8")
         raise failure
 

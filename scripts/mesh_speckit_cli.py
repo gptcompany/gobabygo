@@ -56,6 +56,8 @@ _GENERATED_UPDATE_FILES = {
     ".specify/init-options.json",
 }
 _PROTECTED_MIGRATION_FILES = {".specify/memory/constitution.md"}
+_VOLATILE_WORKFLOW_REGISTRY = ".specify/workflows/workflow-registry.json"
+_VOLATILE_INTEGRATION_PREFIX = ".specify/integrations/"
 _LEGACY_CONSTITUTION_PATH = "memory/constitution.md"
 _LEGACY_COMMAND_NAMES = {
     "analyze.md",
@@ -743,6 +745,46 @@ def _file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _is_volatile_metadata(relative: str) -> bool:
+    return relative == _VOLATILE_WORKFLOW_REGISTRY or (
+        relative.startswith(_VOLATILE_INTEGRATION_PREFIX)
+        and relative.endswith(".manifest.json")
+    )
+
+
+def _normalized_generated_digest(data: bytes, relative: str) -> str:
+    if not _is_volatile_metadata(relative):
+        return hashlib.sha256(data).hexdigest()
+    try:
+        payload = json.loads(data.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("top-level value is not an object")
+        if relative == _VOLATILE_WORKFLOW_REGISTRY:
+            workflows = payload.get("workflows")
+            if not isinstance(workflows, dict):
+                raise ValueError("workflows is not an object")
+            for workflow in workflows.values():
+                if not isinstance(workflow, dict):
+                    raise ValueError("workflow entry is not an object")
+                workflow.pop("installed_at", None)
+                workflow.pop("updated_at", None)
+        else:
+            payload.pop("installed_at", None)
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise SpeckitRuntimeError(
+            f"invalid generated metadata file: {relative}"
+        ) from exc
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _generated_file_digest(path: Path, relative: str) -> str:
+    data = path.read_bytes()
+    if len(data) > _MAX_MIGRATION_FILE_BYTES:
+        raise SpeckitRuntimeError(f"migration file exceeds size limit: {path.name}")
+    return _normalized_generated_digest(data, relative)
+
+
 def _is_generated_update(relative: str) -> bool:
     return relative in _GENERATED_UPDATE_FILES or relative.startswith(
         _GENERATED_UPDATE_PREFIXES
@@ -817,14 +859,14 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
             collisions.append(relative)
         elif not target.exists():
             additions.append(relative)
-            content_digests[relative] = _file_digest(source)
+            content_digests[relative] = _generated_file_digest(source, relative)
         elif _file_digest(source) == _file_digest(target):
             continue
         elif relative in _PROTECTED_MIGRATION_FILES:
             preserved.append(relative)
         elif _is_generated_update(relative):
             updates.append(relative)
-            content_digests[relative] = _file_digest(source)
+            content_digests[relative] = _generated_file_digest(source, relative)
         else:
             collisions.append(relative)
     return {
@@ -995,21 +1037,32 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _atomic_copy_migration_file(
-    source: Path, target: Path, expected_digest: str | None = None
+    source: Path,
+    target: Path,
+    expected_digest: str | None = None,
+    relative: str = "",
 ) -> None:
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
         target_handle = os.fdopen(fd, "wb")
         fd = -1
         digest = hashlib.sha256()
+        normalized_data = bytearray() if _is_volatile_metadata(relative) else None
         with source.open("rb") as source_handle, target_handle:
             while chunk := source_handle.read(64 * 1024):
                 digest.update(chunk)
+                if normalized_data is not None:
+                    normalized_data.extend(chunk)
                 target_handle.write(chunk)
             target_handle.flush()
             os.fsync(target_handle.fileno())
             os.fchmod(target_handle.fileno(), source.stat().st_mode & 0o777)
-        if expected_digest is not None and digest.hexdigest() != expected_digest:
+        actual_digest = (
+            _normalized_generated_digest(bytes(normalized_data), relative)
+            if normalized_data is not None
+            else digest.hexdigest()
+        )
+        if expected_digest is not None and actual_digest != expected_digest:
             raise SpeckitRuntimeError(
                 f"migration source changed while copying: {source.name}"
             )
@@ -1123,6 +1176,7 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
                         source,
                         target,
                         inventory["generated_content_sha256"][relative],
+                        relative,
                     )
                 project = inspect_project(
                     root, ALLOWED_INTEGRATIONS, plan["required_version"]
