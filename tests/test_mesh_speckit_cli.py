@@ -891,6 +891,11 @@ def test_generated_metadata_digest_ignores_only_allowlisted_timestamps() -> None
             b'{"integration":"claude","installed_at":{"unexpected":true}}',
             relative,
         )
+    with pytest.raises(module.SpeckitRuntimeError, match="invalid generated metadata"):
+        module._normalized_generated_digest(
+            b'{"integration":"claude","version":"0.16.5","version":"0.16.6"}',
+            relative,
+        )
 
 
 def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:

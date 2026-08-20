@@ -776,7 +776,15 @@ def _normalized_generated_digest(data: bytes, relative: str) -> str:
     if not _is_volatile_metadata(relative):
         return hashlib.sha256(data).hexdigest()
     try:
-        payload = json.loads(data.decode("utf-8"))
+        def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            value: dict[str, Any] = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError(f"duplicate JSON key: {key}")
+                value[key] = item
+            return value
+
+        payload = json.loads(data.decode("utf-8"), object_pairs_hook=unique_object)
         if not isinstance(payload, dict):
             raise ValueError("top-level value is not an object")
         if relative == _VOLATILE_WORKFLOW_REGISTRY:
