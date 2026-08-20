@@ -112,6 +112,46 @@ def test_project_capabilities_require_manifest_and_all_integrations(tmp_path) ->
     assert result["enabled_capabilities"] == []
 
 
+def test_project_without_manifest_distinguishes_legacy_from_missing(tmp_path) -> None:
+    module = _load_module()
+    legacy = tmp_path / "legacy"
+    (legacy / ".specify" / "memory").mkdir(parents=True)
+    (legacy / ".specify" / "memory" / "constitution.md").write_text(
+        "# Legacy constitution\n", encoding="utf-8"
+    )
+    feature = legacy / "specs" / "001-old"
+    feature.mkdir(parents=True)
+    (feature / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (feature / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    missing = tmp_path / "missing"
+    missing.mkdir()
+
+    legacy_result = module.inspect_project(legacy, module.ALLOWED_INTEGRATIONS)
+    missing_result = module.inspect_project(missing, module.ALLOWED_INTEGRATIONS)
+
+    assert legacy_result["state"] == "legacy"
+    assert legacy_result["legacy_evidence"] == [
+        ".specify/",
+        "specs/001-old/{spec.md,tasks.md}",
+    ]
+    assert missing_result["state"] == "missing"
+    assert missing_result["legacy_evidence"] == []
+
+
+def test_legacy_detection_is_bounded_and_does_not_read_artifact_contents(tmp_path) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    commands = repo / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    (commands / "speckit.plan.md").write_text("SECRET=must-not-leak\n", encoding="utf-8")
+
+    result = module.inspect_project(repo, module.ALLOWED_INTEGRATIONS)
+
+    assert result["state"] == "legacy"
+    assert result["legacy_evidence"] == [".claude/commands/speckit*"]
+    assert "SECRET" not in json.dumps(result)
+
+
 def test_project_capabilities_are_intersection_of_installed_skills(tmp_path) -> None:
     module = _load_module()
     repo = _project(tmp_path / "repo")

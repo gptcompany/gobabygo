@@ -152,6 +152,39 @@ def _skill_capabilities(root: Path) -> list[str]:
     return capabilities
 
 
+def _legacy_project_evidence(root: Path) -> list[str]:
+    """Return bounded evidence for pre-manifest Spec Kit projects."""
+    evidence: list[str] = []
+    specify_root = root / ".specify"
+    if specify_root.is_dir():
+        evidence.append(".specify/")
+
+    command_roots = (
+        root / ".claude" / "commands",
+        root / ".agents" / "skills",
+    )
+    for command_root in command_roots:
+        if not command_root.is_dir():
+            continue
+        if any(command_root.glob("speckit*")):
+            evidence.append(command_root.relative_to(root).as_posix() + "/speckit*")
+
+    specs_root = root / "specs"
+    if specs_root.is_dir():
+        for feature in sorted(specs_root.iterdir()):
+            if not feature.is_dir():
+                continue
+            artifacts = [
+                name for name in ("spec.md", "plan.md", "tasks.md") if (feature / name).is_file()
+            ]
+            if len(artifacts) >= 2:
+                evidence.append(
+                    feature.relative_to(root).as_posix() + "/{" + ",".join(artifacts) + "}"
+                )
+                break
+    return evidence[:4]
+
+
 def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[str, Any]:
     root = repo.expanduser().resolve()
     manifest_path = root / ".specify" / "integration.json"
@@ -165,6 +198,7 @@ def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[st
         "unsupported_integrations": [],
         "capabilities": {},
         "enabled_capabilities": [],
+        "legacy_evidence": [],
         "error": None,
     }
     if not root.is_dir():
@@ -177,6 +211,11 @@ def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[st
         if manifest_path.exists():
             result["state"] = "invalid"
             result["error"] = str(exc)
+        else:
+            evidence = _legacy_project_evidence(root)
+            if evidence:
+                result["state"] = "legacy"
+                result["legacy_evidence"] = evidence
         return result
 
     installed, default = _manifest_integrations(payload)
