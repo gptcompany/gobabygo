@@ -56,6 +56,18 @@ _GENERATED_UPDATE_FILES = {
     ".specify/init-options.json",
 }
 _PROTECTED_MIGRATION_FILES = {".specify/memory/constitution.md"}
+_LEGACY_CONSTITUTION_PATH = "memory/constitution.md"
+_LEGACY_COMMAND_NAMES = {
+    "analyze.md",
+    "checklist.md",
+    "clarify.md",
+    "constitution.md",
+    "implement.md",
+    "plan.md",
+    "specify.md",
+    "tasks.md",
+    "taskstoissues.md",
+}
 
 
 class SpeckitRuntimeError(RuntimeError):
@@ -229,6 +241,9 @@ def _legacy_project_evidence(root: Path) -> list[str]:
     specify_root = root / ".specify"
     if specify_root.is_dir():
         evidence.append(".specify/")
+    legacy_constitution = root / _LEGACY_CONSTITUTION_PATH
+    if legacy_constitution.is_file() or legacy_constitution.is_symlink():
+        evidence.append(_LEGACY_CONSTITUTION_PATH)
 
     command_roots = (
         root / ".claude" / "commands",
@@ -237,8 +252,16 @@ def _legacy_project_evidence(root: Path) -> list[str]:
     for command_root in command_roots:
         if not command_root.is_dir():
             continue
-        if any(command_root.glob("speckit*")):
+        entries = {path.name for path in command_root.iterdir()}
+        if any(name.startswith("speckit") for name in entries):
             evidence.append(command_root.relative_to(root).as_posix() + "/speckit*")
+        elif legacy_names := sorted(entries.intersection(_LEGACY_COMMAND_NAMES)):
+            evidence.append(
+                command_root.relative_to(root).as_posix()
+                + "/{"
+                + ",".join(legacy_names)
+                + "}"
+            )
 
     specs_root = root / "specs"
     if specs_root.is_dir():
@@ -254,6 +277,19 @@ def _legacy_project_evidence(root: Path) -> list[str]:
                 )
                 break
     return evidence[:4]
+
+
+def _legacy_command_paths(root: Path) -> list[str]:
+    command_root = root / ".claude" / "commands"
+    if not command_root.is_dir():
+        return []
+    paths: list[str] = []
+    for path in sorted(command_root.iterdir()):
+        if not path.is_file():
+            continue
+        if path.name.startswith("speckit") or path.name in _LEGACY_COMMAND_NAMES:
+            paths.append(path.relative_to(root).as_posix())
+    return paths[:32]
 
 
 def inspect_project(
@@ -276,12 +312,14 @@ def inspect_project(
         "capabilities": {},
         "enabled_capabilities": [],
         "legacy_evidence": [],
+        "legacy_commands": [],
         "error": None,
     }
     if not root.is_dir():
         result["state"] = "invalid"
         result["error"] = "project directory does not exist"
         return result
+    result["legacy_commands"] = _legacy_command_paths(root)
     try:
         payload = _load_json_object(manifest_path, label="Spec Kit integration manifest")
     except SpeckitRuntimeError as exc:
@@ -736,6 +774,7 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
     collisions: list[str] = []
     generated = 0
     total_size = 0
+    constitution_migrations: dict[str, str] = {}
     for source in sorted(staging.rglob("*")):
         if ".git" in source.relative_to(staging).parts:
             continue
@@ -752,6 +791,18 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
             raise SpeckitRuntimeError("migration sandbox exceeds size limit")
         relative = source.relative_to(staging).as_posix()
         target = repo / relative
+        legacy_constitution = repo / _LEGACY_CONSTITUTION_PATH
+        if (
+            relative == ".specify/memory/constitution.md"
+            and not target.exists()
+            and (legacy_constitution.exists() or legacy_constitution.is_symlink())
+        ):
+            if legacy_constitution.is_symlink() or not legacy_constitution.is_file():
+                collisions.append(relative)
+            else:
+                additions.append(relative)
+                constitution_migrations[relative] = _LEGACY_CONSTITUTION_PATH
+            continue
         if _migration_path_collides(repo, relative):
             collisions.append(relative)
         elif not target.exists():
@@ -770,6 +821,8 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
         "generated_updates": updates,
         "protected_preserved": preserved,
         "blocking_collisions": collisions,
+        "legacy_constitution_migrations": constitution_migrations,
+        "legacy_commands_preserved": _legacy_command_paths(repo),
     }
 
 
@@ -816,7 +869,8 @@ def build_project_plan(
                 "--allow-multi-install-force"
             )
         commands = _project_init_commands()
-        migration = None
+        _require_pinned_runtime(lock["version"])
+        migration = _migration_inventory(root, commands)
     elif action == "migrate":
         if manifest_exists:
             raise SpeckitRuntimeError("project is already initialized; use project upgrade")
@@ -879,7 +933,7 @@ def build_project_plan(
 
 
 def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    if plan.get("action") == "migrate":
+    if plan.get("action") in {"init", "migrate"} and plan.get("migration"):
         return apply_migration_plan(plan)
     _require_pinned_runtime(str(plan.get("required_version", "")))
     root = Path(plan["repo"])
@@ -1032,7 +1086,10 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
         try:
             with _defer_migration_signals():
                 for relative in sorted(copy_paths):
-                    source = staging / relative
+                    legacy_source = inventory["legacy_constitution_migrations"].get(
+                        relative
+                    )
+                    source = root / legacy_source if legacy_source else staging / relative
                     target, created = _safe_migration_target(root, relative)
                     created_dirs.extend(created)
                     backups[target] = (
@@ -1221,8 +1278,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "protected_preserved",
                 "blocking_collisions",
                 "ignored_generated_paths",
+                "legacy_commands_preserved",
             ):
                 print(f"{label}={','.join(migration[label]) or '-'}")
+            constitution_moves = migration["legacy_constitution_migrations"]
+            print(
+                "legacy_constitution_migrations="
+                + (
+                    ",".join(
+                        f"{source}->{target}"
+                        for target, source in sorted(constitution_moves.items())
+                    )
+                    or "-"
+                )
+            )
             print(f"ready_to_apply={'yes' if output['ready_to_apply'] else 'no'}")
     elif args.command == "context":
         print(_render_context(output))

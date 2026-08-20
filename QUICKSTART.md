@@ -385,10 +385,14 @@ mesh speckit project upgrade /data/sata/1TB/rektslug --apply
 
 Every mutation requires the exact clean Git root. Legacy migration generates
 Claude, Codex, and AGY integrations in a temporary sandbox, preserves existing
-`specs/` and `.specify/memory/constitution.md`, and refuses custom skill
-collisions. Review and commit the resulting diff in that repository before
-migrating the next one. `~/.local/bin/specify` is discovered explicitly for
-non-interactive SSH sessions; no shell startup file is required.
+`specs/` and `.specify/memory/constitution.md`, copies an older
+`memory/constitution.md` into the current location, and refuses custom skill or
+ignored-output collisions. Existing legacy `.claude/commands` are listed but
+never deleted; archive them only after verifying that no operator still invokes
+them. New-project `init` uses the same sandbox, lock, and rollback path. Review
+and commit the resulting diff before migrating the next repository.
+`~/.local/bin/specify` is discovered explicitly for non-interactive SSH
+sessions; no shell startup file is required.
 
 ### Git hook chaining
 

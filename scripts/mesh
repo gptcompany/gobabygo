@@ -755,8 +755,9 @@ Runtime management:
   context emits one bounded provider-neutral delegation envelope from installed skills.
   update-check contacts only the fixed official GitHub release endpoint and
   writes allowlisted metadata under the operator state directory.
-  migrate stages official output outside the target repo, preserves its
-  constitution/specs, and fails closed on skill or custom-file collisions.
+  init and migrate stage official output outside the target repo. Migration
+  preserves specs, copies an old memory/constitution.md into the current path,
+  reports retained legacy commands, and fails closed on collisions.
 
 Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.

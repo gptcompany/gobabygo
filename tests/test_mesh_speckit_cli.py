@@ -181,6 +181,26 @@ def test_legacy_detection_is_bounded_and_does_not_read_artifact_contents(tmp_pat
     assert "SECRET" not in json.dumps(result)
 
 
+def test_legacy_detection_recognizes_pre_dot_specify_layout(tmp_path) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    constitution = repo / "memory" / "constitution.md"
+    command = repo / ".claude" / "commands" / "plan.md"
+    constitution.parent.mkdir(parents=True)
+    command.parent.mkdir(parents=True)
+    constitution.write_text("# Historical principles\n", encoding="utf-8")
+    command.write_text("# Historical plan command\n", encoding="utf-8")
+
+    result = module.inspect_project(repo, module.ALLOWED_INTEGRATIONS)
+
+    assert result["state"] == "legacy"
+    assert result["legacy_evidence"] == [
+        "memory/constitution.md",
+        ".claude/commands/{plan.md}",
+    ]
+    assert result["legacy_commands"] == [".claude/commands/plan.md"]
+
+
 def test_project_capabilities_are_intersection_of_installed_skills(tmp_path) -> None:
     module = _load_module()
     repo = _project(tmp_path / "repo")
@@ -463,10 +483,31 @@ def test_install_apply_stops_on_first_failure(monkeypatch) -> None:
     assert calls == [["uv", "install"]]
 
 
-def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(tmp_path) -> None:
+def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(
+    monkeypatch, tmp_path
+) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
     lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+    monkeypatch.setattr(
+        module,
+        "_migration_inventory",
+        lambda _repo, _commands: {
+            "generated_files": 1,
+            "additions": [".specify/integration.json"],
+            "generated_updates": [],
+            "protected_preserved": [],
+            "blocking_collisions": [],
+            "legacy_constitution_migrations": {},
+            "legacy_commands_preserved": [],
+            "ignored_generated_paths": [],
+        },
+    )
 
     with pytest.raises(module.SpeckitRuntimeError, match="allow-multi-install-force"):
         module.build_project_plan("init", repo, lock)
@@ -483,6 +524,8 @@ def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(tmp_p
         "agy",
         "--force",
     ]
+    assert plan["ready_to_apply"] is True
+    assert plan["migration"]["additions"] == [".specify/integration.json"]
     subdir = repo / "src"
     subdir.mkdir()
     with pytest.raises(module.SpeckitRuntimeError, match="exact Git repository root"):
@@ -561,6 +604,8 @@ def test_migration_plan_reports_updates_preservation_and_additions(
         "protected_preserved": [".specify/memory/constitution.md"],
         "blocking_collisions": [],
         "ignored_generated_paths": [],
+        "legacy_constitution_migrations": {},
+        "legacy_commands_preserved": [],
     }
     assert plan["ready_to_apply"] is False
     assert accepted["ready_to_apply"] is True
@@ -755,6 +800,83 @@ def test_migration_apply_installs_all_providers_and_preserves_constitution(
     assert template.read_text(encoding="utf-8") == "current template\n"
     assert (repo / ".claude" / "skills" / "speckit-plan" / "SKILL.md").is_file()
     assert (repo / ".agents" / "skills" / "speckit-plan" / "SKILL.md").is_file()
+
+
+def test_migration_apply_moves_historical_constitution_to_current_path(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    historical = repo / "memory" / "constitution.md"
+    legacy_command = repo / ".claude" / "commands" / "plan.md"
+    historical.parent.mkdir(parents=True)
+    legacy_command.parent.mkdir(parents=True)
+    historical.write_text("# Historical principles\n", encoding="utf-8")
+    legacy_command.write_text("# Historical plan command\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "memory", ".claude"], check=True
+    )
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+
+    def write_bundle(staging, _commands):
+        manifest = staging / ".specify" / "integration.json"
+        constitution = staging / ".specify" / "memory" / "constitution.md"
+        claude = staging / ".claude" / "skills" / "speckit-plan" / "SKILL.md"
+        agents = staging / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+        for path in (manifest, constitution, claude, agents):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "version": "0.16.5",
+                    "default_integration": "claude",
+                    "installed_integrations": ["claude", "codex", "agy"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        constitution.write_text("# Default constitution\n", encoding="utf-8")
+        claude.write_text("# Plan\n", encoding="utf-8")
+        agents.write_text("# Plan\n", encoding="utf-8")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary)
+        write_bundle(staged, [])
+        inventory = module._migration_inventory_with_git(repo, staged)
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan = {
+        "action": "migrate",
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "init"]],
+        "base_head": head,
+        "migration": inventory,
+        "accept_generated_updates": False,
+        "ready_to_apply": True,
+    }
+    monkeypatch.setattr(module, "_generate_migration_tree", write_bundle)
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    result = module.apply_migration_plan(plan)
+
+    current = repo / ".specify" / "memory" / "constitution.md"
+    assert current.read_bytes() == historical.read_bytes()
+    assert result["migration"]["legacy_constitution_migrations"] == {
+        ".specify/memory/constitution.md": "memory/constitution.md"
+    }
+    assert result["migration"]["legacy_commands_preserved"] == [
+        ".claude/commands/plan.md"
+    ]
+    assert legacy_command.read_text(encoding="utf-8") == "# Historical plan command\n"
 
 
 @pytest.mark.parametrize(
@@ -1139,6 +1261,25 @@ def test_cli_project_without_apply_only_prints_plan(monkeypatch, tmp_path, capsy
         module,
         "apply_project_plan",
         lambda _plan: pytest.fail("project executor called without --apply"),
+    )
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+    monkeypatch.setattr(
+        module,
+        "_migration_inventory",
+        lambda _repo, _commands: {
+            "generated_files": 1,
+            "additions": [".specify/integration.json"],
+            "generated_updates": [],
+            "protected_preserved": [],
+            "blocking_collisions": [],
+            "legacy_constitution_migrations": {},
+            "legacy_commands_preserved": [],
+            "ignored_generated_paths": [],
+        },
     )
 
     rc = module.main(
