@@ -476,8 +476,8 @@ def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(tmp_p
     )
     assert Path(plan["commands"][0][0]).name == "specify"
     assert plan["commands"][0][1:4] == ["init", "--here", "--force"]
-    assert plan["commands"][2] == [
-        "specify",
+    assert Path(plan["commands"][2][0]).name == "specify"
+    assert plan["commands"][2][1:] == [
         "integration",
         "install",
         "agy",
