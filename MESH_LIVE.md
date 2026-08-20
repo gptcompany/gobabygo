@@ -86,6 +86,14 @@ The scope is selected automatically by `mcoordinator`:
   not mandatory startup parameters and the coordinator must not request one
   global pair before cross-repo clarification or read-only analysis.
 
+Multi-repo scope runs from the dedicated Git repository
+`/data/sata/1TB/coordination`, configurable with the absolute
+`MESH_COORDINATOR_STATE_REPO`. Intra-repo scope still runs from the selected
+repository. Every coordinator transport validates that its target is the exact
+Git root before inspecting or creating tmux state; it never falls back to the
+unversioned repository base. Store global specs, decisions, task state, and
+handoffs there, not pane captures or secrets.
+
 Coordinator scope is a policy projection, not a durable pipeline instance. A
 router thread/database may persist selected tasks and handoffs when useful, but
 is not required to hold the global Speckit state or coordinate live tmux panes.
@@ -95,10 +103,10 @@ session is first created; later calls only attach. An already running
 coordinator therefore keeps its old contract. Bootstrap a new coordinator (or
 exit the old tmux session and resume it) to activate a newly deployed contract.
 
-Repository names resolve below `MESH_WS_REPO_BASE`. A missing target fails
-before tmux session creation.
-Persistent helpers never fall back to the repository-base directory. An
-absolute repository path is also accepted.
+Repository names resolve below `MESH_WS_REPO_BASE`. A missing target fails, and
+a non-Git target also fails, before tmux session inspection or creation. Persistent helpers never fall
+back to the repository-base directory. An absolute repository path is also
+accepted.
 
 For multi-repo coordination:
 

@@ -212,7 +212,7 @@ Done when:
 
 ### T007. Persist multi-repo Spec Kit state in a Git repository
 
-Status: todo
+Status: done
 
 Depends on: T003, T004
 

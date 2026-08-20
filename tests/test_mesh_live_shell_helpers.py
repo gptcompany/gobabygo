@@ -350,7 +350,7 @@ mcoordinator --all --session claude-live-coordinator
     lines = proc.stdout.splitlines()
     assert lines[:2] == [
         "session=claude-live-coordinator",
-        "dir=/data/sata/1TB",
+        "dir=/data/sata/1TB/coordination",
     ]
     assert lines[2].startswith(
         "startup=claude --name claude-live-coordinator --append-system-prompt "
@@ -368,6 +368,44 @@ mcoordinator --all --session claude-live-coordinator
         "<--workflow>",
         "<adaptive>",
     ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_uses_explicit_multi_repo_state_repository(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ printf '%s' 'PROMPT'; }}
+_ws_mosh_attach_or_start() {{ printf 'dir=%s\n' "$2"; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+MESH_COORDINATOR_STATE_REPO=/data/sata/1TB/program-state
+mcoordinator --all
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "dir=/data/sata/1TB/program-state"
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_rejects_relative_state_repository_before_prompt(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ echo unexpected-prompt; }}
+_ws_mosh_attach_or_start() {{ echo unexpected-attach; }}
+MESH_COORDINATOR_STATE_REPO=relative/state
+mcoordinator --all
+""",
+    )
+
+    assert proc.returncode == 2
+    assert "must be an absolute path" in proc.stderr
+    assert "unexpected" not in proc.stdout
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -426,7 +464,10 @@ mcoordinator --all --resume {resume_id}
 
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.splitlines()
-    assert lines[:2] == ["session=claude-coordinator", "dir=/data/sata/1TB"]
+    assert lines[:2] == [
+        "session=claude-coordinator",
+        "dir=/data/sata/1TB/coordination",
+    ]
     assert lines[2].startswith(
         f"startup=claude --resume {resume_id} --name claude-coordinator "
         "--append-system-prompt "
@@ -707,6 +748,7 @@ _ws_mosh_preflight_attach_or_start claude-coordinator /data/sata/1TB \
 def test_mosh_preflight_distinguishes_wrapped_claude_from_stale_shell(
     shell: str, tmp_path: Path, child_command: str, marker: str, expected_rc: int
 ) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     helper = shlex.quote(str(HELPERS))
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -756,6 +798,7 @@ _ws_mosh_preflight_attach_or_start claude-coordinator {shlex.quote(str(tmp_path)
 def test_mosh_preflight_rejects_legacy_coordinator_with_same_resume_id(
     shell: str, tmp_path: Path
 ) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     helper = shlex.quote(str(HELPERS))
     resume_id = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
     fake_bin = tmp_path / "bin"
@@ -833,6 +876,36 @@ _ws_ssh_attach_or_start_once claude-typo /data/sata/1TB/typo ''
     assert "missing repo dir" in command
     assert "exit 3" in command
     assert 'TARGET_DIR="/data/sata/1TB"' not in command
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_coordinator_transport_validates_exact_git_root_before_tmux(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "ssh")
+    capture = tmp_path / "ssh-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+_ws_control_host() {{ printf '%s' 'dell7670'; }}
+_ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB/coordination \
+  'claude --name claude-coordinator' '' coordinator
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    command = capture.read_text(encoding="utf-8")
+    assert "git -C" in command
+    assert "rev-parse" in command
+    assert "coordinator target must be an exact Git root" in command
+    assert "exit 7" in command
+    assert command.index("git -C") < command.index("tmux has-session")
 
 
 @pytest.mark.parametrize("shell", _shells())

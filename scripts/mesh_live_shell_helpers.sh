@@ -286,8 +286,22 @@ fi
 MESH_REMOTE_LOCKED_STARTUP
 }
 
+_ws_remote_coordinator_git_guard() {
+  command cat <<'MESH_REMOTE_COORDINATOR_GIT_GUARD'
+if [[ "$SESSION_KIND" == "coordinator" ]]; then
+  target_real="$(cd "$TARGET_DIR" 2>/dev/null && pwd -P)"
+  git_root="$(git -C "$TARGET_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  git_real="$(cd "$git_root" 2>/dev/null && pwd -P)"
+  if [[ -z "$target_real" || -z "$git_real" || "$target_real" != "$git_real" ]]; then
+    echo "[tmux] coordinator target must be an exact Git root: $TARGET_DIR" >&2
+    exit 7
+  fi
+fi
+MESH_REMOTE_COORDINATOR_GIT_GUARD
+}
+
 _ws_ssh_attach_or_start_once() {
-  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup
+  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup git_guard
   local -a ssh_opts=()
   session="$1"
   target_dir="$2"
@@ -296,6 +310,7 @@ _ws_ssh_attach_or_start_once() {
   session_kind="${5:-}"
   resume_guard="$(_ws_remote_resume_guard)"
   locked_startup="$(_ws_remote_locked_startup)"
+  git_guard="$(_ws_remote_coordinator_git_guard)"
   ws_host="$(_ws_control_host)" || return $?
   if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
     local opt
@@ -310,6 +325,7 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
   exit 3
 fi
+$git_guard
 $resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
@@ -389,13 +405,14 @@ _ws_ssh_attach_or_start() {
 }
 
 _ws_mosh_preflight_attach_or_start() {
-  local session target_dir resume_id session_kind direct_host resume_guard
+  local session target_dir resume_id session_kind direct_host resume_guard git_guard
   session="$1"
   target_dir="$2"
   resume_id="${3:-}"
   session_kind="${4:-}"
   direct_host="$5"
   resume_guard="$(_ws_remote_resume_guard)"
+  git_guard="$(_ws_remote_coordinator_git_guard)"
   command ssh \
     -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=10 \
     "$direct_host" \
@@ -404,6 +421,7 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
   exit 3
 fi
+$git_guard
 $resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
@@ -451,7 +469,7 @@ fi
 
 _ws_mosh_attach_or_start() {
   local session target_dir startup resume_id session_kind direct_host remote_command rc
-  local resume_guard locked_startup
+  local resume_guard locked_startup git_guard
   session="$1"
   target_dir="$2"
   startup="${3:-}"
@@ -459,6 +477,7 @@ _ws_mosh_attach_or_start() {
   session_kind="${5:-}"
   resume_guard="$(_ws_remote_resume_guard)"
   locked_startup="$(_ws_remote_locked_startup)"
+  git_guard="$(_ws_remote_coordinator_git_guard)"
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -z "$direct_host" || -z "$(command -v mosh 2>/dev/null)" ]]; then
     _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
@@ -470,7 +489,7 @@ _ws_mosh_attach_or_start() {
   else
     rc=$?
     case "$rc" in
-      3|4|5|6|130|143) return "$rc" ;;
+      3|4|5|6|7|130|143) return "$rc" ;;
     esac
     printf '\n[ws] mosh preflight failed (exit %s); falling back to SSH.\n' "$rc" >&2
     _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
@@ -486,6 +505,7 @@ if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
   exit 3
 fi
+$git_guard
 $resume_guard
 if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
   if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
@@ -626,7 +646,7 @@ printf "%s" "$output"'
 }
 
 mcoordinator() {
-  local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh
+  local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh state_repo
   local prompt claude_cmd startup usage speckit_status_json
   local -a prompt_args=()
   usage="Usage: mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
@@ -718,7 +738,12 @@ mcoordinator() {
     prompt_args=(live coordinator-prompt --repo "$repo" --repo-root "$target_dir" --session "$session" --mesh-script "$remote_mesh" --workflow "$workflow")
   else
     session="${session_override:-claude-coordinator}"
-    target_dir="$(_ws_tmux_target_dir)"
+    state_repo="${MESH_COORDINATOR_STATE_REPO:-${repo_base}/coordination}"
+    case "$state_repo" in
+      /*) ;;
+      *) echo "MESH_COORDINATOR_STATE_REPO must be an absolute path" >&2; return 2 ;;
+    esac
+    target_dir="$state_repo"
     prompt_args=(live coordinator-prompt --all --session "$session" --mesh-script "$remote_mesh" --workflow "$workflow")
   fi
   [[ -n "$worker" ]] && prompt_args+=(--worker "$worker")

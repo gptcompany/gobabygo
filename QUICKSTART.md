@@ -291,6 +291,10 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - router DB is authoritative for durable managed orchestration
 - iTerm2 is optional layout/UX
 - `mcoordinator <repo>` is the default automatic intra-repo path; `mcoordinator --all` is multi-repo
+- multi-repo state lives in the exact Git root
+  `/data/sata/1TB/coordination` (override with absolute
+  `MESH_COORDINATOR_STATE_REPO`); missing, nested, or non-Git paths fail before
+  tmux attach or creation
 - without an explicit override, Mesh Live assigns Antigravity as the sole writer
   and Codex in a different session as the primary read-only reviewer; all
   providers may still review when explicitly selected
