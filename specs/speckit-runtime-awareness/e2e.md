@@ -51,11 +51,11 @@ Reviewed commit: `363d1034dd1e`
 ## Legacy Migration Addendum
 
 Date: 2026-08-20
-Reviewed range: `d1b64d1..27ef0cd`
+Reviewed range: `d1b64d1..11d8c16`
 
 ### Validation
 
-- Final local focused Spec Kit/Mesh Live suite: `321 passed`.
+- Final local focused Spec Kit/Mesh Live suite: `323 passed`.
 - Dell migration unit/shell suite: `44 passed`; only pre-existing pytest
   cleanup permission warnings were emitted.
 - Control checkout:
