@@ -183,6 +183,17 @@ def _atomic_write(path: Path, content: str, *, mode: int) -> None:
         raise
 
 
+def _read_install_target(path: Path, *, label: str) -> str:
+    if path.is_symlink():
+        raise ProbityRuntimeError(f"refusing symlink {label}: {path}")
+    if path.exists() and not path.is_file():
+        raise ProbityRuntimeError(f"{label} is not a regular file: {path}")
+    try:
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+    except (OSError, UnicodeError) as exc:
+        raise ProbityRuntimeError(f"cannot read {label} {path}: {exc}") from exc
+
+
 def _enable_hooks_feature(content: str) -> str:
     try:
         parsed = tomllib.loads(content) if content.strip() else {}
@@ -307,6 +318,24 @@ def install_codex(
         return plan
     if not HOOK_SOURCE.is_file():
         raise ProbityRuntimeError(f"dispatcher source not found: {HOOK_SOURCE}")
+    executable = npm_prefix / "bin" / "probity"
+    python = Path("/usr/bin/python3")
+    if not python.is_file():
+        found = shutil.which("python3")
+        if found is None:
+            raise ProbityRuntimeError("python3 is required for the Probity dispatcher")
+        python = Path(found)
+    command = (
+        f"MESH_PROBITY_EXPECTED_VERSION={shlex.quote(lock['version'])} "
+        f"MESH_PROBITY_BIN={shlex.quote(str(executable))} "
+        f"{shlex.quote(str(python))} {shlex.quote(str(hook_path))}"
+    )
+    config_path = codex_home / "config.toml"
+    hooks_path = codex_home / "hooks.json"
+    config_content = _read_install_target(config_path, label="Codex config.toml")
+    hooks_content = _read_install_target(hooks_path, label="Codex hooks.json")
+    updated_config = _enable_hooks_feature(config_content)
+    updated_hooks = _merge_codex_hook(hooks_content, command=command)
     with tempfile.TemporaryDirectory(prefix="mesh-probity-install-") as temporary:
         archive = _npm_pack(lock, Path(temporary))
         npm = shutil.which("npm")
@@ -323,37 +352,21 @@ def install_codex(
             raise ProbityRuntimeError(f"cannot install pinned Probity package: {exc}") from exc
         if proc.returncode != 0:
             raise ProbityRuntimeError("npm install failed for pinned Probity package")
-    executable = npm_prefix / "bin" / "probity"
     try:
         proc = subprocess.run(
             [str(executable), "--version"],
             check=False,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ProbityRuntimeError(f"cannot verify installed Probity: {exc}") from exc
     if proc.returncode != 0 or proc.stdout.strip() != lock["version"]:
         raise ProbityRuntimeError("installed Probity version does not match the lock")
     _atomic_write(hook_path, HOOK_SOURCE.read_text(encoding="utf-8"), mode=0o755)
-    python = Path("/usr/bin/python3")
-    if not python.is_file():
-        found = shutil.which("python3")
-        if found is None:
-            raise ProbityRuntimeError("python3 is required for the Probity dispatcher")
-        python = Path(found)
-    command = (
-        f"MESH_PROBITY_EXPECTED_VERSION={shlex.quote(lock['version'])} "
-        f"MESH_PROBITY_BIN={shlex.quote(str(executable))} "
-        f"{shlex.quote(str(python))} {shlex.quote(str(hook_path))}"
-    )
-    config_path = codex_home / "config.toml"
-    hooks_path = codex_home / "hooks.json"
-    config_content = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
-    hooks_content = hooks_path.read_text(encoding="utf-8") if hooks_path.is_file() else ""
-    _atomic_write(config_path, _enable_hooks_feature(config_content), mode=0o600)
-    _atomic_write(hooks_path, _merge_codex_hook(hooks_content, command=command), mode=0o600)
+    _atomic_write(config_path, updated_config, mode=0o600)
+    _atomic_write(hooks_path, updated_hooks, mode=0o600)
     plan["installed_executable"] = str(executable)
     return plan
 

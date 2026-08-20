@@ -191,3 +191,29 @@ def test_install_plan_does_not_touch_targets(tmp_path) -> None:
     assert not codex_home.exists()
     assert not prefix.exists()
     assert not hook.exists()
+
+
+def test_install_preflights_both_codex_files_before_download(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('[features]\nhooks = false\n', encoding="utf-8")
+    (codex_home / "hooks.json").write_text("not-json\n", encoding="utf-8")
+    monkeypatch.setattr(
+        module,
+        "_npm_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("download started")),
+    )
+
+    try:
+        module.install_codex(
+            apply=True,
+            npm_prefix=tmp_path / "npm",
+            codex_home=codex_home,
+            hook_path=tmp_path / "hook.py",
+        )
+    except module.ProbityRuntimeError as exc:
+        assert "invalid Codex hooks.json" in str(exc)
+    else:
+        raise AssertionError("invalid hooks file was accepted")
+    assert tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))["features"]["hooks"] is False
