@@ -94,7 +94,7 @@ Done when:
 
 ### T003. Add guarded CLI and project upgrades
 
-Status: todo
+Status: done
 
 Depends on: T001, T002
 
@@ -111,12 +111,15 @@ Scope:
 - make non-`--apply` execution a mutation-free plan
 - refuse dirty target repositories unless an explicit future policy permits it
 - invoke only official `specify` integration commands for Claude, Codex, AGY
+- require explicit `--allow-multi-install-force` before passing the upstream
+  `--force` needed to install AGY beside another integration in v0.16.5
 - show resulting Git status and changed paths without committing them
 
 Done when:
 
 - no command accepts implicit `latest` for installation
-- `--apply` is mandatory for every filesystem or tool installation mutation
+- `--apply` is mandatory for every filesystem or tool installation mutation;
+  AGY multi-install additionally requires `--allow-multi-install-force`
 - unsupported integrations and Gemini are rejected
 - failures preserve the previous lock and report partial project changes
 - subprocess tests use fakes and never install tools on the test host

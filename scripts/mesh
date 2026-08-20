@@ -742,6 +742,8 @@ Usage:
   ./scripts/mesh speckit status [repo-path] [--json]
   ./scripts/mesh speckit capabilities [repo-path] [--json]
   ./scripts/mesh speckit update-check [--json]
+  ./scripts/mesh speckit install <version> [--apply] [--json]
+  ./scripts/mesh speckit project <init|upgrade> <repo-path> [--apply] [--json]
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
@@ -801,7 +803,7 @@ run_speckit_short() {
     exit 0
   fi
   case "$subcmd" in
-    status|capabilities|update-check)
+    status|capabilities|update-check|install|project)
       run_speckit_runtime "$@"
       exit $?
       ;;

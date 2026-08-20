@@ -318,6 +318,176 @@ def update_check(state_file: Path = DEFAULT_STATE_FILE) -> dict[str, Any]:
     return payload
 
 
+def _run_command(
+    args: Sequence[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float = 300,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(args),
+        cwd=str(cwd) if cwd else None,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _git_root(repo: Path) -> Path:
+    root = repo.expanduser().resolve()
+    if not root.is_dir():
+        raise SpeckitRuntimeError(f"project directory does not exist: {root}")
+    proc = _run_command(["git", "-C", str(root), "rev-parse", "--show-toplevel"], timeout=10)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise SpeckitRuntimeError(f"project is not a Git repository: {root}")
+    git_root = Path(proc.stdout.strip()).resolve()
+    if git_root != root:
+        raise SpeckitRuntimeError(f"project must be the exact Git repository root: {root}")
+    return root
+
+
+def _git_status(repo: Path) -> list[str]:
+    proc = _run_command(["git", "-C", str(repo), "status", "--short"], timeout=15)
+    if proc.returncode != 0:
+        raise SpeckitRuntimeError(f"cannot inspect Git status for {repo}")
+    return [line for line in proc.stdout.splitlines() if line]
+
+
+def build_install_plan(version: str, lock: dict[str, Any]) -> dict[str, Any]:
+    requested = _version_from_text(version)
+    if requested is None or version not in {requested, f"v{requested}"}:
+        raise SpeckitRuntimeError("install requires one exact semantic version")
+    if requested != lock["version"]:
+        raise SpeckitRuntimeError(
+            f"requested Spec Kit {requested} does not match lock {lock['version']}"
+        )
+    uv = shutil.which("uv") or str(Path("~/.local/bin/uv").expanduser())
+    if not Path(uv).is_file() and shutil.which("uv") is None:
+        raise SpeckitRuntimeError("uv is required to install the pinned Spec Kit CLI")
+    return {
+        "schema": "mesh.speckit.install-plan.v1",
+        "version": requested,
+        "commands": [
+            [
+                uv,
+                "tool",
+                "install",
+                "--force",
+                "specify-cli",
+                "--from",
+                f"git+https://github.com/github/spec-kit.git@v{requested}",
+            ],
+            ["specify", "check"],
+        ],
+    }
+
+
+def apply_install_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    for command in plan["commands"]:
+        proc = _run_command(command)
+        results.append({"command": command, "returncode": proc.returncode})
+        if proc.returncode != 0:
+            raise SpeckitRuntimeError(
+                f"Spec Kit install command failed ({proc.returncode}): {' '.join(command)}"
+            )
+    installed = installed_version()
+    if installed["version"] != plan["version"]:
+        raise SpeckitRuntimeError(
+            f"installed Spec Kit version {installed['version'] or 'unknown'} "
+            f"does not match {plan['version']}"
+        )
+    return {**plan, "applied": True, "results": results, "installed": installed}
+
+
+def build_project_plan(
+    action: str,
+    repo: Path,
+    lock: dict[str, Any],
+    *,
+    allow_multi_install_force: bool = False,
+) -> dict[str, Any]:
+    root = _git_root(repo)
+    status = _git_status(root)
+    if status:
+        raise SpeckitRuntimeError(
+            f"project worktree must be clean before Spec Kit {action}: {root}"
+        )
+    project = inspect_project(root, lock["integrations"])
+    manifest_exists = Path(project["manifest"]).is_file()
+    if action == "init":
+        if manifest_exists:
+            raise SpeckitRuntimeError("project is already initialized; use project upgrade")
+        if not allow_multi_install_force:
+            raise SpeckitRuntimeError(
+                "AGY multi-install in Spec Kit v0.16.5 requires explicit "
+                "--allow-multi-install-force"
+            )
+        commands = [
+            [
+                "specify",
+                "init",
+                "--here",
+                "--force",
+                "--integration",
+                "claude",
+                "--script",
+                "sh",
+                "--ignore-agent-tools",
+            ],
+            ["specify", "integration", "install", "codex"],
+            ["specify", "integration", "install", "agy", "--force"],
+            ["specify", "integration", "use", "claude"],
+        ]
+    elif action == "upgrade":
+        if not manifest_exists:
+            raise SpeckitRuntimeError("project is not initialized; use project init")
+        if project["unsupported_integrations"]:
+            raise SpeckitRuntimeError(
+                "project has unsupported active integrations: "
+                + ",".join(project["unsupported_integrations"])
+            )
+        if project["missing_integrations"]:
+            raise SpeckitRuntimeError(
+                "project is missing required integrations: "
+                + ",".join(project["missing_integrations"])
+            )
+        commands = [
+            ["specify", "integration", "upgrade", integration]
+            for integration in lock["integrations"]
+        ]
+    else:
+        raise SpeckitRuntimeError(f"unsupported project action: {action}")
+    return {
+        "schema": "mesh.speckit.project-plan.v1",
+        "action": action,
+        "repo": str(root),
+        "required_version": lock["version"],
+        "integrations": lock["integrations"],
+        "commands": commands,
+        "apply_required": True,
+    }
+
+
+def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    if shutil.which("specify") is None:
+        raise SpeckitRuntimeError("specify CLI is not installed")
+    root = Path(plan["repo"])
+    results: list[dict[str, Any]] = []
+    for command in plan["commands"]:
+        proc = _run_command(command, cwd=root)
+        results.append({"command": command, "returncode": proc.returncode})
+        if proc.returncode != 0:
+            changed = _git_status(root)
+            raise SpeckitRuntimeError(
+                f"Spec Kit project command failed ({proc.returncode}); "
+                f"partial changed paths: {', '.join(changed) or '-'}"
+            )
+    changed = _git_status(root)
+    return {**plan, "applied": True, "results": results, "changed_paths": changed}
+
+
 def _render_status(payload: dict[str, Any]) -> str:
     project = payload["project"]
     installed = payload["installed"]["version"] or "missing"
@@ -349,13 +519,38 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         command.add_argument("--json", action="store_true")
     check = sub.add_parser("update-check")
     check.add_argument("--json", action="store_true")
+    install = sub.add_parser("install")
+    install.add_argument("version")
+    install.add_argument("--apply", action="store_true")
+    install.add_argument("--json", action="store_true")
+    project = sub.add_parser("project")
+    project_sub = project.add_subparsers(dest="project_action", required=True)
+    for action in ("init", "upgrade"):
+        project_action = project_sub.add_parser(action)
+        project_action.add_argument("repo", type=Path)
+        project_action.add_argument("--apply", action="store_true")
+        project_action.add_argument("--json", action="store_true")
+        project_action.add_argument("--allow-multi-install-force", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
-        if args.command == "update-check":
+        if args.command == "install":
+            plan = build_install_plan(args.version, load_lock(args.lock_file))
+            output = apply_install_plan(plan) if args.apply else {**plan, "applied": False}
+            aligned = True
+        elif args.command == "project":
+            plan = build_project_plan(
+                args.project_action,
+                args.repo,
+                load_lock(args.lock_file),
+                allow_multi_install_force=args.allow_multi_install_force,
+            )
+            output = apply_project_plan(plan) if args.apply else {**plan, "applied": False}
+            aligned = True
+        elif args.command == "update-check":
             payload = update_check(args.state_file)
             output: Any = payload
             aligned = True
@@ -379,6 +574,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(output, indent=2, sort_keys=True))
     elif args.command == "update-check":
         print(f"Spec Kit latest={output['version']} checked_at={output['checked_at']}")
+    elif args.command in {"install", "project"}:
+        print(f"Spec Kit plan applied={'yes' if output['applied'] else 'no'}")
+        for command in output["commands"]:
+            print("  " + " ".join(command))
+        if output.get("changed_paths"):
+            print("Changed paths:")
+            for path in output["changed_paths"]:
+                print(f"  {path}")
     else:
         print(_render_status(status))
     return 0 if aligned else 1

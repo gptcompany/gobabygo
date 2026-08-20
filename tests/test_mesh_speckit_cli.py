@@ -51,6 +51,18 @@ def _project(path: Path, integrations=("claude", "codex", "agy")) -> Path:
     return path
 
 
+def _git_repo(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Test"], check=True)
+    marker = path / "README.md"
+    marker.write_text("# test\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(path), "commit", "-qm", "init"], check=True)
+    return path.resolve()
+
+
 def test_committed_lock_is_exact_and_active_providers_only() -> None:
     module = _load_module()
     lock = module.load_lock()
@@ -239,3 +251,165 @@ def test_cli_status_json_reports_unaligned_without_traceback(monkeypatch, tmp_pa
     assert rc == 1
     assert output["installed"]["available"] is False
     assert output["project"]["state"] == "invalid"
+
+
+def test_install_plan_requires_exact_locked_version(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    uv = tmp_path / "uv"
+    uv.write_text("", encoding="utf-8")
+    monkeypatch.setattr(module.shutil, "which", lambda name: str(uv) if name == "uv" else None)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="does not match lock"):
+        module.build_install_plan("0.16.6", lock)
+    with pytest.raises(module.SpeckitRuntimeError, match="exact semantic version"):
+        module.build_install_plan("latest", lock)
+
+    plan = module.build_install_plan("v0.16.5", lock)
+    assert plan["commands"][0][-1].endswith("@v0.16.5")
+
+
+def test_install_apply_stops_on_first_failure(monkeypatch) -> None:
+    module = _load_module()
+    calls: list[list[str]] = []
+    plan = {"version": "0.16.5", "commands": [["uv", "install"], ["specify", "check"]]}
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 7, stdout="", stderr="failed")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.SpeckitRuntimeError, match=r"failed \(7\)"):
+        module.apply_install_plan(plan)
+    assert calls == [["uv", "install"]]
+
+
+def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+
+    with pytest.raises(module.SpeckitRuntimeError, match="allow-multi-install-force"):
+        module.build_project_plan("init", repo, lock)
+
+    plan = module.build_project_plan(
+        "init", repo, lock, allow_multi_install_force=True
+    )
+    assert plan["commands"][0][:4] == ["specify", "init", "--here", "--force"]
+    assert plan["commands"][2] == [
+        "specify",
+        "integration",
+        "install",
+        "agy",
+        "--force",
+    ]
+    subdir = repo / "src"
+    subdir.mkdir()
+    with pytest.raises(module.SpeckitRuntimeError, match="exact Git repository root"):
+        module.build_project_plan(
+            "init", subdir, lock, allow_multi_install_force=True
+        )
+
+
+def test_project_plan_refuses_dirty_repo_before_commands(tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(module.SpeckitRuntimeError, match="worktree must be clean"):
+        module.build_project_plan(
+            "init", repo, lock, allow_multi_install_force=True
+        )
+
+
+def test_project_upgrade_rejects_missing_or_unsupported_integrations(tmp_path) -> None:
+    module = _load_module()
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    repo = _git_repo(tmp_path / "repo")
+    _project(repo, integrations=("claude", "codex"))
+    subprocess.run(["git", "-C", str(repo), "add", ".specify", ".claude", ".agents"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "speckit"], check=True)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="missing required integrations: agy"):
+        module.build_project_plan("upgrade", repo, lock)
+
+    manifest = repo / ".specify" / "integration.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["installed_integrations"] = ["claude", "codex", "agy", "gemini"]
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", str(manifest)], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "unsupported"], check=True)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="unsupported active integrations: gemini"):
+        module.build_project_plan("upgrade", repo, lock)
+
+
+def test_project_apply_reports_partial_changed_paths(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    plan = {"repo": str(repo), "commands": [["specify", "first"], ["specify", "second"]]}
+    calls = 0
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/bin/specify")
+
+    def fake_run(args, **kwargs):
+        nonlocal calls
+        if args[0] == "git":
+            return subprocess.run(args, check=False, capture_output=True, text=True, **kwargs)
+        calls += 1
+        if calls == 1:
+            (repo / "generated.txt").write_text("partial\n", encoding="utf-8")
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args, 3, stdout="", stderr="failed")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.SpeckitRuntimeError, match=r"partial changed paths: \?\? generated.txt"):
+        module.apply_project_plan(plan)
+
+
+def test_cli_install_without_apply_only_prints_plan(monkeypatch, tmp_path, capsys) -> None:
+    module = _load_module()
+    lock = _lock(tmp_path / "lock.json")
+    uv = tmp_path / "uv"
+    uv.write_text("", encoding="utf-8")
+    monkeypatch.setattr(module.shutil, "which", lambda name: str(uv) if name == "uv" else None)
+    monkeypatch.setattr(
+        module,
+        "apply_install_plan",
+        lambda _plan: pytest.fail("install executor called without --apply"),
+    )
+
+    rc = module.main(["--lock-file", str(lock), "install", "0.16.5", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload["applied"] is False
+
+
+def test_cli_project_without_apply_only_prints_plan(monkeypatch, tmp_path, capsys) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(
+        module,
+        "apply_project_plan",
+        lambda _plan: pytest.fail("project executor called without --apply"),
+    )
+
+    rc = module.main(
+        [
+            "--lock-file",
+            str(lock),
+            "project",
+            "init",
+            str(repo),
+            "--allow-multi-install-force",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload["applied"] is False

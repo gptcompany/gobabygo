@@ -70,6 +70,8 @@ def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     assert "speckit status [repo-path]" in proc.stdout
     assert "speckit capabilities [repo-path]" in proc.stdout
     assert "speckit update-check" in proc.stdout
+    assert "speckit install <version>" in proc.stdout
+    assert "speckit project <init|upgrade>" in proc.stdout
     assert "Legacy iTerm2 run options" in proc.stdout
 
 
