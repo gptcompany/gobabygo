@@ -261,7 +261,10 @@ def _legacy_project_evidence(root: Path) -> list[str]:
         entries = {path.name for path in command_root.iterdir()}
         if any(name.startswith("speckit") for name in entries):
             evidence.append(command_root.relative_to(root).as_posix() + "/speckit*")
-        elif legacy_names := sorted(entries.intersection(_LEGACY_COMMAND_NAMES)):
+        elif (
+            (legacy_names := sorted(entries.intersection(_LEGACY_COMMAND_NAMES)))
+            and (len(legacy_names) >= 2 or bool(evidence))
+        ):
             evidence.append(
                 command_root.relative_to(root).as_posix()
                 + "/{"

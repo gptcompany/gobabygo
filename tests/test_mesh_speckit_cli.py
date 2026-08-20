@@ -202,6 +202,20 @@ def test_legacy_detection_recognizes_pre_dot_specify_layout(tmp_path) -> None:
     assert result["legacy_commands"] == [".claude/commands/plan.md"]
 
 
+def test_single_generic_claude_command_does_not_mark_project_legacy(tmp_path) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    command = repo / ".claude" / "commands" / "plan.md"
+    command.parent.mkdir(parents=True)
+    command.write_text("# Custom project command\n", encoding="utf-8")
+
+    result = module.inspect_project(repo, module.ALLOWED_INTEGRATIONS)
+
+    assert result["state"] == "missing"
+    assert result["legacy_evidence"] == []
+    assert result["legacy_commands"] == [".claude/commands/plan.md"]
+
+
 def test_inspect_project_contains_unreadable_legacy_commands(
     monkeypatch, tmp_path, capsys
 ) -> None:
