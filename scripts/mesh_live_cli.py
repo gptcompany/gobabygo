@@ -31,6 +31,8 @@ DEFAULT_BOARD_LINES = 20
 DEFAULT_PEEK_LINES = 120
 DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
 DEFAULT_CODEX_RECOVERY_STATE_FILE = "~/.local/state/gobabygo/mesh-live-codex-recovery.json"
+DEFAULT_SPECKIT_UPDATE_STATE_FILE = "~/.local/state/gobabygo/speckit-update.json"
+DEFAULT_SPECKIT_LOCK_FILE = str(Path(__file__).resolve().parents[1] / "config" / "speckit.lock.json")
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
 SESSION_LIMIT_SCHEDULE_VERSION = 2
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
@@ -1855,7 +1857,45 @@ def live_tick_state_lock(path: str):
             os.close(fd)
 
 
-def _tick_wake_message(token: str) -> str:
+def load_speckit_update_notice(state_path: str, lock_path: str) -> str:
+    """Load only validated versions from Spec Kit metadata and its committed lock."""
+    state_file = Path(state_path).expanduser()
+    lock_file = Path(lock_path).expanduser()
+    try:
+        if state_file.is_symlink() or lock_file.is_symlink():
+            return ""
+        if state_file.stat().st_size > 8192 or lock_file.stat().st_size > 8192:
+            return ""
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        lock = json.loads(lock_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return ""
+    if not isinstance(state, dict) or not isinstance(lock, dict):
+        return ""
+    version_pattern = re.compile(r"^(0|[1-9][0-9]*)\.(0|[0-9]+)\.(0|[0-9]+)$")
+    latest = str(state.get("version") or "")
+    required = str(lock.get("version") or "")
+    latest_match = version_pattern.fullmatch(latest)
+    required_match = version_pattern.fullmatch(required)
+    if (
+        latest_match is None
+        or required_match is None
+        or state.get("tag") != f"v{latest}"
+        or lock.get("tag") != f"v{required}"
+    ):
+        return ""
+    latest_tuple = tuple(int(part) for part in latest_match.groups())
+    required_tuple = tuple(int(part) for part in required_match.groups())
+    if latest_tuple <= required_tuple:
+        return ""
+    return (
+        f"Spec Kit update metadata: required={required}, latest={latest}. Report this in the next "
+        "operator summary; never install or upgrade automatically."
+    )
+
+
+def _tick_wake_message(token: str, speckit_update_notice: str = "") -> str:
+    update = f" {speckit_update_notice}" if speckit_update_notice else ""
     return (
         f"MESH_LIVE_TICK id={token}: inspect authorized sessions now with mesh live board/peek. "
         "Resume coordination only when there is actionable work, verify delivery before follow-up, "
@@ -1866,11 +1906,12 @@ def _tick_wake_message(token: str) -> str:
         "Treat idle workers as reusable; activity_age alone never authorizes rotation. Report a "
         "ROTATION_CANDIDATE only with an additional verified reason, and never terminate or replace "
         "a session from this tick. "
-        "Reply TICK_IDLE when no action is needed."
+        f"Reply TICK_IDLE when no action is needed.{update}"
     )
 
 
-def _tick_session_limit_wake_message(token: str) -> str:
+def _tick_session_limit_wake_message(token: str, speckit_update_notice: str = "") -> str:
+    update = f" {speckit_update_notice}" if speckit_update_notice else ""
     return (
         f"MESH_LIVE_RESET_WAKE id={token}: the session-limit reset time shown by this "
         "Claude session has passed. Resume the interrupted request from existing context; "
@@ -1878,7 +1919,7 @@ def _tick_session_limit_wake_message(token: str) -> str:
         "hints only: completion requires the exact current marker and screen=idle in two fresh "
         "board/peek observations at least 5 seconds apart. Treat idle workers as reusable; "
         "activity_age alone never authorizes rotation, and this wake never terminates or replaces "
-        "a session."
+        f"a session.{update}"
     )
 
 
@@ -1943,6 +1984,7 @@ def execute_live_tick_actions(
     verify_delay: float,
     sleep_fn: Callable[[float], None] = time.sleep,
     persist_state: Callable[[dict[str, Any]], None] | None = None,
+    speckit_update_notice: str = "",
 ) -> tuple[list[TickActionResult], bool]:
     LiveScreenState, wait_selected, session_limit_reset, classify_screen = _load_cli_screen_api()
     observations = build_live_tick_plan(sessions, coordinator_keys, now=now)
@@ -2120,7 +2162,10 @@ def execute_live_tick_actions(
                     persist_state(state)
                 client.send(
                     fresh,
-                    _tick_session_limit_wake_message(token),
+                    _tick_session_limit_wake_message(
+                        token,
+                        speckit_update_notice if observation.coordinator else "",
+                    ),
                     enter=True,
                     expected_commands=("claude", "claude-code"),
                     allow_coordinator_wrapper=observation.coordinator,
@@ -2166,7 +2211,7 @@ def execute_live_tick_actions(
             if fresh_state != LiveScreenState.idle:
                 raise LiveReadError(f"coordinator changed to {fresh_state.value} before wake")
             token = _tick_token(now, fresh)
-            message = _tick_wake_message(token)
+            message = _tick_wake_message(token, speckit_update_notice)
             saved.update({"pane_id": fresh.pane_id, "last_wake_at": now, "last_wake_token": token})
             changed = True
             if persist_state is not None:
@@ -3286,6 +3331,18 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("MESH_LIVE_TICK_STATE", DEFAULT_TICK_STATE_FILE),
         help="Idempotency state path. No pane output is stored.",
     )
+    tick.add_argument(
+        "--speckit-state-file",
+        default=os.environ.get(
+            "MESH_SPECKIT_UPDATE_STATE", DEFAULT_SPECKIT_UPDATE_STATE_FILE
+        ),
+        help="Read-only Spec Kit release metadata written by the daily update check.",
+    )
+    tick.add_argument(
+        "--speckit-lock-file",
+        default=os.environ.get("MESH_SPECKIT_LOCK_FILE", DEFAULT_SPECKIT_LOCK_FILE),
+        help="Committed Spec Kit version lock used for update comparison.",
+    )
     tick.add_argument("--min-wake-minutes", type=int, default=25)
     tick.add_argument("--wait-retry-minutes", type=int, default=60)
     tick.add_argument("--verify-delay", type=float, default=1.0)
@@ -3441,6 +3498,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError("tick --verify-delay must be between 0 and 30 seconds")
             with live_tick_state_lock(args.state_file):
                 state = load_live_tick_state(args.state_file)
+                speckit_update_notice = load_speckit_update_notice(
+                    args.speckit_state_file,
+                    args.speckit_lock_file,
+                )
                 results, changed = execute_live_tick_actions(
                     client,
                     captured,
@@ -3452,6 +3513,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     wait_retry_minutes=args.wait_retry_minutes,
                     verify_delay=args.verify_delay,
                     persist_state=lambda value: save_live_tick_state(args.state_file, value),
+                    speckit_update_notice=speckit_update_notice,
                 )
                 if changed:
                     save_live_tick_state(args.state_file, state)

@@ -60,6 +60,7 @@ def _run_installer(env: dict[str, str], *args: str) -> subprocess.CompletedProce
 def test_cron_installer_is_idempotent_and_remove_is_scoped(tmp_path: Path) -> None:
     env, store = _fake_crontab(tmp_path)
     state = tmp_path / "state" / "tick.json"
+    speckit_state = tmp_path / "state" / "speckit.json"
     log = tmp_path / "log" / "tick.log"
     store.write_text("15 2 * * * /usr/local/bin/unrelated\n", encoding="utf-8")
     args = (
@@ -69,6 +70,8 @@ def test_cron_installer_is_idempotent_and_remove_is_scoped(tmp_path: Path) -> No
         str(MESH),
         "--state-file",
         str(state),
+        "--speckit-state-file",
+        str(speckit_state),
         "--log-file",
         str(log),
     )
@@ -84,6 +87,9 @@ def test_cron_installer_is_idempotent_and_remove_is_scoped(tmp_path: Path) -> No
     assert "*/30 * * * * MESH_LIVE_LOCAL=1" in content
     assert f"'{MESH}' live tick --apply" in content
     assert f"--state-file '{state}'" in content
+    assert "17 3 * * * MESH_SPECKIT_UPDATE_STATE=" in content
+    assert f"MESH_SPECKIT_UPDATE_STATE='{speckit_state}'" in content
+    assert f"'{MESH}' speckit update-check --json" in content
     assert f">>'{log}' 2>&1" in content
     assert log.stat().st_mode & 0o777 == 0o600
 

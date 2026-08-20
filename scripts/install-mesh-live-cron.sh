@@ -7,6 +7,7 @@ END_MARKER="# <<< gobabygo-mesh-live-tick <<<"
 INTERVAL=30
 MESH_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/mesh"
 STATE_FILE="${MESH_LIVE_TICK_STATE:-$HOME/.local/state/gobabygo/mesh-live-tick.json}"
+SPECKIT_STATE_FILE="${MESH_SPECKIT_UPDATE_STATE:-$HOME/.local/state/gobabygo/speckit-update.json}"
 LOG_FILE="${MESH_LIVE_TICK_LOG:-$HOME/.local/state/gobabygo/mesh-live-tick.log}"
 DRY_RUN=0
 REMOVE=0
@@ -15,11 +16,13 @@ usage() {
   cat <<'EOF'
 Usage:
   install-mesh-live-cron.sh [--interval MINUTES] [--mesh-script PATH]
-                            [--state-file PATH] [--log-file PATH] [--dry-run]
+                            [--state-file PATH] [--speckit-state-file PATH]
+                            [--log-file PATH] [--dry-run]
   install-mesh-live-cron.sh --remove [--dry-run]
 
 Installs one idempotent user-crontab entry for `mesh live tick --apply`, including
 exact WAIT selection and one wake after an explicitly declared session reset.
+The same managed block runs one daily metadata-only Spec Kit update check.
 No daemon, router, database, iTerm2, or root access is required.
 EOF
 }
@@ -55,6 +58,11 @@ while [[ $# -gt 0 ]]; do
       STATE_FILE="$2"
       shift 2
       ;;
+    --speckit-state-file)
+      [[ $# -ge 2 ]] || fail "--speckit-state-file requires a value"
+      SPECKIT_STATE_FILE="$2"
+      shift 2
+      ;;
     --log-file)
       [[ $# -ge 2 ]] || fail "--log-file requires a value"
       LOG_FILE="$2"
@@ -83,6 +91,7 @@ command -v crontab >/dev/null 2>&1 || fail "crontab command not found"
 if (( ! REMOVE )); then
   [[ "$MESH_SCRIPT" == /* ]] || fail "--mesh-script must be an absolute path"
   [[ "$STATE_FILE" == /* ]] || fail "--state-file must be an absolute path"
+  [[ "$SPECKIT_STATE_FILE" == /* ]] || fail "--speckit-state-file must be an absolute path"
   [[ "$LOG_FILE" == /* ]] || fail "--log-file must be an absolute path"
   [[ -x "$MESH_SCRIPT" ]] || fail "mesh script is not executable: $MESH_SCRIPT"
 fi
@@ -121,10 +130,13 @@ awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
   if (( ! REMOVE )); then
     quoted_mesh="$(quote_cron_arg "$MESH_SCRIPT")"
     quoted_state="$(quote_cron_arg "$STATE_FILE")"
+    quoted_speckit_state="$(quote_cron_arg "$SPECKIT_STATE_FILE")"
     quoted_log="$(quote_cron_arg "$LOG_FILE")"
     printf '%s\n' "$BEGIN_MARKER"
     printf '*/%s * * * * MESH_LIVE_LOCAL=1 %s live tick --apply --state-file %s >>%s 2>&1\n' \
       "$INTERVAL" "$quoted_mesh" "$quoted_state" "$quoted_log"
+    printf '17 3 * * * MESH_SPECKIT_UPDATE_STATE=%s %s speckit update-check --json >>%s 2>&1\n' \
+      "$quoted_speckit_state" "$quoted_mesh" "$quoted_log"
     printf '%s\n' "$END_MARKER"
   fi
 } >"$next"
@@ -135,7 +147,7 @@ if (( DRY_RUN )); then
 fi
 
 if (( ! REMOVE )); then
-  mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$LOG_FILE")"
+  mkdir -p "$(dirname "$STATE_FILE")" "$(dirname "$SPECKIT_STATE_FILE")" "$(dirname "$LOG_FILE")"
   touch "$LOG_FILE"
   chmod 600 "$LOG_FILE"
 fi
@@ -146,5 +158,6 @@ if (( REMOVE )); then
 else
   echo "Installed mesh live tick every ${INTERVAL} minutes."
   echo "State: $STATE_FILE"
+  echo "Spec Kit state: $SPECKIT_STATE_FILE"
   echo "Log:  $LOG_FILE"
 fi

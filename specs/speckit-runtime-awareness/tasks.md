@@ -240,7 +240,7 @@ Done when:
 
 ### T008. Add read-only automatic update awareness
 
-Status: todo
+Status: done
 
 Depends on: T001, T004
 

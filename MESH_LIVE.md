@@ -541,6 +541,14 @@ Preview or remove the managed crontab block without touching unrelated entries:
 The installer fails without rewriting the crontab when the existing crontab
 cannot be read or its managed marker block is malformed.
 
+The same managed block runs `mesh speckit update-check --json` once daily. It
+writes only validated release version, tag, timestamp, and official URL to
+`~/.local/state/gobabygo/speckit-update.json`; it never installs the CLI or
+upgrades a project. A later normal coordinator tick includes required/latest
+versions only when that tick already has another reason to wake an idle or
+post-limit coordinator. An update never creates its own wake and is never sent
+to worker panes. Reinstalling the managed block is idempotent.
+
 The default schedule gives a maximum polling delay of about 30 minutes after
 the reset and grace period. The
 state file is mode `0600` and stores hashes, timestamps, pane IDs, and delivery
