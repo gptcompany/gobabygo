@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""Inspect the pinned official Spec Kit runtime and project capabilities."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Any, Callable, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_LOCK_FILE = ROOT / "config" / "speckit.lock.json"
+DEFAULT_STATE_FILE = Path(
+    os.environ.get(
+        "MESH_SPECKIT_UPDATE_STATE",
+        "~/.local/state/gobabygo/speckit-update.json",
+    )
+).expanduser()
+RELEASE_API = "https://api.github.com/repos/github/spec-kit/releases/latest"
+ALLOWED_INTEGRATIONS = ("claude", "codex", "agy")
+INTEGRATION_SKILL_ROOTS = {
+    "claude": Path(".claude/skills"),
+    "codex": Path(".agents/skills"),
+    "agy": Path(".agents/skills"),
+}
+_VERSION = re.compile(r"(?<![0-9])v?(0|[1-9][0-9]*)\.(0|[0-9]+)\.(0|[0-9]+)(?![0-9])")
+_SAFE_INTEGRATION = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+_SAFE_CAPABILITY = re.compile(r"^[a-z][a-z0-9.-]{0,79}$")
+_MAX_RELEASE_BYTES = 1024 * 1024
+
+
+class SpeckitRuntimeError(RuntimeError):
+    pass
+
+
+def _version_from_text(value: str) -> str | None:
+    match = _VERSION.search(str(value or ""))
+    if match is None:
+        return None
+    return ".".join(match.groups())
+
+
+def _version_tuple(value: str | None) -> tuple[int, int, int] | None:
+    version = _version_from_text(str(value or ""))
+    if version is None:
+        return None
+    return tuple(int(item) for item in version.split("."))  # type: ignore[return-value]
+
+
+def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise SpeckitRuntimeError(f"{label} not found: {path}") from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SpeckitRuntimeError(f"cannot read {label} {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SpeckitRuntimeError(f"{label} must contain a JSON object: {path}")
+    return payload
+
+
+def load_lock(path: Path = DEFAULT_LOCK_FILE) -> dict[str, Any]:
+    payload = _load_json_object(path.resolve(), label="Spec Kit lock")
+    version = _version_from_text(str(payload.get("version", "")))
+    tag_version = _version_from_text(str(payload.get("tag", "")))
+    integrations = payload.get("integrations")
+    if payload.get("schema") != 1 or version is None or tag_version != version:
+        raise SpeckitRuntimeError("invalid Spec Kit lock schema, version, or tag")
+    if integrations != list(ALLOWED_INTEGRATIONS):
+        raise SpeckitRuntimeError(
+            "Spec Kit lock integrations must be exactly claude, codex, agy"
+        )
+    return {
+        "schema": 1,
+        "version": version,
+        "tag": f"v{version}",
+        "source": str(payload.get("source", "")),
+        "integrations": list(ALLOWED_INTEGRATIONS),
+    }
+
+
+def installed_version(
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Any]:
+    executable = shutil.which("specify")
+    if executable is None:
+        return {"available": False, "executable": None, "version": None, "error": None}
+    try:
+        proc = runner(
+            [executable, "version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "available": True,
+            "executable": executable,
+            "version": None,
+            "error": str(exc),
+        }
+    output = f"{proc.stdout}\n{proc.stderr}"
+    version = _version_from_text(output) if proc.returncode == 0 else None
+    error = None
+    if version is None:
+        error = f"specify version failed with exit {proc.returncode}"
+    return {
+        "available": True,
+        "executable": executable,
+        "version": version,
+        "error": error,
+    }
+
+
+def _manifest_integrations(payload: dict[str, Any]) -> tuple[list[str], str | None]:
+    raw = payload.get("installed_integrations")
+    installed: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            value = str(item or "").strip()
+            if _SAFE_INTEGRATION.fullmatch(value) and value not in installed:
+                installed.append(value)
+    default = str(payload.get("default_integration") or payload.get("integration") or "").strip()
+    if not _SAFE_INTEGRATION.fullmatch(default):
+        default = ""
+    if default and default not in installed:
+        installed.insert(0, default)
+    return installed, default or None
+
+
+def _skill_capabilities(root: Path) -> list[str]:
+    if not root.is_dir():
+        return []
+    capabilities: list[str] = []
+    for skill in sorted(root.glob("speckit-*/SKILL.md")):
+        name = skill.parent.name.removeprefix("speckit-").replace("-", ".")
+        if _SAFE_CAPABILITY.fullmatch(name) and name not in capabilities:
+            capabilities.append(name)
+    return capabilities
+
+
+def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[str, Any]:
+    root = repo.expanduser().resolve()
+    manifest_path = root / ".specify" / "integration.json"
+    result: dict[str, Any] = {
+        "root": str(root),
+        "manifest": str(manifest_path),
+        "state": "missing",
+        "default_integration": None,
+        "installed_integrations": [],
+        "missing_integrations": list(required_integrations),
+        "unsupported_integrations": [],
+        "capabilities": {},
+        "enabled_capabilities": [],
+        "error": None,
+    }
+    if not root.is_dir():
+        result["state"] = "invalid"
+        result["error"] = "project directory does not exist"
+        return result
+    try:
+        payload = _load_json_object(manifest_path, label="Spec Kit integration manifest")
+    except SpeckitRuntimeError as exc:
+        if manifest_path.exists():
+            result["state"] = "invalid"
+            result["error"] = str(exc)
+        return result
+
+    installed, default = _manifest_integrations(payload)
+    required = list(required_integrations)
+    missing = [item for item in required if item not in installed]
+    unsupported = [item for item in installed if item not in ALLOWED_INTEGRATIONS]
+    capabilities: dict[str, list[str]] = {}
+    for integration in required:
+        if integration not in installed:
+            capabilities[integration] = []
+            continue
+        capabilities[integration] = _skill_capabilities(
+            root / INTEGRATION_SKILL_ROOTS[integration]
+        )
+    enabled_sets = [set(capabilities[item]) for item in required if item in installed]
+    enabled = sorted(set.intersection(*enabled_sets)) if enabled_sets and not missing else []
+    has_empty = any(not capabilities[item] for item in required if item in installed)
+
+    if unsupported:
+        state = "unsupported"
+    elif missing or has_empty:
+        state = "partial"
+    else:
+        state = "aligned"
+    result.update(
+        {
+            "state": state,
+            "default_integration": default,
+            "installed_integrations": installed,
+            "missing_integrations": missing,
+            "unsupported_integrations": unsupported,
+            "capabilities": capabilities,
+            "enabled_capabilities": enabled,
+        }
+    )
+    return result
+
+
+def _load_cached_release(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = _load_json_object(path, label="Spec Kit update state")
+    except SpeckitRuntimeError:
+        return None
+    version = _version_from_text(str(payload.get("version", "")))
+    tag = str(payload.get("tag", ""))
+    if version is None or tag != f"v{version}":
+        return None
+    return {
+        "version": version,
+        "tag": tag,
+        "published_at": str(payload.get("published_at", ""))[:40],
+        "html_url": str(payload.get("html_url", ""))[:300],
+        "checked_at": str(payload.get("checked_at", ""))[:40],
+    }
+
+
+def build_status(
+    repo: Path,
+    *,
+    lock_file: Path = DEFAULT_LOCK_FILE,
+    state_file: Path = DEFAULT_STATE_FILE,
+) -> dict[str, Any]:
+    lock = load_lock(lock_file)
+    installed = installed_version()
+    cached = _load_cached_release(state_file)
+    project = inspect_project(repo, lock["integrations"])
+    latest = cached["version"] if cached else None
+    latest_tuple = _version_tuple(latest)
+    required_tuple = _version_tuple(lock["version"])
+    return {
+        "schema": "mesh.speckit.status.v1",
+        "required_version": lock["version"],
+        "installed": installed,
+        "latest_known_version": latest,
+        "update_available": bool(
+            latest_tuple and required_tuple and latest_tuple > required_tuple
+        ),
+        "runtime_aligned": installed["version"] == lock["version"],
+        "project": project,
+        "aligned": installed["version"] == lock["version"] and project["state"] == "aligned",
+    }
+
+
+def _fetch_latest_release() -> dict[str, str]:
+    request = Request(
+        RELEASE_API,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "gobabygo-speckit-check"},
+    )
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310 - fixed HTTPS endpoint
+            raw = response.read(_MAX_RELEASE_BYTES + 1)
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise SpeckitRuntimeError(f"Spec Kit update check failed: {exc}") from exc
+    if len(raw) > _MAX_RELEASE_BYTES:
+        raise SpeckitRuntimeError("Spec Kit release response exceeds size limit")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise SpeckitRuntimeError(f"invalid Spec Kit release response: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SpeckitRuntimeError("invalid Spec Kit release response shape")
+    version = _version_from_text(str(payload.get("tag_name", "")))
+    if version is None:
+        raise SpeckitRuntimeError("Spec Kit release response has no valid tag")
+    url = str(payload.get("html_url", ""))
+    if not url.startswith("https://github.com/github/spec-kit/releases/tag/"):
+        raise SpeckitRuntimeError("Spec Kit release response has an unexpected URL")
+    return {
+        "version": version,
+        "tag": f"v{version}",
+        "published_at": str(payload.get("published_at", ""))[:40],
+        "html_url": url[:300],
+    }
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path = path.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.is_symlink():
+        raise SpeckitRuntimeError(f"refusing symlink update state: {path}")
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def update_check(state_file: Path = DEFAULT_STATE_FILE) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    release = _fetch_latest_release()
+    payload = {**release, "checked_at": datetime.now(timezone.utc).isoformat()}
+    _atomic_write_json(state_file, payload)
+    return payload
+
+
+def _render_status(payload: dict[str, Any]) -> str:
+    project = payload["project"]
+    installed = payload["installed"]["version"] or "missing"
+    latest = payload["latest_known_version"] or "unknown"
+    capabilities = ",".join(project["enabled_capabilities"]) or "-"
+    integrations = ",".join(project["installed_integrations"]) or "-"
+    return "\n".join(
+        [
+            "Spec Kit",
+            f"required={payload['required_version']}",
+            f"installed={installed}",
+            f"latest_known={latest}",
+            f"project={project['state']}",
+            f"integrations={integrations}",
+            f"capabilities={capabilities}",
+            f"aligned={'yes' if payload['aligned'] else 'no'}",
+        ]
+    )
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--lock-file", type=Path, default=DEFAULT_LOCK_FILE)
+    parser.add_argument("--state-file", type=Path, default=DEFAULT_STATE_FILE)
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("status", "capabilities"):
+        command = sub.add_parser(name)
+        command.add_argument("repo", nargs="?", type=Path, default=Path.cwd())
+        command.add_argument("--json", action="store_true")
+    check = sub.add_parser("update-check")
+    check.add_argument("--json", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parse_args(argv)
+    try:
+        if args.command == "update-check":
+            payload = update_check(args.state_file)
+            output: Any = payload
+            aligned = True
+        else:
+            status = build_status(
+                args.repo,
+                lock_file=args.lock_file,
+                state_file=args.state_file,
+            )
+            output = status if args.command == "status" else {
+                "schema": "mesh.speckit.capabilities.v1",
+                "required_version": status["required_version"],
+                "runtime_aligned": status["runtime_aligned"],
+                "project": status["project"],
+            }
+            aligned = status["aligned"]
+    except SpeckitRuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(output, indent=2, sort_keys=True))
+    elif args.command == "update-check":
+        print(f"Spec Kit latest={output['version']} checked_at={output['checked_at']}")
+    else:
+        print(_render_status(status))
+    return 0 if aligned else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

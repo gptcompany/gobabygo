@@ -41,7 +41,7 @@ Done when:
 
 ### T001. Add a pinned Spec Kit runtime model
 
-Status: todo
+Status: done
 
 Depends on: T000
 
