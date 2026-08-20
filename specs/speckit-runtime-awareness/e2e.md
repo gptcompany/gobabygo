@@ -95,3 +95,39 @@ Reviewed range: `d1b64d1..11d8c16`
 - Gobabygo runtime dry-run: 42 additions and no collisions or replacements.
 - UTXOracle, CCXT, and Nautilus currently have dirty worktrees and must not be
   migrated until their active changes are resolved and committed.
+
+## Migration Hardening Addendum
+
+Date: 2026-08-20
+Implementation range: `a93425d..917912e`
+
+### Validation
+
+- Final local focused Spec Kit/Mesh Live suite: `385 passed`.
+- Dell focused CLI/shell/docs suite: `72 passed`; only the pre-existing pytest
+  cleanup permission warnings under `/tmp` were emitted.
+- Final control checkout:
+  `/data/sata/1TB/gobabygo-speckit-fixes-e2e-917912e8fccd1b1fcc1fc8c77dc73dde84e4a699`.
+- Final historical canary:
+  `/data/sata/1TB/speckit-historical-canary-917912e8fccd1b1fcc1fc8c77dc73dde84e4a699`.
+- The real pinned `specify 0.16.5` migration transitioned the canary from
+  `legacy` to `aligned`, installed Claude/Codex/AGY integrations, preserved the
+  historical constitution byte-for-byte, retained the legacy Claude command,
+  and left the control checkout clean.
+- Planning and apply bind generated paths to content digests while normalizing
+  only valid allowlisted timestamp fields in upstream metadata.
+- Source and target symlink components, ignored generated output, concurrent
+  apply, project drift, ambiguous constitutions, and malformed metadata fail
+  closed. Rollback remains protected from SIGINT/SIGTERM before the signal is
+  re-delivered under the restored handler.
+
+### Review Chain
+
+- Claude reviewed `a93425d..fc0e332` and reported one high, five medium, and
+  bounded low findings. Each correction was committed separately.
+- A fresh read-only Codex review of the corrected range found one remaining
+  medium issue in deferred signal exit semantics.
+- The final read-only review of `0ee4691..917912e` reported no findings and
+  verdict `ACCEPTABLE_TO_CLOSE`; its checkout remained clean.
+- A second Claude pass could not run before closure because the account was
+  rate-limited until 21:40 Asia/Bangkok. No pass was claimed for that attempt.

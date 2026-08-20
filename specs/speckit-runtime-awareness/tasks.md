@@ -366,6 +366,30 @@ Done when:
 - runtime drift, concurrent repo changes, and skill collisions fail closed
 - migration behavior and residual provider smoke gaps are recorded
 
+### T012. Harden project migration after external review
+
+Status: done
+
+Depends on: T011
+
+Scope:
+
+- make init/migrate rollback durable across filesystem failures and signals
+- serialize apply and upgrade operations per repository
+- bind plans to generated content while allowing only validated timestamp drift
+- reject source/target symlink escapes and ignored generated output
+- recognize historical layouts without classifying one generic command as Spec Kit
+- report retained commands and ambiguous dual constitutions explicitly
+- normalize process, filesystem, and project-inspection failures
+- rerun local and Dell canaries and independent read-only review
+
+Done when:
+
+- no unresolved high or medium review findings remain
+- local and Dell focused suites pass
+- a real historical Dell canary reaches aligned state without content loss
+- final reviewer checkout and control checkout remain clean
+
 ## Plan Review
 
 Verdict: approved for incremental implementation after the following corrections.
