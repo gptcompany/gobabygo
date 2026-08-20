@@ -292,6 +292,23 @@ def _npm_pack(lock: dict[str, Any], destination: Path) -> Path:
     return archive
 
 
+def _version_at(executable: Path) -> str | None:
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        return None
+    try:
+        proc = subprocess.run(
+            [str(executable), "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = _VERSION.search(f"{proc.stdout}\n{proc.stderr}")
+    return ".".join(match.groups()) if proc.returncode == 0 and match else None
+
+
 def install_codex(
     *,
     apply: bool,
@@ -336,38 +353,32 @@ def install_codex(
     hooks_content = _read_install_target(hooks_path, label="Codex hooks.json")
     updated_config = _enable_hooks_feature(config_content)
     updated_hooks = _merge_codex_hook(hooks_content, command=command)
-    with tempfile.TemporaryDirectory(prefix="mesh-probity-install-") as temporary:
-        archive = _npm_pack(lock, Path(temporary))
-        npm = shutil.which("npm")
-        assert npm is not None
-        try:
-            proc = subprocess.run(
-                [npm, "install", "--global", "--prefix", str(npm_prefix), str(archive)],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise ProbityRuntimeError(f"cannot install pinned Probity package: {exc}") from exc
-        if proc.returncode != 0:
-            raise ProbityRuntimeError("npm install failed for pinned Probity package")
-    try:
-        proc = subprocess.run(
-            [str(executable), "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ProbityRuntimeError(f"cannot verify installed Probity: {exc}") from exc
-    if proc.returncode != 0 or proc.stdout.strip() != lock["version"]:
+    runtime_action = "reused"
+    if _version_at(executable) != lock["version"]:
+        runtime_action = "installed"
+        with tempfile.TemporaryDirectory(prefix="mesh-probity-install-") as temporary:
+            archive = _npm_pack(lock, Path(temporary))
+            npm = shutil.which("npm")
+            assert npm is not None
+            try:
+                proc = subprocess.run(
+                    [npm, "install", "--global", "--prefix", str(npm_prefix), str(archive)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ProbityRuntimeError(f"cannot install pinned Probity package: {exc}") from exc
+            if proc.returncode != 0:
+                raise ProbityRuntimeError("npm install failed for pinned Probity package")
+    if _version_at(executable) != lock["version"]:
         raise ProbityRuntimeError("installed Probity version does not match the lock")
     _atomic_write(hook_path, HOOK_SOURCE.read_text(encoding="utf-8"), mode=0o755)
     _atomic_write(config_path, updated_config, mode=0o600)
     _atomic_write(hooks_path, updated_hooks, mode=0o600)
     plan["installed_executable"] = str(executable)
+    plan["runtime_action"] = runtime_action
     return plan
 
 

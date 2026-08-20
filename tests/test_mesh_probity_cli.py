@@ -217,3 +217,32 @@ def test_install_preflights_both_codex_files_before_download(monkeypatch, tmp_pa
     else:
         raise AssertionError("invalid hooks file was accepted")
     assert tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))["features"]["hooks"] is False
+
+
+def test_install_reuses_exact_runtime_and_updates_hook(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    prefix = tmp_path / "npm"
+    executable = prefix / "bin" / "probity"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\nprintf '1.10.0\\n'\n", encoding="utf-8")
+    executable.chmod(0o755)
+    monkeypatch.setattr(
+        module,
+        "_npm_pack",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("download started")),
+    )
+    codex_home = tmp_path / "codex"
+    hook = tmp_path / "lib" / "hook.py"
+
+    result = module.install_codex(
+        apply=True,
+        npm_prefix=prefix,
+        codex_home=codex_home,
+        hook_path=hook,
+    )
+
+    assert result["runtime_action"] == "reused"
+    assert hook.read_text(encoding="utf-8") == module.HOOK_SOURCE.read_text(encoding="utf-8")
+    command = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert "MESH_PROBITY_EXPECTED_VERSION=1.10.0" in command
+    assert f"MESH_PROBITY_BIN={executable}" in command
