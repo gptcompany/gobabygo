@@ -1446,6 +1446,20 @@ def test_auto_approval_choice_ignores_plain_screen():
     assert module._auto_approval_choice("Type your message") == ("", "")
 
 
+def test_codex_needs_submit_retry_when_prompt_is_still_pending():
+    module = _load_module()
+    screen = "› Reply with exactly PRESIDENT_ACK.\n  gpt-5.4 high · /tmp/demo"
+
+    assert module._codex_needs_submit_retry(screen, "Reply with exactly PRESIDENT_ACK.") is True
+
+
+def test_codex_needs_submit_retry_skips_when_activity_is_visible():
+    module = _load_module()
+    screen = "› Reply with exactly PRESIDENT_ACK.\n• PRESIDENT_ACK\n  gpt-5.4 high · /tmp/demo"
+
+    assert module._codex_needs_submit_retry(screen, "Reply with exactly PRESIDENT_ACK.") is False
+
+
 def test_gemini_screen_ready_requires_no_queue_warning():
     module = _load_module()
 
@@ -2275,3 +2289,14 @@ def test_send_line_chunks_long_text_before_enter():
         module.SEND_TEXT_CHUNK_CHARS,
         7,
     ]
+
+
+def test_send_line_retries_enter_once_for_pending_codex_prompt():
+    module = _load_module()
+    session = _FakeSession(role="president", repo="/media/sam/1TB/demo", marked=True)
+    session.variables["session.badge"] = "mesh:president (spawn:codex) | demo"
+    session.screen = _FakeScreen(["› Reply with exactly PRESIDENT_ACK.", "  gpt-5.4 high · /tmp/demo"])
+
+    asyncio.run(module._send_line(session, "Reply with exactly PRESIDENT_ACK."))
+
+    assert session.sent == ["Reply with exactly PRESIDENT_ACK.", "\r", "\r"]

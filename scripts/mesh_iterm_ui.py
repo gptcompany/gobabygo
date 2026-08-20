@@ -24,6 +24,7 @@ import os
 import platform
 import plistlib
 import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -420,6 +421,19 @@ def _router_post_json(router_url: str, auth_token: str, path: str, payload: dict
         return json.load(resp)
 
 
+def _router_available(router_url: str, auth_token: str, timeout_s: float = 2.0) -> bool:
+    if not router_url:
+        return False
+    req = Request(router_url.rstrip("/") + "/health")
+    if auth_token:
+        req.add_header("Authorization", f"Bearer {auth_token}")
+    try:
+        with urlopen(req, timeout=max(0.1, timeout_s)) as resp:
+            return 200 <= int(getattr(resp, "status", 200)) < 300
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+        return False
+
+
 def _router_has_live_ui_group(router_url: str, auth_token: str, ui_group_id: str) -> bool | None:
     if not router_url or not auth_token or not ui_group_id:
         return False
@@ -589,13 +603,13 @@ def _load_ui_role_rules(config_path: str | None = None) -> dict[str, dict[str, o
 
 def _default_remote_init_for_role(role: str) -> str:
     defaults = {
-        "boss": "ccs gemini",
-        "president": "ccs gemini",
-        "lead": "ccs gemini",
-        "worker-claude": "ccs work-claude",
-        "worker-codex": "ccs codex",
-        "worker-gemini": "ccs gemini",
-        "verifier": "ccs gemini",
+        "boss": "claude",
+        "president": "codex",
+        "lead": "codex",
+        "worker-claude": "claude",
+        "worker-codex": "codex",
+        "worker-gemini": "gemini",
+        "verifier": "codex",
     }
     return defaults.get(role, "")
 
@@ -615,6 +629,13 @@ def _default_target_account_for_provider(provider: str) -> str:
     if provider == "claude":
         return "work-claude"
     return provider
+
+
+def _resolved_target_account_for_role(role: str, rule: dict[str, str], provider: str) -> str:
+    target_account = rule.get("target_account", "").strip()
+    if target_account:
+        return target_account
+    return _default_target_account_for_provider(provider)
 
 
 def _read_text_if_exists(path: Path) -> str:
@@ -759,6 +780,8 @@ def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
                 f"{workflow_policy} "
                 "The operator should talk only to you. Do not tell the operator to run mesh commands or manually message other panes. "
                 "The runtime may auto-relay your response summary to president after you answer; assume that relay path exists. "
+                "If you need to force an explicit manual message to president in this local UI group, use the absolute command "
+                f"`{mesh_script} term exec {cfg.repo} president \"<message>\"`. "
                 "Do not enter planning mode before you have given a concise answer suitable for president to coordinate from when delegation is possible. "
                 "Do not inspect files, run implementation steps, or start solving the task yourself before president has enough context to act, unless the operator explicitly asks for boss-only analysis. "
                 "Keep operator-facing updates concise. Only interrupt the operator for confirmations, blocking ambiguity, or corrections. "
@@ -785,10 +808,10 @@ def _ui_role_bootstrap_prompt(cfg: UiConfig, role: str, target_cli: str) -> str:
                 f"{workflow_policy} "
                 "Do not mention lead, workers, or verifier. They are not active in this test group. "
                 "The runtime may auto-relay your response summary back to boss after each reply; assume that return path exists. "
-                "When you need an explicit manual message to boss, reply back through the mesh bus. "
-                "Always use the absolute repo command "
-                f"`{mesh_script} send boss \"<message>\"` "
-                "instead of relying on `mesh` being in PATH. "
+                "When you report a substantive execution update back to boss, add a dedicated final line that starts with "
+                "`PRESIDENT_UPDATE:` followed by one concise sentence. Use that tag only for real progress, findings, or completion updates, not for acknowledgements or clarifying questions. "
+                "When you need an explicit manual message to boss in this local UI group, use the absolute repo command "
+                f"`{mesh_script} term exec {cfg.repo} boss \"<message>\"`. "
                 "Do not inspect files, create plans, or start implementation unless boss explicitly asks you to do that. "
                 "Keep replies concise and stay in this interactive session. Do not exit."
             )
@@ -842,7 +865,7 @@ def _resolve_role_task_target(role: str) -> tuple[str, str]:
     provider = _resolved_provider_for_role(role, rule)
     if not provider:
         provider = "gemini"
-    target_account = rule.get("target_account", "").strip() or _default_target_account_for_provider(provider)
+    target_account = _resolved_target_account_for_role(role, rule, provider)
     return provider, target_account
 
 
@@ -895,7 +918,84 @@ def _role_relay_config(role: str) -> dict[str, object]:
     return config
 
 
+def _local_ui_ws_host() -> str:
+    return os.environ.get("MESH_WS_HOST", "").strip()
+
+
+def _local_ui_ws_host_is_local() -> bool:
+    host = _local_ui_ws_host()
+    if not host:
+        return False
+    target = host.split("@", 1)[-1].split(":", 1)[0].strip().lower()
+    return target in {"localhost", "127.0.0.1"}
+
+
+def _stable_python_for_relay_proxy() -> str:
+    return shutil.which("python3") or shutil.which("python") or sys.executable
+
+
+def _wrap_local_ui_command_with_relay_proxy(
+    child_command: str,
+    *,
+    role: str,
+    repo: str,
+    ui_group_id: str,
+) -> str:
+    if not child_command.strip() or not ui_group_id.strip():
+        return child_command
+    if role != "boss":
+        return child_command
+    if not _local_ui_ws_host_is_local():
+        return child_command
+
+    relay = _role_relay_config(role)
+    if not relay:
+        return child_command
+    target_role = str(relay.get("target_role", "")).strip()
+    if not target_role:
+        return child_command
+
+    mode = str(relay.get("mode", "response_summary")).strip() or "response_summary"
+    if mode == "router_relay":
+        mode = "response_summary"
+    if mode not in {"prompt_submit", "response_summary"}:
+        return child_command
+
+    command = [
+        shlex.quote(_stable_python_for_relay_proxy()),
+        shlex.quote(str(_repo_root() / "scripts" / "mesh_prompt_relay_proxy.py")),
+        "--mode",
+        shlex.quote(mode),
+        "--transport",
+        "term_exec",
+        "--target-role",
+        shlex.quote(target_role),
+        "--target-repo",
+        shlex.quote(repo),
+        "--ui-group-id",
+        shlex.quote(ui_group_id),
+        "--mesh-script",
+        shlex.quote(str(_repo_root() / "scripts" / "mesh")),
+        "--source-role",
+        shlex.quote(role),
+    ]
+    if str(relay.get("ignore_slash_commands", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        command.append("--ignore-slash-commands")
+    message_prefix = str(relay.get("message_prefix", "")).strip()
+    if message_prefix:
+        command.extend(["--message-prefix", shlex.quote(message_prefix)])
+    if str(relay.get("passthrough_to_child", "true")).strip().lower() in {"0", "false", "no", "off"}:
+        command.append("--no-child-passthrough")
+    local_ack = str(relay.get("local_ack", "")).strip()
+    if local_ack:
+        command.extend(["--local-ack", shlex.quote(local_ack)])
+    command.extend(["--child-command", shlex.quote(child_command)])
+    return " ".join(command)
+
+
 def _provider_remote_init_for_role(role: str, rule: dict[str, str]) -> str:
+    if os.environ.get("MESH_PROVIDER_RUNTIME_CONFIG") is None:
+        return ""
     provider = os.environ.get("MESH_UI_PROVIDER_OVERRIDE", "").strip() or rule.get("provider", "").strip()
     if not provider and role.startswith("worker-"):
         provider = role.split("-", 1)[1].strip()
@@ -908,12 +1008,7 @@ def _provider_remote_init_for_role(role: str, rule: dict[str, str]) -> str:
     if not template:
         return ""
 
-    target_account = rule.get("target_account", "").strip()
-    if not target_account:
-        if provider == "claude":
-            target_account = "work-claude"
-        else:
-            target_account = provider
+    target_account = _resolved_target_account_for_role(role, rule, provider)
 
     command = template.format(
         target_account=target_account,
@@ -923,6 +1018,29 @@ def _provider_remote_init_for_role(role: str, rule: dict[str, str]) -> str:
     if not command:
         return ""
     return command
+
+
+def _native_ui_remote_init_for_role(role: str, rule: dict[str, str]) -> str:
+    provider = _resolved_provider_for_role(role, rule)
+    if not provider:
+        provider = {
+            "boss": "claude",
+            "president": "codex",
+            "lead": "codex",
+            "verifier": "codex",
+        }.get(role, "")
+    if not provider:
+        return ""
+
+    candidates = {
+        "claude": ["claude"],
+        "codex": ["codex"],
+        "gemini": ["gemini"],
+    }.get(provider, [])
+    for candidate in candidates:
+        if shutil.which(candidate):
+            return candidate
+    return ""
 
 
 def _default_command_for_role(role: str, repo: str, repo_name: str) -> str:
@@ -1484,6 +1602,15 @@ def _command_for_role(
     live_remote_init: str = "",
 ) -> str:
     effective_provider = provider
+    shell_env: list[str] = []
+
+    for key, value in (
+        ("MESH_WS_HOST", os.environ.get("MESH_WS_HOST", "").strip()),
+        ("MESH_WS_REPO_BASE", os.environ.get("MESH_WS_REPO_BASE", "").strip()),
+        ("MESH_CONTROL_REPO", os.environ.get("MESH_CONTROL_REPO", "").strip() or str(_repo_root())),
+    ):
+        if value:
+            shell_env.extend(["env" if not shell_env else "", f"{key}={shlex.quote(value)}"])
 
     def _wrap_custom_command(command: str) -> str:
         if not command:
@@ -1519,6 +1646,7 @@ def _command_for_role(
     rule = rules.get(role, {})
     if not effective_provider:
         effective_provider = _resolved_provider_for_role(role, rule) or "gemini"
+    effective_target_account = _resolved_target_account_for_role(role, rule, effective_provider)
     template = rule.get("command_template", "").strip()
     if template:
         return _wrap_custom_command(
@@ -1534,12 +1662,14 @@ def _command_for_role(
         live_remote_init
         or rule.get("remote_init", "").strip()
         or _provider_remote_init_for_role(role, rule)
+        or _native_ui_remote_init_for_role(role, rule)
         or _default_remote_init_for_role(role)
     )
     helper = _repo_root() / "scripts" / "mesh_ui_role_shell.sh"
     live_attach_mode = "pre_resolved" if live_remote_init and launch_mode == "attach" else "auto"
     return " ".join(
         [
+            *[item for item in shell_env if item],
             shlex.quote(str(helper)),
             shlex.quote(role),
             shlex.quote(repo),
@@ -1551,6 +1681,7 @@ def _command_for_role(
             shlex.quote(launch_mode),
             shlex.quote(effective_provider),
             shlex.quote(session_id),
+            shlex.quote(effective_target_account),
         ]
     )
 
@@ -1596,6 +1727,89 @@ async def _mark_mesh_ui_sessions(sessions: list[Any], cfg: UiConfig, roles: list
             await session.async_set_variable("user.mesh_ui_group_id", cfg.ui_group_id)
         except Exception:
             continue
+
+
+def _start_local_auto_relays(cfg: UiConfig) -> None:
+    if not _local_ui_ws_host_is_local():
+        return
+    if "boss" not in cfg.roles or "president" not in cfg.roles:
+        return
+
+    watcher = _repo_root() / "scripts" / "mesh_lite_auto_relay.py"
+    if not watcher.is_file():
+        return
+    rules = _load_ui_role_rules()
+    president_rule = rules.get("president", {})
+    president_provider = _resolved_provider_for_role("president", president_rule) or "codex"
+
+    try:
+        common = {
+            "cwd": str(_repo_root()),
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "start_new_session": True,
+        }
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(watcher),
+                "--project",
+                cfg.repo,
+                "--source-mode",
+                "transcript",
+                "--source-role",
+                "boss",
+                "--target-role",
+                "president",
+                "--ui-group-id",
+                cfg.ui_group_id,
+            ],
+            **common,
+        )
+        if president_provider == "codex":
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(watcher),
+                    "--project",
+                    cfg.repo,
+                    "--source-mode",
+                    "screen",
+                    "--source-role",
+                    "president",
+                    "--target-role",
+                    "boss",
+                    "--ui-group-id",
+                    cfg.ui_group_id,
+                    "--require-prefix",
+                    "PRESIDENT_UPDATE:",
+                    "--require-activity",
+                ],
+                **common,
+            )
+        else:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(watcher),
+                    "--project",
+                    cfg.repo,
+                    "--source-mode",
+                    "screen",
+                    "--source-role",
+                    "president",
+                    "--target-role",
+                    "boss",
+                    "--ui-group-id",
+                    cfg.ui_group_id,
+                    "--require-prefix",
+                    "PRESIDENT_UPDATE:",
+                ],
+                **common,
+            )
+    except OSError:
+        return
 
 
 async def _close_tab(tab) -> None:
@@ -1651,10 +1865,15 @@ async def _launch_layout(connection, cfg: UiConfig) -> None:
         await _mark_mesh_ui_sessions(sessions, cfg, roles)
         tab_surfaces.append((sessions, roles))
 
+    _start_local_auto_relays(cfg)
+
     router_url, auth_token = _load_router_env()
-    session_pairs = _fetch_live_session_pairs(router_url, auth_token) if cfg.attach_live else []
+    attach_live = bool(cfg.attach_live and _router_available(router_url, auth_token))
+    if cfg.attach_live and not attach_live:
+        print("WARNING: router unavailable; falling back to direct role shells.")
+    session_pairs = _fetch_live_session_pairs(router_url, auth_token) if attach_live else []
     launch_plans = _build_role_launch_plans(cfg, session_pairs)
-    if cfg.attach_live:
+    if attach_live:
         launch_plans = _spawn_missing_agent_role_plans(
             cfg,
             launch_plans,

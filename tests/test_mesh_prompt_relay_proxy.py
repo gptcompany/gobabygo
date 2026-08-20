@@ -75,6 +75,47 @@ def test_relay_prompt_uses_mesh_send(monkeypatch, tmp_path):
     ]
 
 
+def test_relay_prompt_uses_term_exec_transport(monkeypatch, tmp_path):
+    module = _load_module()
+    mesh_script = tmp_path / "mesh"
+    mesh_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    mesh_script.chmod(0o755)
+    calls = {}
+
+    def fake_run(command, **kwargs):
+        calls["command"] = command
+        calls["kwargs"] = kwargs
+        class Result:
+            returncode = 0
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    args = module.argparse.Namespace(
+        mesh_script=str(mesh_script),
+        transport="term_exec",
+        target_role="president",
+        target_repo="/tmp/gbg-snake-proof",
+        ui_group_id="demo-ui-1",
+        source_role="boss",
+        message_prefix="",
+        ignore_slash_commands=True,
+        child_command="claude",
+    )
+
+    module._relay_prompt(args, "boss summary")
+
+    assert calls["command"] == [
+        str(mesh_script),
+        "term",
+        "exec",
+        "/tmp/gbg-snake-proof",
+        "president",
+        "boss summary",
+        "--ui-group-id",
+        "demo-ui-1",
+    ]
+
+
 def test_format_local_ack_renders_target_role():
     module = _load_module()
 

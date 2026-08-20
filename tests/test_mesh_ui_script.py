@@ -75,11 +75,53 @@ def test_mesh_ui_role_shell_exports_ui_group_id():
     assert 'LAUNCH_MODE="${8:-}"' in content
     assert 'PROVIDER="${9:-}"' in content
     assert 'SESSION_ID="${10:-}"' in content
+    assert 'TARGET_ACCOUNT="${11:-}"' in content
     assert 'export MESH_UI_GROUP_ID="$ui_group_id"' in content
     assert 'export MESH_UI_LAUNCH_MODE="$launch_mode"' in content
     assert 'export MESH_UI_PROVIDER="$provider"' in content
     assert 'export MESH_UI_SESSION_ID="$session_id"' in content
-    assert 'UI_GROUP_ID=%q LAUNCH_MODE=%q PROVIDER=%q SESSION_ID=%q bash -lc %q' in content
+    assert 'export MESH_UI_TARGET_ACCOUNT="$target_account"' in content
+    assert 'TARGET_ACCOUNT=%q bash -lc %q' in content
+
+
+def test_mesh_ui_role_shell_preseeds_provider_runtime():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert 'helper="$mesh_home/scripts/mesh_ui_preseed_runtime.py"' in content
+    assert 'preseed_provider_runtime "$target_dir" "$provider" "$target_account" "$mesh_home" "$role"' in content
+
+
+def test_mesh_ui_role_shell_refreshes_codex_before_launch():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_ui_role_shell.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert content.count("maybe_refresh_native_cli() {") >= 2
+    assert 'codex --upgrade >/dev/null 2>&1 || true' in content
+    assert content.count('maybe_refresh_native_cli "$provider"') >= 2
+    assert content.count('"$HOME/Library/Application Support/Claude/claude-code"/*/claude.app/Contents/MacOS') >= 2
+
+
+def test_two_role_bootstrap_prompts_include_local_term_exec_fallback():
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/tmp/gbg-snake-proof",
+        repo_name="gbg-snake-proof",
+        roles=["boss", "president"],
+        max_panes_per_tab=2,
+        single_tab=True,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=False,
+        ui_group_id="gbg-test-ui",
+    )
+
+    boss_prompt = module._ui_role_bootstrap_prompt(cfg, "boss", "claude")
+    president_prompt = module._ui_role_bootstrap_prompt(cfg, "president", "codex")
+
+    assert "term exec /tmp/gbg-snake-proof president" in boss_prompt
+    assert "term exec /tmp/gbg-snake-proof boss" in president_prompt
+    assert "PRESIDENT_UPDATE:" in president_prompt
 
 
 def test_operator_ui_boss_is_provider_backed():
@@ -90,10 +132,10 @@ def test_operator_ui_boss_is_provider_backed():
     boss = data["roles"]["boss"]
     president = data["roles"]["president"]
 
-    assert boss["provider"] == "gemini"
+    assert boss["provider"] == "claude"
     assert boss["relay"]["enabled"] is True
     assert boss["relay"]["target_role"] == "president"
-    assert president["provider"] == "gemini"
+    assert president["provider"] == "codex"
     assert president["relay"]["enabled"] is True
     assert president["relay"]["target_role"] == "boss"
 
@@ -180,11 +222,12 @@ def test_command_for_role_uses_yaml_provider_runtime(tmp_path, monkeypatch):
     monkeypatch.setenv("MESH_UI_CONFIG", str(config))
     monkeypatch.delenv("MESH_UI_CMD_BOSS", raising=False)
     monkeypatch.delenv("MESH_UI_PROVIDER_OVERRIDE", raising=False)
+    monkeypatch.delenv("MESH_PROVIDER_RUNTIME_CONFIG", raising=False)
 
     command = module._command_for_role("boss", "/media/sam/1TB/rektslug", "rektslug")
 
     assert "mesh_ui_role_shell.sh" in command
-    assert "ccs gemini" in command
+    assert "gemini" in command
     assert "/media/sam/1TB/rektslug" in command
 
 
@@ -246,11 +289,12 @@ def test_command_for_role_provider_override_wins_for_worker(tmp_path, monkeypatc
     )
     monkeypatch.setenv("MESH_UI_CONFIG", str(config))
     monkeypatch.setenv("MESH_UI_PROVIDER_OVERRIDE", "gemini")
+    monkeypatch.delenv("MESH_PROVIDER_RUNTIME_CONFIG", raising=False)
 
     command = module._command_for_role("worker-codex", "/media/sam/1TB/rektslug", "rektslug")
 
-    assert "ccs gemini" in command
-    assert "ccs codex" not in command
+    assert " gemini " in f" {command} "
+    assert " codex " not in f" {command} "
 
 
 def test_role_cli_args_reads_max_turns_and_extra_args(tmp_path, monkeypatch):
@@ -319,6 +363,161 @@ def test_command_for_role_passes_ui_group_id(monkeypatch):
     assert "rektslug-ui-1" in command
 
 
+def test_command_for_role_propagates_ws_host_to_helper(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CMD_BOSS", raising=False)
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+    monkeypatch.setenv("MESH_WS_HOST", "localhost")
+
+    command = module._command_for_role(
+        "boss",
+        "/tmp/gbg-snake-proof",
+        "gbg-snake-proof",
+    )
+
+    assert "env MESH_WS_HOST=localhost" in command
+    assert "mesh_ui_role_shell.sh" in command
+
+
+def test_command_for_role_does_not_wrap_local_boss_with_relay_proxy(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CMD_BOSS", raising=False)
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+    monkeypatch.setenv("MESH_WS_HOST", "localhost")
+
+    command = module._command_for_role(
+        "boss",
+        "/tmp/gbg-snake-proof",
+        "gbg-snake-proof",
+        ui_group_id="gbg-ui-1",
+    )
+
+    assert "mesh_prompt_relay_proxy.py" not in command
+
+
+def test_command_for_role_does_not_wrap_local_president_with_relay_proxy(monkeypatch):
+    module = _load_module()
+    monkeypatch.delenv("MESH_UI_CMD_PRESIDENT", raising=False)
+    monkeypatch.delenv("MESH_UI_CONFIG", raising=False)
+    monkeypatch.setenv("MESH_WS_HOST", "localhost")
+
+    command = module._command_for_role(
+        "president",
+        "/tmp/gbg-snake-proof",
+        "gbg-snake-proof",
+        ui_group_id="gbg-ui-1",
+    )
+
+    assert "mesh_prompt_relay_proxy.py" not in command
+
+
+def test_start_local_auto_relays_spawns_both_watchers(monkeypatch, tmp_path):
+    module = _load_module()
+    watcher = tmp_path / "scripts" / "mesh_lite_auto_relay.py"
+    watcher.parent.mkdir(parents=True, exist_ok=True)
+    watcher.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    calls = []
+
+    monkeypatch.setenv("MESH_WS_HOST", "localhost")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        class Proc:
+            pid = 123
+        return Proc()
+
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    cfg = module.UiConfig(
+        repo="/tmp/gbg-snake-proof",
+        repo_name="gbg-snake-proof",
+        roles=["boss", "president"],
+        max_panes_per_tab=2,
+        single_tab=True,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=False,
+        ui_group_id="gbg-ui-1",
+    )
+
+    module._start_local_auto_relays(cfg)
+
+    assert len(calls) == 2
+
+    first_argv, first_kwargs = calls[0]
+    second_argv, second_kwargs = calls[1]
+
+    assert first_argv[1] == str(watcher)
+    assert "--project" in first_argv
+    assert "/tmp/gbg-snake-proof" in first_argv
+    assert "--source-mode" in first_argv
+    assert "transcript" in first_argv
+    assert "--source-role" in first_argv
+    assert "boss" in first_argv
+    assert "--target-role" in first_argv
+    assert "president" in first_argv
+    assert first_kwargs["start_new_session"] is True
+
+    assert second_argv[1] == str(watcher)
+    assert "--source-mode" in second_argv
+    assert "screen" in second_argv
+    assert "--source-role" in second_argv
+    assert "president" in second_argv
+    assert "--target-role" in second_argv
+    assert "boss" in second_argv
+    assert "--require-prefix" in second_argv
+    assert "PRESIDENT_UPDATE:" in second_argv
+    assert "--require-activity" in second_argv
+    assert second_kwargs["start_new_session"] is True
+
+
+def test_start_local_auto_relays_skips_activity_gate_for_non_codex_president(monkeypatch, tmp_path):
+    module = _load_module()
+    watcher = tmp_path / "scripts" / "mesh_lite_auto_relay.py"
+    watcher.parent.mkdir(parents=True, exist_ok=True)
+    watcher.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    config = tmp_path / "operator_ui.yaml"
+    config.write_text(
+        "roles:\n  president:\n    provider: gemini\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    monkeypatch.setenv("MESH_WS_HOST", "localhost")
+    monkeypatch.setenv("MESH_UI_CONFIG", str(config))
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        class Proc:
+            pid = 123
+        return Proc()
+
+    monkeypatch.setattr(module.subprocess, "Popen", fake_popen)
+    cfg = module.UiConfig(
+        repo="/tmp/gbg-snake-proof",
+        repo_name="gbg-snake-proof",
+        roles=["boss", "president"],
+        max_panes_per_tab=2,
+        single_tab=True,
+        replace_tabs=True,
+        preset="auto",
+        attach_live=False,
+        ui_group_id="gbg-ui-1",
+    )
+
+    module._start_local_auto_relays(cfg)
+
+    assert len(calls) == 2
+    second_argv, second_kwargs = calls[1]
+    assert "--source-mode" in second_argv
+    assert "screen" in second_argv
+    assert "--require-prefix" in second_argv
+    assert "PRESIDENT_UPDATE:" in second_argv
+    assert "--require-activity" not in second_argv
+    assert second_kwargs["start_new_session"] is True
+
+
 def test_command_for_role_passes_runtime_identity_to_helper(monkeypatch):
     module = _load_module()
     monkeypatch.delenv("MESH_UI_CMD_LEAD", raising=False)
@@ -337,13 +536,15 @@ def test_command_for_role_passes_runtime_identity_to_helper(monkeypatch):
     assert "spawn" in command
     assert "gemini" in command
     assert "12345678-abcd-ef01-2345-6789abcdef01" in command
+    assert " lead" in f" {command} "
+    assert " gemini " in f" {command} "
 
 
 def test_command_for_role_falls_back_to_role_provider_for_spawn_labels(tmp_path, monkeypatch):
     module = _load_module()
     config = tmp_path / "operator_ui.yaml"
     config.write_text(
-        "roles:\n  worker-codex:\n    provider: codex\n",
+        "roles:\n  worker-codex:\n    provider: codex\n    target_account: work-codex\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("MESH_UI_CONFIG", str(config))
@@ -360,6 +561,7 @@ def test_command_for_role_falls_back_to_role_provider_for_spawn_labels(tmp_path,
     )
 
     assert "codex" in command
+    assert "work-codex" in command
 
 
 def test_command_for_role_yaml_command_template_accepts_ui_group_id(tmp_path, monkeypatch):
@@ -2228,6 +2430,7 @@ def test_launch_layout_creates_surfaces_before_spawning_sessions(monkeypatch):
     monkeypatch.setitem(sys.modules, "iterm2", FakeIterm2)
     monkeypatch.setattr(module, "_should_avoid_split_panes", lambda version=None: False)
     monkeypatch.setattr(module, "_load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "_router_available", lambda *args, **kwargs: True)
     monkeypatch.setattr(module, "_fetch_live_session_pairs", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         module,
@@ -2255,3 +2458,63 @@ def test_launch_layout_creates_surfaces_before_spawning_sessions(monkeypatch):
     asyncio.run(module._launch_layout(None, cfg))
 
     assert order == ["panes", "spawn"]
+
+
+def test_launch_layout_falls_back_to_direct_role_shells_when_router_unavailable(monkeypatch, capsys):
+    module = _load_module()
+    cfg = module.UiConfig(
+        repo="/media/sam/1TB/demo",
+        repo_name="demo",
+        roles=["boss", "president"],
+        max_panes_per_tab=3,
+        single_tab=False,
+        replace_tabs=False,
+        preset="auto",
+        attach_live=True,
+        ui_group_id="demo-ui-1",
+    )
+    fake_window = _FakeWindow()
+    fake_app = type("App", (), {"windows": [fake_window]})()
+
+    class FakeIterm2:
+        @staticmethod
+        async def async_get_app(connection):
+            return fake_app
+
+        class Window:
+            @staticmethod
+            async def async_create(connection):
+                return fake_window
+
+    fetch_called = {"value": False}
+    spawn_called = {"value": False}
+
+    monkeypatch.setitem(sys.modules, "iterm2", FakeIterm2)
+    monkeypatch.setattr(module, "_should_avoid_split_panes", lambda version=None: False)
+    monkeypatch.setattr(module, "_load_router_env", lambda: ("http://router", "token"))
+    monkeypatch.setattr(module, "_router_available", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        module,
+        "_fetch_live_session_pairs",
+        lambda *args, **kwargs: fetch_called.__setitem__("value", True),
+    )
+
+    def fake_spawn(*args, **kwargs):
+        spawn_called["value"] = True
+        return {}
+
+    monkeypatch.setattr(module, "_spawn_missing_agent_role_plans", fake_spawn)
+    monkeypatch.setattr(module, "_command_for_role", lambda *args, **kwargs: "echo ok")
+    monkeypatch.setattr(module, "_mark_mesh_ui_sessions", lambda sessions, cfg, roles: asyncio.sleep(0))
+    monkeypatch.setattr(
+        module,
+        "_create_panes_for_roles",
+        lambda tab, roles: asyncio.sleep(0, result=[_FakeLaunchSession(role) for role in roles]),
+    )
+
+    asyncio.run(module._launch_layout(None, cfg))
+
+    out = capsys.readouterr().out
+    assert "router unavailable; falling back to direct role shells" in out
+    assert fetch_called["value"] is False
+    assert spawn_called["value"] is False

@@ -20,6 +20,27 @@ def _project_path(raw: str) -> str:
     return str(Path(raw).expanduser().resolve())
 
 
+def _project_path_aliases(raw: str) -> list[str]:
+    aliases: list[str] = []
+
+    def _add(value: str) -> None:
+        candidate = str(value or "").strip()
+        if candidate and candidate not in aliases:
+            aliases.append(candidate)
+
+    expanded = Path(raw).expanduser()
+    _add(str(expanded))
+    _add(str(expanded.resolve()))
+
+    for value in tuple(aliases):
+        if value.startswith("/private/tmp/"):
+            _add(value.removeprefix("/private"))
+        elif value.startswith("/tmp/"):
+            _add(f"/private{value}")
+
+    return aliases
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Mesh Lite iTerm2-first control plane.")
     parser.add_argument(
@@ -62,6 +83,24 @@ def _parse_title_metadata(title: str) -> tuple[str | None, str | None, str | Non
     provider = subparts[1] if len(subparts) >= 2 and subparts[1] else None
     upstream_session_id = subparts[2] if len(subparts) >= 3 and subparts[2] else None
     return provider, launch_mode, upstream_session_id
+
+
+def _select_latest_replied_candidate_path(
+    *,
+    project_path: str,
+    candidates: list,
+    claimed_paths: set[str],
+) -> str:
+    available = [candidate for candidate in candidates if str(candidate.path) not in claimed_paths]
+    exact_cwd_replied = [
+        candidate
+        for candidate in available
+        if candidate.cwd == project_path and candidate.assistant_text
+    ]
+    if not exact_cwd_replied:
+        return ""
+    newest = max(exact_cwd_replied, key=lambda candidate: candidate.last_modified)
+    return str(newest.path)
 
 
 def _select_jsonl_path(
@@ -147,8 +186,50 @@ def _apply_fallback_binding(
     )
 
 
+def _apply_provider_fallback_bindings(
+    *,
+    project_path: str,
+    discovered_entries: list,
+    candidates: list,
+    claimed_paths: set[str],
+) -> None:
+    unresolved_claude_indices = [
+        index
+        for index, entry in enumerate(discovered_entries)
+        if not entry.jsonl_path and str(entry.provider or "").strip() == "claude"
+    ]
+    if len(unresolved_claude_indices) != 1:
+        return
+
+    fallback_path = _select_latest_replied_candidate_path(
+        project_path=project_path,
+        candidates=candidates,
+        claimed_paths=claimed_paths,
+    )
+    if not fallback_path:
+        return
+
+    pending_index = unresolved_claude_indices[0]
+    pending_entry = discovered_entries[pending_index]
+    discovered_entries[pending_index] = build_entry(
+        role=pending_entry.role,
+        team_id=pending_entry.team_id,
+        session_id=pending_entry.session_id,
+        tty=pending_entry.tty,
+        title=pending_entry.title,
+        badge=pending_entry.badge,
+        jsonl_path=fallback_path,
+        project_path=pending_entry.project_path,
+        backend_id=pending_entry.backend_id,
+        provider=pending_entry.provider,
+        launch_mode=pending_entry.launch_mode,
+        upstream_session_id=pending_entry.upstream_session_id,
+    )
+
+
 def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
     project_path = _project_path(project)
+    project_aliases = _project_path_aliases(project)
     
     try:
         import iterm2
@@ -162,7 +243,16 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
         if app is None:
             raise RuntimeError("iTerm2 app not available")
 
-        panes = await _mesh_sessions(app, project_path)
+        panes = []
+        seen_session_ids: set[str] = set()
+        for alias in project_aliases:
+            for pane in await _mesh_sessions(app, alias):
+                session_id = str(getattr(pane.session, "session_id", "") or "")
+                if session_id and session_id in seen_session_ids:
+                    continue
+                if session_id:
+                    seen_session_ids.add(session_id)
+                panes.append(pane)
         candidates = transcript_candidates(project_path)
         existing_payload = ((registry.load().get("projects") or {}).get(project_path) or {})
         team_id = str(existing_payload.get("team_id") or "").strip()
@@ -183,8 +273,6 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             except Exception:
                 pass
 
-            provider, launch_mode, upstream_session_id = _parse_title_metadata(title)
-
             try:
                 tty = str(pane.session.tty or "")
             except Exception:
@@ -195,6 +283,10 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
                 badge = str(await pane.session.async_get_variable("session.badge") or "")
             except Exception:
                 pass
+
+            provider, launch_mode, upstream_session_id = _parse_title_metadata(title)
+            if not provider and not launch_mode and not upstream_session_id and badge:
+                provider, launch_mode, upstream_session_id = _parse_title_metadata(badge)
 
             existing = registry.get(project_path, pane.role)
             jsonl_path = _select_jsonl_path(
@@ -228,6 +320,12 @@ def _cmd_discover(registry: MeshLiteRegistry, project: str) -> int:
             project_path=project_path,
             discovered_entries=discovered_entries,
             pending_fallback_indices=unresolved_indices,
+            candidates=candidates,
+            claimed_paths=claimed_paths,
+        )
+        _apply_provider_fallback_bindings(
+            project_path=project_path,
+            discovered_entries=discovered_entries,
             candidates=candidates,
             claimed_paths=claimed_paths,
         )

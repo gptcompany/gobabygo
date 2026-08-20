@@ -30,7 +30,9 @@ _INBOUND_PREFIX = "__mesh_inbound__:"
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Mirror submitted pane prompts to a mesh role.")
     parser.add_argument("--mode", default="prompt_submit")
+    parser.add_argument("--transport", default="mesh_send")
     parser.add_argument("--target-role", required=True)
+    parser.add_argument("--target-repo", default="")
     parser.add_argument("--ui-group-id", required=True)
     parser.add_argument("--mesh-script", required=True)
     parser.add_argument("--source-role", default="")
@@ -133,9 +135,25 @@ def _relay_prompt(args: argparse.Namespace, prompt: str) -> None:
     if not shutil.which(mesh_script) and not os.access(mesh_script, os.X_OK):
         return
 
-    command = [mesh_script, "send", args.target_role, "--ui-group-id", args.ui_group_id]
     message = f"{args.message_prefix}{prompt}" if args.message_prefix else prompt
-    command.append(message)
+    transport = str(getattr(args, "transport", "") or "mesh_send").strip() or "mesh_send"
+    if transport == "term_exec":
+        target_repo = str(getattr(args, "target_repo", "") or "").strip()
+        if not target_repo:
+            return
+        command = [
+            mesh_script,
+            "term",
+            "exec",
+            target_repo,
+            args.target_role,
+            message,
+            "--ui-group-id",
+            args.ui_group_id,
+        ]
+    else:
+        command = [mesh_script, "send", args.target_role, "--ui-group-id", args.ui_group_id]
+        command.append(message)
     try:
         subprocess.run(
             command,

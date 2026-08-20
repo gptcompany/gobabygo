@@ -3,8 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 from scripts.mesh_lite.cli import (
+    _apply_provider_fallback_bindings,
     _apply_fallback_binding,
     _parse_title_metadata,
+    _project_path_aliases,
+    _select_latest_replied_candidate_path,
     _select_fallback_jsonl_path,
     _select_jsonl_path,
 )
@@ -18,6 +21,13 @@ def test_parse_title_metadata_extracts_provider_launch_and_upstream() -> None:
     assert provider == "claude"
     assert launch_mode == "split"
     assert upstream == "ABC123"
+
+
+def test_project_path_aliases_include_tmp_and_private_tmp_forms() -> None:
+    aliases = _project_path_aliases("/tmp/repo")
+
+    assert "/tmp/repo" in aliases
+    assert "/private/tmp/repo" in aliases
 
 
 def test_select_jsonl_path_prefers_existing_binding(tmp_path: Path) -> None:
@@ -104,6 +114,38 @@ def test_select_fallback_jsonl_path_uses_unique_exact_cwd_replied_candidate(tmp_
     )
 
     assert selected == str(unique)
+
+
+def test_select_latest_replied_candidate_path_picks_newest_exact_cwd(tmp_path: Path) -> None:
+    older = tmp_path / "older.jsonl"
+    newer = tmp_path / "newer.jsonl"
+    older.write_text("", encoding="utf-8")
+    newer.write_text("", encoding="utf-8")
+
+    candidates = [
+        TranscriptCandidate(
+            path=older,
+            session_id="ONE",
+            cwd="/tmp/repo",
+            last_modified=1.0,
+            assistant_text="older",
+        ),
+        TranscriptCandidate(
+            path=newer,
+            session_id="TWO",
+            cwd="/tmp/repo",
+            last_modified=2.0,
+            assistant_text="newer",
+        ),
+    ]
+
+    selected = _select_latest_replied_candidate_path(
+        project_path="/tmp/repo",
+        candidates=candidates,
+        claimed_paths=set(),
+    )
+
+    assert selected == str(newer)
 
 
 def test_select_fallback_jsonl_path_ignores_used_candidates_and_binds_unique_remaining_one(tmp_path: Path) -> None:
@@ -362,6 +404,56 @@ def test_apply_fallback_binding_treats_unmatched_upstream_role_as_contender(tmp_
     )
 
     assert entries[0].jsonl_path == ""
+    assert entries[1].jsonl_path == ""
+
+
+def test_apply_provider_fallback_bindings_binds_single_claude_role_to_latest_transcript(tmp_path: Path) -> None:
+    transcript = tmp_path / "boss.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    candidates = [
+        TranscriptCandidate(
+            path=transcript,
+            session_id="CLAUDE",
+            cwd="/tmp/repo",
+            last_modified=3.0,
+            assistant_text="boss summary",
+        )
+    ]
+    entries = [
+        build_entry(
+            role="boss",
+            team_id="team-1",
+            session_id="S1",
+            tty="/dev/ttys001",
+            title="boss",
+            badge="mesh:boss (spawn:claude) | repo",
+            jsonl_path="",
+            project_path="/tmp/repo",
+            provider="claude",
+            launch_mode="spawn",
+        ),
+        build_entry(
+            role="president",
+            team_id="team-1",
+            session_id="S2",
+            tty="/dev/ttys002",
+            title="president",
+            badge="mesh:president (spawn:codex) | repo",
+            jsonl_path="",
+            project_path="/tmp/repo",
+            provider="codex",
+            launch_mode="spawn",
+        ),
+    ]
+
+    _apply_provider_fallback_bindings(
+        project_path="/tmp/repo",
+        discovered_entries=entries,
+        candidates=candidates,
+        claimed_paths=set(),
+    )
+
+    assert entries[0].jsonl_path == str(transcript)
     assert entries[1].jsonl_path == ""
 
 

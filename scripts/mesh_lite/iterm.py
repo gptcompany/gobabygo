@@ -46,6 +46,69 @@ def _clean(text: Any) -> str:
     return str(text or "").replace("\x00", "").strip()
 
 
+def _screen_text(screen: Any) -> str:
+    lines: list[str] = []
+    for idx in range(getattr(screen, "number_of_lines", 0)):
+        raw = str(screen.line(idx).string or "").replace("\x00", "").rstrip()
+        if raw:
+            lines.append(raw)
+    return "\n".join(lines)
+
+
+def _prompt_signature(text: str, *, max_chars: int = 120) -> str:
+    normalized = " ".join(str(text or "").replace("\r", "\n").split())
+    return normalized[: max(1, int(max_chars))]
+
+
+def _codex_screen_shows_activity(screen_text: str) -> bool:
+    body = str(screen_text or "")
+    lowered = body.lower()
+    if "⏺" in body:
+        return True
+    if "• " in body:
+        return True
+    if any(
+        token in lowered
+        for token in (
+            "working(",
+            "ran ",
+            "using ",
+            "reading ",
+            "updating ",
+            "creating ",
+            "editing ",
+            "bash(",
+            "task(",
+        )
+    ):
+        return True
+    return False
+
+
+def _codex_needs_submit_retry(screen_text: str, prompt_text: str) -> bool:
+    snippet = _prompt_signature(prompt_text)
+    if not snippet:
+        return False
+    body = str(screen_text or "")
+    compact_body = " ".join(body.split())
+    if snippet not in compact_body:
+        return False
+    if _codex_screen_shows_activity(body):
+        return False
+    return "› " in body or body.strip().startswith("›")
+
+
+async def _session_looks_like_codex(session: Any) -> bool:
+    for name in ("session.badge", "session.name"):
+        try:
+            value = str(await session.async_get_variable(name) or "")
+        except Exception:
+            value = ""
+        if "codex" in value.lower():
+            return True
+    return False
+
+
 def _osascript_raw(script: str) -> str:
     script_lines = [line for line in str(script).splitlines() if line.strip()]
     args = ["osascript"]
@@ -269,6 +332,15 @@ async def _send_line(connection, session_id: str, text: str) -> None:
     await target.async_send_text(text)
     await asyncio.sleep(0.08)
     await target.async_send_text("\r")
+    if await _session_looks_like_codex(target):
+        await asyncio.sleep(0.35)
+        try:
+            screen = await target.async_get_screen_contents()
+        except Exception:
+            screen = None
+        if screen is not None and _codex_needs_submit_retry(_screen_text(screen), text):
+            await asyncio.sleep(0.08)
+            await target.async_send_text("\r")
 
 
 def send_line(session_id: str, text: str) -> None:

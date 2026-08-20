@@ -1,6 +1,11 @@
 import sys
 
-from scripts.mesh_lite.iterm import _apple_string_expr, _list_sessions_via_osascript, get_session
+from scripts.mesh_lite.iterm import (
+    _apple_string_expr,
+    _codex_needs_submit_retry,
+    _list_sessions_via_osascript,
+    get_session,
+)
 
 
 def test_apple_string_expr_serializes_multiline_text() -> None:
@@ -39,3 +44,15 @@ def test_list_sessions_via_osascript_keeps_last_session_with_empty_tty(monkeypat
     assert len(sessions) == 1
     assert sessions[0].session_id == "S2"
     assert sessions[0].tty == ""
+
+
+def test_codex_needs_submit_retry_when_prompt_is_still_pending() -> None:
+    screen = "› Reply with exactly PRESIDENT_ACK.\n  gpt-5.4 high · /tmp/demo"
+
+    assert _codex_needs_submit_retry(screen, "Reply with exactly PRESIDENT_ACK.") is True
+
+
+def test_codex_needs_submit_retry_skips_when_activity_is_visible() -> None:
+    screen = "› Reply with exactly PRESIDENT_ACK.\n• PRESIDENT_ACK\n  gpt-5.4 high · /tmp/demo"
+
+    assert _codex_needs_submit_retry(screen, "Reply with exactly PRESIDENT_ACK.") is False

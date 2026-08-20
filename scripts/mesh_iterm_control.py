@@ -495,6 +495,64 @@ def _key_text(key: str) -> str:
     return text
 
 
+def _screen_text(screen: Any) -> str:
+    collected: list[str] = []
+    for idx in range(getattr(screen, "number_of_lines", 0)):
+        raw = str(screen.line(idx).string or "").replace("\x00", "").rstrip()
+        if raw:
+            collected.append(raw)
+    return "\n".join(collected)
+
+
+def _prompt_signature(text: str, *, max_chars: int = 120) -> str:
+    return " ".join(str(text or "").replace("\r", "\n").split())[: max(1, int(max_chars))]
+
+
+def _codex_screen_shows_activity(screen_text: str) -> bool:
+    body = str(screen_text or "")
+    lowered = body.lower()
+    if "⏺" in body or "• " in body:
+        return True
+    return any(
+        token in lowered
+        for token in (
+            "working(",
+            "ran ",
+            "using ",
+            "reading ",
+            "updating ",
+            "creating ",
+            "editing ",
+            "bash(",
+            "task(",
+        )
+    )
+
+
+def _codex_needs_submit_retry(screen_text: str, prompt_text: str) -> bool:
+    snippet = _prompt_signature(prompt_text)
+    if not snippet:
+        return False
+    body = str(screen_text or "")
+    compact = " ".join(body.split())
+    if snippet not in compact:
+        return False
+    if _codex_screen_shows_activity(body):
+        return False
+    return "› " in body or body.strip().startswith("›")
+
+
+async def _session_looks_like_codex(session: Any) -> bool:
+    for name in ("session.badge", "session.name"):
+        try:
+            value = str(await session.async_get_variable(name) or "")
+        except Exception:
+            value = ""
+        if "codex" in value.lower():
+            return True
+    return False
+
+
 def _iterm_retry_enabled() -> bool:
     return str(os.environ.get("MESH_ITERM_RETRY", "")).strip().lower() in {
         "1",
@@ -1732,6 +1790,15 @@ async def _send_line(session: Any, text: str) -> None:
         await asyncio.sleep(0.015)
     await asyncio.sleep(0.08)
     await session.async_send_text("\r")
+    if await _session_looks_like_codex(session):
+        await asyncio.sleep(0.35)
+        try:
+            screen = await session.async_get_screen_contents()
+        except Exception:
+            screen = None
+        if screen is not None and _codex_needs_submit_retry(_screen_text(screen), value):
+            await asyncio.sleep(0.08)
+            await session.async_send_text("\r")
 
 
 async def _restart_mesh_role_pane(pane: MeshPane, repo: str, command_text: str) -> None:

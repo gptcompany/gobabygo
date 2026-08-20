@@ -11,6 +11,7 @@ UI_GROUP_ID="${7:-}"
 LAUNCH_MODE="${8:-}"
 PROVIDER="${9:-}"
 SESSION_ID="${10:-}"
+TARGET_ACCOUNT="${11:-}"
 if [[ -z "$REMOTE_INIT" && -n "$ROLE_SET" && "$ROLE_SET" != *","* ]]; then
   REMOTE_INIT="$ROLE_SET"
   ROLE_SET="$ROLE"
@@ -172,6 +173,55 @@ emit_role_banner() {
   printf '[mesh:%s] repo=%s ui_group=%s\n' "$role" "$repo_name" "${MESH_UI_GROUP_ID:-unset}"
 }
 
+preseed_provider_runtime() {
+  local target_dir="$1"
+  local provider="$2"
+  local target_account="$3"
+  local mesh_home="$4"
+  local role="$5"
+  local helper py_bin
+
+  [[ -n "$provider" ]] || return 0
+  helper="$mesh_home/scripts/mesh_ui_preseed_runtime.py"
+  [[ -f "$helper" ]] || return 0
+  py_bin="$(command -v python3 || command -v python || true)"
+  [[ -n "$py_bin" ]] || return 0
+
+  if ! "$py_bin" "$helper" "$provider" "$target_dir" --target-account "$target_account" >/dev/null 2>&1; then
+    printf '[mesh:%s] WARNING: runtime preseed failed for provider=%s account=%s\n' \
+      "$role" "$provider" "${target_account:-$provider}"
+  fi
+}
+
+ensure_cli_path() {
+  local candidate current
+  current=":$PATH:"
+  for candidate in \
+    "$HOME/.npm-global/bin" \
+    "$HOME/.local/bin" \
+    "$HOME/Library/Application Support/Claude/claude-code"/*/claude.app/Contents/MacOS \
+    "$HOME/.nvm/versions/node"/*/bin \
+    "/usr/local/bin" \
+    "/opt/local/bin"; do
+    [[ -d "$candidate" ]] || continue
+    if [[ "$current" != *":$candidate:"* ]]; then
+      export PATH="$candidate:$PATH"
+      current=":$PATH:"
+    fi
+  done
+}
+
+maybe_refresh_native_cli() {
+  local provider="$1"
+  case "$provider" in
+    codex)
+      if command -v codex >/dev/null 2>&1; then
+        codex --upgrade >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+}
+
 bootstrap_shell() {
   local target_dir="$1"
   local ws_repo_base="$2"
@@ -183,6 +233,7 @@ bootstrap_shell() {
   local launch_mode="$8"
   local provider="$9"
   local session_id="${10:-}"
+  local target_account="${11:-}"
   local mesh_home mesh_script live_attach_helper live_attach
 
   if [[ -d "$target_dir" ]]; then
@@ -200,6 +251,7 @@ bootstrap_shell() {
   export MESH_UI_LAUNCH_MODE="$launch_mode"
   export MESH_UI_PROVIDER="$provider"
   export MESH_UI_SESSION_ID="$session_id"
+  export MESH_UI_TARGET_ACCOUNT="$target_account"
   export MESH_UI_ROLE="$role"
   export MESH_UI_REPO_NAME="$repo_name"
   set_session_label "$role" "$repo_name"
@@ -217,6 +269,9 @@ bootstrap_shell() {
     export MESH_HOME="$mesh_home"
     export PATH="$(dirname "$mesh_script"):$PATH"
   fi
+  ensure_cli_path
+  maybe_refresh_native_cli "$provider"
+  preseed_provider_runtime "$target_dir" "$provider" "$target_account" "$mesh_home" "$role"
   live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
   if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
     live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$ROLE_SET" 2>/dev/null || true)"
@@ -239,7 +294,7 @@ bootstrap_shell() {
 
 if is_local_ws_host "$WS_HOST"; then
   TARGET_DIR="$(resolve_target_dir "$REPO_INPUT" "$WS_REPO_BASE")"
-  bootstrap_shell "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT" "$LIVE_ATTACH_MODE" "$UI_GROUP_ID" "$LAUNCH_MODE" "$PROVIDER" "$SESSION_ID"
+  bootstrap_shell "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$REMOTE_INIT" "$LIVE_ATTACH_MODE" "$UI_GROUP_ID" "$LAUNCH_MODE" "$PROVIDER" "$SESSION_ID" "$TARGET_ACCOUNT"
 fi
 
 REMOTE_BOOTSTRAP_SCRIPT='
@@ -256,6 +311,7 @@ ui_group_id="${UI_GROUP_ID:-}"
 launch_mode="${LAUNCH_MODE:-}"
 provider="${PROVIDER:-}"
 session_id="${SESSION_ID:-}"
+target_account="${TARGET_ACCOUNT:-}"
 
 set_session_label() {
   local role="$1"
@@ -308,6 +364,55 @@ emit_role_banner() {
   printf "[mesh:%s] repo=%s ui_group=%s\n" "$role" "$repo_name" "${MESH_UI_GROUP_ID:-unset}"
 }
 
+preseed_provider_runtime() {
+  local target_dir="$1"
+  local provider="$2"
+  local target_account="$3"
+  local mesh_home="$4"
+  local role="$5"
+  local helper py_bin
+
+  [[ -n "$provider" ]] || return 0
+  helper="$mesh_home/scripts/mesh_ui_preseed_runtime.py"
+  [[ -f "$helper" ]] || return 0
+  py_bin="$(command -v python3 || command -v python || true)"
+  [[ -n "$py_bin" ]] || return 0
+
+  if ! "$py_bin" "$helper" "$provider" "$target_dir" --target-account "$target_account" >/dev/null 2>&1; then
+    printf "[mesh:%s] WARNING: runtime preseed failed for provider=%s account=%s\n" \
+      "$role" "$provider" "${target_account:-$provider}"
+  fi
+}
+
+ensure_cli_path() {
+  local candidate current
+  current=":$PATH:"
+  for candidate in \
+    "$HOME/.npm-global/bin" \
+    "$HOME/.local/bin" \
+    "$HOME/Library/Application Support/Claude/claude-code"/*/claude.app/Contents/MacOS \
+    "$HOME/.nvm/versions/node"/*/bin \
+    "/usr/local/bin" \
+    "/opt/local/bin"; do
+    [[ -d "$candidate" ]] || continue
+    if [[ "$current" != *":$candidate:"* ]]; then
+      export PATH="$candidate:$PATH"
+      current=":$PATH:"
+    fi
+  done
+}
+
+maybe_refresh_native_cli() {
+  local provider="$1"
+  case "$provider" in
+    codex)
+      if command -v codex >/dev/null 2>&1; then
+        codex --upgrade >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+}
+
 if [[ -n "${REMOTE_INIT_B64:-}" ]]; then
   remote_init="$(printf "%s" "$REMOTE_INIT_B64" | base64 -d)"
 fi
@@ -340,6 +445,7 @@ export MESH_UI_GROUP_ID="$ui_group_id"
 export MESH_UI_LAUNCH_MODE="$launch_mode"
 export MESH_UI_PROVIDER="$provider"
 export MESH_UI_SESSION_ID="$session_id"
+export MESH_UI_TARGET_ACCOUNT="$target_account"
 export MESH_UI_ROLE="$role"
 export MESH_UI_REPO_NAME="$repo_name"
 set_session_label "$role" "$repo_name"
@@ -357,6 +463,9 @@ if [[ -x "$mesh_script" ]]; then
   export MESH_HOME="$mesh_home"
   export PATH="$(dirname "$mesh_script"):$PATH"
 fi
+ensure_cli_path
+maybe_refresh_native_cli "$provider"
+preseed_provider_runtime "$target_dir" "$provider" "$target_account" "$mesh_home" "$role"
 live_attach_helper="$mesh_home/scripts/mesh_ui_live_attach.py"
 if [[ "$live_attach_mode" != "pre_resolved" && "${MESH_UI_ATTACH_LIVE:-1}" != "0" && -f "$live_attach_helper" ]]; then
   live_attach="$("$(command -v python3 || command -v python)" "$live_attach_helper" "$role" "$target_dir" "$repo_name" "$role_set" 2>/dev/null || true)"
@@ -378,6 +487,6 @@ exec "${SHELL:-/bin/bash}" -l
 '
 
 mapfile -t SSH_OPTS < <(mesh_ssh_ui_opts)
-REMOTE_COMMAND="$(printf 'TARGET_DIR=%q WS_REPO_BASE=%q ROLE=%q REPO_NAME=%q ROLE_SET=%q REMOTE_INIT_B64=%q LIVE_ATTACH_MODE=%q UI_GROUP_ID=%q LAUNCH_MODE=%q PROVIDER=%q SESSION_ID=%q bash -lc %q' \
-  "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$ROLE_SET" "$REMOTE_INIT_B64" "$LIVE_ATTACH_MODE" "$UI_GROUP_ID" "$LAUNCH_MODE" "$PROVIDER" "$SESSION_ID" "$REMOTE_BOOTSTRAP_SCRIPT")"
+REMOTE_COMMAND="$(printf 'TARGET_DIR=%q WS_REPO_BASE=%q ROLE=%q REPO_NAME=%q ROLE_SET=%q REMOTE_INIT_B64=%q LIVE_ATTACH_MODE=%q UI_GROUP_ID=%q LAUNCH_MODE=%q PROVIDER=%q SESSION_ID=%q TARGET_ACCOUNT=%q bash -lc %q' \
+  "$TARGET_DIR" "$WS_REPO_BASE" "$ROLE" "$REPO_NAME" "$ROLE_SET" "$REMOTE_INIT_B64" "$LIVE_ATTACH_MODE" "$UI_GROUP_ID" "$LAUNCH_MODE" "$PROVIDER" "$SESSION_ID" "$TARGET_ACCOUNT" "$REMOTE_BOOTSTRAP_SCRIPT")"
 exec ssh "${SSH_OPTS[@]}" -tt "$WS_HOST" "$REMOTE_COMMAND"

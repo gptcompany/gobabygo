@@ -6,27 +6,27 @@ default_roles:
 
 roles:
   boss:
-    provider: gemini
+    provider: claude
     max_turns: 4
     relay:
       enabled: true
-      mode: claude_hooks
+      mode: router_relay
       target_role: president
       ignore_slash_commands: true
       passthrough_to_child: true
       local_ack: ""
   president:
-    provider: gemini
+    provider: codex
     max_turns: 4
     relay:
       enabled: true
-      mode: claude_hooks
+      mode: router_relay
       target_role: boss
       ignore_slash_commands: true
       passthrough_to_child: true
       local_ack: ""
   lead:
-    provider: gemini
+    provider: codex
   worker-claude:
     provider: claude
     target_account: work-claude
@@ -36,4 +36,4 @@ roles:
   worker-gemini:
     provider: gemini
   verifier:
-    provider: gemini
+    provider: codex
