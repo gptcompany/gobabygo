@@ -290,7 +290,7 @@ Done when:
 
 ### T009. Run local and Dell-canary E2E validation
 
-Status: todo
+Status: done
 
 Depends on: T001-T008
 
