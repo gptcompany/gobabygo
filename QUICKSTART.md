@@ -208,7 +208,7 @@ source ~/.zshrc   # or source ~/.bashrc on bash hosts
 ```
 
 This enables:
-- `wss` / `wss <repo>` (quick SSH to WS)
+- `wss` / `wss <repo>` (quick SSH to WS using the reachable LAN/VPN fallback)
 - `wboard [query] [lines]` (live tmux board via `mesh live`, router/iTerm2 independent)
 - `wpeek <tmux-session> [lines]` (read one live tmux pane)
 - `wsend <tmux-session> [text] [--enter]` (literal send; Enter is always explicit)

@@ -31,8 +31,16 @@ _mesh_resolve_home() {
     printf '%s' "${MESH_HOME}"
     return 0
   fi
+  if [[ -n "${MESH_WS_REPO_BASE:-}" && -d "${MESH_WS_REPO_BASE}/gobabygo-runtime/scripts" ]]; then
+    printf '%s' "${MESH_WS_REPO_BASE}/gobabygo-runtime"
+    return 0
+  fi
   if [[ -n "${MESH_WS_REPO_BASE:-}" && -d "${MESH_WS_REPO_BASE}/gobabygo/scripts" ]]; then
     printf '%s' "${MESH_WS_REPO_BASE}/gobabygo"
+    return 0
+  fi
+  if [[ -d "/data/sata/1TB/gobabygo-runtime/scripts" ]]; then
+    printf '%s' "/data/sata/1TB/gobabygo-runtime"
     return 0
   fi
   if [[ -d "/media/sam/1TB/gobabygo/scripts" ]]; then
@@ -46,8 +54,10 @@ _mesh_resolve_home() {
   return 1
 }
 
-# Prefer explicit MESH_HOME, otherwise pin to 1TB workspace when available.
-if [[ -z "${MESH_HOME:-}" && -d "/media/sam/1TB/gobabygo/scripts" ]]; then
+# Prefer explicit MESH_HOME, otherwise pin to the canonical runtime when available.
+if [[ -z "${MESH_HOME:-}" && -d "/data/sata/1TB/gobabygo-runtime/scripts" ]]; then
+  export MESH_HOME="/data/sata/1TB/gobabygo-runtime"
+elif [[ -z "${MESH_HOME:-}" && -d "/media/sam/1TB/gobabygo/scripts" ]]; then
   export MESH_HOME="/media/sam/1TB/gobabygo"
 fi
 
@@ -135,7 +145,11 @@ wss() {
     fi
     return 1
   }
-  ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+  if command -v _ws_control_host >/dev/null 2>&1; then
+    ws_host="$(_ws_control_host)" || return $?
+  else
+    ws_host="${MESH_WS_HOST:-sam@10.0.0.2}"
+  fi
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
   while IFS= read -r -d '' opt; do
     ssh_opts+=("$opt")
@@ -162,7 +176,7 @@ wss() {
   mesh_home="$(_mesh_resolve_home || true)"
   ws_script="${mesh_home}/scripts/ws"
   if [[ -x "$ws_script" ]]; then
-    command "$ws_script" "$@"
+    MESH_WS_HOST="$ws_host" command "$ws_script" "$@"
     return $?
   fi
 

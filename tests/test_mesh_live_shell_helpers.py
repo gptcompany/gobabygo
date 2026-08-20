@@ -250,6 +250,10 @@ def test_installer_is_idempotent_and_sources_canonical_live_helpers(tmp_path: Pa
         assert content.count("# >>> gobabygo-shell-helpers >>>") == 1
         assert content.count("# <<< gobabygo-shell-helpers <<<") == 1
         assert 'source "$mesh_live_helpers"' in content
+        assert '"${MESH_WS_REPO_BASE}/gobabygo-runtime"' in content
+        assert 'export MESH_HOME="/data/sata/1TB/gobabygo-runtime"' in content
+        assert 'ws_host="$(_ws_control_host)"' in content
+        assert 'MESH_WS_HOST="$ws_host" command "$ws_script"' in content
         assert "sudo -u mesh-worker tmux attach" not in content
 
 
