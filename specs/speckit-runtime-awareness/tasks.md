@@ -316,7 +316,7 @@ Done when:
 
 ### T010. Documentation, final review, deployment, and rollout
 
-Status: todo
+Status: done
 
 Depends on: T009
 
