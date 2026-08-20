@@ -70,7 +70,7 @@ Done when:
 
 ### T002. Expose lifecycle commands through `mesh speckit`
 
-Status: todo
+Status: done
 
 Depends on: T001
 

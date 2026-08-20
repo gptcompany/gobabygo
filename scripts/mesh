@@ -739,10 +739,18 @@ EOF
 speckit_usage() {
   cat <<'EOF'
 Usage:
+  ./scripts/mesh speckit status [repo-path] [--json]
+  ./scripts/mesh speckit capabilities [repo-path] [--json]
+  ./scripts/mesh speckit update-check [--json]
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
-Options:
+Runtime management:
+  status and capabilities are local, read-only, and do not require iTerm2.
+  update-check contacts only the fixed official GitHub release endpoint and
+  writes allowlisted metadata under the operator state directory.
+
+Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.
   --write, --allow-write         Allow the worker to edit files. No commit is made.
   --team local-codex-gemini      Use Codex boss, Codex president, Gemini worker. Default.
@@ -773,12 +781,31 @@ Behavior:
 EOF
 }
 
+run_speckit_runtime() {
+  local py_bin="${MESH_SPECKIT_PYTHON:-}"
+  local runtime_cli="${REPO_ROOT}/scripts/mesh_speckit_cli.py"
+  if [[ ! -f "$runtime_cli" ]]; then
+    echo "Error: missing Spec Kit runtime CLI at $runtime_cli" >&2
+    return 1
+  fi
+  if [[ -z "$py_bin" ]]; then
+    py_bin="$(detect_python)" || return $?
+  fi
+  command "$py_bin" "$runtime_cli" "$@"
+}
+
 run_speckit_short() {
   local subcmd="${1:-}"
   if [[ "$subcmd" == "" || "$subcmd" == "-h" || "$subcmd" == "--help" ]]; then
     speckit_usage
     exit 0
   fi
+  case "$subcmd" in
+    status|capabilities|update-check)
+      run_speckit_runtime "$@"
+      exit $?
+      ;;
+  esac
   if [[ "$subcmd" != "run" ]]; then
     if [[ "$subcmd" == "smoke" ]]; then
       shift
