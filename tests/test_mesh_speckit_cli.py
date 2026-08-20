@@ -1237,6 +1237,39 @@ def test_atomic_migration_copy_and_restore_preserve_mode_and_cleanup(tmp_path) -
     assert list(tmp_path.glob(".target.*")) == []
 
 
+def test_safe_migration_target_cleans_partial_parent_creation(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    root = tmp_path / "repo"
+    root.mkdir()
+    original_mkdir = module.Path.mkdir
+
+    def fail_second_parent(path, *args, **kwargs):
+        if path == root / "first" / "second":
+            raise OSError("no space")
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(module.Path, "mkdir", fail_second_parent)
+
+    with pytest.raises(OSError, match="no space"):
+        module._safe_migration_target(root, "first/second/file.txt")
+
+    assert not (root / "first").exists()
+
+
+def test_generated_file_digest_enforces_streaming_size_limit(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    generated = tmp_path / "generated.txt"
+    generated.write_bytes(b"12345")
+    monkeypatch.setattr(module, "_MAX_MIGRATION_FILE_BYTES", 4)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="exceeds size limit"):
+        module._generated_file_digest(generated, "generated.txt")
+
+
 def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")

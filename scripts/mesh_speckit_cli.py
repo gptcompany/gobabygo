@@ -816,10 +816,24 @@ def _normalize_generated_timestamp(payload: dict[str, Any], key: str) -> None:
 
 
 def _generated_file_digest(path: Path, relative: str) -> str:
-    data = path.read_bytes()
-    if len(data) > _MAX_MIGRATION_FILE_BYTES:
-        raise SpeckitRuntimeError(f"migration file exceeds size limit: {path.name}")
-    return _normalized_generated_digest(data, relative)
+    digest = hashlib.sha256()
+    normalized_data = bytearray() if _is_volatile_metadata(relative) else None
+    size = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(64 * 1024):
+            size += len(chunk)
+            if size > _MAX_MIGRATION_FILE_BYTES:
+                raise SpeckitRuntimeError(
+                    f"migration file exceeds size limit: {path.name}"
+                )
+            digest.update(chunk)
+            if normalized_data is not None:
+                normalized_data.extend(chunk)
+    return (
+        _normalized_generated_digest(bytes(normalized_data), relative)
+        if normalized_data is not None
+        else digest.hexdigest()
+    )
 
 
 def _is_generated_update(relative: str) -> bool:
@@ -1087,19 +1101,33 @@ def _safe_migration_target(root: Path, relative: str) -> tuple[Path, list[Path]]
         raise SpeckitRuntimeError(f"invalid migration path: {relative}")
     current = root
     created: list[Path] = []
-    for part in path.parts[:-1]:
-        current = current / part
-        if current.is_symlink():
-            raise SpeckitRuntimeError(f"migration path traverses symlink: {relative}")
-        if current.exists() and not current.is_dir():
-            raise SpeckitRuntimeError(f"migration parent is not a directory: {relative}")
-        if not current.exists():
-            current.mkdir()
-            created.append(current)
-    target = root / path
-    if target.is_symlink() or (target.exists() and not target.is_file()):
-        raise SpeckitRuntimeError(f"migration target is not a regular file: {relative}")
-    return target, created
+    try:
+        for part in path.parts[:-1]:
+            current = current / part
+            if current.is_symlink():
+                raise SpeckitRuntimeError(
+                    f"migration path traverses symlink: {relative}"
+                )
+            if current.exists() and not current.is_dir():
+                raise SpeckitRuntimeError(
+                    f"migration parent is not a directory: {relative}"
+                )
+            if not current.exists():
+                current.mkdir()
+                created.append(current)
+        target = root / path
+        if target.is_symlink() or (target.exists() and not target.is_file()):
+            raise SpeckitRuntimeError(
+                f"migration target is not a regular file: {relative}"
+            )
+        return target, created
+    except BaseException:
+        for directory in reversed(created):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        raise
 
 
 def _fsync_directory(path: Path) -> None:
