@@ -574,6 +574,7 @@ def _run_command(
     *,
     cwd: Path | None = None,
     timeout: float = 300,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     executable = Path(str(args[0])).name if args else "command"
     try:
@@ -584,6 +585,7 @@ def _run_command(
             capture_output=True,
             text=True,
             timeout=timeout,
+            input=input_text,
         )
     except subprocess.TimeoutExpired as exc:
         raise SpeckitRuntimeError(
@@ -624,13 +626,10 @@ def _git_head(repo: Path) -> str:
 def _git_ignored_paths(repo: Path, paths: Sequence[str]) -> list[str]:
     if not paths:
         return []
-    proc = subprocess.run(
+    proc = _run_command(
         ["git", "-C", str(repo), "check-ignore", "--stdin", "-z"],
-        input="\0".join(paths) + "\0",
-        check=False,
-        capture_output=True,
-        text=True,
         timeout=15,
+        input_text="\0".join(paths) + "\0",
     )
     if proc.returncode not in {0, 1}:
         raise SpeckitRuntimeError(f"cannot inspect ignored paths for {repo}")
@@ -1350,6 +1349,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             aligned = status["aligned"]
     except SpeckitRuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"Error: operating system failure: {exc}", file=sys.stderr)
         return 2
     if args.json:
         print(json.dumps(output, indent=2, sort_keys=True))

@@ -486,6 +486,33 @@ def test_cli_normalizes_subprocess_failures(
     assert "Traceback" not in captured.err
 
 
+def test_cli_normalizes_residual_filesystem_failures(monkeypatch, tmp_path, capsys) -> None:
+    module = _load_module()
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(
+        module,
+        "build_project_plan",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read failed")),
+    )
+
+    rc = module.main(
+        [
+            "--lock-file",
+            str(lock),
+            "project",
+            "init",
+            str(tmp_path),
+            "--allow-multi-install-force",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert captured.out == ""
+    assert captured.err.strip() == "Error: operating system failure: read failed"
+    assert "Traceback" not in captured.err
+
+
 def test_install_plan_requires_exact_locked_version(monkeypatch, tmp_path) -> None:
     module = _load_module()
     lock = module.load_lock(_lock(tmp_path / "lock.json"))
