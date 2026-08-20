@@ -204,9 +204,9 @@ def _parse_args() -> argparse.Namespace:
     smoke_parser.add_argument("--response-timeout", type=float, default=120.0, help="Seconds to wait for each marker.")
     smoke_parser.add_argument("--poll-interval", type=float, default=3.0, help="Seconds between screen polls.")
 
-    e2e_parser = sub.add_parser("two-cli-e2e", help="Open, verify, and optionally close a local Gemini/Codex layout.")
+    e2e_parser = sub.add_parser("two-cli-e2e", help="Retired historical Gemini/Codex layout; new runs are refused.")
     e2e_parser.add_argument("--repo", required=True, help="Exact repo path.")
-    e2e_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TWO_CLI_BOSS_CMD", "gemini"))
+    e2e_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TWO_CLI_BOSS_CMD", ""))
     e2e_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TWO_CLI_PRESIDENT_CMD", "codex"))
     e2e_parser.add_argument("--boss-role", default="boss")
     e2e_parser.add_argument("--president-role", default="president")
@@ -222,10 +222,10 @@ def _parse_args() -> argparse.Namespace:
     team_parser.add_argument("--repo", required=True, help="Exact repo path.")
     team_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TEAM_BOSS_CMD", "claude"))
     team_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TEAM_PRESIDENT_CMD", "codex"))
-    team_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "gemini"))
+    team_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "agy"))
     team_parser.add_argument("--boss-role", default="boss")
     team_parser.add_argument("--president-role", default="president")
-    team_parser.add_argument("--worker-role", default="worker-gemini")
+    team_parser.add_argument("--worker-role", default="worker-antigravity")
     team_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
     team_parser.add_argument("--startup-wait", type=float, default=12.0, help="Seconds to wait after launching panes.")
     team_parser.add_argument("--startup-timeout", type=float, default=120.0, help="Seconds to wait for CLI prompts.")
@@ -238,10 +238,10 @@ def _parse_args() -> argparse.Namespace:
     speckit_parser.add_argument("--feature", default=os.environ.get("MESH_SPECKIT_FEATURE", "snake-game-demo"))
     speckit_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TEAM_BOSS_CMD", "claude"))
     speckit_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TEAM_PRESIDENT_CMD", "codex"))
-    speckit_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "gemini"))
+    speckit_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "agy"))
     speckit_parser.add_argument("--boss-role", default="boss")
     speckit_parser.add_argument("--president-role", default="president")
-    speckit_parser.add_argument("--worker-role", default="worker-gemini")
+    speckit_parser.add_argument("--worker-role", default="worker-antigravity")
     speckit_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
     speckit_parser.add_argument("--startup-wait", type=float, default=12.0, help="Seconds to wait after launching panes.")
     speckit_parser.add_argument("--startup-timeout", type=float, default=120.0, help="Seconds to wait for CLI prompts.")
@@ -255,11 +255,11 @@ def _parse_args() -> argparse.Namespace:
     speckit_run_parser.add_argument("--task", default="", help="Optional narrower implementation task.")
     speckit_run_parser.add_argument("--boss-cmd", default=os.environ.get("MESH_TEAM_BOSS_CMD", "claude"))
     speckit_run_parser.add_argument("--president-cmd", default=os.environ.get("MESH_TEAM_PRESIDENT_CMD", "codex"))
-    speckit_run_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "gemini"))
-    speckit_run_parser.add_argument("--reviewer-cmd", default=os.environ.get("MESH_TEAM_REVIEWER_CMD", "gemini"))
+    speckit_run_parser.add_argument("--worker-cmd", default=os.environ.get("MESH_TEAM_WORKER_CMD", "agy"))
+    speckit_run_parser.add_argument("--reviewer-cmd", default=os.environ.get("MESH_TEAM_REVIEWER_CMD", "codex"))
     speckit_run_parser.add_argument("--boss-role", default="boss")
     speckit_run_parser.add_argument("--president-role", default="president")
-    speckit_run_parser.add_argument("--worker-role", default="worker-gemini")
+    speckit_run_parser.add_argument("--worker-role", default="worker-antigravity")
     speckit_run_parser.add_argument("--reviewer-role", default="reviewer")
     speckit_run_parser.add_argument("--with-reviewer", action="store_true", help="Add a reviewer role before the final boss report.")
     speckit_run_parser.add_argument("--ui-group-id", default="", help="Optional mesh UI group id.")
@@ -524,6 +524,17 @@ def _ui_command_env_key(role: str) -> str:
 
 def _command_name(command_text: str) -> str:
     return str(command_text or "").strip().split(" ", 1)[0]
+
+
+def _reject_retired_gemini_args(args: argparse.Namespace) -> None:
+    if args.cmd == "two-cli-e2e":
+        raise RuntimeError("two-cli-e2e is retired because Gemini is no longer an active provider")
+    if args.cmd not in {"team-e2e", "speckit-team-e2e", "speckit-team-run"}:
+        return
+    for field in ("boss_cmd", "president_cmd", "worker_cmd", "reviewer_cmd"):
+        command = str(getattr(args, field, "") or "")
+        if _command_name(command) in {"gemini", "gemini-cli"}:
+            raise RuntimeError(f"{field.replace('_', '-')} cannot use retired Gemini")
 
 
 def _role_launch_command(repo: str, command_text: str) -> str:
@@ -2727,7 +2738,7 @@ async def _run_speckit_team_smoke(app: Any, args: argparse.Namespace) -> int:
         (
             "Dry-run routing smoke only: do not inspect files and do not edit files. "
             f"Boss handoff received for feature '{feature}': {discuss}. "
-            "Your role is president. Treat this as speckit.analyze and hand work to worker-gemini. "
+            f"Your role is president. Treat this as speckit.analyze and hand work to {args.worker_role}. "
             f'Rispondi solo con la concatenazione esatta di "SPECKIT_ANALYZE_TO_WORKER_" e "{run_id}".'
         ),
     )
@@ -2745,7 +2756,7 @@ async def _run_speckit_team_smoke(app: Any, args: argparse.Namespace) -> int:
         (
             "Dry-run routing smoke only: do not inspect files and do not edit files. "
             f"President handoff received for feature '{feature}': {analyze}. "
-            "Your role is worker-gemini. Treat this as speckit.implement dry-run execution. "
+            f"Your role is {args.worker_role}. Treat this as speckit.implement dry-run execution. "
             f'Rispondi solo con la concatenazione esatta di "SPECKIT_IMPLEMENT_RESULT_" e "{run_id}".'
         ),
     )
@@ -3991,6 +4002,10 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
     args = _parse_args()
+    try:
+        _reject_retired_gemini_args(args)
+    except RuntimeError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
     try:
         import iterm2
     except ImportError:

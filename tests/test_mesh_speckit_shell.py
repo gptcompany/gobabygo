@@ -138,3 +138,59 @@ def test_unknown_speckit_command_still_fails_closed() -> None:
 
     assert proc.returncode == 2
     assert "unsupported speckit subcommand 'upgrade-now'" in proc.stderr
+
+
+def test_legacy_speckit_print_plan_uses_active_provider_defaults(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(MESH),
+            "speckit",
+            "run",
+            str(repo),
+            "--feature",
+            "provider migration",
+            "--print-command",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "--boss-cmd claude" in proc.stdout
+    assert "--president-cmd codex" in proc.stdout
+    assert "--worker-cmd agy" in proc.stdout
+    assert "--reviewer-cmd codex" in proc.stdout
+    assert "gemini" not in proc.stdout.lower()
+
+
+def test_legacy_speckit_rejects_retired_gemini_team(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(MESH),
+            "speckit",
+            "run",
+            str(repo),
+            "--feature",
+            "provider migration",
+            "--team",
+            "local-codex-gemini",
+            "--print-command",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 2
+    assert "unsupported speckit team 'local-codex-gemini'" in proc.stderr

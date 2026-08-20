@@ -526,7 +526,7 @@ Examples:
   ./scripts/mesh attach --all
   ./scripts/mesh send president "status?"
   ./scripts/mesh enter lead
-  ./scripts/mesh interrupt worker-gemini
+  ./scripts/mesh interrupt worker-antigravity
   ./scripts/mesh summary lead
   ./scripts/mesh live board
   ./scripts/mesh live board rektslug --lines 40
@@ -756,9 +756,8 @@ Runtime management:
 Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.
   --write, --allow-write         Allow the worker to edit files. No commit is made.
-  --team local-codex-gemini      Use Codex boss, Codex president, Gemini worker. Default.
-  --team local-gemini            Use Gemini for all roles; useful for cheaper live tests.
-  --team claude-codex-gemini     Use Claude boss, Codex president, Gemini worker.
+  --team claude-codex-antigravity  Use Claude boss, Codex president/reviewer, Antigravity worker. Default.
+  --team local-codex-antigravity   Use Codex boss/president/reviewer and Antigravity worker.
   --team env                     Defer CLI commands to MESH_TEAM_* env vars / controller defaults.
   --test-command <cmd>           Test command to run after worker returns. Defaults to ./test.sh if executable.
   --no-test                      Do not run a test command.
@@ -817,7 +816,7 @@ run_speckit_short() {
         exit 0
       fi
 
-      local repo="" team="${MESH_SPECKIT_TEAM:-local-codex-gemini}"
+      local repo="" team="${MESH_SPECKIT_TEAM:-claude-codex-antigravity}"
       local feature="${MESH_SPECKIT_SMOKE_FEATURE:-speckit-controller-smoke}"
       local task="${MESH_SPECKIT_SMOKE_TASK:-Verify local speckit team startup and fallback handling.}"
       local boss_cmd="" president_cmd="" worker_cmd="" reviewer_cmd=""
@@ -953,23 +952,17 @@ run_speckit_short() {
       local repo_path="$RESOLVED_REPO_PATH"
 
       case "$team" in
-        local-codex-gemini)
+        local-codex-antigravity)
           boss_cmd="${boss_cmd:-codex}"
           president_cmd="${president_cmd:-codex}"
-          worker_cmd="${worker_cmd:-gemini}"
-          reviewer_cmd="${reviewer_cmd:-gemini}"
+          worker_cmd="${worker_cmd:-agy}"
+          reviewer_cmd="${reviewer_cmd:-codex}"
           ;;
-        local-gemini|gemini)
-          boss_cmd="${boss_cmd:-gemini}"
-          president_cmd="${president_cmd:-gemini}"
-          worker_cmd="${worker_cmd:-gemini}"
-          reviewer_cmd="${reviewer_cmd:-gemini}"
-          ;;
-        claude-codex-gemini)
+        claude-codex-antigravity)
           boss_cmd="${boss_cmd:-claude}"
           president_cmd="${president_cmd:-codex}"
-          worker_cmd="${worker_cmd:-gemini}"
-          reviewer_cmd="${reviewer_cmd:-gemini}"
+          worker_cmd="${worker_cmd:-agy}"
+          reviewer_cmd="${reviewer_cmd:-codex}"
           ;;
         env)
           ;;
@@ -1013,7 +1006,7 @@ run_speckit_short() {
     exit 0
   fi
 
-  local repo="" feature="" task="" team="${MESH_SPECKIT_TEAM:-local-codex-gemini}"
+  local repo="" feature="" task="" team="${MESH_SPECKIT_TEAM:-claude-codex-antigravity}"
   local boss_cmd="" president_cmd="" worker_cmd="" reviewer_cmd=""
   local claude_config="" boss_contract="" president_contract="" worker_contract="" reviewer_contract=""
   local allow_write=0 auto_mode=0 auto_approve=0 print_command=0
@@ -1245,23 +1238,17 @@ run_speckit_short() {
   fi
 
   case "$team" in
-    local-codex-gemini)
+    local-codex-antigravity)
       boss_cmd="${boss_cmd:-codex}"
       president_cmd="${president_cmd:-codex}"
-      worker_cmd="${worker_cmd:-gemini}"
-      reviewer_cmd="${reviewer_cmd:-gemini}"
+      worker_cmd="${worker_cmd:-agy}"
+      reviewer_cmd="${reviewer_cmd:-codex}"
       ;;
-    local-gemini|gemini)
-      boss_cmd="${boss_cmd:-gemini}"
-      president_cmd="${president_cmd:-gemini}"
-      worker_cmd="${worker_cmd:-gemini}"
-      reviewer_cmd="${reviewer_cmd:-gemini}"
-      ;;
-    claude-codex-gemini)
+    claude-codex-antigravity)
       boss_cmd="${boss_cmd:-claude}"
       president_cmd="${president_cmd:-codex}"
-      worker_cmd="${worker_cmd:-gemini}"
-      reviewer_cmd="${reviewer_cmd:-gemini}"
+      worker_cmd="${worker_cmd:-agy}"
+      reviewer_cmd="${reviewer_cmd:-codex}"
       ;;
     env)
       ;;

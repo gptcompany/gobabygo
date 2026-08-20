@@ -185,7 +185,7 @@ Done when:
 
 ### T006. Retire Gemini from active Spec Kit paths
 
-Status: todo
+Status: done
 
 Depends on: T002
 
