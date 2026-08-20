@@ -862,6 +862,10 @@ def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="mesh-speckit-migrate-apply-") as temporary:
         staging = Path(temporary)
         _generate_migration_tree(staging, plan["commands"])
+        if _git_status(root) or _git_head(root) != plan.get("base_head"):
+            raise SpeckitRuntimeError(
+                "project changed while preparing the migration sandbox"
+            )
         inventory = _migration_inventory_from_tree(root, staging)
         if inventory != plan.get("migration"):
             raise SpeckitRuntimeError("migration inventory changed after planning")

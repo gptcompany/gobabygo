@@ -826,6 +826,49 @@ def test_migration_apply_refuses_unaccepted_generated_updates(tmp_path) -> None:
         module.apply_migration_plan(plan)
 
 
+def test_migration_apply_refuses_repo_change_during_sandbox_generation(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan = {
+        "action": "migrate",
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "init"]],
+        "base_head": head,
+        "migration": {
+            "generated_files": 0,
+            "additions": [],
+            "generated_updates": [],
+            "protected_preserved": [],
+            "blocking_collisions": [],
+        },
+        "accept_generated_updates": False,
+        "ready_to_apply": True,
+    }
+
+    def generate_while_repo_changes(_staging, _commands):
+        (repo / "worker-change.txt").write_text("concurrent\n", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_generate_migration_tree", generate_while_repo_changes)
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    with pytest.raises(module.SpeckitRuntimeError, match="changed while preparing"):
+        module.apply_migration_plan(plan)
+    assert not (repo / ".specify" / "integration.json").exists()
+
+
 def test_project_plan_refuses_dirty_repo_before_commands(tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
