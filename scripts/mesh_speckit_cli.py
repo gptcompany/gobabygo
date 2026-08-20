@@ -617,6 +617,17 @@ def _is_generated_update(relative: str) -> bool:
     )
 
 
+def _migration_path_collides(repo: Path, relative: str) -> bool:
+    path = Path(relative)
+    current = repo
+    for part in path.parts[:-1]:
+        current = current / part
+        if current.is_symlink() or (current.exists() and not current.is_dir()):
+            return True
+    target = repo / path
+    return target.is_symlink() or (target.exists() and not target.is_file())
+
+
 def _generate_migration_tree(staging: Path, commands: Sequence[Sequence[str]]) -> None:
     if _specify_executable() is None:
         raise SpeckitRuntimeError("specify CLI is required to inspect a legacy migration")
@@ -655,10 +666,10 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
             raise SpeckitRuntimeError("migration sandbox exceeds size limit")
         relative = source.relative_to(staging).as_posix()
         target = repo / relative
-        if not target.exists():
-            additions.append(relative)
-        elif target.is_symlink() or not target.is_file():
+        if _migration_path_collides(repo, relative):
             collisions.append(relative)
+        elif not target.exists():
+            additions.append(relative)
         elif _file_digest(source) == _file_digest(target):
             continue
         elif relative in _PROTECTED_MIGRATION_FILES:

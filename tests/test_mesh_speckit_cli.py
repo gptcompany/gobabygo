@@ -614,6 +614,34 @@ def test_migration_plan_fails_closed_on_agent_skill_collision(monkeypatch, tmp_p
     assert plan["ready_to_apply"] is False
 
 
+@pytest.mark.parametrize("collision_kind", ["target-symlink", "parent-symlink"])
+def test_migration_inventory_reports_symlink_paths_as_collisions(
+    tmp_path, collision_kind
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    staging = tmp_path / "staging"
+    repo.mkdir()
+    generated = staging / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("official\n", encoding="utf-8")
+    if collision_kind == "target-symlink":
+        target = repo / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+        target.parent.mkdir(parents=True)
+        target.symlink_to(repo / "missing-target")
+    else:
+        parent = repo / ".agents" / "skills"
+        parent.parent.mkdir(parents=True)
+        parent.symlink_to(repo / "missing-directory")
+
+    inventory = module._migration_inventory_from_tree(repo, staging)
+
+    assert inventory["additions"] == []
+    assert inventory["blocking_collisions"] == [
+        ".agents/skills/speckit-plan/SKILL.md"
+    ]
+
+
 def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
