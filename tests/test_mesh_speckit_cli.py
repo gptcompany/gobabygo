@@ -452,6 +452,40 @@ def test_cli_status_json_reports_unaligned_without_traceback(monkeypatch, tmp_pa
     assert output["project"]["state"] == "invalid"
 
 
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (subprocess.TimeoutExpired(["git"], 10), "git timed out after 10 seconds"),
+        (OSError("unavailable"), "cannot start git: unavailable"),
+    ],
+)
+def test_cli_normalizes_subprocess_failures(
+    monkeypatch, tmp_path, capsys, failure, message
+) -> None:
+    module = _load_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: (_ for _ in ()).throw(failure))
+
+    rc = module.main(
+        [
+            "--lock-file",
+            str(lock),
+            "project",
+            "init",
+            str(repo),
+            "--allow-multi-install-force",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert captured.out == ""
+    assert captured.err.strip() == f"Error: {message}"
+    assert "Traceback" not in captured.err
+
+
 def test_install_plan_requires_exact_locked_version(monkeypatch, tmp_path) -> None:
     module = _load_module()
     lock = module.load_lock(_lock(tmp_path / "lock.json"))

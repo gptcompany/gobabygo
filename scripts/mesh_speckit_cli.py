@@ -569,14 +569,22 @@ def _run_command(
     cwd: Path | None = None,
     timeout: float = 300,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        list(args),
-        cwd=str(cwd) if cwd else None,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    executable = Path(str(args[0])).name if args else "command"
+    try:
+        return subprocess.run(
+            list(args),
+            cwd=str(cwd) if cwd else None,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SpeckitRuntimeError(
+            f"{executable} timed out after {timeout:g} seconds"
+        ) from exc
+    except OSError as exc:
+        raise SpeckitRuntimeError(f"cannot start {executable}: {exc}") from exc
 
 
 def _git_root(repo: Path) -> Path:
