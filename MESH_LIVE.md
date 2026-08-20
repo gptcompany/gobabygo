@@ -104,9 +104,9 @@ coordinator therefore keeps its old contract. Bootstrap a new coordinator (or
 exit the old tmux session and resume it) to activate a newly deployed contract.
 
 Repository names resolve below `MESH_WS_REPO_BASE`. A missing target fails, and
-a non-Git target also fails, before tmux session inspection or creation. Persistent helpers never fall
-back to the repository-base directory. An absolute repository path is also
-accepted.
+a non-Git target also fails, before tmux session inspection or creation.
+Persistent helpers never fall back to the repository-base directory. An
+absolute repository path is also accepted.
 
 For multi-repo coordination:
 

@@ -107,6 +107,27 @@ Current expectation:
 
 ## Notes
 
+### Spec Kit runtime
+
+Gobabygo pins the official Spec Kit CLI and discovers project capabilities from
+the installed Claude, Codex, and AGY skills. Update discovery is automatic and
+read-only; CLI installation and project changes always require explicit
+`--apply`.
+
+```bash
+mesh speckit status /data/sata/1TB/rektslug
+mesh speckit capabilities /data/sata/1TB/rektslug --json
+mesh speckit update-check --json
+mesh speckit install 0.16.5                 # plan only
+mesh speckit project upgrade /data/sata/1TB/rektslug  # plan only
+```
+
+`mesh speckit context` creates the bounded, provider-neutral phase/artifact
+envelope used for worker delegation. Intra-repo specs remain in that repo;
+multi-repo specs, decisions, tasks, and handoffs live in the exact Git root
+`/data/sata/1TB/coordination`. Mesh Live still owns tmux delivery and review;
+Spec Kit does not launch nested CLI workers. See [MESH_LIVE.md](MESH_LIVE.md).
+
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
 - Default operator multi-panel bootstrap is centralized in [mapping/operator_ui.yaml](/media/sam/1TB/gobabygo/mapping/operator_ui.yaml).
 - Canonical built-in `gsd` and `speckit` templates are session-only team templates. Active provider lanes are Claude, Codex, and Antigravity; Gemini is retained only for historical row deserialization and is rejected for new work.

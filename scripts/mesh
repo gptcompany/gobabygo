@@ -749,7 +749,8 @@ Usage:
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
 Runtime management:
-  status and capabilities are local, read-only, and do not require iTerm2.
+  status, capabilities, and context are local, read-only, and do not require iTerm2.
+  context emits one bounded provider-neutral delegation envelope from installed skills.
   update-check contacts only the fixed official GitHub release endpoint and
   writes allowlisted metadata under the operator state directory.
 
