@@ -755,9 +755,10 @@ def test_migration_inventory_reports_generated_paths_ignored_by_git(tmp_path) ->
 def test_generated_metadata_digest_ignores_only_allowlisted_timestamps() -> None:
     module = _load_module()
     relative = ".specify/integrations/claude.manifest.json"
-    first = b'{"integration":"claude","version":"0.16.5","installed_at":"one"}'
-    later = b'{"installed_at":"two","version":"0.16.5","integration":"claude"}'
-    changed = b'{"integration":"claude","version":"0.16.6","installed_at":"two"}'
+    first = b'{"integration":"claude","version":"0.16.5","installed_at":"2026-08-20T10:24:14.1+00:00"}'
+    later = b'{"installed_at":"2026-08-20T10:25:00Z","version":"0.16.5","integration":"claude"}'
+    changed = b'{"integration":"claude","version":"0.16.6","installed_at":"2026-08-20T10:25:00Z"}'
+    missing = b'{"integration":"claude","version":"0.16.5"}'
 
     assert module._normalized_generated_digest(
         first, relative
@@ -765,6 +766,14 @@ def test_generated_metadata_digest_ignores_only_allowlisted_timestamps() -> None
     assert module._normalized_generated_digest(
         first, relative
     ) != module._normalized_generated_digest(changed, relative)
+    assert module._normalized_generated_digest(
+        first, relative
+    ) != module._normalized_generated_digest(missing, relative)
+    with pytest.raises(module.SpeckitRuntimeError, match="invalid generated metadata"):
+        module._normalized_generated_digest(
+            b'{"integration":"claude","installed_at":{"unexpected":true}}',
+            relative,
+        )
 
 
 def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:

@@ -39,6 +39,10 @@ INTEGRATION_SKILL_ROOTS = {
 _VERSION = re.compile(r"(?<![0-9])v?(0|[1-9][0-9]*)\.(0|[0-9]+)\.(0|[0-9]+)(?![0-9])")
 _SAFE_INTEGRATION = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _SAFE_CAPABILITY = re.compile(r"^[a-z][a-z0-9.-]{0,79}$")
+_ISO_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+)
 _IMMUTABLE_REVIEW_SCOPE = re.compile(
     r"^(?:commit:[0-9a-f]{40}(?:\.\.[0-9a-f]{40})?|diff-sha256:[0-9a-f]{64})$"
 )
@@ -766,16 +770,25 @@ def _normalized_generated_digest(data: bytes, relative: str) -> str:
             for workflow in workflows.values():
                 if not isinstance(workflow, dict):
                     raise ValueError("workflow entry is not an object")
-                workflow.pop("installed_at", None)
-                workflow.pop("updated_at", None)
+                _normalize_generated_timestamp(workflow, "installed_at")
+                _normalize_generated_timestamp(workflow, "updated_at")
         else:
-            payload.pop("installed_at", None)
+            _normalize_generated_timestamp(payload, "installed_at")
     except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise SpeckitRuntimeError(
             f"invalid generated metadata file: {relative}"
         ) from exc
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _normalize_generated_timestamp(payload: dict[str, Any], key: str) -> None:
+    if key not in payload:
+        return
+    value = payload[key]
+    if not isinstance(value, str) or _ISO_TIMESTAMP.fullmatch(value) is None:
+        raise ValueError(f"{key} is not an ISO timestamp")
+    payload[key] = "<volatile-timestamp>"
 
 
 def _generated_file_digest(path: Path, relative: str) -> str:
