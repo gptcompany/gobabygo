@@ -775,6 +775,7 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
     generated = 0
     total_size = 0
     constitution_migrations: dict[str, str] = {}
+    content_digests: dict[str, str] = {}
     for source in sorted(staging.rglob("*")):
         if ".git" in source.relative_to(staging).parts:
             continue
@@ -802,17 +803,20 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
             else:
                 additions.append(relative)
                 constitution_migrations[relative] = _LEGACY_CONSTITUTION_PATH
+                content_digests[relative] = _file_digest(legacy_constitution)
             continue
         if _migration_path_collides(repo, relative):
             collisions.append(relative)
         elif not target.exists():
             additions.append(relative)
+            content_digests[relative] = _file_digest(source)
         elif _file_digest(source) == _file_digest(target):
             continue
         elif relative in _PROTECTED_MIGRATION_FILES:
             preserved.append(relative)
         elif _is_generated_update(relative):
             updates.append(relative)
+            content_digests[relative] = _file_digest(source)
         else:
             collisions.append(relative)
     return {
@@ -823,6 +827,7 @@ def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
         "blocking_collisions": collisions,
         "legacy_constitution_migrations": constitution_migrations,
         "legacy_commands_preserved": _legacy_command_paths(repo),
+        "generated_content_sha256": content_digests,
     }
 
 
@@ -981,16 +986,25 @@ def _fsync_directory(path: Path) -> None:
         os.close(directory_fd)
 
 
-def _atomic_copy_migration_file(source: Path, target: Path) -> None:
+def _atomic_copy_migration_file(
+    source: Path, target: Path, expected_digest: str | None = None
+) -> None:
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     try:
         target_handle = os.fdopen(fd, "wb")
         fd = -1
+        digest = hashlib.sha256()
         with source.open("rb") as source_handle, target_handle:
-            shutil.copyfileobj(source_handle, target_handle)
+            while chunk := source_handle.read(64 * 1024):
+                digest.update(chunk)
+                target_handle.write(chunk)
             target_handle.flush()
             os.fsync(target_handle.fileno())
             os.fchmod(target_handle.fileno(), source.stat().st_mode & 0o777)
+        if expected_digest is not None and digest.hexdigest() != expected_digest:
+            raise SpeckitRuntimeError(
+                f"migration source changed while copying: {source.name}"
+            )
         os.replace(temporary, target)
         _fsync_directory(target.parent)
     except BaseException:
@@ -1097,7 +1111,11 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
                         if target.exists()
                         else None
                     )
-                    _atomic_copy_migration_file(source, target)
+                    _atomic_copy_migration_file(
+                        source,
+                        target,
+                        inventory["generated_content_sha256"][relative],
+                    )
                 project = inspect_project(
                     root, ALLOWED_INTEGRATIONS, plan["required_version"]
                 )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -505,6 +506,9 @@ def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(
             "blocking_collisions": [],
             "legacy_constitution_migrations": {},
             "legacy_commands_preserved": [],
+            "generated_content_sha256": {
+                ".specify/integration.json": "example"
+            },
             "ignored_generated_paths": [],
         },
     )
@@ -606,6 +610,14 @@ def test_migration_plan_reports_updates_preservation_and_additions(
         "ignored_generated_paths": [],
         "legacy_constitution_migrations": {},
         "legacy_commands_preserved": [],
+        "generated_content_sha256": {
+            ".claude/skills/speckit-plan/SKILL.md": hashlib.sha256(
+                b"current skill\n"
+            ).hexdigest(),
+            ".specify/templates/spec-template.md": hashlib.sha256(
+                b"current template\n"
+            ).hexdigest(),
+        },
     }
     assert plan["ready_to_apply"] is False
     assert accepted["ready_to_apply"] is True
@@ -873,6 +885,9 @@ def test_migration_apply_moves_historical_constitution_to_current_path(
     assert result["migration"]["legacy_constitution_migrations"] == {
         ".specify/memory/constitution.md": "memory/constitution.md"
     }
+    assert result["migration"]["generated_content_sha256"][
+        ".specify/memory/constitution.md"
+    ] == hashlib.sha256(historical.read_bytes()).hexdigest()
     assert result["migration"]["legacy_commands_preserved"] == [
         ".claude/commands/plan.md"
     ]
@@ -927,7 +942,7 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
         lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
     )
 
-    def partial_write(_source, target):
+    def partial_write(_source, target, _expected_digest):
         target.write_text("partial\n", encoding="utf-8")
         raise failure
 
@@ -990,6 +1005,11 @@ def test_atomic_migration_copy_and_restore_preserve_mode_and_cleanup(tmp_path) -
 
     module._restore_migration_file(target, None)
     assert not target.exists()
+
+    with pytest.raises(module.SpeckitRuntimeError, match="source changed"):
+        module._atomic_copy_migration_file(source, target, "0" * 64)
+    assert not target.exists()
+    assert list(tmp_path.glob(".target.*")) == []
 
 
 def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> None:
@@ -1143,6 +1163,46 @@ def test_migration_apply_refuses_repo_change_during_sandbox_generation(
     with pytest.raises(module.SpeckitRuntimeError, match="changed while preparing"):
         module.apply_migration_plan(plan)
     assert not (repo / ".specify" / "integration.json").exists()
+
+
+def test_migration_apply_refuses_changed_generated_content(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+
+    def write_bundle(staging, _commands, *, content="planned\n"):
+        generated = staging / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text(content, encoding="utf-8")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary)
+        write_bundle(staged, [])
+        inventory = module._migration_inventory_with_git(repo, staged)
+    plan = {
+        "action": "init",
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "init"]],
+        "base_head": module._git_head(repo),
+        "migration": inventory,
+        "accept_generated_updates": False,
+        "ready_to_apply": True,
+    }
+    monkeypatch.setattr(
+        module,
+        "_generate_migration_tree",
+        lambda staging, commands: write_bundle(staging, commands, content="changed\n"),
+    )
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    with pytest.raises(module.SpeckitRuntimeError, match="inventory changed"):
+        module.apply_migration_plan(plan)
+
+    assert not (repo / ".agents").exists()
 
 
 def test_project_plan_refuses_dirty_repo_before_commands(tmp_path) -> None:
