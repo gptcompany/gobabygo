@@ -893,6 +893,11 @@ def test_generated_metadata_digest_ignores_only_allowlisted_timestamps() -> None
         )
     with pytest.raises(module.SpeckitRuntimeError, match="invalid generated metadata"):
         module._normalized_generated_digest(
+            b'{"integration":"claude","installed_at":"9999-99-99T99:99:99Z"}',
+            relative,
+        )
+    with pytest.raises(module.SpeckitRuntimeError, match="invalid generated metadata"):
+        module._normalized_generated_digest(
             b'{"integration":"claude","version":"0.16.5","version":"0.16.6"}',
             relative,
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime
 import fcntl
 import hashlib
 import json
@@ -587,7 +588,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def update_check(state_file: Path = DEFAULT_STATE_FILE) -> dict[str, Any]:
-    from datetime import datetime, timezone
+    from datetime import timezone
 
     release = _fetch_latest_release()
     payload = {**release, "checked_at": datetime.now(timezone.utc).isoformat()}
@@ -821,6 +822,12 @@ def _normalize_generated_timestamp(payload: dict[str, Any], key: str) -> None:
     value = payload[key]
     if not isinstance(value, str) or _ISO_TIMESTAMP.fullmatch(value) is None:
         raise ValueError(f"{key} is not an ISO timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{key} is not a valid calendar timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{key} timestamp must include a timezone")
     payload[key] = "<volatile-timestamp>"
 
 
