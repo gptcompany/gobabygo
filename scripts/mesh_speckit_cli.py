@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -39,6 +40,19 @@ _IMMUTABLE_REVIEW_SCOPE = re.compile(
     r"^(?:commit:[0-9a-f]{40}(?:\.\.[0-9a-f]{40})?|diff-sha256:[0-9a-f]{64})$"
 )
 _MAX_RELEASE_BYTES = 1024 * 1024
+_MAX_MIGRATION_FILES = 512
+_MAX_MIGRATION_FILE_BYTES = 8 * 1024 * 1024
+_MAX_MIGRATION_TOTAL_BYTES = 32 * 1024 * 1024
+_GENERATED_UPDATE_PREFIXES = (
+    ".specify/templates/",
+    ".specify/scripts/",
+    ".specify/workflows/",
+)
+_GENERATED_UPDATE_FILES = {
+    ".specify/.gitignore",
+    ".specify/init-options.json",
+}
+_PROTECTED_MIGRATION_FILES = {".specify/memory/constitution.md"}
 
 
 class SpeckitRuntimeError(RuntimeError):
@@ -480,6 +494,14 @@ def _git_status(repo: Path) -> list[str]:
     return [line for line in proc.stdout.splitlines() if line]
 
 
+def _git_head(repo: Path) -> str:
+    proc = _run_command(["git", "-C", str(repo), "rev-parse", "HEAD"], timeout=10)
+    value = proc.stdout.strip().lower()
+    if proc.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise SpeckitRuntimeError(f"cannot resolve Git HEAD for {repo}")
+    return value
+
+
 def build_install_plan(version: str, lock: dict[str, Any]) -> dict[str, Any]:
     requested = _version_from_text(version)
     if requested is None or version not in {requested, f"v{requested}"}:
@@ -527,12 +549,109 @@ def apply_install_plan(plan: dict[str, Any]) -> dict[str, Any]:
     return {**plan, "applied": True, "results": results, "installed": installed}
 
 
+def _project_init_commands() -> list[list[str]]:
+    return [
+        [
+            "specify",
+            "init",
+            "--here",
+            "--force",
+            "--integration",
+            "claude",
+            "--script",
+            "sh",
+            "--ignore-agent-tools",
+        ],
+        ["specify", "integration", "install", "codex"],
+        ["specify", "integration", "install", "agy", "--force"],
+        ["specify", "integration", "use", "claude"],
+    ]
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(64 * 1024):
+            size += len(chunk)
+            if size > _MAX_MIGRATION_FILE_BYTES:
+                raise SpeckitRuntimeError(f"migration file exceeds size limit: {path.name}")
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _is_generated_update(relative: str) -> bool:
+    return relative in _GENERATED_UPDATE_FILES or relative.startswith(
+        _GENERATED_UPDATE_PREFIXES
+    )
+
+
+def _migration_inventory(repo: Path, commands: Sequence[Sequence[str]]) -> dict[str, Any]:
+    if shutil.which("specify") is None:
+        raise SpeckitRuntimeError("specify CLI is required to inspect a legacy migration")
+    with tempfile.TemporaryDirectory(prefix="mesh-speckit-migrate-") as temporary:
+        staging = Path(temporary)
+        init = _run_command(["git", "init", "-q"], cwd=staging, timeout=10)
+        if init.returncode != 0:
+            raise SpeckitRuntimeError("cannot initialize Spec Kit migration sandbox")
+        for command in commands:
+            proc = _run_command(command, cwd=staging)
+            if proc.returncode != 0:
+                raise SpeckitRuntimeError(
+                    f"Spec Kit migration sandbox failed ({proc.returncode}): "
+                    f"{' '.join(command)}"
+                )
+
+        additions: list[str] = []
+        updates: list[str] = []
+        preserved: list[str] = []
+        collisions: list[str] = []
+        generated = 0
+        total_size = 0
+        for source in sorted(staging.rglob("*")):
+            if ".git" in source.relative_to(staging).parts:
+                continue
+            if source.is_symlink():
+                raise SpeckitRuntimeError("migration sandbox generated a symlink")
+            if not source.is_file():
+                continue
+            generated += 1
+            if generated > _MAX_MIGRATION_FILES:
+                raise SpeckitRuntimeError("migration sandbox exceeds file count limit")
+            size = source.stat().st_size
+            total_size += size
+            if size > _MAX_MIGRATION_FILE_BYTES or total_size > _MAX_MIGRATION_TOTAL_BYTES:
+                raise SpeckitRuntimeError("migration sandbox exceeds size limit")
+            relative = source.relative_to(staging).as_posix()
+            target = repo / relative
+            if not target.exists():
+                additions.append(relative)
+            elif target.is_symlink() or not target.is_file():
+                collisions.append(relative)
+            elif _file_digest(source) == _file_digest(target):
+                continue
+            elif relative in _PROTECTED_MIGRATION_FILES:
+                preserved.append(relative)
+            elif _is_generated_update(relative):
+                updates.append(relative)
+            else:
+                collisions.append(relative)
+        return {
+            "generated_files": generated,
+            "additions": additions,
+            "generated_updates": updates,
+            "protected_preserved": preserved,
+            "blocking_collisions": collisions,
+        }
+
+
 def build_project_plan(
     action: str,
     repo: Path,
     lock: dict[str, Any],
     *,
     allow_multi_install_force: bool = False,
+    accept_generated_updates: bool = False,
 ) -> dict[str, Any]:
     root = _git_root(repo)
     status = _git_status(root)
@@ -545,27 +664,33 @@ def build_project_plan(
     if action == "init":
         if manifest_exists:
             raise SpeckitRuntimeError("project is already initialized; use project upgrade")
+        if project["state"] == "legacy":
+            raise SpeckitRuntimeError("legacy project requires project migrate")
         if not allow_multi_install_force:
             raise SpeckitRuntimeError(
                 "AGY multi-install in Spec Kit v0.16.5 requires explicit "
                 "--allow-multi-install-force"
             )
-        commands = [
-            [
-                "specify",
-                "init",
-                "--here",
-                "--force",
-                "--integration",
-                "claude",
-                "--script",
-                "sh",
-                "--ignore-agent-tools",
-            ],
-            ["specify", "integration", "install", "codex"],
-            ["specify", "integration", "install", "agy", "--force"],
-            ["specify", "integration", "use", "claude"],
-        ]
+        commands = _project_init_commands()
+        migration = None
+    elif action == "migrate":
+        if manifest_exists:
+            raise SpeckitRuntimeError("project is already initialized; use project upgrade")
+        if project["state"] != "legacy":
+            raise SpeckitRuntimeError("project migrate requires legacy Spec Kit evidence")
+        if not allow_multi_install_force:
+            raise SpeckitRuntimeError(
+                "AGY multi-install in Spec Kit v0.16.5 requires explicit "
+                "--allow-multi-install-force"
+            )
+        runtime = installed_version()
+        if runtime["version"] != lock["version"]:
+            raise SpeckitRuntimeError(
+                "legacy migration requires pinned Spec Kit "
+                f"{lock['version']}; installed={runtime['version'] or 'missing'}"
+            )
+        commands = _project_init_commands()
+        migration = _migration_inventory(root, commands)
     elif action == "upgrade":
         if not manifest_exists:
             raise SpeckitRuntimeError("project is not initialized; use project init")
@@ -583,9 +708,10 @@ def build_project_plan(
             ["specify", "integration", "upgrade", integration]
             for integration in lock["integrations"]
         ]
+        migration = None
     else:
         raise SpeckitRuntimeError(f"unsupported project action: {action}")
-    return {
+    plan = {
         "schema": "mesh.speckit.project-plan.v1",
         "action": action,
         "repo": str(root),
@@ -593,7 +719,21 @@ def build_project_plan(
         "integrations": lock["integrations"],
         "commands": commands,
         "apply_required": True,
+        "base_head": _git_head(root),
     }
+    if migration is not None:
+        ready = not migration["blocking_collisions"] and (
+            accept_generated_updates or not migration["generated_updates"]
+        )
+        plan.update(
+            {
+                "legacy_evidence": project["legacy_evidence"],
+                "migration": migration,
+                "accept_generated_updates": accept_generated_updates,
+                "ready_to_apply": ready,
+            }
+        )
+    return plan
 
 
 def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
@@ -664,12 +804,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     install.add_argument("--json", action="store_true")
     project = sub.add_parser("project")
     project_sub = project.add_subparsers(dest="project_action", required=True)
-    for action in ("init", "upgrade"):
+    for action in ("init", "migrate", "upgrade"):
         project_action = project_sub.add_parser(action)
         project_action.add_argument("repo", type=Path)
         project_action.add_argument("--apply", action="store_true")
         project_action.add_argument("--json", action="store_true")
         project_action.add_argument("--allow-multi-install-force", action="store_true")
+        project_action.add_argument("--accept-generated-updates", action="store_true")
     context = sub.add_parser("context")
     context.add_argument("repo", type=Path)
     context.add_argument("--phase", required=True)
@@ -705,6 +846,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.repo,
                 load_lock(args.lock_file),
                 allow_multi_install_force=args.allow_multi_install_force,
+                accept_generated_updates=args.accept_generated_updates,
             )
             output = apply_project_plan(plan) if args.apply else {**plan, "applied": False}
             aligned = True

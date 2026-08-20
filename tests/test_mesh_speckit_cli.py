@@ -438,6 +438,150 @@ def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(tmp_p
         )
 
 
+def test_project_init_redirects_legacy_repo_to_migrate(tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    (repo / ".specify").mkdir()
+    (repo / ".specify" / "legacy.txt").write_text("legacy\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+
+    with pytest.raises(module.SpeckitRuntimeError, match="requires project migrate"):
+        module.build_project_plan(
+            "init", repo, lock, allow_multi_install_force=True
+        )
+
+
+def test_migration_plan_reports_updates_preservation_and_additions(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    template = repo / ".specify" / "templates" / "spec-template.md"
+    constitution = repo / ".specify" / "memory" / "constitution.md"
+    template.parent.mkdir(parents=True)
+    constitution.parent.mkdir(parents=True)
+    template.write_text("legacy template\n", encoding="utf-8")
+    constitution.write_text("legacy constitution\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    monkeypatch.setattr(module.shutil, "which", lambda name: "/bin/specify" if name == "specify" else None)
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+    real_run = module._run_command
+
+    def fake_run(args, **kwargs):
+        if args[0] == "git":
+            return real_run(args, **kwargs)
+        staging = Path(kwargs["cwd"])
+        generated_template = staging / ".specify" / "templates" / "spec-template.md"
+        generated_constitution = staging / ".specify" / "memory" / "constitution.md"
+        generated_skill = staging / ".claude" / "skills" / "speckit-plan" / "SKILL.md"
+        for path in (generated_template, generated_constitution, generated_skill):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        generated_template.write_text("current template\n", encoding="utf-8")
+        generated_constitution.write_text("current constitution\n", encoding="utf-8")
+        generated_skill.write_text("current skill\n", encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    plan = module.build_project_plan(
+        "migrate", repo, lock, allow_multi_install_force=True
+    )
+    accepted = module.build_project_plan(
+        "migrate",
+        repo,
+        lock,
+        allow_multi_install_force=True,
+        accept_generated_updates=True,
+    )
+
+    assert plan["migration"] == {
+        "generated_files": 3,
+        "additions": [".claude/skills/speckit-plan/SKILL.md"],
+        "generated_updates": [".specify/templates/spec-template.md"],
+        "protected_preserved": [".specify/memory/constitution.md"],
+        "blocking_collisions": [],
+    }
+    assert plan["ready_to_apply"] is False
+    assert accepted["ready_to_apply"] is True
+    assert accepted["base_head"] == subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_migration_plan_fails_closed_on_agent_skill_collision(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    legacy = repo / ".specify" / "legacy.txt"
+    legacy.parent.mkdir()
+    legacy.write_text("legacy\n", encoding="utf-8")
+    skill = repo / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("custom skill\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify", ".agents"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/bin/specify")
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+    real_run = module._run_command
+
+    def fake_run(args, **kwargs):
+        if args[0] == "git":
+            return real_run(args, **kwargs)
+        generated = Path(kwargs["cwd"]) / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text("official skill\n", encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    plan = module.build_project_plan(
+        "migrate",
+        repo,
+        lock,
+        allow_multi_install_force=True,
+        accept_generated_updates=True,
+    )
+
+    assert plan["migration"]["blocking_collisions"] == [
+        ".agents/skills/speckit-plan/SKILL.md"
+    ]
+    assert plan["ready_to_apply"] is False
+
+
+def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    legacy = repo / ".specify" / "legacy.txt"
+    legacy.parent.mkdir()
+    legacy.write_text("legacy\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.4", "error": None},
+    )
+
+    with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 0.16.5"):
+        module.build_project_plan(
+            "migrate", repo, lock, allow_multi_install_force=True
+        )
+
+
 def test_project_plan_refuses_dirty_repo_before_commands(tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
