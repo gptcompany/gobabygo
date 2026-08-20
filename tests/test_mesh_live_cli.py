@@ -1796,6 +1796,13 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "It has no recovery command" in prompt
     assert "exact worker pin replaces the default Antigravity-writer/Codex-reviewer pairing" in prompt
     assert "Use Antigravity as the sole implementation writer" not in prompt
+    assert "Per-delegation test policy" in prompt
+    assert "TDD_MODE: required|recommended|not_applicable" in prompt
+    assert "observable RED evidence before production-code edits" in prompt
+    assert "already failing focused regression test is valid RED evidence" in prompt
+    assert "Do not manufacture a test merely to satisfy the label" in prompt
+    assert "applies equally when Codex or Antigravity is the writer" in prompt
+    assert "not a claim that either CLI has a native TDD hook" in prompt
 
 
 def test_coordinator_prompt_accepts_only_bounded_speckit_status_fields() -> None:

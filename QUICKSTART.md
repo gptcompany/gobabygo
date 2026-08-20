@@ -303,6 +303,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - in multi-repo coordinator scope, a multi-task handoff always keeps durable
   Spec Kit specification, decisions, dependencies, and tasks; urgent direct
   recovery lanes do not replace that program state
+- each write delegation declares `TDD_MODE: required|recommended|not_applicable`;
+  RED/GREEN evidence is required only for behavior changes where a focused test
+  is feasible, and the same contract applies to Codex and AGY
 - `mesh live workflow show speckit` projects the canonical
   `mapping/pipeline_templates.yaml` phases without router, tmux discovery, or iTerm2
 - `mcoordinator <repo>` binds Speckit to that repository and derives the

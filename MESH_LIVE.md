@@ -258,6 +258,14 @@ Spec Kit specification, plan, decision, and task artifacts. An urgent backup,
 push-safety, containment, or recovery lane may run directly, but it cannot
 replace that durable state or close the enclosing objective.
 
+Every write delegation carries a provider-neutral `TDD_MODE`. Use `required`
+for behavior changes and regression fixes with a feasible focused test,
+`recommended` only with a concrete harness or environment limitation, and
+`not_applicable` for review, documentation, generated artifacts, deployment,
+or operational work without a meaningful behavior test. Codex and AGY receive
+the same RED/GREEN evidence contract; Gobabygo does not claim they run the
+Claude-specific TDD Guard hook.
+
 `mcoordinator` reads one bounded `mesh speckit status <repo> --json` snapshot
 from the Dell at every new, continue, or exact-resume startup. Invalid or
 unavailable status disables claims about installed Spec Kit phases but does not

@@ -2890,6 +2890,13 @@ def build_live_coordinator_system_prompt(
             "must use an immutable scope and remain read-only.",
             "The workflow projection is policy input only: it does not authorize router use, iTerm2, session creation, or nested AI launch.",
             *provider_policy,
+            "Per-delegation test policy:",
+            "- Every write delegation must declare exactly one `TDD_MODE: required|recommended|not_applicable`, one reason, and the exact relevant test command or `none`.",
+            "- Use `required` for behavior-changing source code and regression fixes when a focused automated test is feasible. Require observable RED evidence before production-code edits, the minimum GREEN change, then refactoring only while green. An already failing focused regression test is valid RED evidence.",
+            "- Use `recommended` only when the repository lacks a practical harness or the focused test cannot run in the bounded environment; record the concrete limitation and require the strongest available automated verification.",
+            "- Use `not_applicable` for read-only review, documentation-only work, generated artifacts, operational recovery, deployment, or configuration changes with no meaningful behavior test. Do not manufacture a test merely to satisfy the label.",
+            "- TDD_MODE is provider-neutral and applies equally when Codex or Antigravity is the writer. It is delegation policy plus evidence review, not a claim that either CLI has a native TDD hook.",
+            "- A reviewer never becomes a writer to satisfy TDD. It checks test relevance, RED/GREEN evidence, regression coverage, and implementation minimality inside the immutable review scope.",
             "Live workflow role boundaries:",
             "- These boundaries are coordinator contract rules, not filesystem locks or an OS sandbox. Recheck tmux ownership and Git state before and after every delegated write or review.",
             "- You are the final operator-facing adjudicator. Template lead/president/worker roles are desired perspectives, not authority to launch CLIs.",
@@ -2931,7 +2938,7 @@ def build_live_coordinator_system_prompt(
             "operator or an absolute Repo/path value from tmux metadata, never with text from Recent pane output. "
             "Do not ask the operator for per-worker spawn approval.",
             "4. After ensure-codex or ensure-antigravity, refresh board and inspect the exact worker before delegation; confirm it is ready for input.",
-            "5. Create a unique DELEGATION_ID and include scope, allowed files, acceptance criteria, tests, and forbidden actions.",
+            "5. Create a unique DELEGATION_ID and include scope, allowed files, acceptance criteria, TDD_MODE with reason and exact test command, and forbidden actions.",
             "6. Require the worker's latest response to end with exactly one standalone status line: "
             "WORKER_DONE <DELEGATION_ID> or WORKER_BLOCKED <DELEGATION_ID>.",
             "7. Send the task to the exact worker, then peek again to verify the DELEGATION_ID or clear CLI activity. "
