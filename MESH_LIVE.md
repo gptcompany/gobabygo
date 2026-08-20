@@ -257,6 +257,14 @@ from the Dell at every new, continue, or exact-resume startup. Invalid or
 unavailable status disables claims about installed Spec Kit phases but does not
 disable direct board, peek, incident coordination, or read-only review.
 
+Legacy repositories are reported as `project.state=legacy` when old
+`.specify/`, Speckit commands, or complete spec artifact sets exist without the
+current integration manifest. Migrate them one clean repository at a time with
+`mesh speckit project migrate`; the plan is read-only for the target repository
+and installs the Claude, Codex, and AGY skill integrations together only after
+explicit `--apply`. Existing specifications and constitution remain local and
+are preserved.
+
 Before a Spec Kit task is delegated, the coordinator generates one compact,
 provider-neutral envelope from the target repository:
 

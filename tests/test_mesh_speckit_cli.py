@@ -83,6 +83,7 @@ def test_lock_rejects_gemini(tmp_path) -> None:
 def test_installed_version_reports_missing_binary(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(module.Path, "is_file", lambda _path: False)
 
     assert module.installed_version() == {
         "available": False,
@@ -90,6 +91,32 @@ def test_installed_version_reports_missing_binary(monkeypatch) -> None:
         "version": None,
         "error": None,
     }
+
+
+def test_installed_version_falls_back_to_user_local_bin(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    executable = tmp_path / ".local" / "bin" / "specify"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+    monkeypatch.setattr(module.shutil, "which", lambda _name: None)
+    original_expanduser = module.Path.expanduser
+
+    def fake_expanduser(path):
+        if str(path) == "~/.local/bin/specify":
+            return executable
+        return original_expanduser(path)
+
+    monkeypatch.setattr(module.Path, "expanduser", fake_expanduser)
+
+    def runner(args, **_kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout="specify 0.16.5\n", stderr="")
+
+    result = module.installed_version(runner)
+
+    assert result["available"] is True
+    assert result["executable"] == str(executable)
+    assert result["version"] == "0.16.5"
 
 
 def test_installed_version_parses_official_output(monkeypatch) -> None:

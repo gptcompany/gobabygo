@@ -59,6 +59,16 @@ class SpeckitRuntimeError(RuntimeError):
     pass
 
 
+def _specify_executable() -> str | None:
+    executable = shutil.which("specify")
+    if executable:
+        return executable
+    user_executable = Path("~/.local/bin/specify").expanduser()
+    if user_executable.is_file() and os.access(user_executable, os.X_OK):
+        return str(user_executable)
+    return None
+
+
 def _version_from_text(value: str) -> str | None:
     match = _VERSION.search(str(value or ""))
     if match is None:
@@ -108,7 +118,7 @@ def load_lock(path: Path = DEFAULT_LOCK_FILE) -> dict[str, Any]:
 def installed_version(
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, Any]:
-    executable = shutil.which("specify")
+    executable = _specify_executable()
     if executable is None:
         return {"available": False, "executable": None, "version": None, "error": None}
     try:
@@ -550,9 +560,10 @@ def apply_install_plan(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _project_init_commands() -> list[list[str]]:
+    specify = _specify_executable() or "specify"
     return [
         [
-            "specify",
+            specify,
             "init",
             "--here",
             "--force",
@@ -562,9 +573,9 @@ def _project_init_commands() -> list[list[str]]:
             "sh",
             "--ignore-agent-tools",
         ],
-        ["specify", "integration", "install", "codex"],
-        ["specify", "integration", "install", "agy", "--force"],
-        ["specify", "integration", "use", "claude"],
+        [specify, "integration", "install", "codex"],
+        [specify, "integration", "install", "agy", "--force"],
+        [specify, "integration", "use", "claude"],
     ]
 
 
@@ -587,7 +598,7 @@ def _is_generated_update(relative: str) -> bool:
 
 
 def _generate_migration_tree(staging: Path, commands: Sequence[Sequence[str]]) -> None:
-    if shutil.which("specify") is None:
+    if _specify_executable() is None:
         raise SpeckitRuntimeError("specify CLI is required to inspect a legacy migration")
     init = _run_command(["git", "init", "-q"], cwd=staging, timeout=10)
     if init.returncode != 0:
@@ -746,7 +757,7 @@ def build_project_plan(
 def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if plan.get("action") == "migrate":
         return apply_migration_plan(plan)
-    if shutil.which("specify") is None:
+    if _specify_executable() is None:
         raise SpeckitRuntimeError("specify CLI is not installed")
     root = Path(plan["repo"])
     results: list[dict[str, Any]] = []
@@ -961,7 +972,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         project_action.add_argument("--apply", action="store_true")
         project_action.add_argument("--json", action="store_true")
         project_action.add_argument("--allow-multi-install-force", action="store_true")
-        project_action.add_argument("--accept-generated-updates", action="store_true")
+        if action == "migrate":
+            project_action.add_argument("--accept-generated-updates", action="store_true")
+        else:
+            project_action.set_defaults(accept_generated_updates=False)
     context = sub.add_parser("context")
     context.add_argument("repo", type=Path)
     context.add_argument("--phase", required=True)
@@ -1033,6 +1047,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Changed paths:")
             for path in output["changed_paths"]:
                 print(f"  {path}")
+        if output.get("migration"):
+            migration = output["migration"]
+            for label in (
+                "additions",
+                "generated_updates",
+                "protected_preserved",
+                "blocking_collisions",
+            ):
+                print(f"{label}={','.join(migration[label]) or '-'}")
+            print(f"ready_to_apply={'yes' if output['ready_to_apply'] else 'no'}")
     elif args.command == "context":
         print(_render_context(output))
     else:

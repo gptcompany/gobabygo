@@ -361,6 +361,35 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - tick state contains metadata only; use `install-mesh-live-cron.sh --remove`
   to remove its marked crontab block without touching unrelated entries
 
+### Spec Kit project lifecycle
+
+The Dell has one pinned `specify` CLI; each repository owns its Spec Kit
+artifacts and integrations. Use `status` to choose exactly one lifecycle path:
+
+```bash
+mesh speckit status /data/sata/1TB/rektslug
+
+# state=missing: new project
+mesh speckit project init /data/sata/1TB/rektslug \
+  --allow-multi-install-force
+
+# state=legacy: inspect first, then explicitly accept generated template updates
+mesh speckit project migrate /data/sata/1TB/rektslug \
+  --allow-multi-install-force
+mesh speckit project migrate /data/sata/1TB/rektslug \
+  --allow-multi-install-force --accept-generated-updates --apply
+
+# state=aligned: future pinned release
+mesh speckit project upgrade /data/sata/1TB/rektslug --apply
+```
+
+Every mutation requires the exact clean Git root. Legacy migration generates
+Claude, Codex, and AGY integrations in a temporary sandbox, preserves existing
+`specs/` and `.specify/memory/constitution.md`, and refuses custom skill
+collisions. Review and commit the resulting diff in that repository before
+migrating the next one. `~/.local/bin/specify` is discovered explicitly for
+non-interactive SSH sessions; no shell startup file is required.
+
 ### Git hook chaining
 
 Git supports one effective `core.hooksPath`. On the Dell, keep the global value

@@ -119,8 +119,16 @@ mesh speckit status /data/sata/1TB/rektslug
 mesh speckit capabilities /data/sata/1TB/rektslug --json
 mesh speckit update-check --json
 mesh speckit install 0.16.5                 # plan only
+mesh speckit project migrate /data/sata/1TB/rektslug  # legacy plan only
 mesh speckit project upgrade /data/sata/1TB/rektslug  # plan only
 ```
+
+`status` reports pre-manifest projects as `legacy`, not `missing`. Migrate one
+clean repository at a time: inspect the plan first, then add
+`--accept-generated-updates --apply` only after reviewing generated template
+replacements. Migration installs Claude, Codex, and AGY together, preserves
+existing `specs/` and `.specify/memory/constitution.md`, and blocks collisions
+with custom skills. Later releases use `project upgrade`.
 
 `mesh speckit context` creates the bounded, provider-neutral phase/artifact
 envelope used for worker delegation. Intra-repo specs remain in that repo;

@@ -744,7 +744,9 @@ Usage:
   ./scripts/mesh speckit context <repo-path> --phase <phase> --feature-dir <dir> --artifact <path> --role <writer|reviewer> [--review-scope <scope>] [--json]
   ./scripts/mesh speckit update-check [--json]
   ./scripts/mesh speckit install <version> [--apply] [--json]
-  ./scripts/mesh speckit project <init|upgrade> <repo-path> [--apply] [--json]
+  ./scripts/mesh speckit project init <repo-path> [--apply] [--json]
+  ./scripts/mesh speckit project migrate <repo-path> [--accept-generated-updates] [--apply] [--json]
+  ./scripts/mesh speckit project upgrade <repo-path> [--apply] [--json]
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
@@ -753,6 +755,8 @@ Runtime management:
   context emits one bounded provider-neutral delegation envelope from installed skills.
   update-check contacts only the fixed official GitHub release endpoint and
   writes allowlisted metadata under the operator state directory.
+  migrate stages official output outside the target repo, preserves its
+  constitution/specs, and fails closed on skill or custom-file collisions.
 
 Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.
