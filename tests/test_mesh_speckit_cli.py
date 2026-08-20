@@ -38,6 +38,7 @@ def _project(path: Path, integrations=("claude", "codex", "agy")) -> Path:
     (path / ".specify" / "integration.json").write_text(
         json.dumps(
             {
+                "version": "0.16.5",
                 "default_integration": "claude",
                 "installed_integrations": list(integrations),
             }
@@ -192,6 +193,29 @@ def test_project_capabilities_are_intersection_of_installed_skills(tmp_path) -> 
     assert result["state"] == "aligned"
     assert result["enabled_capabilities"] == ["converge", "plan", "specify"]
     assert result["capabilities"]["codex"] == result["capabilities"]["agy"]
+
+
+def test_status_rejects_outdated_project_manifest(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _project(tmp_path / "repo")
+    manifest = repo / ".specify" / "integration.json"
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["version"] = "0.16.4"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    result = module.build_status(repo, lock_file=lock, state_file=tmp_path / "none")
+
+    assert result["runtime_aligned"] is True
+    assert result["project"]["state"] == "partial"
+    assert result["project"]["manifest_version"] == "0.16.4"
+    assert result["project"]["version_aligned"] is False
+    assert result["aligned"] is False
 
 
 def test_project_rejects_active_unsupported_integration(tmp_path) -> None:

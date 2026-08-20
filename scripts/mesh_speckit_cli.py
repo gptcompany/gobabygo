@@ -209,7 +209,11 @@ def _legacy_project_evidence(root: Path) -> list[str]:
     return evidence[:4]
 
 
-def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[str, Any]:
+def inspect_project(
+    repo: Path,
+    required_integrations: Sequence[str],
+    required_version: str | None = None,
+) -> dict[str, Any]:
     root = repo.expanduser().resolve()
     manifest_path = root / ".specify" / "integration.json"
     result: dict[str, Any] = {
@@ -217,6 +221,8 @@ def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[st
         "manifest": str(manifest_path),
         "state": "missing",
         "default_integration": None,
+        "manifest_version": None,
+        "version_aligned": None,
         "installed_integrations": [],
         "missing_integrations": list(required_integrations),
         "unsupported_integrations": [],
@@ -243,6 +249,8 @@ def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[st
         return result
 
     installed, default = _manifest_integrations(payload)
+    manifest_version = _version_from_text(str(payload.get("version", "")))
+    version_aligned = required_version is None or manifest_version == required_version
     required = list(required_integrations)
     missing = [item for item in required if item not in installed]
     unsupported = [item for item in installed if item not in ALLOWED_INTEGRATIONS]
@@ -260,7 +268,7 @@ def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[st
 
     if unsupported:
         state = "unsupported"
-    elif missing or has_empty:
+    elif missing or has_empty or not version_aligned:
         state = "partial"
     else:
         state = "aligned"
@@ -268,6 +276,8 @@ def inspect_project(repo: Path, required_integrations: Sequence[str]) -> dict[st
         {
             "state": state,
             "default_integration": default,
+            "manifest_version": manifest_version,
+            "version_aligned": version_aligned,
             "installed_integrations": installed,
             "missing_integrations": missing,
             "unsupported_integrations": unsupported,
@@ -305,7 +315,7 @@ def build_status(
     lock = load_lock(lock_file)
     installed = installed_version()
     cached = _load_cached_release(state_file)
-    project = inspect_project(repo, lock["integrations"])
+    project = inspect_project(repo, lock["integrations"], lock["version"])
     latest = cached["version"] if cached else None
     latest_tuple = _version_tuple(latest)
     required_tuple = _version_tuple(lock["version"])
@@ -349,7 +359,7 @@ def build_delegation_context(
     root = _git_root(repo)
     lock = load_lock(lock_file)
     installed = installed_version()
-    project = inspect_project(root, lock["integrations"])
+    project = inspect_project(root, lock["integrations"], lock["version"])
     normalized_phase = str(phase or "").strip()
     if installed["version"] != lock["version"] or project["state"] != "aligned":
         raise SpeckitRuntimeError("Spec Kit runtime and project must be aligned")
@@ -677,7 +687,7 @@ def build_project_plan(
         raise SpeckitRuntimeError(
             f"project worktree must be clean before Spec Kit {action}: {root}"
         )
-    project = inspect_project(root, lock["integrations"])
+    project = inspect_project(root, lock["integrations"], lock["version"])
     manifest_exists = Path(project["manifest"]).is_file()
     if action == "init":
         if manifest_exists:
@@ -886,7 +896,9 @@ def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
                     else None
                 )
                 _atomic_copy_migration_file(source, target)
-            project = inspect_project(root, ALLOWED_INTEGRATIONS)
+            project = inspect_project(
+                root, ALLOWED_INTEGRATIONS, plan["required_version"]
+            )
             manifest = _load_json_object(
                 root / ".specify" / "integration.json",
                 label="Spec Kit integration manifest",
