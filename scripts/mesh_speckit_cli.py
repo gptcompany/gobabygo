@@ -586,63 +586,70 @@ def _is_generated_update(relative: str) -> bool:
     )
 
 
-def _migration_inventory(repo: Path, commands: Sequence[Sequence[str]]) -> dict[str, Any]:
+def _generate_migration_tree(staging: Path, commands: Sequence[Sequence[str]]) -> None:
     if shutil.which("specify") is None:
         raise SpeckitRuntimeError("specify CLI is required to inspect a legacy migration")
+    init = _run_command(["git", "init", "-q"], cwd=staging, timeout=10)
+    if init.returncode != 0:
+        raise SpeckitRuntimeError("cannot initialize Spec Kit migration sandbox")
+    for command in commands:
+        proc = _run_command(command, cwd=staging)
+        if proc.returncode != 0:
+            raise SpeckitRuntimeError(
+                f"Spec Kit migration sandbox failed ({proc.returncode}): "
+                f"{' '.join(command)}"
+            )
+
+
+def _migration_inventory_from_tree(repo: Path, staging: Path) -> dict[str, Any]:
+    additions: list[str] = []
+    updates: list[str] = []
+    preserved: list[str] = []
+    collisions: list[str] = []
+    generated = 0
+    total_size = 0
+    for source in sorted(staging.rglob("*")):
+        if ".git" in source.relative_to(staging).parts:
+            continue
+        if source.is_symlink():
+            raise SpeckitRuntimeError("migration sandbox generated a symlink")
+        if not source.is_file():
+            continue
+        generated += 1
+        if generated > _MAX_MIGRATION_FILES:
+            raise SpeckitRuntimeError("migration sandbox exceeds file count limit")
+        size = source.stat().st_size
+        total_size += size
+        if size > _MAX_MIGRATION_FILE_BYTES or total_size > _MAX_MIGRATION_TOTAL_BYTES:
+            raise SpeckitRuntimeError("migration sandbox exceeds size limit")
+        relative = source.relative_to(staging).as_posix()
+        target = repo / relative
+        if not target.exists():
+            additions.append(relative)
+        elif target.is_symlink() or not target.is_file():
+            collisions.append(relative)
+        elif _file_digest(source) == _file_digest(target):
+            continue
+        elif relative in _PROTECTED_MIGRATION_FILES:
+            preserved.append(relative)
+        elif _is_generated_update(relative):
+            updates.append(relative)
+        else:
+            collisions.append(relative)
+    return {
+        "generated_files": generated,
+        "additions": additions,
+        "generated_updates": updates,
+        "protected_preserved": preserved,
+        "blocking_collisions": collisions,
+    }
+
+
+def _migration_inventory(repo: Path, commands: Sequence[Sequence[str]]) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="mesh-speckit-migrate-") as temporary:
         staging = Path(temporary)
-        init = _run_command(["git", "init", "-q"], cwd=staging, timeout=10)
-        if init.returncode != 0:
-            raise SpeckitRuntimeError("cannot initialize Spec Kit migration sandbox")
-        for command in commands:
-            proc = _run_command(command, cwd=staging)
-            if proc.returncode != 0:
-                raise SpeckitRuntimeError(
-                    f"Spec Kit migration sandbox failed ({proc.returncode}): "
-                    f"{' '.join(command)}"
-                )
-
-        additions: list[str] = []
-        updates: list[str] = []
-        preserved: list[str] = []
-        collisions: list[str] = []
-        generated = 0
-        total_size = 0
-        for source in sorted(staging.rglob("*")):
-            if ".git" in source.relative_to(staging).parts:
-                continue
-            if source.is_symlink():
-                raise SpeckitRuntimeError("migration sandbox generated a symlink")
-            if not source.is_file():
-                continue
-            generated += 1
-            if generated > _MAX_MIGRATION_FILES:
-                raise SpeckitRuntimeError("migration sandbox exceeds file count limit")
-            size = source.stat().st_size
-            total_size += size
-            if size > _MAX_MIGRATION_FILE_BYTES or total_size > _MAX_MIGRATION_TOTAL_BYTES:
-                raise SpeckitRuntimeError("migration sandbox exceeds size limit")
-            relative = source.relative_to(staging).as_posix()
-            target = repo / relative
-            if not target.exists():
-                additions.append(relative)
-            elif target.is_symlink() or not target.is_file():
-                collisions.append(relative)
-            elif _file_digest(source) == _file_digest(target):
-                continue
-            elif relative in _PROTECTED_MIGRATION_FILES:
-                preserved.append(relative)
-            elif _is_generated_update(relative):
-                updates.append(relative)
-            else:
-                collisions.append(relative)
-        return {
-            "generated_files": generated,
-            "additions": additions,
-            "generated_updates": updates,
-            "protected_preserved": preserved,
-            "blocking_collisions": collisions,
-        }
+        _generate_migration_tree(staging, commands)
+        return _migration_inventory_from_tree(repo, staging)
 
 
 def build_project_plan(
@@ -737,6 +744,8 @@ def build_project_plan(
 
 
 def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    if plan.get("action") == "migrate":
+        return apply_migration_plan(plan)
     if shutil.which("specify") is None:
         raise SpeckitRuntimeError("specify CLI is not installed")
     root = Path(plan["repo"])
@@ -752,6 +761,148 @@ def apply_project_plan(plan: dict[str, Any]) -> dict[str, Any]:
             )
     changed = _git_status(root)
     return {**plan, "applied": True, "results": results, "changed_paths": changed}
+
+
+def _safe_migration_target(root: Path, relative: str) -> tuple[Path, list[Path]]:
+    path = Path(relative)
+    if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+        raise SpeckitRuntimeError(f"invalid migration path: {relative}")
+    current = root
+    created: list[Path] = []
+    for part in path.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise SpeckitRuntimeError(f"migration path traverses symlink: {relative}")
+        if current.exists() and not current.is_dir():
+            raise SpeckitRuntimeError(f"migration parent is not a directory: {relative}")
+        if not current.exists():
+            current.mkdir()
+            created.append(current)
+    target = root / path
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise SpeckitRuntimeError(f"migration target is not a regular file: {relative}")
+    return target, created
+
+
+def _atomic_copy_migration_file(source: Path, target: Path) -> None:
+    fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    try:
+        with source.open("rb") as source_handle, os.fdopen(fd, "wb") as target_handle:
+            shutil.copyfileobj(source_handle, target_handle)
+            target_handle.flush()
+            os.fsync(target_handle.fileno())
+            os.fchmod(target_handle.fileno(), source.stat().st_mode & 0o777)
+        os.replace(temporary, target)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _restore_migration_file(target: Path, backup: tuple[bytes, int] | None) -> None:
+    if backup is None:
+        target.unlink(missing_ok=True)
+        return
+    data, mode = backup
+    fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.restore.", dir=target.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.fchmod(handle.fileno(), mode)
+        os.replace(temporary, target)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def apply_migration_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    root = _git_root(Path(plan["repo"]))
+    if _git_status(root):
+        raise SpeckitRuntimeError("project worktree changed after migration planning")
+    if _git_head(root) != plan.get("base_head"):
+        raise SpeckitRuntimeError("project HEAD changed after migration planning")
+    if not plan.get("ready_to_apply"):
+        migration = plan.get("migration", {})
+        if migration.get("blocking_collisions"):
+            raise SpeckitRuntimeError("migration has blocking collisions")
+        raise SpeckitRuntimeError(
+            "migration generated updates require --accept-generated-updates"
+        )
+
+    runtime = installed_version()
+    if runtime["version"] != plan.get("required_version"):
+        raise SpeckitRuntimeError("Spec Kit runtime changed after migration planning")
+
+    with tempfile.TemporaryDirectory(prefix="mesh-speckit-migrate-apply-") as temporary:
+        staging = Path(temporary)
+        _generate_migration_tree(staging, plan["commands"])
+        inventory = _migration_inventory_from_tree(root, staging)
+        if inventory != plan.get("migration"):
+            raise SpeckitRuntimeError("migration inventory changed after planning")
+
+        copy_paths = list(inventory["additions"])
+        if plan.get("accept_generated_updates"):
+            copy_paths.extend(inventory["generated_updates"])
+        backups: dict[Path, tuple[bytes, int] | None] = {}
+        created_dirs: list[Path] = []
+        try:
+            for relative in sorted(copy_paths):
+                source = staging / relative
+                target, created = _safe_migration_target(root, relative)
+                created_dirs.extend(created)
+                backups[target] = (
+                    (target.read_bytes(), target.stat().st_mode & 0o777)
+                    if target.exists()
+                    else None
+                )
+                _atomic_copy_migration_file(source, target)
+            project = inspect_project(root, ALLOWED_INTEGRATIONS)
+            manifest = _load_json_object(
+                root / ".specify" / "integration.json",
+                label="Spec Kit integration manifest",
+            )
+            manifest_version = _version_from_text(str(manifest.get("version", "")))
+            if project["state"] != "aligned" or manifest_version != plan["required_version"]:
+                raise SpeckitRuntimeError(
+                    "migration output is not aligned with the pinned runtime"
+                )
+            changed_paths = _git_status(root)
+        except Exception as exc:
+            rollback_errors: list[str] = []
+            for target, backup in reversed(list(backups.items())):
+                try:
+                    _restore_migration_file(target, backup)
+                except Exception as rollback_exc:  # pragma: no cover - filesystem failure
+                    rollback_errors.append(f"{target}: {rollback_exc}")
+            for directory in reversed(created_dirs):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            detail = f"; rollback errors: {', '.join(rollback_errors)}" if rollback_errors else ""
+            raise SpeckitRuntimeError(f"migration apply failed and was rolled back: {exc}{detail}") from exc
+
+    return {
+        **plan,
+        "applied": True,
+        "changed_paths": changed_paths,
+        "preserved_paths": inventory["protected_preserved"],
+    }
 
 
 def _render_status(payload: dict[str, Any]) -> str:

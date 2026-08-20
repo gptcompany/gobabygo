@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -580,6 +581,222 @@ def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:
         module.build_project_plan(
             "migrate", repo, lock, allow_multi_install_force=True
         )
+
+
+def test_migration_apply_installs_all_providers_and_preserves_constitution(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    template = repo / ".specify" / "templates" / "spec-template.md"
+    constitution = repo / ".specify" / "memory" / "constitution.md"
+    template.parent.mkdir(parents=True)
+    constitution.parent.mkdir(parents=True)
+    template.write_text("legacy template\n", encoding="utf-8")
+    constitution.write_text("legacy constitution\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+
+    def write_bundle(staging, _commands):
+        manifest = staging / ".specify" / "integration.json"
+        generated_template = staging / ".specify" / "templates" / "spec-template.md"
+        generated_constitution = staging / ".specify" / "memory" / "constitution.md"
+        claude = staging / ".claude" / "skills" / "speckit-plan" / "SKILL.md"
+        agents = staging / ".agents" / "skills" / "speckit-plan" / "SKILL.md"
+        for path in (manifest, generated_template, generated_constitution, claude, agents):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "version": "0.16.5",
+                    "default_integration": "claude",
+                    "installed_integrations": ["claude", "codex", "agy"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        generated_template.write_text("current template\n", encoding="utf-8")
+        generated_constitution.write_text("default constitution\n", encoding="utf-8")
+        claude.write_text("# Plan\n", encoding="utf-8")
+        agents.write_text("# Plan\n", encoding="utf-8")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary)
+        write_bundle(staged, [])
+        inventory = module._migration_inventory_from_tree(repo, staged)
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan = {
+        "schema": "mesh.speckit.project-plan.v1",
+        "action": "migrate",
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "init"]],
+        "base_head": head,
+        "migration": inventory,
+        "accept_generated_updates": True,
+        "ready_to_apply": True,
+    }
+    monkeypatch.setattr(module, "_generate_migration_tree", write_bundle)
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    result = module.apply_migration_plan(plan)
+
+    assert result["applied"] is True
+    assert result["preserved_paths"] == [".specify/memory/constitution.md"]
+    assert constitution.read_text(encoding="utf-8") == "legacy constitution\n"
+    assert template.read_text(encoding="utf-8") == "current template\n"
+    assert (repo / ".claude" / "skills" / "speckit-plan" / "SKILL.md").is_file()
+    assert (repo / ".agents" / "skills" / "speckit-plan" / "SKILL.md").is_file()
+
+
+def test_migration_apply_rolls_back_only_its_own_partial_writes(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    template = repo / ".specify" / "templates" / "spec-template.md"
+    template.parent.mkdir(parents=True)
+    template.write_text("legacy template\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+
+    def write_bundle(staging, _commands):
+        generated = staging / ".specify" / "templates" / "spec-template.md"
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text("current template\n", encoding="utf-8")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary)
+        write_bundle(staged, [])
+        inventory = module._migration_inventory_from_tree(repo, staged)
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan = {
+        "action": "migrate",
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "init"]],
+        "base_head": head,
+        "migration": inventory,
+        "accept_generated_updates": True,
+        "ready_to_apply": True,
+    }
+    monkeypatch.setattr(module, "_generate_migration_tree", write_bundle)
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    def partial_write(_source, target):
+        target.write_text("partial\n", encoding="utf-8")
+        raise OSError("simulated copy failure")
+
+    monkeypatch.setattr(module, "_atomic_copy_migration_file", partial_write)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="was rolled back"):
+        module.apply_migration_plan(plan)
+    assert template.read_text(encoding="utf-8") == "legacy template\n"
+    assert subprocess.run(
+        ["git", "-C", str(repo), "status", "--short"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+
+
+def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    legacy = repo / ".specify" / "legacy.txt"
+    legacy.parent.mkdir()
+    legacy.write_text("legacy\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "legacy"], check=True)
+
+    def write_incomplete_bundle(staging, _commands):
+        manifest = staging / ".specify" / "integration.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            json.dumps(
+                {
+                    "version": "0.16.5",
+                    "default_integration": "claude",
+                    "installed_integrations": ["claude"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        staged = Path(temporary)
+        write_incomplete_bundle(staged, [])
+        inventory = module._migration_inventory_from_tree(repo, staged)
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    plan = {
+        "action": "migrate",
+        "repo": str(repo),
+        "required_version": "0.16.5",
+        "commands": [["specify", "init"]],
+        "base_head": head,
+        "migration": inventory,
+        "accept_generated_updates": False,
+        "ready_to_apply": True,
+    }
+    monkeypatch.setattr(module, "_generate_migration_tree", write_incomplete_bundle)
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+    )
+
+    with pytest.raises(module.SpeckitRuntimeError, match="not aligned"):
+        module.apply_migration_plan(plan)
+    assert not (repo / ".specify" / "integration.json").exists()
+    assert subprocess.run(
+        ["git", "-C", str(repo), "status", "--short"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+
+
+def test_migration_apply_refuses_unaccepted_generated_updates(tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    plan = {
+        "action": "migrate",
+        "repo": str(repo),
+        "base_head": subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "migration": {"blocking_collisions": [], "generated_updates": ["template"]},
+        "ready_to_apply": False,
+    }
+
+    with pytest.raises(module.SpeckitRuntimeError, match="accept-generated-updates"):
+        module.apply_migration_plan(plan)
 
 
 def test_project_plan_refuses_dirty_repo_before_commands(tmp_path) -> None:
