@@ -657,6 +657,53 @@ def test_remote_send_tracks_codex_delivery_without_storing_text(
     assert message not in state_path.read_text(encoding="utf-8")
 
 
+def test_tracked_codex_send_accepts_completed_reply_with_empty_composer(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    message = "DELEGATION_ID=delegation-next read /repo/brief.md"
+    completed = (
+        "• I'm working on the delegated review now.\n\n"
+        "• READY.\n\n"
+        "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n"
+        "  gpt-5.6-sol medium · /repo"
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(
+        module,
+        "_capture_visible_target",
+        lambda target, **_kwargs: {**target, "command": "codex", "output": completed},
+    )
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+            "text": message,
+            "enter": True,
+            "delegation_id": "delegation-next",
+        }
+    )
+
+    assert result["delivery_tracked"] is True
+    assert result["delegation_id"] == "delegation-next"
+    assert sum("send-keys" in command for command in commands) == 2
+
+
 def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> None:
     module = _load_module()
     delegation_id = "delegation-agy-1234"
