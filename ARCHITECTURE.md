@@ -151,6 +151,9 @@ GitHub Issues are derived one-way from opted-in features by the
 repository-serialized `speckit-ledger` Action. The machine identity is
 `<owner/repo>:<feature-id>:<Tnnn>`; titles, directory names, router rows, and
 Project cards are not identity. Planning artifacts merge and publish before
+implementation starts. Cross-repository adoption uses a minimal caller pinned
+to an immutable Gobabygo commit; the reusable workflow checks out caller and
+runtime separately, leaving parser and reconciliation code with one owner.
 implementation delegation, preventing agent session state from becoming an
 implicit task ledger.
 

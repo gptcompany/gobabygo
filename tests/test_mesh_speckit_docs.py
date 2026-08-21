@@ -12,11 +12,12 @@ def test_primary_docs_define_one_way_development_ledger() -> None:
         for name in ("README.md", "QUICKSTART.md", "MESH_LIVE.md", "ARCHITECTURE.md")
     }
 
-    assert "mesh speckit github init|plan|check" in documents["README.md"]
+    assert "mesh speckit github init|plan|check|install-caller" in documents["README.md"]
     for command in (
         "mesh speckit github init specs/001-feature --apply",
         "mesh speckit github plan specs/001-feature",
         "mesh speckit github check specs/001-feature",
+        "mesh speckit github install-caller /path/to/repo --runtime-ref <40-char-sha>",
     ):
         assert command in documents["QUICKSTART.md"]
     quickstart = " ".join(documents["QUICKSTART.md"].split())

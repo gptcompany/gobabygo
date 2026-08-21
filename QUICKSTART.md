@@ -437,6 +437,17 @@ Gobabygo initially owns the implementation and canary. Other repositories must
 not copy the Python reconciler or reference a mutable branch; install their
 minimal caller only after the pinned reusable-workflow rollout is reviewed.
 
+```bash
+# Read-only plan, then explicit local file creation.
+mesh speckit github install-caller /path/to/repo --runtime-ref <40-char-sha>
+mesh speckit github install-caller /path/to/repo --runtime-ref <40-char-sha> --apply
+```
+
+The installer creates only `.github/workflows/speckit-ledger.yml`, uses the same
+immutable SHA for the reusable workflow and its runtime, and refuses to replace
+different existing content. For private repositories, allow the caller to use
+Gobabygo reusable workflows in the repository Actions settings before canarying.
+
 ### Git hook chaining
 
 Git supports one effective `core.hooksPath`. On the Dell, keep the global value

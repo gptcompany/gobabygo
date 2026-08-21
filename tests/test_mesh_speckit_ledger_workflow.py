@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "speckit-ledger.yml"
+REUSABLE = ROOT / ".github" / "workflows" / "speckit-ledger-reusable.yml"
 
 
 def load_workflow() -> dict:
@@ -62,3 +63,25 @@ def test_workflow_retains_machine_readable_reports() -> None:
     assert text.count("actions/upload-artifact@v4") == 2
     assert workflow["jobs"]["check"]["steps"][-1]["if"] == "always()"
     assert workflow["jobs"]["apply"]["steps"][-1]["if"] == "always()"
+
+
+def test_reusable_workflow_checks_out_caller_and_pinned_runtime() -> None:
+    workflow = yaml.load(REUSABLE.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    call = workflow["on"]["workflow_call"]
+    assert set(call["inputs"]) == {"mode", "runtime_ref"}
+    job = workflow["jobs"]["reconcile"]
+    assert job["permissions"] == {"contents": "read", "issues": "write"}
+    checkouts = [
+        step for step in job["steps"] if step.get("uses") == "actions/checkout@v4"
+    ]
+    assert len(checkouts) == 2
+    assert checkouts[0]["with"]["persist-credentials"] == "false"
+    assert checkouts[1]["with"] == {
+        "repository": "gptcompany/gobabygo",
+        "ref": "${{ inputs.runtime_ref }}",
+        "path": ".mesh-ledger-runtime",
+        "persist-credentials": "false",
+    }
+    text = REUSABLE.read_text(encoding="utf-8")
+    assert '[[ "$RUNTIME_REF" =~ ^[0-9a-f]{40}$ ]]' in text
+    assert '"$MODE" --all --repo-root "$GITHUB_WORKSPACE" --json' in text

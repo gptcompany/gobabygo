@@ -763,6 +763,67 @@ def test_binding_init_preserves_immutable_existing_identity(module, tmp_path: Pa
         )
 
 
+def test_caller_plan_is_pinned_plan_first_atomic_and_idempotent(
+    module, tmp_path: Path
+) -> None:
+    repo, _ = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    runtime_ref = "a" * 40
+
+    plan = module.build_caller_plan(
+        repo,
+        repository="owner/repo",
+        runtime_repository="gptcompany/gobabygo",
+        runtime_ref=runtime_ref,
+    )
+
+    assert plan.operation == "create"
+    assert not plan.workflow_path.exists()
+    assert f"@{runtime_ref}" in plan.content
+    assert f"runtime_ref: {runtime_ref}" in plan.content
+    assert "issues: read" in plan.content
+    assert "issues: write" in plan.content
+    assert module.apply_caller_plan(plan) is True
+    replay = module.build_caller_plan(
+        repo,
+        repository="owner/repo",
+        runtime_repository="gptcompany/gobabygo",
+        runtime_ref=runtime_ref,
+    )
+    assert replay.operation == "noop"
+    assert module.apply_caller_plan(replay) is False
+    assert not list(plan.workflow_path.parent.glob(".speckit-ledger.*.tmp"))
+
+
+@pytest.mark.parametrize("runtime_ref", ["main", "A" * 40, "a" * 39, "a" * 41])
+def test_caller_plan_rejects_mutable_or_malformed_runtime_ref(
+    module, tmp_path: Path, runtime_ref: str
+) -> None:
+    repo, _ = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+
+    with pytest.raises(module.LedgerError, match="full lowercase 40-character"):
+        module.build_caller_plan(
+            repo,
+            repository="owner/repo",
+            runtime_repository="gptcompany/gobabygo",
+            runtime_ref=runtime_ref,
+        )
+
+
+def test_caller_plan_refuses_to_overwrite_existing_workflow(module, tmp_path: Path) -> None:
+    repo, _ = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    workflow = repo / module.CALLER_WORKFLOW
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: custom\n", encoding="utf-8")
+
+    with pytest.raises(module.LedgerError, match="review it manually"):
+        module.build_caller_plan(
+            repo,
+            repository="owner/repo",
+            runtime_repository="gptcompany/gobabygo",
+            runtime_ref="a" * 40,
+        )
+
+
 def test_cli_plan_and_check_share_read_only_remote_plan(
     module, tmp_path: Path, capsys
 ) -> None:

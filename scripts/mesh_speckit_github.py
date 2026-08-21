@@ -34,6 +34,8 @@ MAX_GH_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_REMOTE_ISSUES = 1_000
 MAX_BOUND_FEATURES = 100
 MIN_GH_VERSION = (2, 40, 0)
+CALLER_WORKFLOW = Path(".github/workflows/speckit-ledger.yml")
+DEFAULT_RUNTIME_REPOSITORY = "gptcompany/gobabygo"
 
 _BINDING_FIELDS = {"schema", "feature_id", "repository", "enabled"}
 _FEATURE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{6,38}[a-z0-9]$")
@@ -156,6 +158,17 @@ class BindingPlan:
     feature_dir: Path
     binding_path: Path
     binding: FeatureBinding
+    operation: str
+
+
+@dataclass(frozen=True)
+class CallerPlan:
+    repo_root: Path
+    workflow_path: Path
+    repository: str
+    runtime_repository: str
+    runtime_ref: str
+    content: str
     operation: str
 
 
@@ -1073,7 +1086,138 @@ def apply_binding_plan(plan: BindingPlan) -> bool:
     return True
 
 
+def render_caller_workflow(runtime_repository: str, runtime_ref: str) -> str:
+    if not _REPOSITORY_RE.fullmatch(runtime_repository):
+        raise LedgerError("invalid runtime repository; expected lowercase owner/repo")
+    if not re.fullmatch(r"[0-9a-f]{40}", runtime_ref):
+        raise LedgerError("runtime ref must be a full lowercase 40-character commit SHA")
+    reusable = (
+        f"{runtime_repository}/.github/workflows/"
+        f"speckit-ledger-reusable.yml@{runtime_ref}"
+    )
+    return f'''name: Spec Kit GitHub Ledger
+
+on:
+  pull_request:
+    paths:
+      - "specs/**/tasks.md"
+      - "specs/**/github-ledger.json"
+  push:
+    paths:
+      - "specs/**/tasks.md"
+      - "specs/**/github-ledger.json"
+  workflow_dispatch:
+
+concurrency:
+  group: speckit-ledger-${{{{ github.repository }}}}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      issues: read
+    uses: {reusable}
+    with:
+      mode: plan
+      runtime_ref: {runtime_ref}
+
+  apply:
+    if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      issues: write
+    uses: {reusable}
+    with:
+      mode: apply
+      runtime_ref: {runtime_ref}
+'''
+
+
+def build_caller_plan(
+    repo_root: Path,
+    *,
+    repository: str,
+    runtime_repository: str,
+    runtime_ref: str,
+) -> CallerPlan:
+    root = repo_root.resolve(strict=True)
+    if not (root / ".git").exists():
+        raise LedgerError(f"repository root is not an exact Git checkout: {root}")
+    content = render_caller_workflow(runtime_repository, runtime_ref)
+    workflow_path = root / CALLER_WORKFLOW
+    operation = "create"
+    if workflow_path.exists() or workflow_path.is_symlink():
+        if workflow_path.is_symlink() or not workflow_path.is_file():
+            raise LedgerError(f"caller workflow must be a regular file: {workflow_path}")
+        current = _read_bounded(workflow_path, MAX_TASKS_BYTES, "caller workflow")
+        if current != content:
+            raise LedgerError(
+                "caller workflow already exists with different content; review it manually"
+            )
+        operation = "noop"
+    return CallerPlan(
+        root,
+        workflow_path,
+        repository,
+        runtime_repository,
+        runtime_ref,
+        content,
+        operation,
+    )
+
+
+def caller_plan_to_dict(plan: CallerPlan, *, applied: bool) -> dict[str, object]:
+    return {
+        "schema": "mesh.speckit.github-caller-plan.v1",
+        "repository": plan.repository,
+        "runtime_repository": plan.runtime_repository,
+        "runtime_ref": plan.runtime_ref,
+        "workflow_file": plan.workflow_path.relative_to(plan.repo_root).as_posix(),
+        "operation": plan.operation,
+        "applied": applied,
+    }
+
+
+def apply_caller_plan(plan: CallerPlan) -> bool:
+    if plan.operation == "noop":
+        return False
+    if plan.operation != "create":
+        raise LedgerError(f"unsupported caller operation: {plan.operation}")
+    if plan.workflow_path.exists() or plan.workflow_path.is_symlink():
+        raise LedgerError("caller workflow appeared while applying the plan")
+    plan.workflow_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=".speckit-ledger.", suffix=".tmp", dir=plan.workflow_path.parent
+    )
+    temp_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(plan.content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if plan.workflow_path.exists() or plan.workflow_path.is_symlink():
+            raise LedgerError("caller workflow appeared while applying the plan")
+        os.replace(temp_path, plan.workflow_path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+    return True
+
+
 def _render_plan(payload: dict[str, object]) -> str:
+    if payload.get("schema") == "mesh.speckit.github-caller-plan.v1":
+        return "\n".join(
+            [
+                "Spec Kit GitHub ledger caller",
+                f"repository={payload['repository']}",
+                f"runtime={payload['runtime_repository']}@{payload['runtime_ref']}",
+                f"operation={payload['operation']}",
+                f"workflow_file={payload['workflow_file']}",
+                f"applied={'yes' if payload['applied'] else 'no'}",
+            ]
+        )
     if payload.get("schema") == "mesh.speckit.github-batch.v1":
         lines = [
             "Spec Kit GitHub ledger batch",
@@ -1121,6 +1265,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     init.add_argument("--feature-id")
     init.add_argument("--apply", action="store_true")
     init.add_argument("--json", action="store_true")
+    caller = sub.add_parser(
+        "install-caller", help="Plan or install a pinned minimal caller workflow."
+    )
+    caller.add_argument("repo", type=Path)
+    caller.add_argument("--runtime-ref", required=True)
+    caller.add_argument(
+        "--runtime-repository", default=DEFAULT_RUNTIME_REPOSITORY
+    )
+    caller.add_argument("--apply", action="store_true")
+    caller.add_argument("--json", action="store_true")
     for name in ("plan", "check", "apply"):
         command = sub.add_parser(name, help=f"{name.title()} one feature ledger.")
         command.add_argument("feature_dir", nargs="?", type=Path)
@@ -1193,7 +1347,22 @@ def main(
     args = _parse_args(argv)
     env = dict(os.environ if environ is None else environ)
     try:
-        if args.command == "init":
+        if args.command == "install-caller":
+            root = discover_git_root(args.repo, run=run)
+            repository = checkout_repository(root, run=run)
+            caller_plan = build_caller_plan(
+                root,
+                repository=repository,
+                runtime_repository=args.runtime_repository,
+                runtime_ref=args.runtime_ref,
+            )
+            changed = apply_caller_plan(caller_plan) if args.apply else False
+            output = caller_plan_to_dict(
+                caller_plan,
+                applied=bool(args.apply and (changed or caller_plan.operation == "noop")),
+            )
+            exit_code = 0
+        elif args.command == "init":
             root = discover_git_root(args.feature_dir, run=run)
             repository = checkout_repository(root, run=run)
             binding_plan = build_binding_plan(

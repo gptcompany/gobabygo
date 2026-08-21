@@ -753,6 +753,7 @@ Usage:
   ./scripts/mesh speckit github init <feature-dir> [--feature-id <id>] [--apply] [--json]
   ./scripts/mesh speckit github plan <feature-dir> [--json]
   ./scripts/mesh speckit github check <feature-dir> [--json]
+  ./scripts/mesh speckit github install-caller <repo-path> --runtime-ref <40-char-sha> [--apply] [--json]
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
@@ -767,6 +768,8 @@ Runtime management:
   github init opts one feature into the derived GitHub Issues ledger and is
   plan-only unless --apply is explicit. github plan/check are read-only; remote
   writes are intentionally restricted to the repository GitHub Actions workflow.
+  github install-caller emits a minimal reusable-workflow caller pinned to one
+  immutable Gobabygo commit and is plan-only unless --apply is explicit.
 
 Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.

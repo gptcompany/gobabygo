@@ -1,0 +1,70 @@
+name: Reusable Spec Kit GitHub Ledger
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "Read-only plan or authoritative default-branch apply"
+        required: true
+        type: string
+      runtime_ref:
+        description: "Immutable Gobabygo commit containing the reconciler"
+        required: true
+        type: string
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The caller can only preserve or reduce this permission. Its PR job grants read.
+      issues: write
+    steps:
+      - name: Validate mode and runtime pin
+        env:
+          MODE: ${{ inputs.mode }}
+          RUNTIME_REF: ${{ inputs.runtime_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$MODE" == "plan" || "$MODE" == "apply" ]]
+          [[ "$RUNTIME_REF" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned Gobabygo runtime
+        uses: actions/checkout@v4
+        with:
+          repository: gptcompany/gobabygo
+          ref: ${{ inputs.runtime_ref }}
+          path: .mesh-ledger-runtime
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Reconcile ledger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ inputs.mode }}
+          GITHUB_ACTIONS: "true"
+          MESH_SPECKIT_LEDGER_APPLY: ${{ inputs.mode == 'apply' && '1' || '0' }}
+          MESH_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          python .mesh-ledger-runtime/scripts/mesh_speckit_github.py \
+            "$MODE" --all --repo-root "$GITHUB_WORKSPACE" --json \
+            | tee speckit-ledger-report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: speckit-ledger-${{ inputs.mode }}-${{ github.run_id }}
+          path: speckit-ledger-report.json
+          if-no-files-found: warn
+          retention-days: 30
