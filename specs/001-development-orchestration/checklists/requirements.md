@@ -34,4 +34,3 @@
 - The project constitution is still an uninitialized upstream template, so this
   feature applies the repository's documented KISS, fail-closed, and review
   conventions directly. Constitution initialization is separate work.
-

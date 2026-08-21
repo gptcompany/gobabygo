@@ -34,4 +34,3 @@ Use official Spec Kit artifacts and lifecycle, a project-local deterministic
 adapter for namespaced reconciliation, and GitHub Actions as the only automatic
 remote writer. Keep hooks validation-only and keep the router out of ledger
 state.
-
