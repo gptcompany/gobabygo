@@ -245,12 +245,13 @@ def test_command_for_role_provider_override_wins_for_worker(tmp_path, monkeypatc
         encoding="utf-8",
     )
     monkeypatch.setenv("MESH_UI_CONFIG", str(config))
-    monkeypatch.setenv("MESH_UI_PROVIDER_OVERRIDE", "gemini")
+    monkeypatch.setenv("MESH_UI_PROVIDER_OVERRIDE", "antigravity")
 
     command = module._command_for_role("worker-codex", "/media/sam/1TB/rektslug", "rektslug")
 
-    assert "ccs gemini" in command
+    assert "/home/sam/.local/bin/agy" in command
     assert "ccs codex" not in command
+    assert "antigravity" in command
 
 
 def test_role_cli_args_reads_max_turns_and_extra_args(tmp_path, monkeypatch):
