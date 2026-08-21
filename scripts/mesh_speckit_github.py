@@ -8,10 +8,14 @@ fully testable.
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import os
 import re
 import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Protocol
@@ -143,6 +147,15 @@ class ApplyResult:
     initial_plan: ReconciliationPlan
     final_plan: ReconciliationPlan
     mutations: int
+
+
+@dataclass(frozen=True)
+class BindingPlan:
+    repo_root: Path
+    feature_dir: Path
+    binding_path: Path
+    binding: FeatureBinding
+    operation: str
 
 
 class GitHubClient(Protocol):
@@ -929,3 +942,221 @@ def apply_authoritative(
     if not final.aligned:
         raise LedgerError("GitHub ledger is not aligned after authoritative apply")
     return ApplyResult(initial, final, mutations)
+
+
+def discover_git_root(path: Path, *, run: RunCommand = _default_run) -> Path:
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    try:
+        start = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise LedgerError(f"path does not exist: {candidate}") from exc
+    result = run(("git", "-C", str(start), "rev-parse", "--show-toplevel"), None)
+    if result.returncode != 0:
+        raise LedgerError(f"path is not inside a Git checkout: {start}")
+    raw_root = result.stdout.strip()
+    if not raw_root or "\n" in raw_root:
+        raise LedgerError("git returned an invalid repository root")
+    try:
+        root = Path(raw_root).resolve(strict=True)
+    except OSError as exc:
+        raise LedgerError("git repository root does not exist") from exc
+    if not (root / ".git").exists():
+        raise LedgerError(f"repository root is not an exact Git checkout: {root}")
+    return root
+
+
+def checkout_repository(repo_root: Path, *, run: RunCommand = _default_run) -> str:
+    result = run(
+        (
+            "git",
+            "-C",
+            str(repo_root),
+            "config",
+            "--get",
+            "remote.origin.url",
+        ),
+        None,
+    )
+    if result.returncode != 0:
+        raise LedgerError("cannot resolve origin repository")
+    return parse_github_remote(result.stdout)
+
+
+def derive_feature_id(repository: str, feature_relative: str) -> str:
+    name = Path(feature_relative).name.lower()
+    slug = re.sub(r"^\d+[-_]", "", name)
+    slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-") or "feature"
+    slug = slug[:20].rstrip("-") or "feature"
+    digest = hashlib.sha256(
+        f"{repository}\n{feature_relative}".encode("utf-8")
+    ).hexdigest()[:12]
+    value = f"{slug}-{digest}"
+    if not _FEATURE_ID_RE.fullmatch(value):
+        raise LedgerError("cannot derive a valid feature_id")
+    return value
+
+
+def build_binding_plan(
+    repo_root: Path,
+    feature_dir: Path,
+    *,
+    repository: str,
+    feature_id: str | None = None,
+) -> BindingPlan:
+    root, feature = _resolve_feature_dir(repo_root, feature_dir)
+    if not _REPOSITORY_RE.fullmatch(repository) or repository.lower() != repository:
+        raise LedgerError("repository must use canonical lowercase owner/repo")
+    tasks_path = feature / TASKS_FILE
+    parse_tasks(_read_bounded(tasks_path, MAX_TASKS_BYTES, "tasks file"))
+    relative = feature.relative_to(root).as_posix()
+    binding_path = feature / BINDING_FILE
+
+    if binding_path.exists() or binding_path.is_symlink():
+        existing = load_binding(binding_path)
+        if existing.repository != repository:
+            raise LedgerError("existing binding repository does not match origin")
+        if feature_id is not None and feature_id != existing.feature_id:
+            raise LedgerError("existing binding feature_id is immutable")
+        return BindingPlan(root, feature, binding_path, existing, "noop")
+
+    selected_id = feature_id or derive_feature_id(repository, relative)
+    if not _FEATURE_ID_RE.fullmatch(selected_id):
+        raise LedgerError("invalid feature_id; use 8-40 lowercase letters, digits, or hyphens")
+    binding = FeatureBinding(BINDING_SCHEMA, selected_id, repository, True)
+    return BindingPlan(root, feature, binding_path, binding, "create")
+
+
+def binding_plan_to_dict(plan: BindingPlan, *, applied: bool) -> dict[str, object]:
+    return {
+        "schema": "mesh.speckit.github-binding-plan.v1",
+        "repository": plan.binding.repository,
+        "feature_id": plan.binding.feature_id,
+        "feature_dir": plan.feature_dir.relative_to(plan.repo_root).as_posix(),
+        "binding_file": plan.binding_path.relative_to(plan.repo_root).as_posix(),
+        "operation": plan.operation,
+        "applied": applied,
+    }
+
+
+def apply_binding_plan(plan: BindingPlan) -> bool:
+    if plan.operation == "noop":
+        return False
+    if plan.operation != "create":
+        raise LedgerError(f"unsupported binding operation: {plan.operation}")
+    if plan.binding_path.exists() or plan.binding_path.is_symlink():
+        raise LedgerError("ledger binding appeared while applying the plan")
+    payload = {
+        "schema": plan.binding.schema,
+        "feature_id": plan.binding.feature_id,
+        "repository": plan.binding.repository,
+        "enabled": plan.binding.enabled,
+    }
+    fd, temporary = tempfile.mkstemp(
+        prefix=".github-ledger.", suffix=".tmp", dir=plan.feature_dir
+    )
+    temp_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        if plan.binding_path.exists() or plan.binding_path.is_symlink():
+            raise LedgerError("ledger binding appeared while applying the plan")
+        os.replace(temp_path, plan.binding_path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+    return True
+
+
+def _render_plan(payload: dict[str, object]) -> str:
+    lines = [
+        "Spec Kit GitHub ledger",
+        f"repository={payload['repository']}",
+        f"feature_id={payload['feature_id']}",
+    ]
+    if "aligned" in payload:
+        lines.append(f"aligned={'yes' if payload['aligned'] else 'no'}")
+        for item in payload.get("blocking", []):
+            lines.append(f"BLOCKING {item['code']}: {item['message']}")
+        for item in payload.get("actions", []):
+            reasons = ",".join(item["reasons"]) or "-"
+            lines.append(
+                f"{item['task_id']} {item['operation']} state={item['state']} reasons={reasons}"
+            )
+    else:
+        lines.extend(
+            [
+                f"operation={payload['operation']}",
+                f"binding_file={payload['binding_file']}",
+                f"applied={'yes' if payload['applied'] else 'no'}",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    init = sub.add_parser("init", help="Plan or create one feature ledger binding.")
+    init.add_argument("feature_dir", type=Path)
+    init.add_argument("--feature-id")
+    init.add_argument("--apply", action="store_true")
+    init.add_argument("--json", action="store_true")
+    for name in ("plan", "check"):
+        command = sub.add_parser(name, help=f"{name.title()} one feature ledger.")
+        command.add_argument("feature_dir", type=Path)
+        command.add_argument("--json", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    run: RunCommand = _default_run,
+    environ: Mapping[str, str] | None = None,
+) -> int:
+    args = _parse_args(argv)
+    env = dict(os.environ if environ is None else environ)
+    try:
+        root = discover_git_root(args.feature_dir, run=run)
+        repository = checkout_repository(root, run=run)
+        if args.command == "init":
+            binding_plan = build_binding_plan(
+                root,
+                args.feature_dir,
+                repository=repository,
+                feature_id=args.feature_id,
+            )
+            changed = apply_binding_plan(binding_plan) if args.apply else False
+            output = binding_plan_to_dict(
+                binding_plan, applied=bool(args.apply and (changed or binding_plan.operation == "noop"))
+            )
+            exit_code = 0
+        else:
+            feature = load_feature(root, args.feature_dir)
+            verify_checkout_binding(feature, run=run, environ=env)
+            client = GhClient(feature.binding.repository, run=run)
+            reconciliation = build_plan(feature, client.list_issues())
+            output = plan_to_dict(reconciliation)
+            if reconciliation.blocking:
+                exit_code = 2
+            elif args.command == "check" and not reconciliation.aligned:
+                exit_code = 1
+            else:
+                exit_code = 0
+    except LedgerError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(output, indent=2, sort_keys=True))
+    else:
+        print(_render_plan(output))
+    return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

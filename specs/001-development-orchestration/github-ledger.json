@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "feature_id": "development-orchestr-4d4dea2fa71d",
+  "repository": "gptcompany/gobabygo",
+  "schema": "mesh.speckit.github-ledger.v1"
+}

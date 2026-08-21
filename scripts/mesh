@@ -750,6 +750,9 @@ Usage:
   ./scripts/mesh speckit project init <repo-path> [--apply] [--json]
   ./scripts/mesh speckit project migrate <repo-path> [--accept-generated-updates] [--apply] [--json]
   ./scripts/mesh speckit project upgrade <repo-path> [--apply] [--json]
+  ./scripts/mesh speckit github init <feature-dir> [--feature-id <id>] [--apply] [--json]
+  ./scripts/mesh speckit github plan <feature-dir> [--json]
+  ./scripts/mesh speckit github check <feature-dir> [--json]
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
@@ -761,6 +764,9 @@ Runtime management:
   init and migrate stage official output outside the target repo. Migration
   preserves specs, copies an old memory/constitution.md into the current path,
   reports retained legacy commands, and fails closed on collisions.
+  github init opts one feature into the derived GitHub Issues ledger and is
+  plan-only unless --apply is explicit. github plan/check are read-only; remote
+  writes are intentionally restricted to the repository GitHub Actions workflow.
 
 Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.
@@ -837,6 +843,19 @@ run_speckit_runtime() {
   command "$py_bin" "$runtime_cli" "$@"
 }
 
+run_speckit_github() {
+  local py_bin="${MESH_SPECKIT_PYTHON:-}"
+  local github_cli="${REPO_ROOT}/scripts/mesh_speckit_github.py"
+  if [[ ! -f "$github_cli" ]]; then
+    echo "Error: missing Spec Kit GitHub ledger CLI at $github_cli" >&2
+    return 1
+  fi
+  if [[ -z "$py_bin" ]]; then
+    py_bin="$(detect_python)" || return $?
+  fi
+  command "$py_bin" "$github_cli" "$@"
+}
+
 run_speckit_short() {
   local subcmd="${1:-}"
   if [[ "$subcmd" == "" || "$subcmd" == "-h" || "$subcmd" == "--help" ]]; then
@@ -846,6 +865,11 @@ run_speckit_short() {
   case "$subcmd" in
     status|capabilities|context|update-check|install|project)
       run_speckit_runtime "$@"
+      exit $?
+      ;;
+    github)
+      shift
+      run_speckit_github "$@"
       exit $?
       ;;
   esac

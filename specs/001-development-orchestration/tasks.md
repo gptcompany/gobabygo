@@ -23,7 +23,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 5: Operator Interface
 
-- [ ] T005 [US3] Expose init, plan, and check through `mesh speckit github` with stable JSON and exit-code contracts and no local remote-write switch
+- [x] T005 [US3] Expose init, plan, and check through `mesh speckit github` with stable JSON and exit-code contracts and no local remote-write switch
 
 ## Phase 6: Authoritative Automation
 

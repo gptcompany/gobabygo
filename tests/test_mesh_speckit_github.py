@@ -726,3 +726,92 @@ def test_authoritative_apply_performs_no_mutation_when_plan_is_blocked(
         module.apply_authoritative(loaded, client, action_environment())
 
     assert client.calls == [("list_issues",)]
+
+
+def test_binding_init_is_plan_first_atomic_and_idempotent(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    binding_path = feature / "github-ledger.json"
+    binding_path.unlink()
+
+    plan = module.build_binding_plan(repo, feature, repository="owner/repo")
+
+    assert plan.operation == "create"
+    assert plan.binding.feature_id.startswith("example-")
+    assert not binding_path.exists()
+    assert module.apply_binding_plan(plan) is True
+    assert json.loads(binding_path.read_text(encoding="utf-8")) == {
+        "enabled": True,
+        "feature_id": plan.binding.feature_id,
+        "repository": "owner/repo",
+        "schema": "mesh.speckit.github-ledger.v1",
+    }
+    replay = module.build_binding_plan(repo, feature, repository="owner/repo")
+    assert replay.operation == "noop"
+    assert module.apply_binding_plan(replay) is False
+    assert not list(feature.glob(".github-ledger.*.tmp"))
+
+
+def test_binding_init_preserves_immutable_existing_identity(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+
+    with pytest.raises(module.LedgerError, match="feature_id is immutable"):
+        module.build_binding_plan(
+            repo,
+            feature,
+            repository="owner/repo",
+            feature_id="different-a1b2c3d4",
+        )
+
+
+def test_cli_plan_and_check_share_read_only_remote_plan(
+    module, tmp_path: Path, capsys
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+
+    def run(args, input_text=None):
+        if args[-2:] == ("rev-parse", "--show-toplevel"):
+            return module.CommandResult(0, f"{repo.resolve()}\n", "")
+        if args[-3:] == ("config", "--get", "remote.origin.url"):
+            return module.CommandResult(
+                0, "https://github.com/owner/repo.git\n", ""
+            )
+        if args == ("gh", "version"):
+            return module.CommandResult(0, "gh version 2.80.0\n", "")
+        if args[:4] == ("gh", "api", "--paginate", "--slurp"):
+            return module.CommandResult(0, "[[]]", "")
+        raise AssertionError(args)
+
+    assert module.main(["plan", str(feature), "--json"], run=run, environ={}) == 0
+    plan_payload = json.loads(capsys.readouterr().out)
+    assert plan_payload["actions"][0]["operation"] == "create"
+    assert module.main(["check", str(feature), "--json"], run=run, environ={}) == 1
+    check_payload = json.loads(capsys.readouterr().out)
+    assert check_payload == plan_payload
+
+
+def test_cli_blocking_drift_uses_exit_two(module, tmp_path: Path, capsys) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    legacy = [
+        [
+            {
+                "number": 1,
+                "title": "T001: Legacy",
+                "body": "",
+                "state": "open",
+                "labels": [],
+            }
+        ]
+    ]
+
+    def run(args, input_text=None):
+        if args[-2:] == ("rev-parse", "--show-toplevel"):
+            return module.CommandResult(0, f"{repo.resolve()}\n", "")
+        if args[-3:] == ("config", "--get", "remote.origin.url"):
+            return module.CommandResult(0, "git@github.com:owner/repo.git\n", "")
+        if args == ("gh", "version"):
+            return module.CommandResult(0, "gh version 2.80.0\n", "")
+        return module.CommandResult(0, json.dumps(legacy), "")
+
+    assert module.main(["plan", str(feature)], run=run, environ={}) == 2
+    output = capsys.readouterr().out
+    assert "BLOCKING legacy_task_issue" in output
