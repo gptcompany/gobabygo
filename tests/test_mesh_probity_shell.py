@@ -22,8 +22,9 @@ def test_probity_help_describes_opt_in_and_restart() -> None:
     assert "probity status [repo-path]" in proc.stdout
     assert "plan-only unless --apply" in proc.stdout
     assert "without a Probity config remain unaffected" in proc.stdout
-    assert "Existing Codex sessions must be" in proc.stdout
-    assert "trust the exact hook once" in proc.stdout
+    assert "Claude and Codex sessions must be restarted" in proc.stdout
+    assert "manual trust as unknown" in proc.stdout
+    assert "--replace-tdd-guard" in proc.stdout
 
 
 def test_probity_subcommands_forward_exact_arguments(tmp_path) -> None:

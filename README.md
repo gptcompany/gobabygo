@@ -141,33 +141,36 @@ multi-repo specs, decisions, tasks, and handoffs live in the exact Git root
 `/data/sata/1TB/coordination`. Mesh Live still owns tmux delivery and review;
 Spec Kit does not launch nested CLI workers. See [MESH_LIVE.md](MESH_LIVE.md).
 
-### Optional Codex TDD gate
+### Optional Claude and Codex TDD gate
 
 Gobabygo pins Probity but does not enable TDD enforcement globally. The engine
-and one Codex dispatcher are user-level; a repository opts in only by committing
-exactly one `probity.config.ts|mts|js|mjs` at its Git root.
+and the Claude/Codex dispatchers are user-level; a repository opts in only by
+committing exactly one `probity.config.ts|mts|js|mjs` at its Git root.
 
 ```bash
 mesh probity install --json        # plan only
-mesh probity install --apply       # pinned install + Codex hook merge
-mesh probity smoke --json          # temporary repo; deterministic allow/block
+mesh probity install --apply --replace-tdd-guard  # reviewed TDD Guard migration
+mesh probity smoke --agent all --json             # deterministic dual-vendor smoke
 mesh probity status /data/sata/1TB/rektslug --json
 ```
 
 Add a reviewed project-specific config only where strict TDD is useful. Scope
 `enforceTdd()` to the repository's real code and test paths; do not copy broad
-globs across unrelated repositories. After installation, start Codex once and
-use `/hooks` to review and trust the exact user hook; Codex skips untrusted or
-changed hooks. Then restart any older Codex worker that should use it.
-Repositories without a config remain unaffected after this one-time user hook
-trust.
+globs across unrelated repositories. Applying without `--replace-tdd-guard`
+fails when the legacy global Claude TDD Guard is present; the explicit flag
+removes only that exact hook and preserves every other Claude hook. Changed user
+settings receive adjacent `*.mesh-probity.bak` backups with mode `0600`. Start
+Codex once and use `/hooks` to review and trust the exact user hook; Gobabygo can
+verify installation but cannot infer that UI trust. Restart older Claude and
+Codex workers. Repositories without a config remain unaffected.
 
-Probity `1.10.0` exposes Codex but not Antigravity through its CLI. Claude keeps
-the existing Claude-specific TDD Guard, and AGY follows the provider-neutral
-`TDD_MODE` plus RED/GREEN evidence contract. Do not stack Probity and TDD Guard
-on the same Claude session. Probity configs execute as code and matching TDD
-writes may invoke a model validator, so opt in only after config review and a
-smoke; this is a guardrail, not an OS sandbox or a replacement for tests/CI.
+Probity `1.10.0` exposes Claude Code and Codex, but not Antigravity. AGY follows
+the provider-neutral `TDD_MODE` plus RED/GREEN evidence contract. Do not stack
+Probity and TDD Guard on the same Claude session. Probity configs execute as code
+and matching TDD writes may invoke a model validator, so opt in only after config
+review and a smoke; this is a guardrail, not an OS sandbox or a replacement for
+tests/CI. To roll back the user integration, restore the reviewed backup files;
+to disable one repository, revert its `probity.config.*` commit.
 
 - Default provider account selection is centralized in [mapping/account_pools.yaml](/media/sam/1TB/gobabygo/mapping/account_pools.yaml).
 - Default operator multi-panel bootstrap is centralized in [mapping/operator_ui.yaml](/media/sam/1TB/gobabygo/mapping/operator_ui.yaml).

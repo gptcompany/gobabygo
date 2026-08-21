@@ -266,24 +266,32 @@ or operational work without a meaningful behavior test. Codex and AGY receive
 the same RED/GREEN evidence contract; Gobabygo does not claim they run the
 Claude-specific TDD Guard hook.
 
-For selected Codex coding repositories, `mesh probity` can turn that contract
-into a pre-tool gate. Runtime and hook wiring are central, but activation and
-path policy stay in one reviewed `probity.config.*` at the target Git root:
+For selected Claude and Codex coding repositories, `mesh probity` can turn that
+contract into a pre-tool gate. Runtime and hook wiring are central, but
+activation and path policy stay in one reviewed `probity.config.*` at the target
+Git root:
 
 ```bash
 mesh probity install              # inspect the plan
-mesh probity install --apply      # one-time user-level Codex integration
-mesh probity smoke --json
+mesh probity install --apply --replace-tdd-guard
+mesh probity smoke --agent all --json
 mesh probity status <repo> --json
 ```
 
 The dispatcher returns immediately for every repository without a config. An
 opted-in repository fails closed when its config is ambiguous or the runtime is
-missing. Existing Codex sessions do not reload hook configuration and must be
-restarted normally; Mesh Live never kills them during installation. The pinned
-Probity CLI does not expose its packaged Antigravity adapter, so AGY remains on
-brief-level TDD policy and test evidence. Claude continues to use its existing
-TDD Guard rather than a second overlapping hook.
+missing. Existing Claude and Codex sessions do not reload this integration and
+must be restarted normally; Mesh Live never kills them during installation. The
+pinned Probity CLI does not expose Antigravity, so AGY remains on brief-level TDD
+policy and test evidence.
+
+Claude user and project hooks are additive. The installer therefore refuses to
+stack Probity with the legacy global TDD Guard. After review,
+`--replace-tdd-guard` removes only the recognized TDD Guard command and writes
+mode-`0600` backups beside changed user settings. It does not edit project
+settings or any other Claude hook. `mesh probity status` reports stale/missing
+dispatchers and TDD Guard conflicts, but Codex hook trust remains
+`manual-unknown` because it is UI state.
 
 Codex requires one explicit trust review whenever the installed hook hash
 changes. Open a fresh Codex CLI, run `/hooks`, inspect the absolute dispatcher
@@ -295,7 +303,9 @@ already-reviewed smoke and does not persist trust.
 Keep this optional. `enforceTdd()` can invoke a model validator for matching
 writes and therefore adds latency and usage. A Probity config is executable
 project code and must be reviewed before Codex trusts it. CI and an independent
-reviewer remain authoritative; YOLO permissions are unchanged.
+reviewer remain authoritative; YOLO permissions are unchanged. Revert the
+repository config commit to disable one project. Restore the reviewed
+`*.mesh-probity.bak` files only when rolling back the user-level integration.
 
 `mcoordinator` reads one bounded `mesh speckit status <repo> --json` snapshot
 from the Dell at every new, continue, or exact-resume startup. Invalid or

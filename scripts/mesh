@@ -796,18 +796,18 @@ probity_usage() {
   cat <<'EOF'
 Usage:
   ./scripts/mesh probity status [repo-path] [--json]
-  ./scripts/mesh probity install [--apply] [--json]
-  ./scripts/mesh probity smoke [--executable <path>] [--json]
+  ./scripts/mesh probity install [--apply] [--replace-tdd-guard] [--json]
+  ./scripts/mesh probity smoke [--agent all|codex|claude-code] [--executable <path>] [--json]
 
 Behavior:
   Probity is pinned centrally but enabled only by one probity.config.* at a
   target Git root. install is plan-only unless --apply is explicit. Applying
-  installs the pinned runtime and one global Codex dispatcher; repositories
-  without a Probity config remain unaffected. Existing Codex sessions must be
-  restarted after hook installation. Review and trust the exact hook once with
-  /hooks; untrusted or changed hooks are skipped. Antigravity is not exposed as
-  a supported agent by the pinned Probity CLI and remains on delegation/evidence
-  TDD policy.
+  installs the pinned runtime and global Claude/Codex dispatchers; repositories
+  without a Probity config remain unaffected. Applying refuses to overlap the
+  legacy global Claude TDD Guard unless --replace-tdd-guard is explicit. Existing
+  Claude and Codex sessions must be restarted. Review and trust the exact Codex
+  hook once with /hooks; status reports that manual trust as unknown. Antigravity
+  is not exposed by the pinned Probity CLI and remains on delegation/evidence TDD.
 EOF
 }
 
