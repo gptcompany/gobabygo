@@ -59,7 +59,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 14: Fresh-Repository Canary
 
-- [ ] T014 [US3] Execute a real disposable repository from no caller or binding through one coordinator objective, automatic Spec Kit onboarding, GitHub issue publication, Antigravity writer, Codex read-only review, CI, authoritative task closure, and mutation-free replay; retain exact evidence
+- [x] T014 [US3] Execute a real disposable repository from no caller or binding through one coordinator objective, automatic Spec Kit onboarding, GitHub issue publication, Antigravity writer, Codex read-only review, CI, authoritative task closure, and mutation-free replay; retain exact evidence
 
 ## Dependencies
 

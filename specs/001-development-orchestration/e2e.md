@@ -49,3 +49,39 @@
   branch apply run `32468824413` succeeded.
 - Final workflow-dispatch replay `32468848319` reported `aligned=true`,
   `mutations=0`, and only no-op operations for the closed feature.
+
+## Automatic Onboarding Canary
+
+- Repository: `gptcompany/gobabygo-onboarding-canary`; feature:
+  `001-normalize-whitespace`; initial state: Spec Kit 0.16.5 integrations
+  aligned, with no ledger caller and no feature binding.
+- One coordinator objective used trusted Gobabygo runtime commit
+  `0b298088689284b62f16a2246995c2d960892095`. The coordinator installed the
+  pinned caller, created binding `normalize-whitespace-c4ec8b8bbe33`, and
+  opened planning PR #1 without operator-executed onboarding commands.
+- Planning PR #1 merged as `a2f25cf7`; ledger run `32474814391` published
+  issues #2-#11 after pull-request check run `32474768853` passed.
+- Antigravity produced implementation commit
+  `e04b955bbbc9810296e2d4a162f437c5ed391c3e`. Read-only Codex delegation
+  `DLG-20260821-NW-REVIEW-01` reviewed exact range
+  `a2f25cf7afb8873c6887f2b78aedb6540f874a72..e04b955bbbc9810296e2d4a162f437c5ed391c3e`
+  (diff SHA-256 `65716110e4b1c2a042e15e084fb474db44adcc3487dd7fa07085dfdffafb4651`)
+  and returned `REVIEW_VERDICT: PASS` with validated low-severity findings.
+- Antigravity correction `abcd35d014dbe78f9aadb672280b2aa7ab3cae98`
+  was reviewed read-only by `DLG-20260821-NW-REVIEW-02` over exact range
+  `e04b955bbbc9810296e2d4a162f437c5ed391c3e..abcd35d014dbe78f9aadb672280b2aa7ab3cae98`
+  (diff SHA-256 `50a2e376dae59e3e417616d62631555348f5a3518891be92d0417178c85f81be`)
+  and returned `REVIEW_VERDICT: PASS`. Final whitespace-only correction
+  `ebfa0895b8ae205fcbd29d8df05aaba4d441de5b` passed `git diff --check`, 43
+  tests, and both CI jobs before merge.
+- Implementation commit `e04b955bbbc9810296e2d4a162f437c5ed391c3e` marked
+  T001-T010 complete. PR #12 passed CI on Python 3.11 and 3.14, then published
+  that authoritative task state in merge `0b572af9`. Default-branch ledger run
+  `32476378925` closed issues #2-#11.
+- Workflow-dispatch replay `32477457045` reported `aligned=true`,
+  `mutations=0`, and ten closed no-op operations.
+- Manual interaction was limited to dismissing first-run Codex vendor prompts
+  and delivering the already frozen first review pointer after a guard false
+  positive. No onboarding, source edit, commit, push, issue mutation, or merge
+  was performed manually. Commits `5fe1ef9` and `f3f217e` add the observed
+  completed-reply regressions to the guard before this evidence is published.
