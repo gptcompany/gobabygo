@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -370,3 +371,358 @@ def test_plan_dict_is_stable_and_contains_no_remote_body(module, tmp_path: Path)
     assert payload["repository"] == "owner/repo"
     assert payload["aligned"] is False
     assert "SECRET=remote" not in encoded
+
+
+@pytest.mark.parametrize(
+    ("remote", "expected"),
+    [
+        ("https://github.com/Owner/Repo.git", "owner/repo"),
+        ("git@github.com:Owner/Repo.git", "owner/repo"),
+        ("ssh://git@github.com/Owner/Repo.git", "owner/repo"),
+    ],
+)
+def test_parse_github_remote_supports_https_and_ssh(
+    module, remote: str, expected: str
+) -> None:
+    assert module.parse_github_remote(remote) == expected
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "https://gitlab.com/owner/repo.git",
+        "https://token@github.com/owner/repo.git",
+        "https://github.com/owner/repo/extra",
+        "github.com/owner/repo",
+    ],
+)
+def test_parse_github_remote_rejects_unsafe_or_non_github_urls(module, remote: str) -> None:
+    with pytest.raises(module.LedgerError, match="GitHub remote"):
+        module.parse_github_remote(remote)
+
+
+def test_verify_checkout_binding_checks_origin_and_action_repository(
+    module, tmp_path: Path
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+
+    def good_run(args, input_text=None):
+        assert args == ("git", "-C", str(repo.resolve()), "config", "--get", "remote.origin.url")
+        return module.CommandResult(0, "https://github.com/owner/repo.git\n", "")
+
+    module.verify_checkout_binding(
+        loaded, run=good_run, environ={"GITHUB_REPOSITORY": "owner/repo"}
+    )
+
+    with pytest.raises(module.LedgerError, match="origin repository"):
+        module.verify_checkout_binding(
+            loaded,
+            run=lambda args, input_text=None: module.CommandResult(
+                0, "https://github.com/other/repo.git\n", ""
+            ),
+            environ={},
+        )
+    with pytest.raises(module.LedgerError, match="GITHUB_REPOSITORY"):
+        module.verify_checkout_binding(
+            loaded, run=good_run, environ={"GITHUB_REPOSITORY": "fork/repo"}
+        )
+
+
+def test_gh_client_checks_version_and_parses_paginated_issues(module) -> None:
+    calls = []
+
+    def run(args, input_text=None):
+        calls.append((args, input_text))
+        if args == ("gh", "version"):
+            return module.CommandResult(0, "gh version 2.80.0 (2026-01-01)\n", "")
+        assert args[:4] == ("gh", "api", "--paginate", "--slurp")
+        return module.CommandResult(
+            0,
+            json.dumps(
+                [
+                    [
+                        {
+                            "number": 1,
+                            "title": "Issue",
+                            "body": "Body",
+                            "state": "open",
+                            "labels": [{"name": "speckit-task"}],
+                        },
+                        {
+                            "number": 2,
+                            "title": "PR",
+                            "body": "",
+                            "state": "open",
+                            "labels": [],
+                            "pull_request": {},
+                        },
+                    ],
+                    [
+                        {
+                            "number": 3,
+                            "title": "Closed",
+                            "body": None,
+                            "state": "closed",
+                            "labels": [{"name": "done"}],
+                        }
+                    ],
+                ]
+            ),
+            "",
+        )
+
+    client = module.GhClient("owner/repo", run=run)
+
+    assert client.version == (2, 80, 0)
+    assert client.list_issues() == (
+        module.RemoteIssue(1, "Issue", "Body", "open", ("speckit-task",)),
+        module.RemoteIssue(3, "Closed", "", "closed", ("done",)),
+    )
+    assert len(calls) == 2
+
+
+def test_gh_client_rejects_old_version_and_malformed_or_oversized_output(module) -> None:
+    old = module.GhClient(
+        "owner/repo",
+        run=lambda args, input_text=None: module.CommandResult(
+            0, "gh version 2.39.9\n", ""
+        ),
+    )
+    with pytest.raises(module.LedgerError, match="2.40 or newer"):
+        _ = old.version
+
+    malformed = module.GhClient(
+        "owner/repo",
+        run=lambda args, input_text=None: module.CommandResult(0, "{}", ""),
+    )
+    malformed._version = (2, 80, 0)
+    with pytest.raises(module.LedgerError, match="paginated array"):
+        malformed.list_issues()
+
+    oversized = module.GhClient(
+        "owner/repo",
+        run=lambda args, input_text=None: module.CommandResult(
+            0, "x" * (module.MAX_GH_OUTPUT_BYTES + 1), ""
+        ),
+    )
+    oversized._version = (2, 80, 0)
+    with pytest.raises(module.LedgerError, match="output exceeds"):
+        oversized.list_issues()
+
+
+def test_gh_client_never_exposes_command_stderr(module) -> None:
+    client = module.GhClient(
+        "owner/repo",
+        run=lambda args, input_text=None: module.CommandResult(
+            1, "", "TOKEN=must-not-leak"
+        ),
+    )
+
+    with pytest.raises(module.LedgerError) as exc:
+        _ = client.version
+
+    assert "must-not-leak" not in str(exc.value)
+
+
+def test_gh_client_mutations_use_json_stdin_without_shell_interpolation(module) -> None:
+    calls = []
+
+    def run(args, input_text=None):
+        calls.append((args, input_text))
+        if args == ("gh", "version"):
+            return module.CommandResult(0, "gh version 2.80.0\n", "")
+        if args[3] == "POST" and args[4] == "repos/owner/repo/issues":
+            return module.CommandResult(0, '{"number":42}', "")
+        return module.CommandResult(0, "{}", "")
+
+    client = module.GhClient("owner/repo", run=run)
+    client.create_label(
+        "speckit-task", color="123abc", description="Managed task"
+    )
+    number = client.create_issue(
+        title='Title "quoted"', body="Body\nline", labels=("speckit-task",)
+    )
+    client.update_issue(number, state="closed")
+    client.add_labels(number, ("human",))
+
+    assert number == 42
+    assert all(call[0][0] == "gh" for call in calls)
+    assert all("sh" not in call[0] and "bash" not in call[0] for call in calls)
+    payloads = [json.loads(call[1]) for call in calls if call[1] is not None]
+    assert payloads == [
+        {
+            "color": "123abc",
+            "description": "Managed task",
+            "name": "speckit-task",
+        },
+        {
+            "body": "Body\nline",
+            "labels": ["speckit-task"],
+            "title": 'Title "quoted"',
+        },
+        {"state": "closed"},
+        {"labels": ["human"]},
+    ]
+
+
+def test_gh_client_rejects_issue_sets_beyond_supported_bound(module) -> None:
+    issues = [
+        {
+            "number": number,
+            "title": f"Issue {number}",
+            "body": "",
+            "state": "open",
+            "labels": [],
+        }
+        for number in range(1, module.MAX_REMOTE_ISSUES + 2)
+    ]
+    client = module.GhClient(
+        "owner/repo",
+        run=lambda args, input_text=None: module.CommandResult(
+            0, json.dumps([issues]), ""
+        ),
+    )
+    client._version = (2, 80, 0)
+
+    with pytest.raises(module.LedgerError, match="issue count exceeds"):
+        client.list_issues()
+
+
+def action_environment() -> dict[str, str]:
+    return {
+        "GITHUB_ACTIONS": "true",
+        "MESH_SPECKIT_LEDGER_APPLY": "1",
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REPOSITORY": "owner/repo",
+        "GITHUB_REF": "refs/heads/main",
+        "MESH_DEFAULT_BRANCH": "main",
+    }
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"GITHUB_ACTIONS": "false"}, "GitHub Actions"),
+        ({"MESH_SPECKIT_LEDGER_APPLY": "0"}, "apply gate"),
+        ({"GITHUB_EVENT_NAME": "pull_request"}, "event"),
+        ({"GITHUB_REPOSITORY": "fork/repo"}, "repository"),
+        ({"GITHUB_REF": "refs/heads/feature"}, "default branch"),
+    ],
+)
+def test_authoritative_apply_environment_fails_closed(
+    module, tmp_path: Path, change: dict[str, str], message: str
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    environ = action_environment()
+    environ.update(change)
+
+    with pytest.raises(module.LedgerError, match=message):
+        module.validate_apply_environment(loaded.binding, environ)
+
+
+class MemoryGitHub:
+    def __init__(self, module, issues=(), labels=()):
+        self.module = module
+        self.issues = {issue.number: issue for issue in issues}
+        self.labels = set(labels)
+        self.calls = []
+        self.next_number = max(self.issues, default=0) + 1
+
+    def list_issues(self):
+        self.calls.append(("list_issues",))
+        return tuple(self.issues.values())
+
+    def list_labels(self):
+        self.calls.append(("list_labels",))
+        return tuple(sorted(self.labels))
+
+    def create_label(self, name, *, color, description):
+        self.calls.append(("create_label", name, color, description))
+        self.labels.add(name)
+
+    def create_issue(self, *, title, body, labels):
+        self.calls.append(("create_issue", title, tuple(labels)))
+        number = self.next_number
+        self.next_number += 1
+        self.issues[number] = self.module.RemoteIssue(
+            number, title, body, "open", tuple(labels)
+        )
+        return number
+
+    def update_issue(self, number, *, title=None, body=None, state=None):
+        self.calls.append(("update_issue", number, title, body, state))
+        old = self.issues[number]
+        self.issues[number] = self.module.RemoteIssue(
+            number,
+            title if title is not None else old.title,
+            body if body is not None else old.body,
+            state if state is not None else old.state,
+            old.labels,
+        )
+
+    def add_labels(self, number, labels):
+        self.calls.append(("add_labels", number, tuple(labels)))
+        old = self.issues[number]
+        merged = tuple(dict.fromkeys((*old.labels, *labels)))
+        self.issues[number] = self.module.RemoteIssue(
+            old.number, old.title, old.body, old.state, merged
+        )
+
+
+def test_authoritative_apply_creates_closes_and_replays_idempotently(
+    module, tmp_path: Path
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [x] T001 Complete\n")
+    loaded = module.load_feature(repo, feature)
+    client = MemoryGitHub(module)
+
+    result = module.apply_authoritative(loaded, client, action_environment())
+
+    assert result.final_plan.aligned is True
+    assert result.mutations == 4  # two labels, issue create, state close
+    first_calls = list(client.calls)
+    replay = module.apply_authoritative(loaded, client, action_environment())
+    assert replay.mutations == 0
+    assert all(call[0] not in {"create_label", "create_issue", "update_issue"} for call in client.calls[len(first_calls) :])
+
+
+def test_authoritative_apply_updates_without_removing_human_labels(
+    module, tmp_path: Path
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 New\n")
+    loaded = module.load_feature(repo, feature)
+    rendered = module.render_issue(loaded, loaded.tasks[0])
+    old = remote_issue(
+        module,
+        rendered,
+        title="Old",
+        body=rendered.body.replace("New", "Old"),
+        state="closed",
+        labels=("speckit-task", "human"),
+    )
+    client = MemoryGitHub(module, (old,), ("speckit-task",))
+
+    result = module.apply_authoritative(loaded, client, action_environment())
+
+    assert result.final_plan.aligned is True
+    assert set(client.issues[1].labels) == {
+        "speckit-task",
+        "speckit:example-a1b2c3d4",
+        "human",
+    }
+
+
+def test_authoritative_apply_performs_no_mutation_when_plan_is_blocked(
+    module, tmp_path: Path
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    legacy = module.RemoteIssue(1, "T001: Legacy", "", "open", ())
+    client = MemoryGitHub(module, (legacy,))
+
+    with pytest.raises(module.LedgerError, match="blocking drift"):
+        module.apply_authoritative(loaded, client, action_environment())
+
+    assert client.calls == [("list_issues",)]

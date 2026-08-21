@@ -19,7 +19,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 4: GitHub Adapter
 
-- [ ] T004 [US2] Implement and test bounded `gh` discovery and Action-only mutation with strict repository, version, JSON, and refresh contracts
+- [x] T004 [US2] Implement and test bounded `gh` discovery and Action-only mutation with strict repository, version, JSON, and refresh contracts
 
 ## Phase 5: Operator Interface
 

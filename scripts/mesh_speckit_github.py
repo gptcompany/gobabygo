@@ -9,9 +9,13 @@ fully testable.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Mapping, Protocol
+from urllib.parse import urlparse
 
 
 BINDING_SCHEMA = "mesh.speckit.github-ledger.v1"
@@ -22,6 +26,9 @@ MAX_BINDING_BYTES = 16 * 1024
 MAX_TASKS_BYTES = 1024 * 1024
 MAX_DESCRIPTION_CHARS = 4_000
 MAX_ISSUE_TITLE_CHARS = 256
+MAX_GH_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_REMOTE_ISSUES = 1_000
+MIN_GH_VERSION = (2, 40, 0)
 
 _BINDING_FIELDS = {"schema", "feature_id", "repository", "enabled"}
 _FEATURE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{6,38}[a-z0-9]$")
@@ -119,6 +126,44 @@ class ReconciliationPlan:
     aligned: bool
     blocking: tuple[BlockingDrift, ...]
     actions: tuple[ReconcileAction, ...]
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+RunCommand = Callable[[tuple[str, ...], str | None], CommandResult]
+
+
+@dataclass(frozen=True)
+class ApplyResult:
+    initial_plan: ReconciliationPlan
+    final_plan: ReconciliationPlan
+    mutations: int
+
+
+class GitHubClient(Protocol):
+    def list_issues(self) -> tuple[RemoteIssue, ...]: ...
+
+    def list_labels(self) -> tuple[str, ...]: ...
+
+    def create_label(self, name: str, *, color: str, description: str) -> None: ...
+
+    def create_issue(self, *, title: str, body: str, labels: tuple[str, ...]) -> int: ...
+
+    def update_issue(
+        self,
+        number: int,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+    ) -> None: ...
+
+    def add_labels(self, number: int, labels: tuple[str, ...]) -> None: ...
 
 
 def _read_bounded(path: Path, limit: int, label: str) -> str:
@@ -574,3 +619,313 @@ def plan_to_dict(plan: ReconciliationPlan) -> dict[str, object]:
             for item in plan.actions
         ],
     }
+
+
+def parse_github_remote(remote: str) -> str:
+    value = str(remote or "").strip()
+    scp_match = re.fullmatch(r"git@github\.com:([^/]+)/([^/]+?)(?:\.git)?", value)
+    if scp_match:
+        repository = f"{scp_match.group(1)}/{scp_match.group(2)}".lower()
+    else:
+        parsed = urlparse(value)
+        if parsed.scheme not in {"https", "ssh"} or parsed.hostname != "github.com":
+            raise LedgerError("origin is not a supported GitHub remote")
+        if parsed.query or parsed.fragment or parsed.params:
+            raise LedgerError("GitHub remote must not contain query or fragment data")
+        if parsed.scheme == "https" and (parsed.username or parsed.password):
+            raise LedgerError("GitHub remote must not contain credentials")
+        if parsed.scheme == "ssh" and parsed.username not in {None, "git"}:
+            raise LedgerError("SSH GitHub remote must use the git user")
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) != 2:
+            raise LedgerError("GitHub remote must identify exactly owner/repo")
+        repo_name = parts[1][:-4] if parts[1].endswith(".git") else parts[1]
+        repository = f"{parts[0]}/{repo_name}".lower()
+    if not _REPOSITORY_RE.fullmatch(repository):
+        raise LedgerError("invalid GitHub remote owner/repo")
+    return repository
+
+
+def _default_run(args: tuple[str, ...], input_text: str | None = None) -> CommandResult:
+    try:
+        result = subprocess.run(
+            list(args),
+            input=input_text,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise LedgerError(f"cannot execute {args[0] if args else 'command'}") from exc
+    return CommandResult(result.returncode, result.stdout, result.stderr)
+
+
+def verify_checkout_binding(
+    feature: LoadedFeature,
+    *,
+    run: RunCommand = _default_run,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    args = (
+        "git",
+        "-C",
+        str(feature.repo_root),
+        "config",
+        "--get",
+        "remote.origin.url",
+    )
+    result = run(args, None)
+    if result.returncode != 0:
+        raise LedgerError("cannot resolve origin repository")
+    origin = parse_github_remote(result.stdout)
+    if origin != feature.binding.repository:
+        raise LedgerError(
+            f"origin repository {origin} does not match binding {feature.binding.repository}"
+        )
+    action_repository = (environ or {}).get("GITHUB_REPOSITORY", "").strip().lower()
+    if action_repository and action_repository != feature.binding.repository:
+        raise LedgerError(
+            f"GITHUB_REPOSITORY {action_repository} does not match binding {feature.binding.repository}"
+        )
+
+
+def _decode_json_output(output: str, *, label: str) -> object:
+    if len(output.encode("utf-8", errors="replace")) > MAX_GH_OUTPUT_BYTES:
+        raise LedgerError(f"{label} output exceeds {MAX_GH_OUTPUT_BYTES} bytes")
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise LedgerError(f"{label} returned malformed JSON") from exc
+
+
+class GhClient:
+    """Bounded ``gh api`` transport with no shell interpolation."""
+
+    def __init__(self, repository: str, *, run: RunCommand = _default_run) -> None:
+        if not _REPOSITORY_RE.fullmatch(repository):
+            raise LedgerError("invalid GitHub repository")
+        self.repository = repository
+        self._run = run
+        self._version: tuple[int, int, int] | None = None
+
+    def _execute(self, args: tuple[str, ...], input_text: str | None = None) -> str:
+        result = self._run(args, input_text)
+        if result.returncode != 0:
+            # stderr may contain echoed credentials or environment values.
+            raise LedgerError(f"{args[0]} command failed with exit {result.returncode}")
+        if len(result.stdout.encode("utf-8", errors="replace")) > MAX_GH_OUTPUT_BYTES:
+            raise LedgerError(f"GitHub output exceeds {MAX_GH_OUTPUT_BYTES} bytes")
+        return result.stdout
+
+    @property
+    def version(self) -> tuple[int, int, int]:
+        if self._version is None:
+            output = self._execute(("gh", "version"))
+            match = re.search(r"\bgh version (\d+)\.(\d+)\.(\d+)\b", output)
+            if not match:
+                raise LedgerError("cannot parse gh version")
+            self._version = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
+            if self._version < MIN_GH_VERSION:
+                raise LedgerError("gh 2.40 or newer is required")
+        return self._version
+
+    def _paginated(self, endpoint: str, *, label: str) -> list[object]:
+        _ = self.version
+        output = self._execute(("gh", "api", "--paginate", "--slurp", endpoint))
+        payload = _decode_json_output(output, label=label)
+        if not isinstance(payload, list) or any(not isinstance(page, list) for page in payload):
+            raise LedgerError(f"{label} must return a paginated array")
+        return [item for page in payload for item in page]
+
+    def _api(
+        self,
+        method: str,
+        endpoint: str,
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        _ = self.version
+        args = ("gh", "api", "--method", method, endpoint)
+        input_text = None
+        if payload is not None:
+            args = (*args, "--input", "-")
+            input_text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        output = self._execute(args, input_text)
+        if not output.strip():
+            return None
+        return _decode_json_output(output, label="GitHub API")
+
+    def list_issues(self) -> tuple[RemoteIssue, ...]:
+        items = self._paginated(
+            f"repos/{self.repository}/issues?state=all&per_page=100",
+            label="GitHub issues",
+        )
+        issues: list[RemoteIssue] = []
+        for item in items:
+            if not isinstance(item, dict):
+                raise LedgerError("GitHub issues contained a non-object entry")
+            if "pull_request" in item:
+                continue
+            number = item.get("number")
+            title = item.get("title")
+            body = item.get("body")
+            state = item.get("state")
+            raw_labels = item.get("labels")
+            if (
+                not isinstance(number, int)
+                or number <= 0
+                or not isinstance(title, str)
+                or body is not None and not isinstance(body, str)
+                or state not in {"open", "closed"}
+                or not isinstance(raw_labels, list)
+            ):
+                raise LedgerError("GitHub issues contained invalid allowlisted fields")
+            labels: list[str] = []
+            for raw_label in raw_labels:
+                if not isinstance(raw_label, dict) or not isinstance(raw_label.get("name"), str):
+                    raise LedgerError("GitHub issue labels contained invalid fields")
+                labels.append(raw_label["name"])
+            issues.append(RemoteIssue(number, title, body or "", state, tuple(labels)))
+            if len(issues) > MAX_REMOTE_ISSUES:
+                raise LedgerError(f"GitHub issue count exceeds supported limit {MAX_REMOTE_ISSUES}")
+        return tuple(issues)
+
+    def list_labels(self) -> tuple[str, ...]:
+        items = self._paginated(
+            f"repos/{self.repository}/labels?per_page=100",
+            label="GitHub labels",
+        )
+        labels: list[str] = []
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+                raise LedgerError("GitHub labels contained invalid fields")
+            labels.append(item["name"])
+        return tuple(labels)
+
+    def create_label(self, name: str, *, color: str, description: str) -> None:
+        self._api(
+            "POST",
+            f"repos/{self.repository}/labels",
+            {"name": name, "color": color, "description": description},
+        )
+
+    def create_issue(self, *, title: str, body: str, labels: tuple[str, ...]) -> int:
+        response = self._api(
+            "POST",
+            f"repos/{self.repository}/issues",
+            {"title": title, "body": body, "labels": list(labels)},
+        )
+        if not isinstance(response, dict) or not isinstance(response.get("number"), int):
+            raise LedgerError("GitHub create issue response lacks an issue number")
+        return response["number"]
+
+    def update_issue(
+        self,
+        number: int,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        state: str | None = None,
+    ) -> None:
+        payload: dict[str, object] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if state is not None:
+            payload["state"] = state
+        if payload:
+            self._api("PATCH", f"repos/{self.repository}/issues/{number}", payload)
+
+    def add_labels(self, number: int, labels: tuple[str, ...]) -> None:
+        if labels:
+            self._api(
+                "POST",
+                f"repos/{self.repository}/issues/{number}/labels",
+                {"labels": list(labels)},
+            )
+
+
+def validate_apply_environment(
+    binding: FeatureBinding, environ: Mapping[str, str] | None = None
+) -> None:
+    env = dict(os.environ if environ is None else environ)
+    if env.get("GITHUB_ACTIONS", "").lower() != "true":
+        raise LedgerError("authoritative apply is restricted to GitHub Actions")
+    if env.get("MESH_SPECKIT_LEDGER_APPLY") != "1":
+        raise LedgerError("authoritative apply gate is not enabled")
+    event = env.get("GITHUB_EVENT_NAME", "")
+    if event not in {"push", "workflow_dispatch"}:
+        raise LedgerError(f"GitHub event {event or '-'} cannot apply the ledger")
+    repository = env.get("GITHUB_REPOSITORY", "").strip().lower()
+    if repository != binding.repository:
+        raise LedgerError("GitHub Actions repository does not match the feature binding")
+    default_branch = env.get("MESH_DEFAULT_BRANCH", "").strip()
+    if not default_branch or env.get("GITHUB_REF") != f"refs/heads/{default_branch}":
+        raise LedgerError("authoritative apply must run from the default branch")
+
+
+_LABEL_DEFINITIONS = {
+    "speckit-task": ("1d76db", "Task derived one-way from Spec Kit"),
+}
+
+
+def apply_authoritative(
+    feature: LoadedFeature,
+    client: GitHubClient,
+    environ: Mapping[str, str] | None = None,
+) -> ApplyResult:
+    validate_apply_environment(feature.binding, environ)
+    initial = build_plan(feature, client.list_issues())
+    if initial.blocking:
+        codes = ", ".join(item.code for item in initial.blocking)
+        raise LedgerError(f"refusing authoritative apply due to blocking drift: {codes}")
+    if initial.aligned:
+        return ApplyResult(initial, initial, 0)
+
+    mutations = 0
+    existing_labels = {label.casefold() for label in client.list_labels()}
+    feature_label = f"speckit:{feature.binding.feature_id}"
+    definitions = {
+        **_LABEL_DEFINITIONS,
+        feature_label: ("5319e7", f"Spec Kit feature {feature.binding.feature_id}"),
+    }
+    for name, (color, description) in definitions.items():
+        if name.casefold() not in existing_labels:
+            client.create_label(name, color=color, description=description)
+            existing_labels.add(name.casefold())
+            mutations += 1
+
+    for action in initial.actions:
+        if action.operation == "noop":
+            continue
+        if action.operation == "create":
+            number = client.create_issue(
+                title=action.title,
+                body=action.body,
+                labels=action.add_labels,
+            )
+            mutations += 1
+            if action.state == "closed":
+                client.update_issue(number, state="closed")
+                mutations += 1
+            continue
+        if action.operation != "update" or action.issue_number is None:
+            raise LedgerError(f"unsupported reconciliation operation: {action.operation}")
+        content_reasons = set(action.reasons) & {"title", "body", "state"}
+        if content_reasons:
+            client.update_issue(
+                action.issue_number,
+                title=action.title if "title" in content_reasons else None,
+                body=action.body if "body" in content_reasons else None,
+                state=action.state if "state" in content_reasons else None,
+            )
+            mutations += 1
+        if action.add_labels:
+            client.add_labels(action.issue_number, action.add_labels)
+            mutations += 1
+
+    final = build_plan(feature, client.list_issues())
+    if not final.aligned:
+        raise LedgerError("GitHub ledger is not aligned after authoritative apply")
+    return ApplyResult(initial, final, mutations)
