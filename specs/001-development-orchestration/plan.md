@@ -114,7 +114,8 @@ dispatch remains the operator entry point. No package or service is added.
 2. Fake `gh` contract tests prove argument boundaries, repository checks, pagination/limits, and mutation ordering.
 3. Workflow tests assert event-specific permissions and concurrency.
 4. A disposable opted-in feature performs create, update, complete, and replay against GitHub; the canary issue is closed and retained as audit evidence.
-5. A final independent review evaluates the exact commit range before push/activation.
+5. A separate fictitious micro-feature runs through the real Spec Kit coordinator, one writer, one independent reviewer, a pull request, CI, and ledger closure without production effects.
+6. A final independent review evaluates the exact commit range before push/activation.
 
 ## Complexity Tracking
 

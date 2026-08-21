@@ -119,6 +119,7 @@ second task database.
 - **SC-004**: Pull-request checks execute with read-only repository permissions and produce a reviewable report.
 - **SC-005**: A controlled end-to-end test completes task publication, update, closure, and idempotent replay with exactly one issue per task.
 - **SC-006**: An agent can identify the governing feature and task from an issue or delegation without reading tmux output or router internals.
+- **SC-007**: One disposable fictitious development objective completes the real coordinator/worker/reviewer lifecycle from specification through a CI-verified pull request and ledger closure.
 
 ## Assumptions
 

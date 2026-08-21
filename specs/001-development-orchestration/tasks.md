@@ -35,7 +35,11 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 8: End-To-End Closure
 
-- [ ] T008 [US1] Run local and controlled GitHub E2E tests, independent review, residual-risk documentation, and final regression suites
+- [ ] T008 [US1] Run local smoke tests and controlled GitHub ledger E2E tests for create, update, completion, and idempotent replay
+
+## Phase 9: Real Orchestration Canary
+
+- [ ] T009 [US3] Execute one real, disposable, non-production micro-feature through Spec Kit specify/plan/tasks, GitHub issue publication, coordinator delegation, one writer branch and pull request, independent reviewer verdict, CI evidence, authoritative task completion, and issue closure; retain a concise evidence report and remove only disposable branches/worktrees
 
 ## Dependencies
 
@@ -46,6 +50,7 @@ derived shared ledger and never rewrite this file.
 - T006 depends on T004.
 - T007 depends on T005 and T006.
 - T008 depends on T006 and T007.
+- T009 depends on T008.
 
 ## Completion Rules
 
@@ -53,3 +58,4 @@ derived shared ledger and never rewrite this file.
 - No task is complete based only on worker prose or an idle session.
 - No remote mutation occurs from tests, pull-request checks, or local hooks.
 - T008 requires idempotent replay evidence and an exact-range review.
+- T009 cannot be satisfied by mocks, dry-runs, worker prose, or direct edits that bypass the coordinator/worker/reviewer path.
