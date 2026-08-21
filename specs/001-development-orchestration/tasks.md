@@ -11,7 +11,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 2: Local Model
 
-- [ ] T002 [US1] Implement and test strict feature binding, task parsing, immutable identity, and canonical issue rendering in `scripts/mesh_speckit_github.py`
+- [x] T002 [US1] Implement and test strict feature binding, task parsing, immutable identity, and canonical issue rendering in `scripts/mesh_speckit_github.py`
 
 ## Phase 3: Reconciliation Model
 
