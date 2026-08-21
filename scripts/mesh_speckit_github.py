@@ -48,6 +48,7 @@ _TASK_LIKE_RE = re.compile(r"^T\d+\b")
 _MARKER_RE = re.compile(r"^\[([^\]]+)\](?:\s+|$)")
 _STORY_RE = re.compile(r"^US\d+$")
 _MARKER_PREFIX = "<!-- mesh-speckit-task:"
+_RESERVED_MARKER_RE = re.compile(r"<!--\s*mesh-speckit-task:", re.IGNORECASE)
 _MANAGED_MARKER_RE = re.compile(
     r"<!--\s*mesh-speckit-task:(?P<version>[^\s]+)\s+"
     r"repo=(?P<repository>[^\s]+)\s+"
@@ -313,6 +314,10 @@ def parse_tasks(text: str) -> tuple[SpecTask, ...]:
         description = _normalize_description(tail)
         if not description:
             raise LedgerError(f"malformed task line {line_number}: missing description")
+        if _RESERVED_MARKER_RE.search(description):
+            raise LedgerError(
+                f"task {task_id} uses the reserved mesh-speckit-task marker namespace"
+            )
         if len(description) > MAX_DESCRIPTION_CHARS:
             raise LedgerError(
                 f"task {task_id} description exceeds {MAX_DESCRIPTION_CHARS} characters"

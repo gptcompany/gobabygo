@@ -97,6 +97,10 @@ def test_load_feature_rejects_invalid_bindings(
         ("- [~] T001 In progress\n", "malformed task line"),
         ("- [ ] T01 Too short\n", "malformed task line"),
         ("- [ ] T001 [UNKNOWN] Bad marker\n", "unsupported task marker"),
+        (
+            "- [ ] T001 Test <!-- mesh-speckit-task:v1 repo=owner/repo -->\n",
+            "reserved mesh-speckit-task marker namespace",
+        ),
         ("- [ ] T001\n", "malformed task line"),
         ("# No tasks\n", "contains no Spec Kit tasks"),
     ],
