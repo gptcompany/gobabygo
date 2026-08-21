@@ -27,6 +27,13 @@ def test_primary_docs_define_one_way_development_ledger() -> None:
     assert "Worker prose, idle state, router history" in documents["MESH_LIVE.md"]
     assert "Task identity and completion | `tasks.md`" in documents["ARCHITECTURE.md"]
     assert "GitHub Issues are derived one-way" in documents["ARCHITECTURE.md"]
+    assert "stages a missing managed caller and feature binding automatically" in " ".join(
+        documents["README.md"].split()
+    )
+    assert "Workers do not own onboarding or issue mutation" in " ".join(
+        documents["QUICKSTART.md"].split()
+    )
+    assert "workers never become ledger writers" in documents["ARCHITECTURE.md"]
 
 
 def test_docs_keep_runtime_rollout_pinned_and_non_vendored() -> None:

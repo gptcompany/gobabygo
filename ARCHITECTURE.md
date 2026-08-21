@@ -154,6 +154,10 @@ Project cards are not identity. Planning artifacts merge and publish before
 implementation starts. Cross-repository adoption uses a minimal caller pinned
 to an immutable Gobabygo commit; the reusable workflow checks out caller and
 runtime separately, leaving parser and reconciliation code with one owner.
+For repository-scoped planned work, coordinator startup carries that runtime
+commit only from a clean checkout on `origin/master`. The coordinator composes
+the existing plan-first caller and binding operations on the planning branch;
+workers never become ledger writers and custom caller content is not replaced.
 implementation delegation, preventing agent session state from becoming an
 implicit task ledger.
 

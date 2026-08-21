@@ -145,7 +145,10 @@ For development orchestration, `mesh speckit github init|plan|check|install-call
 approved `tasks.md` files to a namespaced, one-way GitHub Issues ledger. The
 planning artifacts merge before implementation starts; only GitHub Actions may
 write the derived ledger. Other repositories use a minimal caller pinned to one
-reviewed Gobabygo commit and do not vendor the reconciler. See
+reviewed Gobabygo commit and do not vendor the reconciler. `mcoordinator
+<repo>` stages a missing managed caller and feature binding automatically in
+the planning PR when its clean runtime pin is trusted; custom workflows and
+untrusted runtime state fail closed. See
 [QUICKSTART.md](QUICKSTART.md#spec-kit-development-ledger).
 
 ### Optional Claude and Codex TDD gate

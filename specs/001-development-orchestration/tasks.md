@@ -47,15 +47,15 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 11: Automatic Runtime Preflight
 
-- [ ] T011 [US3] Expose and test a bounded immutable Gobabygo runtime pin in `mesh speckit status` only for a clean checkout with the expected origin, and pass it through new and resumed coordinator startup
+- [x] T011 [US3] Expose and test a bounded immutable Gobabygo runtime pin in `mesh speckit status` only for a clean checkout with the expected origin, and pass it through new and resumed coordinator startup
 
 ## Phase 12: Plan-First Repository Onboarding
 
-- [ ] T012 [US3] Update and test the coordinator contract so planned work automatically composes the existing caller installer and feature binding on a planning branch, fails closed on custom or ambiguous state, waits for ledger alignment, and keeps workers outside ledger ownership
+- [x] T012 [US3] Update and test the coordinator contract so planned work automatically composes the existing caller installer and feature binding on a planning branch, fails closed on custom or ambiguous state, waits for ledger alignment, and keeps workers outside ledger ownership
 
 ## Phase 13: Operator Contract
 
-- [ ] T013 [US3] Align concise operator documentation and contract tests around one-command onboarding, planning-plane authority, recovery behavior, and explicit blocker states
+- [x] T013 [US3] Align concise operator documentation and contract tests around one-command onboarding, planning-plane authority, recovery behavior, and explicit blocker states
 
 ## Phase 14: Fresh-Repository Canary
 

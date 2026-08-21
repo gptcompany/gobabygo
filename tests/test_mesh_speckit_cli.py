@@ -353,6 +353,96 @@ def test_status_does_not_treat_older_cache_as_update(monkeypatch, tmp_path) -> N
     assert result["update_available"] is False
 
 
+def _trusted_runtime_repo(tmp_path: Path) -> Path:
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    repo = _git_repo(tmp_path / "runtime")
+    subprocess.run(["git", "-C", str(repo), "branch", "-M", "master"], check=True)
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(bare)], check=True)
+    subprocess.run(["git", "-C", str(repo), "push", "-qu", "origin", "HEAD"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/gptcompany/gobabygo.git",
+        ],
+        check=True,
+    )
+    return repo
+
+
+def test_orchestration_runtime_exposes_only_clean_origin_commit(tmp_path) -> None:
+    module = _load_module()
+    repo = _trusted_runtime_repo(tmp_path)
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert module.inspect_orchestration_runtime(repo) == {
+        "repository": "gptcompany/gobabygo",
+        "trusted": True,
+        "commit": commit,
+        "reason": None,
+    }
+
+    (repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+    dirty = module.inspect_orchestration_runtime(repo)
+    assert dirty["trusted"] is False
+    assert dirty["commit"] is None
+    assert dirty["reason"] == "dirty_checkout"
+
+
+def test_orchestration_runtime_rejects_wrong_origin_and_unpublished_head(tmp_path) -> None:
+    module = _load_module()
+    repo = _trusted_runtime_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "set-url", "origin", "https://github.com/other/repo.git"],
+        check=True,
+    )
+    assert module.inspect_orchestration_runtime(repo)["reason"] == "unexpected_origin"
+
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "set-url", "origin", "https://github.com/gptcompany/gobabygo.git"],
+        check=True,
+    )
+    (repo / "README.md").write_text("# changed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "local"], check=True)
+    unpublished = module.inspect_orchestration_runtime(repo)
+    assert unpublished["trusted"] is False
+    assert unpublished["commit"] is None
+    assert unpublished["reason"] == "commit_not_on_origin"
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/gptcompany/gobabygo",
+        "https://github.com/gptcompany/gobabygo.git/",
+        "git@github.com:gptcompany/gobabygo",
+        "ssh://git@github.com/gptcompany/gobabygo",
+    ],
+)
+def test_orchestration_runtime_accepts_canonical_origin_variants(
+    tmp_path, origin
+) -> None:
+    module = _load_module()
+    repo = _trusted_runtime_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "set-url", "origin", origin],
+        check=True,
+    )
+
+    assert module.inspect_orchestration_runtime(repo)["trusted"] is True
+
+
 def test_delegation_context_is_provider_neutral_and_repository_bounded(
     monkeypatch, tmp_path
 ) -> None:

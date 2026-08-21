@@ -312,6 +312,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   feature/task from the objective; `mcoordinator --all` keeps Speckit at
   coordinator/program scope and binds repo plus feature/task only per concrete
   delegation, so no single pair is required at startup
+- for planned repository work, a clean trusted Gobabygo runtime lets the
+  coordinator stage a missing managed caller and feature binding automatically
+  in the planning PR; the operator still submits only the objective
 - coordinator scope does not create a router pipeline: the router/database is
   optional persistence for selected tasks and handoffs
 - Speckit live keeps one writer per repo; Codex/Antigravity challenger roles use
@@ -454,6 +457,14 @@ Gobabygo reusable workflows in the repository Actions settings before canarying.
 To advance an existing generated caller after reviewing a new runtime commit,
 add `--accept-pin-update`; the prior managed template is migrated, while custom
 workflow content is never overwritten.
+
+Normally the operator does not run these onboarding commands. A newly created
+or resumed `mcoordinator <repo>` receives the clean runtime SHA in its bounded
+startup status, dry-runs the same installer and binding commands, and adds only
+the managed caller plus Spec Kit artifacts to a non-default planning branch.
+Custom workflow content, a dirty/unpublished runtime, malformed repository
+state, unavailable `gh`, or a failed Action is an explicit blocker. Workers do
+not own onboarding or issue mutation.
 
 ### Git hook chaining
 
