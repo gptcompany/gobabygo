@@ -49,3 +49,28 @@
   branch apply run `32468824413` succeeded.
 - Final workflow-dispatch replay `32468848319` reported `aligned=true`,
   `mutations=0`, and only no-op operations for the closed feature.
+
+## Automatic Onboarding Canary
+
+- Repository: `gptcompany/gobabygo-onboarding-canary`; feature:
+  `001-normalize-whitespace`; initial state: Spec Kit 0.16.5 integrations
+  aligned, with no ledger caller and no feature binding.
+- One coordinator objective used trusted Gobabygo runtime commit
+  `0b298088689284b62f16a2246995c2d960892095`. The coordinator installed the
+  pinned caller, created binding `normalize-whitespace-c4ec8b8bbe33`, and
+  opened planning PR #1 without operator-executed onboarding commands.
+- Planning PR #1 merged as `a2f25cf7`; ledger run `32474814391` published
+  issues #2-#11 after pull-request check run `32474768853` passed.
+- Antigravity produced implementation commit `e04b955`; Codex reviewed the
+  frozen range read-only and returned `PASS` with validated low-severity test
+  findings. Antigravity corrections `abcd35d` and `ebfa089` passed follow-up
+  review and `git diff --check`.
+- Implementation PR #12 passed CI on Python 3.11 and 3.14, then merged as
+  `0b572af9`. Default-branch ledger run `32476378925` closed issues #2-#11.
+- Workflow-dispatch replay `32477457045` reported `aligned=true`,
+  `mutations=0`, and ten closed no-op operations.
+- Manual interaction was limited to dismissing first-run Codex vendor prompts
+  and delivering the already frozen first review pointer after a guard false
+  positive. No onboarding, source edit, commit, push, issue mutation, or merge
+  was performed manually. Commit `5fe1ef9` adds the observed completed-reply
+  regression to the guard before this evidence is published.
