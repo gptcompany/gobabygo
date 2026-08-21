@@ -34,8 +34,18 @@
 - Workflow-dispatch replay `32468515187` reported `aligned=true`,
   `mutations=0`, with all eight task operations as closed no-ops.
 
-## Remaining Rollout
+## Pinned Multi-Repo Rollout
 
-T010 retains its pin-upgrade completion criterion. The initial pinned caller
-worked in the canary, but the reviewed installer upgrade path is verified
-separately before T010 is complete.
+- The installer first reported `operation=update`, `applied=false`, then changed
+  only `.github/workflows/speckit-ledger.yml` after explicit
+  `--accept-pin-update --apply`.
+- During the canary, a pin-only PR exposed that the original path filters did
+  not validate the caller itself. Commit `3c8768d` added self-validation and a
+  fail-closed migration for the prior managed template; arbitrary workflow
+  content remains protected.
+- Canary PR #11 pinned both reusable workflow and runtime checkout to immutable
+  commit `3c8768dd4163ba9b02b849a1ac3778f892d6c0ce` and merged as `ffb4feee`.
+- Pull-request ledger run `32468781942` completed read-only and aligned; default
+  branch apply run `32468824413` succeeded.
+- Final workflow-dispatch replay `32468848319` reported `aligned=true`,
+  `mutations=0`, and only no-op operations for the closed feature.

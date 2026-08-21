@@ -43,7 +43,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 10: Pinned Multi-Repo Rollout
 
-- [ ] T010 [US3] Publish a reusable Gobabygo ledger workflow, add a plan-first installer for a minimal per-repository caller pinned to an immutable reviewed Gobabygo commit, and canary the caller in one second repository before broader rollout
+- [x] T010 [US3] Publish a reusable Gobabygo ledger workflow, add a plan-first installer for a minimal per-repository caller pinned to an immutable reviewed Gobabygo commit, and canary the caller in one second repository before broader rollout
 
 ## Dependencies
 
