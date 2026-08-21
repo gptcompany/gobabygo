@@ -710,6 +710,40 @@ def test_authoritative_apply_creates_closes_and_replays_idempotently(
     assert all(call[0] not in {"create_label", "create_issue", "update_issue"} for call in client.calls[len(first_calls) :])
 
 
+def test_authoritative_apply_retries_eventually_consistent_read(
+    module, tmp_path: Path
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+
+    class EventuallyConsistentGitHub(MemoryGitHub):
+        def __init__(self):
+            super().__init__(module)
+            self.hide_next_post_create_read = False
+
+        def create_issue(self, *, title, body, labels):
+            number = super().create_issue(title=title, body=body, labels=labels)
+            self.hide_next_post_create_read = True
+            return number
+
+        def list_issues(self):
+            current = super().list_issues()
+            if self.hide_next_post_create_read:
+                self.hide_next_post_create_read = False
+                return ()
+            return current
+
+    client = EventuallyConsistentGitHub()
+    delays: list[float] = []
+
+    result = module.apply_authoritative(
+        loaded, client, action_environment(), sleep=delays.append
+    )
+
+    assert result.final_plan.aligned is True
+    assert delays == [1.0]
+
+
 def test_authoritative_apply_updates_without_removing_human_labels(
     module, tmp_path: Path
 ) -> None:

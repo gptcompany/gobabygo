@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Protocol
@@ -34,6 +35,7 @@ MAX_GH_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_REMOTE_ISSUES = 1_000
 MAX_BOUND_FEATURES = 100
 MIN_GH_VERSION = (2, 40, 0)
+POST_APPLY_RETRY_DELAYS = (1.0, 2.0, 4.0)
 CALLER_WORKFLOW = Path(".github/workflows/speckit-ledger.yml")
 DEFAULT_RUNTIME_REPOSITORY = "gptcompany/gobabygo"
 
@@ -939,6 +941,8 @@ def apply_authoritative(
     feature: LoadedFeature,
     client: GitHubClient,
     environ: Mapping[str, str] | None = None,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> ApplyResult:
     validate_apply_environment(feature.binding, environ)
     initial = build_plan(feature, client.list_issues())
@@ -991,6 +995,11 @@ def apply_authoritative(
             mutations += 1
 
     final = build_plan(feature, client.list_issues())
+    for delay in POST_APPLY_RETRY_DELAYS:
+        if final.aligned:
+            break
+        sleep(delay)
+        final = build_plan(feature, client.list_issues())
     if not final.aligned:
         raise LedgerError("GitHub ledger is not aligned after authoritative apply")
     return ApplyResult(initial, final, mutations)
