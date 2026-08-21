@@ -440,11 +440,12 @@ def inspect_orchestration_runtime(runtime_root: Path = ROOT) -> dict[str, Any]:
             timeout=10,
         )
         allowed_origins = {
-            "https://github.com/gptcompany/gobabygo.git",
-            "git@github.com:gptcompany/gobabygo.git",
-            "ssh://git@github.com/gptcompany/gobabygo.git",
+            "https://github.com/gptcompany/gobabygo",
+            "git@github.com:gptcompany/gobabygo",
+            "ssh://git@github.com/gptcompany/gobabygo",
         }
-        if origin.returncode != 0 or origin.stdout.strip() not in allowed_origins:
+        normalized_origin = origin.stdout.strip().rstrip("/").removesuffix(".git")
+        if origin.returncode != 0 or normalized_origin not in allowed_origins:
             result["reason"] = "unexpected_origin"
             return result
         if _git_status(root):

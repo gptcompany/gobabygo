@@ -421,6 +421,28 @@ def test_orchestration_runtime_rejects_wrong_origin_and_unpublished_head(tmp_pat
     assert unpublished["reason"] == "commit_not_on_origin"
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/gptcompany/gobabygo",
+        "https://github.com/gptcompany/gobabygo.git/",
+        "git@github.com:gptcompany/gobabygo",
+        "ssh://git@github.com/gptcompany/gobabygo",
+    ],
+)
+def test_orchestration_runtime_accepts_canonical_origin_variants(
+    tmp_path, origin
+) -> None:
+    module = _load_module()
+    repo = _trusted_runtime_repo(tmp_path)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "set-url", "origin", origin],
+        check=True,
+    )
+
+    assert module.inspect_orchestration_runtime(repo)["trusted"] is True
+
+
 def test_delegation_context_is_provider_neutral_and_repository_bounded(
     monkeypatch, tmp_path
 ) -> None:
