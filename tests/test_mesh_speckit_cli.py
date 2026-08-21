@@ -1274,6 +1274,22 @@ def test_atomic_migration_copy_and_restore_preserve_mode_and_cleanup(tmp_path) -
     assert list(tmp_path.glob(".target.*")) == []
 
 
+def test_atomic_migration_copy_makes_generated_shell_scripts_executable(tmp_path) -> None:
+    module = _load_module()
+    source = tmp_path / "source.sh"
+    target = tmp_path / "target.sh"
+    source.write_text("#!/bin/sh\n", encoding="utf-8")
+    source.chmod(0o644)
+
+    module._atomic_copy_migration_file(
+        source,
+        target,
+        relative=".specify/scripts/bash/check-prerequisites.sh",
+    )
+
+    assert target.stat().st_mode & 0o777 == 0o755
+
+
 def test_safe_migration_target_cleans_partial_parent_creation(
     monkeypatch, tmp_path
 ) -> None:

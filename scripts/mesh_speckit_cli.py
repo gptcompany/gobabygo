@@ -1175,7 +1175,10 @@ def _atomic_copy_migration_file(
                 target_handle.write(chunk)
             target_handle.flush()
             os.fsync(target_handle.fileno())
-            os.fchmod(target_handle.fileno(), source.stat().st_mode & 0o777)
+            mode = source.stat().st_mode & 0o777
+            if relative.startswith(".specify/scripts/") and relative.endswith(".sh"):
+                mode |= 0o111
+            os.fchmod(target_handle.fileno(), mode)
         actual_digest = (
             _normalized_generated_digest(bytes(normalized_data), relative)
             if normalized_data is not None
