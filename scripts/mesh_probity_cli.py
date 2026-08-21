@@ -428,10 +428,22 @@ def _merge_claude_hook(
     return json.dumps(payload, indent=2, sort_keys=True) + "\n", found_legacy
 
 
+def _backup_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.mesh-probity.bak")
+
+
+def _preflight_backup(path: Path) -> None:
+    backup = _backup_path(path)
+    if backup.is_symlink() or (backup.exists() and not backup.is_file()):
+        raise ProbityRuntimeError(f"refusing unsafe backup target: {backup}")
+
+
 def _write_backup(path: Path, content: str) -> Path | None:
     if not path.is_file():
         return None
-    backup = path.with_name(f"{path.name}.mesh-probity.bak")
+    backup = _backup_path(path)
+    if backup.is_file():
+        return backup
     _atomic_write(backup, content, mode=0o600)
     return backup
 
@@ -547,6 +559,17 @@ def install_integrations(
         command=claude_command,
         replace_legacy_tdd_guard=replace_tdd_guard,
     )
+    changed_targets = [
+        path
+        for path, before, after in (
+            (config_path, config_content, updated_config),
+            (hooks_path, hooks_content, updated_hooks),
+            (claude_settings_path, claude_settings_content, updated_claude_settings),
+        )
+        if before != after and path.is_file()
+    ]
+    for target in changed_targets:
+        _preflight_backup(target)
     runtime_action = "reused"
     if _version_at(executable) != lock["version"]:
         runtime_action = "installed"
@@ -594,11 +617,6 @@ def install_integrations(
         expected_version=lock["version"],
     )
     return plan
-
-
-def install_codex(**kwargs: Any) -> dict[str, Any]:
-    """Compatibility alias for callers of the original installer API."""
-    return install_integrations(**kwargs)
 
 
 def smoke(*, executable: Path | None = None, agents: Sequence[str] = ("codex", "claude-code")) -> dict[str, Any]:

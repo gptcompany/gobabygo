@@ -179,7 +179,7 @@ def test_install_plan_does_not_touch_targets(tmp_path) -> None:
     prefix = tmp_path / "npm"
     hook = tmp_path / "lib" / "hook.py"
 
-    plan = module.install_codex(
+    plan = module.install_integrations(
         apply=False,
         npm_prefix=prefix,
         codex_home=codex_home,
@@ -208,7 +208,7 @@ def test_install_preflights_both_codex_files_before_download(monkeypatch, tmp_pa
     )
 
     try:
-        module.install_codex(
+        module.install_integrations(
             apply=True,
             npm_prefix=tmp_path / "npm",
             codex_home=codex_home,
@@ -237,7 +237,7 @@ def test_install_reuses_exact_runtime_and_updates_hook(monkeypatch, tmp_path) ->
     codex_home = tmp_path / "codex"
     hook = tmp_path / "lib" / "hook.py"
 
-    result = module.install_codex(
+    result = module.install_integrations(
         apply=True,
         npm_prefix=prefix,
         codex_home=codex_home,
@@ -336,3 +336,24 @@ def test_status_reports_hooks_conflict_and_manual_trust(monkeypatch, tmp_path) -
     assert status["integrations"]["claude"]["hook_installed"] is True
     assert status["tdd_guard_conflict"] is True
     assert status["aligned"] is False
+
+
+def test_backup_preserves_first_snapshot_and_rejects_symlink(tmp_path) -> None:
+    module = _load_module()
+    target = tmp_path / "settings.json"
+    target.write_text("first\n", encoding="utf-8")
+
+    backup = module._write_backup(target, target.read_text(encoding="utf-8"))
+    assert backup is not None
+    target.write_text("second\n", encoding="utf-8")
+    assert module._write_backup(target, target.read_text(encoding="utf-8")) == backup
+    assert backup.read_text(encoding="utf-8") == "first\n"
+
+    backup.unlink()
+    backup.symlink_to(tmp_path / "outside")
+    try:
+        module._preflight_backup(target)
+    except module.ProbityRuntimeError as exc:
+        assert "unsafe backup target" in str(exc)
+    else:
+        raise AssertionError("symlink backup target was accepted")
