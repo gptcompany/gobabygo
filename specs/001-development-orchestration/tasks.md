@@ -45,6 +45,22 @@ derived shared ledger and never rewrite this file.
 
 - [x] T010 [US3] Publish a reusable Gobabygo ledger workflow, add a plan-first installer for a minimal per-repository caller pinned to an immutable reviewed Gobabygo commit, and canary the caller in one second repository before broader rollout
 
+## Phase 11: Automatic Runtime Preflight
+
+- [ ] T011 [US3] Expose and test a bounded immutable Gobabygo runtime pin in `mesh speckit status` only for a clean checkout with the expected origin, and pass it through new and resumed coordinator startup
+
+## Phase 12: Plan-First Repository Onboarding
+
+- [ ] T012 [US3] Update and test the coordinator contract so planned work automatically composes the existing caller installer and feature binding on a planning branch, fails closed on custom or ambiguous state, waits for ledger alignment, and keeps workers outside ledger ownership
+
+## Phase 13: Operator Contract
+
+- [ ] T013 [US3] Align concise operator documentation and contract tests around one-command onboarding, planning-plane authority, recovery behavior, and explicit blocker states
+
+## Phase 14: Fresh-Repository Canary
+
+- [ ] T014 [US3] Execute a real disposable repository from no caller or binding through one coordinator objective, automatic Spec Kit onboarding, GitHub issue publication, Antigravity writer, Codex read-only review, CI, authoritative task closure, and mutation-free replay; retain exact evidence
+
 ## Dependencies
 
 - T002 depends on T001.
@@ -56,6 +72,10 @@ derived shared ledger and never rewrite this file.
 - T008 depends on T006 and T007.
 - T009 depends on T008.
 - T010 depends on T009.
+- T011 depends on T010.
+- T012 depends on T011.
+- T013 depends on T012.
+- T014 depends on T013.
 
 ## Completion Rules
 
@@ -65,3 +85,4 @@ derived shared ledger and never rewrite this file.
 - T008 requires idempotent replay evidence and an exact-range review.
 - T009 cannot be satisfied by mocks, dry-runs, worker prose, or direct edits that bypass the coordinator/worker/reviewer path.
 - T010 must not vendor the Python reconciler into target repositories or reference a mutable Gobabygo branch.
+- T014 must start without a ledger caller or feature binding and must not rely on operator-executed onboarding commands after the coordinator objective is submitted.
