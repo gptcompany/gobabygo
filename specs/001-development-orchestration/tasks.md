@@ -51,7 +51,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 12: Plan-First Repository Onboarding
 
-- [ ] T012 [US3] Update and test the coordinator contract so planned work automatically composes the existing caller installer and feature binding on a planning branch, fails closed on custom or ambiguous state, waits for ledger alignment, and keeps workers outside ledger ownership
+- [x] T012 [US3] Update and test the coordinator contract so planned work automatically composes the existing caller installer and feature binding on a planning branch, fails closed on custom or ambiguous state, waits for ledger alignment, and keeps workers outside ledger ownership
 
 ## Phase 13: Operator Contract
 

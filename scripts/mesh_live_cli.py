@@ -2846,6 +2846,11 @@ def build_live_coordinator_system_prompt(
             "Use only enabled phases. If alignment is no, continue direct coordination but do not "
             "present unavailable Spec Kit phases as executed.",
         ]
+    runtime_ref_argument = (
+        speckit_status["runtime_commit"]
+        if speckit_status and speckit_status["runtime_trusted"]
+        else "<unavailable-runtime-commit>"
+    )
 
     if workflow_scope == "repository":
         speckit_scope_policy = [
@@ -2918,11 +2923,15 @@ def build_live_coordinator_system_prompt(
             "Development ledger policy for planned feature work:",
             "- `spec.md`, `plan.md`, and especially `tasks.md` in Git are authoritative. GitHub Issues are a one-way derived work ledger; router state and tmux output never rewrite Spec Kit artifacts.",
             "- After tasks and `speckit.analyze` pass, require a committed `github-ledger.json` binding and a planning-only pull request before source implementation. "
-            f"Use `{speckit_ledger_command} init <feature-dir> --apply` only to create the missing binding and `{speckit_ledger_command} plan <feature-dir>` to validate publication.",
+            f"For a missing binding, run `{speckit_ledger_command} init <feature-dir>` first, inspect the plan, then rerun it with `--apply`; use `{speckit_ledger_command} plan <feature-dir>` to validate publication.",
             "- Do not invoke interactive `speckit-taskstoissues` as the authoritative sync path: its bare Tnnn identity can collide across features. Do not mutate GitHub from a local hook or worker prompt.",
             "- Stop before implementation until the planning pull request is merged and the repository ledger Action has published the issues. "
             f"Require `{speckit_ledger_command} check <feature-dir>` to report aligned before delegating a published task.",
-            "- If the target repository lacks its pinned `.github/workflows/speckit-ledger.yml` caller, report ledger rollout as a blocker for this workflow. Never silently fall back to direct issue creation.",
+            "- For planned repository work, inspect `.github/workflows/speckit-ledger.yml` before implementation. If it is missing and orchestration_runtime_trusted=yes, automatically run the existing installer first without `--apply`, inspect its plan, then rerun the same command with `--apply`; use the exact runtime commit above and include only the generated caller in the planning branch. Do not ask the operator to run onboarding commands.",
+            f"- Exact caller installer: `{speckit_ledger_command} install-caller {repo_argument} --runtime-ref {runtime_ref_argument}`. A managed stale pin may be updated only by adding `--accept-pin-update` after the installer identifies it as managed. Never overwrite custom workflow content.",
+            "- If the caller is missing or stale while orchestration_runtime_trusted=no, stop planned onboarding with the exact runtime reason. Direct incident work remains available, but never silently fall back to direct issue creation.",
+            "- Author Spec Kit artifacts, the managed caller, and `github-ledger.json` only on a non-default planning branch. Before commit, verify the changed-file allowlist and exclude source code. Push a planning-only pull request, require its read-only ledger check, merge only after it passes, then wait for default-branch issue publication and an aligned ledger check.",
+            "- Workers consume the rendered Spec Kit context and immutable task key. Never delegate caller installation, binding initialization, issue mutation, planning-branch ownership, or a competing Spec Kit pipeline to a worker.",
             "- Put the exact immutable `<repository>:<feature-id>:<Tnnn>` task key in every implementation and review delegation. Completion requires reviewed evidence, an authoritative `tasks.md` checkbox update, and subsequent Action reconciliation; worker idle/prose and manual issue closure are not completion.",
             "For every Spec Kit delegation, derive a provider-neutral bounded envelope before sending: "
             f"`{speckit_context_command} <repo-root> --phase <enabled-phase> --feature-dir "
@@ -3021,10 +3030,11 @@ def build_live_coordinator_system_prompt(
             "Standing authorization:",
             "- Provider YOLO mode removes approval prompts; it does not expand this authorization.",
             "- You may board, peek, send bounded tasks to authorized workers, inspect Git, and run relevant tests.",
+            "- For selected planned work, you may create a non-default planning branch, author only Spec Kit artifacts and non-secret briefs, invoke the exact managed caller and binding commands above, commit and push that planning-only allowlist, open its pull request, and merge it only after the required read-only check passes. This authority never includes source implementation or direct issue mutation.",
             "- You have standing authorization to invoke only the listed ensure-codex or ensure-antigravity commands when a worker is missing. "
             "Each may create at most one deterministic provider tmux worker per repository. Codex sends no task text; "
             "Antigravity uses only a fixed no-tools bootstrap prompt and sends no delegated work.",
-            "- You must not edit source files, commit, push, deploy, reset, delete, use sudo, kill sessions, create sessions "
+            "- Outside that bounded planning-plane exception, you must not edit files, commit, push, deploy, reset, delete, use sudo, kill sessions, create sessions "
             "or launch nested AI CLIs by any other mechanism, expose secrets, or approve destructive/privileged prompts.",
             "- Ask the operator only for destructive actions, privilege expansion, missing product decisions, or hard blockers.",
             "- Router threads are optional durable orchestration; never claim they address an existing manual tmux session.",
