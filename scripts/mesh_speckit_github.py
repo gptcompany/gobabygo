@@ -173,6 +173,7 @@ class CallerPlan:
     runtime_ref: str
     content: str
     operation: str
+    previous_content: str | None = None
 
 
 class GitHubClient(Protocol):
@@ -1188,6 +1189,7 @@ def build_caller_plan(
     repository: str,
     runtime_repository: str,
     runtime_ref: str,
+    accept_pin_update: bool = False,
 ) -> CallerPlan:
     root = repo_root.resolve(strict=True)
     if not (root / ".git").exists():
@@ -1195,15 +1197,34 @@ def build_caller_plan(
     content = render_caller_workflow(runtime_repository, runtime_ref)
     workflow_path = root / CALLER_WORKFLOW
     operation = "create"
+    previous_content: str | None = None
     if workflow_path.exists() or workflow_path.is_symlink():
         if workflow_path.is_symlink() or not workflow_path.is_file():
             raise LedgerError(f"caller workflow must be a regular file: {workflow_path}")
         current = _read_bounded(workflow_path, MAX_TASKS_BYTES, "caller workflow")
         if current != content:
-            raise LedgerError(
-                "caller workflow already exists with different content; review it manually"
+            pin_match = re.search(
+                r"uses: ([a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9._-]{0,99})/"
+                r"\.github/workflows/speckit-ledger-reusable\.yml@([0-9a-f]{40})",
+                current,
             )
-        operation = "noop"
+            managed = bool(
+                pin_match
+                and current
+                == render_caller_workflow(pin_match.group(1), pin_match.group(2))
+            )
+            if not managed:
+                raise LedgerError(
+                    "caller workflow already exists with different content; review it manually"
+                )
+            if not accept_pin_update:
+                raise LedgerError(
+                    "managed caller uses a different pin; rerun with --accept-pin-update after review"
+                )
+            operation = "update"
+            previous_content = current
+        else:
+            operation = "noop"
     return CallerPlan(
         root,
         workflow_path,
@@ -1212,6 +1233,7 @@ def build_caller_plan(
         runtime_ref,
         content,
         operation,
+        previous_content,
     )
 
 
@@ -1230,10 +1252,19 @@ def caller_plan_to_dict(plan: CallerPlan, *, applied: bool) -> dict[str, object]
 def apply_caller_plan(plan: CallerPlan) -> bool:
     if plan.operation == "noop":
         return False
-    if plan.operation != "create":
+    if plan.operation not in {"create", "update"}:
         raise LedgerError(f"unsupported caller operation: {plan.operation}")
-    if plan.workflow_path.exists() or plan.workflow_path.is_symlink():
-        raise LedgerError("caller workflow appeared while applying the plan")
+    if plan.operation == "create":
+        if plan.workflow_path.exists() or plan.workflow_path.is_symlink():
+            raise LedgerError("caller workflow appeared while applying the plan")
+    else:
+        if plan.workflow_path.is_symlink() or not plan.workflow_path.is_file():
+            raise LedgerError("managed caller changed while applying the plan")
+        current = _read_bounded(
+            plan.workflow_path, MAX_TASKS_BYTES, "caller workflow"
+        )
+        if current != plan.previous_content:
+            raise LedgerError("managed caller changed while applying the plan")
     plan.workflow_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
         prefix=".speckit-ledger.", suffix=".tmp", dir=plan.workflow_path.parent
@@ -1244,8 +1275,16 @@ def apply_caller_plan(plan: CallerPlan) -> bool:
             stream.write(plan.content)
             stream.flush()
             os.fsync(stream.fileno())
-        if plan.workflow_path.exists() or plan.workflow_path.is_symlink():
+        if plan.operation == "create" and (
+            plan.workflow_path.exists() or plan.workflow_path.is_symlink()
+        ):
             raise LedgerError("caller workflow appeared while applying the plan")
+        if plan.operation == "update":
+            current = _read_bounded(
+                plan.workflow_path, MAX_TASKS_BYTES, "caller workflow"
+            )
+            if current != plan.previous_content:
+                raise LedgerError("managed caller changed while applying the plan")
         os.replace(temp_path, plan.workflow_path)
     finally:
         if temp_path.exists():
@@ -1323,6 +1362,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--runtime-repository", default=DEFAULT_RUNTIME_REPOSITORY
     )
     caller.add_argument("--apply", action="store_true")
+    caller.add_argument("--accept-pin-update", action="store_true")
     caller.add_argument("--json", action="store_true")
     for name in ("plan", "check", "apply"):
         command = sub.add_parser(name, help=f"{name.title()} one feature ledger.")
@@ -1414,6 +1454,7 @@ def main(
                 repository=repository,
                 runtime_repository=args.runtime_repository,
                 runtime_ref=args.runtime_ref,
+                accept_pin_update=args.accept_pin_update,
             )
             changed = apply_caller_plan(caller_plan) if args.apply else False
             output = caller_plan_to_dict(

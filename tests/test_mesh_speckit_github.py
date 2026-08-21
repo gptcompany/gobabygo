@@ -880,6 +880,42 @@ def test_caller_plan_refuses_to_overwrite_existing_workflow(module, tmp_path: Pa
         )
 
 
+def test_caller_pin_update_requires_explicit_review_and_is_atomic(
+    module, tmp_path: Path
+) -> None:
+    repo, _ = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    workflow = repo / module.CALLER_WORKFLOW
+    workflow.parent.mkdir(parents=True)
+    old_ref = "a" * 40
+    new_ref = "b" * 40
+    workflow.write_text(
+        module.render_caller_workflow("gptcompany/gobabygo", old_ref),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.LedgerError, match="--accept-pin-update"):
+        module.build_caller_plan(
+            repo,
+            repository="owner/repo",
+            runtime_repository="gptcompany/gobabygo",
+            runtime_ref=new_ref,
+        )
+
+    plan = module.build_caller_plan(
+        repo,
+        repository="owner/repo",
+        runtime_repository="gptcompany/gobabygo",
+        runtime_ref=new_ref,
+        accept_pin_update=True,
+    )
+    assert plan.operation == "update"
+    assert plan.previous_content is not None
+    assert module.apply_caller_plan(plan) is True
+    assert workflow.read_text(encoding="utf-8") == module.render_caller_workflow(
+        "gptcompany/gobabygo", new_ref
+    )
+
+
 def test_cli_plan_and_check_share_read_only_remote_plan(
     module, tmp_path: Path, capsys
 ) -> None:

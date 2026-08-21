@@ -40,3 +40,4 @@ def test_docs_keep_runtime_rollout_pinned_and_non_vendored() -> None:
     )
     assert "pinned to an immutable reviewed Gobabygo commit" in tasks
     assert "must not vendor the Python reconciler" in tasks
+    assert "`--accept-pin-update`" in quickstart
