@@ -32,6 +32,7 @@ MAX_DESCRIPTION_CHARS = 4_000
 MAX_ISSUE_TITLE_CHARS = 256
 MAX_GH_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_REMOTE_ISSUES = 1_000
+MAX_BOUND_FEATURES = 100
 MIN_GH_VERSION = (2, 40, 0)
 
 _BINDING_FIELDS = {"schema", "feature_id", "repository", "enabled"}
@@ -1073,6 +1074,20 @@ def apply_binding_plan(plan: BindingPlan) -> bool:
 
 
 def _render_plan(payload: dict[str, object]) -> str:
+    if payload.get("schema") == "mesh.speckit.github-batch.v1":
+        lines = [
+            "Spec Kit GitHub ledger batch",
+            f"repository={payload['repository']}",
+            f"features={len(payload['features'])}",
+            f"aligned={'yes' if payload['aligned'] else 'no'}",
+            f"mutations={payload.get('mutations', 0)}",
+        ]
+        for feature in payload["features"]:
+            lines.append(
+                f"{feature['feature_id']} aligned={'yes' if feature['aligned'] else 'no'} "
+                f"blocking={len(feature['blocking'])}"
+            )
+        return "\n".join(lines)
     lines = [
         "Spec Kit GitHub ledger",
         f"repository={payload['repository']}",
@@ -1106,11 +1121,67 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     init.add_argument("--feature-id")
     init.add_argument("--apply", action="store_true")
     init.add_argument("--json", action="store_true")
-    for name in ("plan", "check"):
+    for name in ("plan", "check", "apply"):
         command = sub.add_parser(name, help=f"{name.title()} one feature ledger.")
-        command.add_argument("feature_dir", type=Path)
+        command.add_argument("feature_dir", nargs="?", type=Path)
+        command.add_argument("--all", action="store_true", dest="all_features")
+        command.add_argument("--repo-root", type=Path, default=Path.cwd())
         command.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
+
+
+def discover_bound_features(repo_root: Path) -> tuple[LoadedFeature, ...]:
+    root = repo_root.resolve(strict=True)
+    specs = root / "specs"
+    if not specs.is_dir():
+        raise LedgerError(f"Spec Kit specs directory not found: {specs}")
+    binding_paths = sorted(specs.rglob(BINDING_FILE))
+    if not binding_paths:
+        raise LedgerError("no opted-in Spec Kit GitHub ledger features found")
+    if len(binding_paths) > MAX_BOUND_FEATURES:
+        raise LedgerError(
+            f"opted-in feature count exceeds supported limit {MAX_BOUND_FEATURES}"
+        )
+    features: list[LoadedFeature] = []
+    seen_ids: set[str] = set()
+    for binding_path in binding_paths:
+        if binding_path.is_symlink():
+            raise LedgerError(f"ledger binding must not be a symlink: {binding_path}")
+        feature = load_feature(root, binding_path.parent)
+        if feature.binding.feature_id in seen_ids:
+            raise LedgerError(
+                f"duplicate feature_id across bindings: {feature.binding.feature_id}"
+            )
+        seen_ids.add(feature.binding.feature_id)
+        features.append(feature)
+    return tuple(features)
+
+
+def _batch_to_dict(
+    repository: str,
+    plans: tuple[ReconciliationPlan, ...],
+    *,
+    mutations: int = 0,
+) -> dict[str, object]:
+    return {
+        "schema": "mesh.speckit.github-batch.v1",
+        "repository": repository,
+        "aligned": all(plan.aligned for plan in plans),
+        "mutations": mutations,
+        "features": [plan_to_dict(plan) for plan in plans],
+    }
+
+
+def _select_features(
+    args: argparse.Namespace, *, run: RunCommand
+) -> tuple[Path, tuple[LoadedFeature, ...]]:
+    if bool(args.feature_dir) == bool(args.all_features):
+        raise LedgerError("provide exactly one feature directory or --all")
+    if args.all_features:
+        root = discover_git_root(args.repo_root, run=run)
+        return root, discover_bound_features(root)
+    root = discover_git_root(args.feature_dir, run=run)
+    return root, (load_feature(root, args.feature_dir),)
 
 
 def main(
@@ -1122,9 +1193,9 @@ def main(
     args = _parse_args(argv)
     env = dict(os.environ if environ is None else environ)
     try:
-        root = discover_git_root(args.feature_dir, run=run)
-        repository = checkout_repository(root, run=run)
         if args.command == "init":
+            root = discover_git_root(args.feature_dir, run=run)
+            repository = checkout_repository(root, run=run)
             binding_plan = build_binding_plan(
                 root,
                 args.feature_dir,
@@ -1137,17 +1208,54 @@ def main(
             )
             exit_code = 0
         else:
-            feature = load_feature(root, args.feature_dir)
-            verify_checkout_binding(feature, run=run, environ=env)
-            client = GhClient(feature.binding.repository, run=run)
-            reconciliation = build_plan(feature, client.list_issues())
-            output = plan_to_dict(reconciliation)
-            if reconciliation.blocking:
-                exit_code = 2
-            elif args.command == "check" and not reconciliation.aligned:
-                exit_code = 1
-            else:
+            root, features = _select_features(args, run=run)
+            repository = checkout_repository(root, run=run)
+            if any(feature.binding.repository != repository for feature in features):
+                raise LedgerError("one or more feature bindings do not match origin")
+            for feature in features:
+                verify_checkout_binding(feature, run=run, environ=env)
+            if args.command == "apply":
+                for feature in features:
+                    validate_apply_environment(feature.binding, env)
+            client = GhClient(repository, run=run)
+            snapshot = client.list_issues()
+            preflight = tuple(build_plan(feature, snapshot) for feature in features)
+            if args.command == "apply":
+                blocking = [item for plan in preflight for item in plan.blocking]
+                if blocking:
+                    codes = ", ".join(item.code for item in blocking)
+                    raise LedgerError(
+                        f"refusing authoritative batch apply due to blocking drift: {codes}"
+                    )
+                results = tuple(
+                    apply_authoritative(feature, client, env) for feature in features
+                )
+                final_plans = tuple(result.final_plan for result in results)
+                output = _batch_to_dict(
+                    repository,
+                    final_plans,
+                    mutations=sum(result.mutations for result in results),
+                )
                 exit_code = 0
+            elif len(features) == 1 and not args.all_features:
+                reconciliation = preflight[0]
+                output = plan_to_dict(reconciliation)
+                if reconciliation.blocking:
+                    exit_code = 2
+                elif args.command == "check" and not reconciliation.aligned:
+                    exit_code = 1
+                else:
+                    exit_code = 0
+            else:
+                output = _batch_to_dict(repository, preflight)
+                if any(plan.blocking for plan in preflight):
+                    exit_code = 2
+                elif args.command == "check" and not all(
+                    plan.aligned for plan in preflight
+                ):
+                    exit_code = 1
+                else:
+                    exit_code = 0
     except LedgerError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2

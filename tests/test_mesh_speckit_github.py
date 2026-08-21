@@ -815,3 +815,38 @@ def test_cli_blocking_drift_uses_exit_two(module, tmp_path: Path, capsys) -> Non
     assert module.main(["plan", str(feature)], run=run, environ={}) == 2
     output = capsys.readouterr().out
     assert "BLOCKING legacy_task_issue" in output
+
+
+def test_discover_bound_features_rejects_duplicate_feature_ids(
+    module, tmp_path: Path
+) -> None:
+    repo, first = make_feature(tmp_path, tasks="- [ ] T001 First\n")
+    second = repo / "specs" / "002-second"
+    second.mkdir()
+    (second / "tasks.md").write_text("- [ ] T001 Second\n", encoding="utf-8")
+    (second / "github-ledger.json").write_text(
+        (first / "github-ledger.json").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.LedgerError, match="duplicate feature_id"):
+        module.discover_bound_features(repo)
+
+
+def test_cli_apply_fails_before_github_api_outside_actions(
+    module, tmp_path: Path, capsys
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    calls = []
+
+    def run(args, input_text=None):
+        calls.append(args)
+        if args[-2:] == ("rev-parse", "--show-toplevel"):
+            return module.CommandResult(0, f"{repo.resolve()}\n", "")
+        if args[-3:] == ("config", "--get", "remote.origin.url"):
+            return module.CommandResult(0, "https://github.com/owner/repo.git\n", "")
+        raise AssertionError(f"unexpected remote command: {args}")
+
+    assert module.main(["apply", str(feature)], run=run, environ={}) == 2
+    assert "restricted to GitHub Actions" in capsys.readouterr().err
+    assert all(args[0] == "git" for args in calls)

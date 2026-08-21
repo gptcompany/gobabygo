@@ -1,0 +1,102 @@
+name: Spec Kit GitHub Ledger
+
+on:
+  pull_request:
+    paths:
+      - "specs/**/tasks.md"
+      - "specs/**/github-ledger.json"
+      - "scripts/mesh_speckit_github.py"
+      - ".github/workflows/speckit-ledger.yml"
+  push:
+    paths:
+      - "specs/**/tasks.md"
+      - "specs/**/github-ledger.json"
+      - "scripts/mesh_speckit_github.py"
+      - ".github/workflows/speckit-ledger.yml"
+  workflow_dispatch:
+    inputs:
+      feature:
+        description: "Optional feature directory; empty reconciles every opted-in feature"
+        required: false
+        type: string
+
+concurrency:
+  group: speckit-ledger-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check derived issue ledger
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check ledger plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/mesh_speckit_github.py plan --all --json | tee speckit-ledger-report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: speckit-ledger-check-${{ github.run_id }}
+          path: speckit-ledger-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  apply:
+    name: Apply derived issue ledger
+    if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Apply ledger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_ACTIONS: "true"
+          MESH_SPECKIT_LEDGER_APPLY: "1"
+          MESH_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FEATURE: ${{ inputs.feature }}
+        run: |
+          set -euo pipefail
+          args=(apply --all --json)
+          if [[ -n "${FEATURE:-}" ]]; then
+            args=(apply --json -- "$FEATURE")
+          fi
+          python scripts/mesh_speckit_github.py "${args[@]}" | tee speckit-ledger-report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: speckit-ledger-apply-${{ github.run_id }}
+          path: speckit-ledger-report.json
+          if-no-files-found: warn
+          retention-days: 30

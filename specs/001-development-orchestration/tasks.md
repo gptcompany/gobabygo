@@ -27,7 +27,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 6: Authoritative Automation
 
-- [ ] T006 [US3] Add a least-privilege repository-serialized GitHub Action that checks pull requests and applies opted-in features only on the default branch or workflow dispatch
+- [x] T006 [US3] Add a least-privilege repository-serialized GitHub Action that checks pull requests and applies opted-in features only on the default branch or workflow dispatch
 
 ## Phase 7: Coordinator Contract
 
