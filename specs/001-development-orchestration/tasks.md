@@ -35,7 +35,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 8: End-To-End Closure
 
-- [ ] T008 [US1] Run local smoke tests and controlled GitHub ledger E2E tests for create, update, completion, and idempotent replay
+- [ ] T008 [US1] Run local smoke tests and controlled GitHub ledger E2E tests for create, update, completion, idempotent replay, and retained run evidence
 
 ## Phase 9: Real Orchestration Canary
 
