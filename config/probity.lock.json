@@ -5,6 +5,7 @@
   "integrity": "sha512-tb2eOaE/lugOLm0DzRbW+x4FOQDxDJJldkRiMbybiluCX4AKIMqN6CZ9LQ20K5YEBUePD8+S4/kRiqh8K/B0oA==",
   "source": "https://github.com/nizos/probity",
   "supported_agents": [
-    "codex"
+    "codex",
+    "claude-code"
   ]
 }

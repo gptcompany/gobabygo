@@ -25,14 +25,14 @@ def _git_repo(path: Path) -> Path:
     return path
 
 
-def test_lock_is_exact_and_codex_only() -> None:
+def test_lock_is_exact_and_supports_both_agents() -> None:
     module = _load_module()
 
     lock = module.load_lock()
 
     assert lock["package"] == "@nizos/probity"
     assert lock["version"] == "1.10.0"
-    assert lock["supported_agents"] == ["codex"]
+    assert lock["supported_agents"] == ["codex", "claude-code"]
 
 
 def test_project_requires_one_root_config(tmp_path) -> None:
@@ -109,7 +109,7 @@ def test_cli_json_returns_one_for_unaligned_project(tmp_path) -> None:
     assert proc.returncode == 1
     payload = json.loads(proc.stdout)
     assert payload["project"]["state"] == "missing"
-    assert payload["supported_agents"] == ["codex"]
+    assert payload["supported_agents"] == ["codex", "claude-code"]
 
 
 def test_invalid_lock_fails_closed(tmp_path) -> None:
@@ -183,6 +183,7 @@ def test_install_plan_does_not_touch_targets(tmp_path) -> None:
         apply=False,
         npm_prefix=prefix,
         codex_home=codex_home,
+        claude_home=tmp_path / "claude",
         hook_path=hook,
     )
 
@@ -211,6 +212,7 @@ def test_install_preflights_both_codex_files_before_download(monkeypatch, tmp_pa
             apply=True,
             npm_prefix=tmp_path / "npm",
             codex_home=codex_home,
+            claude_home=tmp_path / "claude",
             hook_path=tmp_path / "hook.py",
         )
     except module.ProbityRuntimeError as exc:
@@ -239,6 +241,7 @@ def test_install_reuses_exact_runtime_and_updates_hook(monkeypatch, tmp_path) ->
         apply=True,
         npm_prefix=prefix,
         codex_home=codex_home,
+        claude_home=tmp_path / "claude",
         hook_path=hook,
     )
 
@@ -247,3 +250,89 @@ def test_install_reuses_exact_runtime_and_updates_hook(monkeypatch, tmp_path) ->
     command = json.loads((codex_home / "hooks.json").read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "MESH_PROBITY_EXPECTED_VERSION=1.10.0" in command
     assert f"MESH_PROBITY_BIN={executable}" in command
+    assert command.endswith("--agent codex")
+    claude = json.loads((tmp_path / "claude" / "settings.json").read_text(encoding="utf-8"))
+    claude_command = claude["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert claude_command.endswith("--agent claude-code")
+
+
+def test_merge_claude_hook_preserves_unrelated_and_requires_explicit_replacement() -> None:
+    module = _load_module()
+    existing = json.dumps(
+        {
+            "env": {"KEEP": "yes"},
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{"type": "command", "command": "/tmp/unrelated"}],
+                    },
+                    {
+                        "matcher": "Write|Edit|MultiEdit",
+                        "hooks": [
+                            {"type": "command", "command": 'node "$HOME/.claude/scripts/hooks/productivity/tdd-guard.js"'}
+                        ],
+                    },
+                ],
+                "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "/tmp/stop"}]}],
+            },
+        }
+    )
+
+    try:
+        module._merge_claude_hook(
+            existing,
+            command="/new/mesh_probity_hook.py --agent claude-code",
+            replace_legacy_tdd_guard=False,
+        )
+    except module.ProbityRuntimeError as exc:
+        assert "--replace-tdd-guard" in str(exc)
+    else:
+        raise AssertionError("legacy TDD Guard conflict was accepted")
+
+    updated, replaced = module._merge_claude_hook(
+        existing,
+        command="/new/mesh_probity_hook.py --agent claude-code",
+        replace_legacy_tdd_guard=True,
+    )
+    payload = json.loads(updated)
+    commands = module._hook_commands(payload)
+    assert replaced is True
+    assert payload["env"] == {"KEEP": "yes"}
+    assert payload["hooks"]["Stop"][0]["hooks"][0]["command"] == "/tmp/stop"
+    assert commands == ["/tmp/unrelated", "/new/mesh_probity_hook.py --agent claude-code"]
+
+
+def test_status_reports_hooks_conflict_and_manual_trust(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    (repo / "probity.config.mjs").write_text("export default {}\n", encoding="utf-8")
+    codex_home = tmp_path / "codex"
+    claude_home = tmp_path / "claude"
+    codex_home.mkdir()
+    claude_home.mkdir()
+    (codex_home / "hooks.json").write_text(
+        json.dumps({"hooks": {"PreToolUse": [{"hooks": [{"command": "hook/mesh_probity_hook.py --agent codex"}]}]}}),
+        encoding="utf-8",
+    )
+    (claude_home / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {"hooks": [{"command": "hook/mesh_probity_hook.py --agent claude-code"}]},
+                        {"hooks": [{"command": "node tdd-guard.js"}]},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "installed_runtime", lambda: {"executable": "/tmp/probity", "version": "1.10.0"})
+
+    status = module.build_status(repo, codex_home=codex_home, claude_home=claude_home)
+
+    assert status["integrations"]["codex"]["trust"] == "manual-unknown"
+    assert status["integrations"]["claude"]["hook_installed"] is True
+    assert status["tdd_guard_conflict"] is True
+    assert status["aligned"] is False
