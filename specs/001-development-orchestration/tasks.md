@@ -55,7 +55,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 13: Operator Contract
 
-- [ ] T013 [US3] Align concise operator documentation and contract tests around one-command onboarding, planning-plane authority, recovery behavior, and explicit blocker states
+- [x] T013 [US3] Align concise operator documentation and contract tests around one-command onboarding, planning-plane authority, recovery behavior, and explicit blocker states
 
 ## Phase 14: Fresh-Repository Canary
 
