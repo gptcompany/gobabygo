@@ -1134,7 +1134,12 @@ def apply_binding_plan(plan: BindingPlan) -> bool:
     return True
 
 
-def render_caller_workflow(runtime_repository: str, runtime_ref: str) -> str:
+def _render_caller_workflow(
+    runtime_repository: str,
+    runtime_ref: str,
+    *,
+    include_caller_path: bool,
+) -> str:
     if not _REPOSITORY_RE.fullmatch(runtime_repository):
         raise LedgerError("invalid runtime repository; expected lowercase owner/repo")
     if not re.fullmatch(r"[0-9a-f]{40}", runtime_ref):
@@ -1143,6 +1148,9 @@ def render_caller_workflow(runtime_repository: str, runtime_ref: str) -> str:
         f"{runtime_repository}/.github/workflows/"
         f"speckit-ledger-reusable.yml@{runtime_ref}"
     )
+    caller_path = (
+        f'      - "{CALLER_WORKFLOW.as_posix()}"\n' if include_caller_path else ""
+    )
     return f'''name: Spec Kit GitHub Ledger
 
 on:
@@ -1150,11 +1158,11 @@ on:
     paths:
       - "specs/**/tasks.md"
       - "specs/**/github-ledger.json"
-  push:
+{caller_path}  push:
     paths:
       - "specs/**/tasks.md"
       - "specs/**/github-ledger.json"
-  workflow_dispatch:
+{caller_path}  workflow_dispatch:
 
 concurrency:
   group: speckit-ledger-${{{{ github.repository }}}}
@@ -1183,6 +1191,12 @@ jobs:
 '''
 
 
+def render_caller_workflow(runtime_repository: str, runtime_ref: str) -> str:
+    return _render_caller_workflow(
+        runtime_repository, runtime_ref, include_caller_path=True
+    )
+
+
 def build_caller_plan(
     repo_root: Path,
     *,
@@ -1208,18 +1222,24 @@ def build_caller_plan(
                 r"\.github/workflows/speckit-ledger-reusable\.yml@([0-9a-f]{40})",
                 current,
             )
-            managed = bool(
-                pin_match
-                and current
-                == render_caller_workflow(pin_match.group(1), pin_match.group(2))
-            )
+            managed = False
+            if pin_match:
+                current_repository, current_ref = pin_match.groups()
+                managed = current in {
+                    render_caller_workflow(current_repository, current_ref),
+                    _render_caller_workflow(
+                        current_repository,
+                        current_ref,
+                        include_caller_path=False,
+                    ),
+                }
             if not managed:
                 raise LedgerError(
                     "caller workflow already exists with different content; review it manually"
                 )
             if not accept_pin_update:
                 raise LedgerError(
-                    "managed caller uses a different pin; rerun with --accept-pin-update after review"
+                    "managed caller differs from the reviewed template; rerun with --accept-pin-update after review"
                 )
             operation = "update"
             previous_content = current

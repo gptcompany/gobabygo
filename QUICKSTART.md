@@ -447,10 +447,13 @@ mesh speckit github install-caller /path/to/repo --runtime-ref <40-char-sha> --a
 
 The installer creates only `.github/workflows/speckit-ledger.yml`, uses the same
 immutable SHA for the reusable workflow and its runtime, and refuses to replace
-different existing content. For private repositories, allow the caller to use
+different existing content. The generated path filters include that workflow,
+so a caller upgrade validates itself on its pull request. For private
+repositories, allow the caller to use
 Gobabygo reusable workflows in the repository Actions settings before canarying.
 To advance an existing generated caller after reviewing a new runtime commit,
-add `--accept-pin-update`; custom workflow content is never overwritten.
+add `--accept-pin-update`; the prior managed template is migrated, while custom
+workflow content is never overwritten.
 
 ### Git hook chaining
 

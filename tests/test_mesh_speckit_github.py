@@ -838,6 +838,7 @@ def test_caller_plan_is_pinned_plan_first_atomic_and_idempotent(
     assert f"runtime_ref: {runtime_ref}" in plan.content
     assert "issues: read" in plan.content
     assert "issues: write" in plan.content
+    assert plan.content.count('      - ".github/workflows/speckit-ledger.yml"') == 2
     assert module.apply_caller_plan(plan) is True
     replay = module.build_caller_plan(
         repo,
@@ -910,6 +911,36 @@ def test_caller_pin_update_requires_explicit_review_and_is_atomic(
     )
     assert plan.operation == "update"
     assert plan.previous_content is not None
+    assert module.apply_caller_plan(plan) is True
+    assert workflow.read_text(encoding="utf-8") == module.render_caller_workflow(
+        "gptcompany/gobabygo", new_ref
+    )
+
+
+def test_caller_update_accepts_only_the_previous_managed_template(
+    module, tmp_path: Path
+) -> None:
+    repo, _ = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    workflow = repo / module.CALLER_WORKFLOW
+    workflow.parent.mkdir(parents=True)
+    old_ref = "a" * 40
+    new_ref = "b" * 40
+    workflow.write_text(
+        module._render_caller_workflow(
+            "gptcompany/gobabygo", old_ref, include_caller_path=False
+        ),
+        encoding="utf-8",
+    )
+
+    plan = module.build_caller_plan(
+        repo,
+        repository="owner/repo",
+        runtime_repository="gptcompany/gobabygo",
+        runtime_ref=new_ref,
+        accept_pin_update=True,
+    )
+
+    assert plan.operation == "update"
     assert module.apply_caller_plan(plan) is True
     assert workflow.read_text(encoding="utf-8") == module.render_caller_workflow(
         "gptcompany/gobabygo", new_ref
