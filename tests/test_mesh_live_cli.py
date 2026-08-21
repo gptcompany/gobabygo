@@ -1803,6 +1803,15 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "Do not manufacture a test merely to satisfy the label" in prompt
     assert "applies equally when Codex or Antigravity is the writer" in prompt
     assert "not a claim that either CLI has a native TDD hook" in prompt
+    assert "Development ledger policy for planned feature work" in prompt
+    assert "GitHub Issues are a one-way derived work ledger" in prompt
+    assert "speckit github init <feature-dir> --apply" in prompt
+    assert "speckit github plan <feature-dir>" in prompt
+    assert "speckit github check <feature-dir>" in prompt
+    assert "planning-only pull request" in prompt
+    assert "interactive `speckit-taskstoissues`" in prompt
+    assert "<repository>:<feature-id>:<Tnnn>" in prompt
+    assert "lacks its pinned `.github/workflows/speckit-ledger.yml` caller" in prompt
 
 
 def test_coordinator_prompt_accepts_only_bounded_speckit_status_fields() -> None:
@@ -2727,7 +2736,7 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
         "repo_feature_binding": "repository-at-start-feature-from-operator-objective",
         "cross_repository_evidence": "out-of-scope",
     }
-    assert len(projection["steps"]) == 20
+    assert len(projection["steps"]) == 21
     assert projection["steps"][0]["name"] == "speckit.specify"
     assert projection["steps"][1]["depends_on_steps"] == [0]
     assert projection["steps"][4]["target_cli"] == "codex"
@@ -2760,7 +2769,7 @@ def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> Non
         output["live_policy"]["automatic_spawn"]
         == "ensure-codex-or-antigravity-only"
     )
-    assert output["steps"][19]["name"] == "confidence-gate-post-impl.adjudicator"
+    assert output["steps"][20]["name"] == "confidence-gate-post-impl.adjudicator"
 
 
 def test_coordinator_workflow_projection_late_binds_each_delegation() -> None:

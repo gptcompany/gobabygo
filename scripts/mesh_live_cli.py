@@ -2734,6 +2734,7 @@ def build_live_coordinator_system_prompt(
         f"{live_command} workflow show speckit --scope {workflow_scope} --json"
     )
     speckit_context_command = f"{shlex.quote(mesh_script)} speckit context"
+    speckit_ledger_command = f"{shlex.quote(mesh_script)} speckit github"
     if worker_session:
         worker_policy = (
             f"Your authorized worker target is exactly {worker_session}. "
@@ -2881,6 +2882,15 @@ def build_live_coordinator_system_prompt(
             *speckit_runtime_policy,
             "",
             *workflow_policy,
+            "Development ledger policy for planned feature work:",
+            "- `spec.md`, `plan.md`, and especially `tasks.md` in Git are authoritative. GitHub Issues are a one-way derived work ledger; router state and tmux output never rewrite Spec Kit artifacts.",
+            "- After tasks and `speckit.analyze` pass, require a committed `github-ledger.json` binding and a planning-only pull request before source implementation. "
+            f"Use `{speckit_ledger_command} init <feature-dir> --apply` only to create the missing binding and `{speckit_ledger_command} plan <feature-dir>` to validate publication.",
+            "- Do not invoke interactive `speckit-taskstoissues` as the authoritative sync path: its bare Tnnn identity can collide across features. Do not mutate GitHub from a local hook or worker prompt.",
+            "- Stop before implementation until the planning pull request is merged and the repository ledger Action has published the issues. "
+            f"Require `{speckit_ledger_command} check <feature-dir>` to report aligned before delegating a published task.",
+            "- If the target repository lacks its pinned `.github/workflows/speckit-ledger.yml` caller, report ledger rollout as a blocker for this workflow. Never silently fall back to direct issue creation.",
+            "- Put the exact immutable `<repository>:<feature-id>:<Tnnn>` task key in every implementation and review delegation. Completion requires reviewed evidence, an authoritative `tasks.md` checkbox update, and subsequent Action reconciliation; worker idle/prose and manual issue closure are not completion.",
             "For every Spec Kit delegation, derive a provider-neutral bounded envelope before sending: "
             f"`{speckit_context_command} <repo-root> --phase <enabled-phase> --feature-dir "
             "<feature-dir> --artifact <feature-relative-path> --role <writer|reviewer> "

@@ -141,6 +141,11 @@ multi-repo specs, decisions, tasks, and handoffs live in the exact Git root
 `/data/sata/1TB/coordination`. Mesh Live still owns tmux delivery and review;
 Spec Kit does not launch nested CLI workers. See [MESH_LIVE.md](MESH_LIVE.md).
 
+For development orchestration, `mesh speckit github init|plan|check` publishes
+approved `tasks.md` files to a namespaced, one-way GitHub Issues ledger. The
+planning artifacts merge before implementation starts; only GitHub Actions may
+write the derived ledger. See [QUICKSTART.md](QUICKSTART.md#spec-kit-development-ledger).
+
 ### Optional Claude and Codex TDD gate
 
 Gobabygo pins Probity but does not enable TDD enforcement globally. The engine

@@ -31,7 +31,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 7: Coordinator Contract
 
-- [ ] T007 [US3] Add immutable task keys and ledger behavior to the coordinator workflow projection, concise operator docs, legacy migration guidance, and documentation contract tests
+- [x] T007 [US3] Add immutable task keys and ledger behavior to the coordinator workflow projection, concise operator docs, legacy migration guidance, and documentation contract tests
 
 ## Phase 8: End-To-End Closure
 
@@ -40,6 +40,10 @@ derived shared ledger and never rewrite this file.
 ## Phase 9: Real Orchestration Canary
 
 - [ ] T009 [US3] Execute one real, disposable, non-production micro-feature through Spec Kit specify/plan/tasks, GitHub issue publication, coordinator delegation, one writer branch and pull request, independent reviewer verdict, CI evidence, authoritative task completion, and issue closure; retain a concise evidence report and remove only disposable branches/worktrees
+
+## Phase 10: Pinned Multi-Repo Rollout
+
+- [ ] T010 [US3] Publish a reusable Gobabygo ledger workflow, add a plan-first installer for a minimal per-repository caller pinned to an immutable reviewed Gobabygo commit, and canary the caller in one second repository before broader rollout
 
 ## Dependencies
 
@@ -51,6 +55,7 @@ derived shared ledger and never rewrite this file.
 - T007 depends on T005 and T006.
 - T008 depends on T006 and T007.
 - T009 depends on T008.
+- T010 depends on T009.
 
 ## Completion Rules
 
@@ -59,3 +64,4 @@ derived shared ledger and never rewrite this file.
 - No remote mutation occurs from tests, pull-request checks, or local hooks.
 - T008 requires idempotent replay evidence and an exact-range review.
 - T009 cannot be satisfied by mocks, dry-runs, worker prose, or direct edits that bypass the coordinator/worker/reviewer path.
+- T010 must not vendor the Python reconciler into target repositories or reference a mutable Gobabygo branch.

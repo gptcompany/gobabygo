@@ -401,6 +401,42 @@ and commit the resulting diff before migrating the next repository.
 `~/.local/bin/specify` is discovered explicitly for non-interactive SSH
 sessions; no shell startup file is required.
 
+### Spec Kit development ledger
+
+For planned features, Git owns intent and `tasks.md` owns task identity and
+completion. GitHub Issues are a one-way derived ledger; issue state never
+rewrites Spec Kit artifacts.
+
+```bash
+# Once per feature: inspect, then commit the immutable binding with planning artifacts.
+mesh speckit github init specs/001-feature
+mesh speckit github init specs/001-feature --apply
+
+# Read-only publication plan. Blocking drift returns 2.
+mesh speckit github plan specs/001-feature
+
+# After the planning PR merges and the Action runs: 0 means aligned, 1 means drift.
+mesh speckit github check specs/001-feature
+```
+
+The planning PR contains specification, plan, tasks, and
+`github-ledger.json`, but no source implementation. Its pull-request job checks
+that reconciliation is safe without writing issues. After merge, the
+repository-serialized Action creates or updates issues using the immutable
+`<owner/repo>:<feature-id>:<Tnnn>` key. Implementation starts only after
+`check` is aligned. Task completion follows the same direction: reviewed
+evidence updates `tasks.md`; the next Action run closes the issue.
+
+Do not use the official interactive `speckit-taskstoissues` command as this
+authoritative path: it remains installed for upstream compatibility but its
+bare `Tnnn` deduplication can collide across features. Local hooks validate
+only. GitHub Projects should auto-add the `speckit-task` label instead of using
+a second sync integration.
+
+Gobabygo initially owns the implementation and canary. Other repositories must
+not copy the Python reconciler or reference a mutable branch; install their
+minimal caller only after the pinned reusable-workflow rollout is reviewed.
+
 ### Git hook chaining
 
 Git supports one effective `core.hooksPath`. On the Dell, keep the global value

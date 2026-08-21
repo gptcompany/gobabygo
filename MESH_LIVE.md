@@ -349,6 +349,20 @@ The resulting `SPECKIT_CONTEXT` contains no provider name, pane output, release
 notes, or full capability inventory, so Codex and Antigravity can receive the
 same artifact identity while retaining different writer/reviewer rules.
 
+For feature development, the coordinator also enforces a planning publication
+gate. It creates the feature's immutable binding with `mesh speckit github init
+<feature-dir> --apply`, validates with `mesh speckit github plan <feature-dir>`,
+and prepares a planning-only PR. It does not delegate source implementation
+until that PR is merged, the repository ledger Action has run, and `mesh
+speckit github check <feature-dir>` reports aligned.
+
+Every implementation and review brief carries the exact
+`<owner/repo>:<feature-id>:<Tnnn>` key. Worker prose, idle state, router history,
+or manual issue closure cannot complete a task: reviewed evidence changes
+`tasks.md`, then the Action derives issue state. The coordinator never uses
+interactive `speckit-taskstoissues` as fallback and reports a missing pinned
+repository workflow as a rollout blocker.
+
 Template roles are desired perspectives, not permission to spawn processes.
 The following are coordinator contract rules, not filesystem locks or an OS
 sandbox. `mesh live` validates session identity and bounded keyboard delivery,

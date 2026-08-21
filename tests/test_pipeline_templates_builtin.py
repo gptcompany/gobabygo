@@ -41,6 +41,23 @@ def test_gsd_and_speckit_are_multi_model_team_templates() -> None:
         assert {"president", "lead", "worker"} <= roles
 
 
+def test_speckit_publishes_planning_ledger_before_implementation() -> None:
+    steps = _load_templates()["speckit"]["steps"]
+    by_name = {step["name"]: (index, step) for index, step in enumerate(steps)}
+    ledger_index, ledger = by_name["speckit.github-ledger"]
+    implement_index, implement = by_name["speckit.implement"]
+
+    assert ledger_index < implement_index
+    assert ledger["depends_on_steps"] == [
+        by_name["confidence-gate-pre-impl.adjudicator"][0]
+    ]
+    assert implement["depends_on_steps"] == [ledger_index]
+    assert ledger["critical"] is True
+    assert "planning-only" in ledger["prompt"]
+    assert "speckit-taskstoissues" in ledger["prompt"]
+    assert "stop before source implementation" in ledger["prompt"]
+
+
 def test_antigravity_team_demo_is_antigravity_only() -> None:
     templates = _load_templates()
     steps = templates["antigravity_team_demo"]["steps"]

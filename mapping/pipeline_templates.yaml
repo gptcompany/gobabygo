@@ -416,12 +416,25 @@ templates:
         review_policy: none
         prompt: "Act as president-level adjudicator for pre-implementation readiness of feature '{feature}' in repo {repo}. Decide if implementation may begin and list required corrections otherwise."
 
+      - name: speckit.github-ledger
+        title: "Publish Speckit Ledger {feature}"
+        target_cli: claude
+        target_account: "{claude_account}"
+        execution_mode: session
+        role: lead
+        depends_on_steps: [12]
+        critical: true
+        on_failure: abort
+        review_policy: none
+        prompt: "Prepare a planning-only commit and pull request for feature '{feature}' in repo {repo}. Ensure the feature has a committed github-ledger.json binding, run mesh speckit github plan, and stop before source implementation until the planning PR is merged and mesh speckit github check reports aligned issues. Never use interactive speckit-taskstoissues as the authoritative sync path."
+
       - name: speckit.implement
         title: "Speckit Implement {feature}"
         target_cli: claude
         target_account: "{claude_account}"
         execution_mode: session
         role: lead
+        depends_on_steps: [13]
         critical: true
         on_failure: abort
         review_policy: codex_review
@@ -433,7 +446,7 @@ templates:
         target_account: "{codex_account}"
         execution_mode: session
         role: worker
-        depends_on_steps: [13]
+        depends_on_steps: [14]
         critical: false
         on_failure: abort
         review_policy: none
@@ -445,7 +458,7 @@ templates:
         target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
-        depends_on_steps: [13]
+        depends_on_steps: [14]
         critical: false
         on_failure: abort
         review_policy: none
@@ -457,7 +470,7 @@ templates:
         target_account: "{claude_account}"
         execution_mode: session
         role: lead
-        depends_on_steps: [14, 15]
+        depends_on_steps: [15, 16]
         critical: false
         on_failure: abort
         review_policy: none
@@ -469,7 +482,7 @@ templates:
         target_account: "{codex_account}"
         execution_mode: session
         role: worker
-        depends_on_steps: [16]
+        depends_on_steps: [17]
         critical: false
         on_failure: abort
         review_policy: none
@@ -481,7 +494,7 @@ templates:
         target_account: "{antigravity_account}"
         execution_mode: session
         role: worker
-        depends_on_steps: [16]
+        depends_on_steps: [17]
         critical: false
         on_failure: abort
         review_policy: none
@@ -493,7 +506,7 @@ templates:
         target_account: "{codex_account}"
         execution_mode: session
         role: president
-        depends_on_steps: [17, 18]
+        depends_on_steps: [18, 19]
         critical: false
         on_failure: abort
         review_policy: none

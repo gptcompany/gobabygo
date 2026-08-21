@@ -136,6 +136,24 @@ adjudication in the coordinator and late-binds `{repo}` plus `{feature}` for
 each concrete delegation. The router/database remains optional durable history;
 tmux remains authoritative for liveness of existing manual sessions.
 
+Development work has non-overlapping authorities:
+
+| Concern | Authority |
+|---|---|
+| Feature intent and acceptance | Git-tracked Spec Kit artifacts |
+| Task identity and completion | `tasks.md` |
+| Shared task discussion | GitHub Issues and pull requests |
+| Code validity | CI plus immutable-scope review |
+| Live process state | tmux through Mesh Live |
+| Managed execution lease/history | Router DB when explicitly used |
+
+GitHub Issues are derived one-way from opted-in features by the
+repository-serialized `speckit-ledger` Action. The machine identity is
+`<owner/repo>:<feature-id>:<Tnnn>`; titles, directory names, router rows, and
+Project cards are not identity. Planning artifacts merge and publish before
+implementation delegation, preventing agent session state from becoming an
+implicit task ledger.
+
 Meaning:
 
 - the template file itself now encodes interactive team orchestration

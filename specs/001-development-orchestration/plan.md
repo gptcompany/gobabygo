@@ -116,6 +116,7 @@ dispatch remains the operator entry point. No package or service is added.
 4. A disposable opted-in feature performs create, update, complete, and replay against GitHub; the canary issue is closed and retained as audit evidence.
 5. A separate fictitious micro-feature runs through the real Spec Kit coordinator, one writer, one independent reviewer, a pull request, CI, and ledger closure without production effects.
 6. A final independent review evaluates the exact commit range before push/activation.
+7. After the real canary, one second repository validates a minimal caller of a reusable workflow pinned to the reviewed Gobabygo runtime commit.
 
 ## Complexity Tracking
 

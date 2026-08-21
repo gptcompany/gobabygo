@@ -120,6 +120,7 @@ second task database.
 - **SC-005**: A controlled end-to-end test completes task publication, update, closure, and idempotent replay with exactly one issue per task.
 - **SC-006**: An agent can identify the governing feature and task from an issue or delegation without reading tmux output or router internals.
 - **SC-007**: One disposable fictitious development objective completes the real coordinator/worker/reviewer lifecycle from specification through a CI-verified pull request and ledger closure.
+- **SC-008**: A second repository consumes the reconciler through a minimal caller pinned to an immutable reviewed Gobabygo commit, without copying implementation code.
 
 ## Assumptions
 
