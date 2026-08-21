@@ -72,5 +72,5 @@
 - Manual interaction was limited to dismissing first-run Codex vendor prompts
   and delivering the already frozen first review pointer after a guard false
   positive. No onboarding, source edit, commit, push, issue mutation, or merge
-  was performed manually. Commit `5fe1ef9` adds the observed completed-reply
-  regression to the guard before this evidence is published.
+  was performed manually. Commits `5fe1ef9` and `f3f217e` add the observed
+  completed-reply regressions to the guard before this evidence is published.
