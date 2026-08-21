@@ -343,6 +343,24 @@ def test_plan_ignores_same_task_id_from_another_feature(module, tmp_path: Path) 
     ]
 
 
+def test_batch_blocks_marker_from_removed_or_rebound_feature(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    stale = module.RemoteIssue(
+        17,
+        "[old-feature] T001: Stale",
+        "<!-- mesh-speckit-task:v1 repo=owner/repo feature=removed-a1b2c3d4 task=T001 -->\n",
+        "open",
+        ("speckit-task", "speckit:removed-a1b2c3d4"),
+    )
+
+    blocking = module.inspect_batch_markers((loaded,), (stale,))
+
+    assert [item.code for item in blocking] == ["unknown_feature"]
+    assert blocking[0].issue_number == 17
+    assert "restore its immutable binding" in blocking[0].message
+
+
 def test_plan_blocks_marker_repository_mismatch(module, tmp_path: Path) -> None:
     repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
     loaded = module.load_feature(repo, feature)

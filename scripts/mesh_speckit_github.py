@@ -622,6 +622,39 @@ def build_plan(
     )
 
 
+def inspect_batch_markers(
+    features: tuple[LoadedFeature, ...],
+    remote_issues: list[RemoteIssue] | tuple[RemoteIssue, ...],
+) -> tuple[BlockingDrift, ...]:
+    if not features:
+        raise LedgerError("batch marker inspection requires at least one feature")
+    repositories = {feature.binding.repository for feature in features}
+    if len(repositories) != 1:
+        raise LedgerError("batch features must belong to one repository")
+    repository = next(iter(repositories))
+    known_features = {feature.binding.feature_id for feature in features}
+    blocking: list[BlockingDrift] = []
+    seen: set[tuple[int, str]] = set()
+    for issue in sorted(remote_issues, key=lambda item: item.number):
+        for marker in _MANAGED_MARKER_RE.finditer(_normalize_body(issue.body)):
+            marker_feature = marker.group("feature")
+            if (
+                marker.group("repository") == repository
+                and marker_feature not in known_features
+                and (issue.number, marker_feature) not in seen
+            ):
+                seen.add((issue.number, marker_feature))
+                blocking.append(
+                    BlockingDrift(
+                        "unknown_feature",
+                        f"issue #{issue.number} references unbound feature {marker_feature}; restore its immutable binding before synchronization",
+                        issue.number,
+                        marker.group("task"),
+                    )
+                )
+    return tuple(blocking)
+
+
 def plan_to_dict(plan: ReconciliationPlan) -> dict[str, object]:
     return {
         "schema": "mesh.speckit.github-plan.v1",
@@ -1231,6 +1264,8 @@ def _render_plan(payload: dict[str, object]) -> str:
             f"aligned={'yes' if payload['aligned'] else 'no'}",
             f"mutations={payload.get('mutations', 0)}",
         ]
+        for item in payload.get("blocking", []):
+            lines.append(f"BLOCKING {item['code']}: {item['message']}")
         for feature in payload["features"]:
             lines.append(
                 f"{feature['feature_id']} aligned={'yes' if feature['aligned'] else 'no'} "
@@ -1321,12 +1356,22 @@ def _batch_to_dict(
     plans: tuple[ReconciliationPlan, ...],
     *,
     mutations: int = 0,
+    blocking: tuple[BlockingDrift, ...] = (),
 ) -> dict[str, object]:
     return {
         "schema": "mesh.speckit.github-batch.v1",
         "repository": repository,
-        "aligned": all(plan.aligned for plan in plans),
+        "aligned": not blocking and all(plan.aligned for plan in plans),
         "mutations": mutations,
+        "blocking": [
+            {
+                "code": item.code,
+                "message": item.message,
+                "issue_number": item.issue_number,
+                "task_id": item.task_id,
+            }
+            for item in blocking
+        ],
         "features": [plan_to_dict(plan) for plan in plans],
     }
 
@@ -1393,22 +1438,45 @@ def main(
                     validate_apply_environment(feature.binding, env)
             client = GhClient(repository, run=run)
             snapshot = client.list_issues()
+            known_features = discover_bound_features(root)
+            batch_blocking = inspect_batch_markers(known_features, snapshot)
             preflight = tuple(build_plan(feature, snapshot) for feature in features)
+            if batch_blocking and len(features) == 1 and not args.all_features:
+                current = preflight[0]
+                preflight = (
+                    ReconciliationPlan(
+                        current.feature,
+                        False,
+                        (*batch_blocking, *current.blocking),
+                        current.actions,
+                    ),
+                )
+                batch_blocking = ()
             if args.command == "apply":
-                blocking = [item for plan in preflight for item in plan.blocking]
+                blocking = [*batch_blocking, *(item for plan in preflight for item in plan.blocking)]
                 if blocking:
                     codes = ", ".join(item.code for item in blocking)
                     raise LedgerError(
                         f"refusing authoritative batch apply due to blocking drift: {codes}"
                     )
-                results = tuple(
-                    apply_authoritative(feature, client, env) for feature in features
-                )
+                results_list: list[ApplyResult] = []
+                for feature in features:
+                    late_blocking = inspect_batch_markers(
+                        known_features, client.list_issues()
+                    )
+                    if late_blocking:
+                        codes = ", ".join(item.code for item in late_blocking)
+                        raise LedgerError(
+                            f"refusing authoritative apply due to late blocking drift: {codes}"
+                        )
+                    results_list.append(apply_authoritative(feature, client, env))
+                results = tuple(results_list)
                 final_plans = tuple(result.final_plan for result in results)
                 output = _batch_to_dict(
                     repository,
                     final_plans,
                     mutations=sum(result.mutations for result in results),
+                    blocking=(),
                 )
                 exit_code = 0
             elif len(features) == 1 and not args.all_features:
@@ -1421,8 +1489,10 @@ def main(
                 else:
                     exit_code = 0
             else:
-                output = _batch_to_dict(repository, preflight)
-                if any(plan.blocking for plan in preflight):
+                output = _batch_to_dict(
+                    repository, preflight, blocking=batch_blocking
+                )
+                if batch_blocking or any(plan.blocking for plan in preflight):
                     exit_code = 2
                 elif args.command == "check" and not all(
                     plan.aligned for plan in preflight
