@@ -67,6 +67,8 @@ No consumer may read GitHub issue state as authority for rewriting `tasks.md`.
 9. **Detect legacy output**: an unmarked issue with an official `Tnnn: ...` title matching the current feature is blocking drift and requires explicit operator migration.
 10. **Normalize comparisons**: line endings, trailing whitespace, title spacing, and label ordering are canonicalized before deciding that an update is needed.
 11. **One remote writer**: only the repository-serialized GitHub Actions workflow applies plans. Local commands plan/check; operators request recovery through `workflow_dispatch`.
+12. **Reuse onboarding primitives**: the coordinator receives a clean immutable Gobabygo runtime pin and composes the existing `install-caller`, `init`, `plan`, and `check` commands. No second bootstrapper, daemon, or database is introduced.
+13. **Planning-plane authority only**: automatic onboarding may author Spec Kit artifacts and use the managed installers on a planning branch, but source implementation remains delegated to one worker and GitHub mutation remains Action-only.
 
 ## Project Structure
 
@@ -105,7 +107,7 @@ dispatch remains the operator entry point. No package or service is added.
 - Serialize the ledger workflow per repository and re-read state immediately before apply.
 - Give PR checks `contents: read` and `issues: read`; give default-branch/manual-dispatch apply `contents: read` and `issues: write` only.
 - Never include environment values, pane captures, task comments, or secrets in issue bodies.
-- Require `gh` 2.40 or newer and consume only allowlisted JSON fields from `gh api`.
+- Require `gh` 2.48 or newer and consume only allowlisted JSON fields from `gh api`.
 - A partial GitHub failure stops subsequent mutation and leaves an auditable Action log; serialized replay reconciles idempotently.
 
 ## Verification Strategy
@@ -117,6 +119,7 @@ dispatch remains the operator entry point. No package or service is added.
 5. A separate fictitious micro-feature runs through the real Spec Kit coordinator, one writer, one independent reviewer, a pull request, CI, and ledger closure without production effects.
 6. A final independent review evaluates the exact commit range before push/activation.
 7. After the real canary, one second repository validates a minimal caller of a reusable workflow pinned to the reviewed Gobabygo runtime commit.
+8. A fresh disposable repository with no caller or binding validates automatic coordinator onboarding, independent implementation review, issue closure, and idempotent replay from a single operator objective.
 
 ## Complexity Tracking
 

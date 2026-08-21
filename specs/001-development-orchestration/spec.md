@@ -100,6 +100,12 @@ second task database.
 - **FR-016**: Published task IDs MUST be append-only; removing one MUST block synchronization until the same ID is restored and explicitly completed or cancelled in `tasks.md`.
 - **FR-017**: Unmarked issues whose titles look like official Spec Kit task issues MUST be reported as legacy drift rather than silently adopted or ignored.
 - **FR-018**: All remote writers MUST run through one repository-serialized GitHub Actions workflow that refreshes remote state before applying its plan.
+- **FR-019**: Coordinator startup status MUST expose an immutable Gobabygo runtime commit only when the runtime checkout is clean, has the expected GitHub origin, and resolves to a full commit SHA.
+- **FR-020**: For planned work in an unconfigured repository, the coordinator MUST plan and stage the existing managed caller and feature binding automatically instead of asking the operator to run setup commands.
+- **FR-021**: Automatic onboarding MUST change only Spec Kit planning artifacts, the managed caller, and the feature binding on a non-default planning branch; it MUST NOT overwrite custom workflow content or write source code.
+- **FR-022**: The coordinator MUST include the onboarding files in the planning pull request and MUST wait for the read-only ledger check, merge, authoritative issue publication, and an aligned check before implementation delegation.
+- **FR-023**: Workers MUST consume the exact Spec Kit context and immutable task key but MUST NOT install callers, initialize bindings, mutate issues, or create a competing specification pipeline.
+- **FR-024**: Resume MUST receive the current bounded runtime and onboarding contract through the same startup injection path as a new coordinator.
 
 ### Key Entities
 
@@ -121,6 +127,8 @@ second task database.
 - **SC-006**: An agent can identify the governing feature and task from an issue or delegation without reading tmux output or router internals.
 - **SC-007**: One disposable fictitious development objective completes the real coordinator/worker/reviewer lifecycle from specification through a CI-verified pull request and ledger closure.
 - **SC-008**: A second repository consumes the reconciler through a minimal caller pinned to an immutable reviewed Gobabygo commit, without copying implementation code.
+- **SC-009**: From one `mcoordinator <repo> --workflow speckit` launch and one objective, an initially unconfigured disposable repository reaches an aligned published ledger without manual setup commands.
+- **SC-010**: A custom caller, dirty runtime, malformed runtime origin, unavailable GitHub CLI, or failed Action stops onboarding with one explicit blocker and no direct default-branch or issue mutation.
 
 ## Assumptions
 
