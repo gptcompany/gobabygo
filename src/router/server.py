@@ -1139,7 +1139,8 @@ class MeshRouterHandler(BaseHTTPRequestHandler):
             return
 
         db: RouterDB = self.server.router_state["db"]  # type: ignore[attr-defined]
-        if db.get_session(session_id) is None:
+        session = db.get_session(session_id)
+        if session is None:
             self._send_json(404, {"error": "session_not_found"})
             return
 
