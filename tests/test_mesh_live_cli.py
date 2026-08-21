@@ -2190,6 +2190,12 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
             True,
         ),
         (
+            "• READY.\n\n"
+            "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n"
+            "  gpt-5.6-sol medium · /repo",
+            True,
+        ),
+        (
             "────────────────────\n"
             "\x1b[1m›\x1b[0m \x1b[2mSummarize recent commits\x1b[0m\n"
             "  \x1b[38;2;246;226;183mgpt-5.6-sol high\x1b[2m\x1b[39m · /repo",
