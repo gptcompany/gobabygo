@@ -14,7 +14,28 @@
 - This commit changes authoritative T008 state to complete. Its Action run must
   close issue #12 before T008 is considered operationally complete.
 
-## Remaining Canary
+## Real Orchestration Canary
 
-T009 and T010 retain their own completion criteria. This report does not claim
-the real coordinator/writer/reviewer canary or second-repository rollout.
+- Repository: `gptcompany/gobabygo-orchestration-canary`; feature:
+  `001-is-even`; binding: `is-even-d4cb603bd73f`.
+- Planning PR #1 merged as `53516904`; ledger run `32458497972` published
+  issues #2-#9.
+- Coordinator delegated writer work to Antigravity as
+  `AGY-001-IS-EVEN-IMPL-01`. Implementation PR #10 retained the resulting
+  TDD commits and CI evidence.
+- Codex review `CDX-001-IS-EVEN-REVIEW-01` returned `CHANGES_REQUIRED` for a
+  false-positive test. Antigravity correction `AGY-001-IS-EVEN-FIX-02` and a
+  second bounded correction produced commit `fa97cea`.
+- Final independent review `CDX-001-IS-EVEN-REVIEW-FINAL-03` returned `PASS`
+  after observing the pre-guard test fail and the current suite pass with
+  `14 passed`.
+- PR #10 merged as `bb519cb4`; authoritative completion commit `1bd5f548`
+  closed issues #2-#9 through ledger run `32460264713`.
+- Workflow-dispatch replay `32468515187` reported `aligned=true`,
+  `mutations=0`, with all eight task operations as closed no-ops.
+
+## Remaining Rollout
+
+T010 retains its pin-upgrade completion criterion. The initial pinned caller
+worked in the canary, but the reviewed installer upgrade path is verified
+separately before T010 is complete.

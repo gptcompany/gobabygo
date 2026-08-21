@@ -39,7 +39,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 9: Real Orchestration Canary
 
-- [ ] T009 [US3] Execute one real, disposable, non-production micro-feature through Spec Kit specify/plan/tasks, GitHub issue publication, coordinator delegation, one writer branch and pull request, independent reviewer verdict, CI evidence, authoritative task completion, and issue closure; retain a concise evidence report and remove only disposable branches/worktrees
+- [x] T009 [US3] Execute one real, disposable, non-production micro-feature through Spec Kit specify/plan/tasks, GitHub issue publication, coordinator delegation, one writer branch and pull request, independent reviewer verdict, CI evidence, authoritative task completion, and issue closure; retain a concise evidence report and remove only disposable branches/worktrees
 
 ## Phase 10: Pinned Multi-Repo Rollout
 
