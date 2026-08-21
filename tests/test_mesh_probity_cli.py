@@ -256,6 +256,38 @@ def test_install_reuses_exact_runtime_and_updates_hook(monkeypatch, tmp_path) ->
     assert claude_command.endswith("--agent claude-code")
 
 
+def test_install_rejects_symlink_dispatcher_target(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    prefix = tmp_path / "npm"
+    executable = prefix / "bin" / "probity"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\nprintf '1.10.0\\n'\n", encoding="utf-8")
+    executable.chmod(0o755)
+    outside = tmp_path / "outside.py"
+    outside.write_text("keep\n", encoding="utf-8")
+    hook = tmp_path / "lib" / "hook.py"
+    hook.parent.mkdir()
+    hook.symlink_to(outside)
+
+    try:
+        module.install_integrations(
+            apply=True,
+            npm_prefix=prefix,
+            codex_home=tmp_path / "codex",
+            claude_home=tmp_path / "claude",
+            hook_path=hook,
+        )
+    except module.ProbityRuntimeError as exc:
+        assert "unsafe dispatcher target" in str(exc)
+    else:
+        raise AssertionError("symlink dispatcher target was accepted")
+
+    assert hook.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "keep\n"
+    assert not (tmp_path / "codex").exists()
+    assert not (tmp_path / "claude").exists()
+
+
 def test_merge_claude_hook_preserves_unrelated_and_requires_explicit_replacement() -> None:
     module = _load_module()
     existing = json.dumps(

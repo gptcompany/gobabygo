@@ -508,7 +508,10 @@ def install_integrations(
     npm_prefix = npm_prefix.expanduser().resolve()
     codex_home = codex_home.expanduser().resolve()
     claude_home = claude_home.expanduser().resolve()
-    hook_path = hook_path.expanduser().resolve()
+    hook_path = hook_path.expanduser()
+    if not hook_path.is_absolute():
+        hook_path = Path.cwd() / hook_path
+    hook_path = hook_path.parent.resolve() / hook_path.name
     plan = {
         "schema": "mesh.probity.install.v1",
         "apply": apply,
@@ -532,6 +535,8 @@ def install_integrations(
         return plan
     if not HOOK_SOURCE.is_file():
         raise ProbityRuntimeError(f"dispatcher source not found: {HOOK_SOURCE}")
+    if hook_path.is_symlink() or (hook_path.exists() and not hook_path.is_file()):
+        raise ProbityRuntimeError(f"refusing unsafe dispatcher target: {hook_path}")
     executable = npm_prefix / "bin" / "probity"
     python = Path("/usr/bin/python3")
     if not python.is_file():
