@@ -74,8 +74,10 @@
   and returned `REVIEW_VERDICT: PASS`. Final whitespace-only correction
   `ebfa0895b8ae205fcbd29d8df05aaba4d441de5b` passed `git diff --check`, 43
   tests, and both CI jobs before merge.
-- Implementation PR #12 passed CI on Python 3.11 and 3.14, then merged as
-  `0b572af9`. Default-branch ledger run `32476378925` closed issues #2-#11.
+- Implementation commit `e04b955bbbc9810296e2d4a162f437c5ed391c3e` marked
+  T001-T010 complete. PR #12 passed CI on Python 3.11 and 3.14, then published
+  that authoritative task state in merge `0b572af9`. Default-branch ledger run
+  `32476378925` closed issues #2-#11.
 - Workflow-dispatch replay `32477457045` reported `aligned=true`,
   `mutations=0`, and ten closed no-op operations.
 - Manual interaction was limited to dismissing first-run Codex vendor prompts
