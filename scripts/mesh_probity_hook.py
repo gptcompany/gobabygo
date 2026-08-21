@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dispatch Codex PreToolUse payloads to Probity only for opted-in Git roots."""
+"""Dispatch PreToolUse payloads to Probity only for opted-in Git roots."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ CONFIG_NAMES = (
     "probity.config.js",
     "probity.config.mjs",
 )
+SUPPORTED_AGENTS = ("codex", "claude-code")
 MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
 
@@ -26,18 +27,22 @@ def _allow() -> str:
     return "{}\n"
 
 
-def _deny(reason: str) -> str:
+def _deny(agent: str, reason: str) -> str:
     bounded = " ".join(str(reason).split())[:1000]
-    return json.dumps(
-        {
+    if agent == "codex":
+        payload = {
+            "decision": "block",
+            "reason": f"Probity dispatcher: {bounded}",
+        }
+    else:
+        payload = {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": f"Probity dispatcher: {bounded}",
             }
-        },
-        separators=(",", ":"),
-    ) + "\n"
+        }
+    return json.dumps(payload, separators=(",", ":")) + "\n"
 
 
 def _read_payload(stream: Any) -> bytes:
@@ -108,7 +113,23 @@ def _runtime_matches_expected(executable: str, expected: str) -> bool:
     )
 
 
-def dispatch(raw: bytes) -> str:
+def _is_vendor_response(agent: str, response: object) -> bool:
+    if not isinstance(response, dict):
+        return False
+    if agent == "codex":
+        return response.get("decision") == "block" and isinstance(response.get("reason"), str)
+    output = response.get("hookSpecificOutput")
+    return (
+        isinstance(output, dict)
+        and output.get("hookEventName") == "PreToolUse"
+        and output.get("permissionDecision") == "deny"
+        and isinstance(output.get("permissionDecisionReason"), str)
+    )
+
+
+def dispatch(raw: bytes, *, agent: str) -> str:
+    if agent not in SUPPORTED_AGENTS:
+        raise ValueError(f"unsupported Probity agent: {agent}")
     payload = _decode_payload(raw)
     if payload is None or payload.get("hook_event_name") != "PreToolUse":
         return _allow()
@@ -120,21 +141,21 @@ def dispatch(raw: bytes) -> str:
         return _allow()
     candidates = [root / name for name in CONFIG_NAMES if (root / name).exists() or (root / name).is_symlink()]
     if any(path.is_symlink() or not path.is_file() for path in candidates):
-        return _deny("probity.config must be one regular file at the Git root")
+        return _deny(agent, "probity.config must be one regular file at the Git root")
     configs = candidates
     if not configs:
         return _allow()
     if len(configs) != 1:
-        return _deny("multiple probity.config files at the Git root")
+        return _deny(agent, "multiple probity.config files at the Git root")
     executable = _probity_executable()
     if executable is None:
-        return _deny("repository opted in but the pinned Probity runtime is unavailable")
+        return _deny(agent, "repository opted in but the pinned Probity runtime is unavailable")
     expected = os.environ.get("MESH_PROBITY_EXPECTED_VERSION", "").strip()
     if not _runtime_matches_expected(executable, expected):
-        return _deny("installed Probity package does not match the pinned version")
+        return _deny(agent, "installed Probity package does not match the pinned version")
     try:
         proc = subprocess.run(
-            [executable, "--agent", "codex", "--config", str(configs[0])],
+            [executable, "--agent", agent, "--config", str(configs[0])],
             cwd=root,
             input=raw,
             check=False,
@@ -142,31 +163,35 @@ def dispatch(raw: bytes) -> str:
             timeout=120,
         )
     except subprocess.TimeoutExpired:
-        return _deny("Probity timed out after 120 seconds")
+        return _deny(agent, "Probity timed out after 120 seconds")
     except OSError as exc:
-        return _deny(f"cannot execute Probity: {exc}")
+        return _deny(agent, f"cannot execute Probity: {exc}")
     if len(proc.stdout) > MAX_RESPONSE_BYTES:
-        return _deny("Probity response exceeds 1 MiB")
+        return _deny(agent, "Probity response exceeds 1 MiB")
     if proc.returncode == 0 and not proc.stdout.strip():
         return _allow()
     try:
         response = json.loads(proc.stdout.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError):
-        return _deny("Probity returned invalid JSON")
-    if proc.returncode != 0 or not isinstance(response, dict):
-        return _deny(f"Probity failed with exit code {proc.returncode}")
+        return _deny(agent, "Probity returned invalid JSON")
+    if proc.returncode != 0:
+        return _deny(agent, f"Probity failed with exit code {proc.returncode}")
+    if not _is_vendor_response(agent, response):
+        return _deny(agent, "Probity returned an invalid vendor response")
     return json.dumps(response, separators=(",", ":")) + "\n"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    if argv:
-        print("Usage: mesh_probity_hook.py < hook-payload.json", file=sys.stderr)
+    args = list(argv or [])
+    if len(args) != 2 or args[0] != "--agent" or args[1] not in SUPPORTED_AGENTS:
+        print("Usage: mesh_probity_hook.py --agent codex|claude-code < hook-payload.json", file=sys.stderr)
         return 2
+    agent = args[1]
     try:
         raw = _read_payload(sys.stdin.buffer)
-        sys.stdout.write(dispatch(raw))
+        sys.stdout.write(dispatch(raw, agent=agent))
     except ValueError as exc:
-        sys.stdout.write(_deny(str(exc)))
+        sys.stdout.write(_deny(agent, str(exc)))
     return 0
 
 

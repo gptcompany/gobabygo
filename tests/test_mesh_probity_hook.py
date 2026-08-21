@@ -39,12 +39,16 @@ def _payload(cwd: Path) -> bytes:
     ).encode()
 
 
+def _dispatch(module, raw: bytes, agent: str = "codex") -> str:
+    return module.dispatch(raw, agent=agent)
+
+
 def test_missing_config_is_a_noop(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
     monkeypatch.setattr(module, "_probity_executable", lambda: (_ for _ in ()).throw(AssertionError()))
 
-    assert json.loads(module.dispatch(_payload(repo))) == {}
+    assert json.loads(_dispatch(module, _payload(repo))) == {}
 
 
 def test_opted_in_repo_forwards_exact_payload(monkeypatch, tmp_path) -> None:
@@ -57,7 +61,8 @@ def test_opted_in_repo_forwards_exact_payload(monkeypatch, tmp_path) -> None:
     capture = tmp_path / "capture"
     fake = tmp_path / "probity"
     fake.write_text(
-        "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$CAPTURE\"\ncat >/dev/null\nprintf '{\"decision\":\"allow\"}\\n'\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$CAPTURE\"\ncat >/dev/null\n"
+        "printf '{\"decision\":\"block\",\"reason\":\"synthetic\"}\\n'\n",
         encoding="utf-8",
     )
     fake.chmod(0o755)
@@ -65,9 +70,9 @@ def test_opted_in_repo_forwards_exact_payload(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
     raw = _payload(nested)
 
-    response = json.loads(module.dispatch(raw))
+    response = json.loads(_dispatch(module, raw))
 
-    assert response == {"decision": "allow"}
+    assert response == {"decision": "block", "reason": "synthetic"}
     assert capture.read_text(encoding="utf-8").splitlines() == [
         str(repo),
         "--agent",
@@ -84,10 +89,10 @@ def test_ambiguous_config_denies_without_running_probity(monkeypatch, tmp_path) 
     (repo / "probity.config.js").write_text("export default {}\n", encoding="utf-8")
     monkeypatch.setattr(module, "_probity_executable", lambda: (_ for _ in ()).throw(AssertionError()))
 
-    response = json.loads(module.dispatch(_payload(repo)))
+    response = json.loads(_dispatch(module, _payload(repo)))
 
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "multiple" in response["hookSpecificOutput"]["permissionDecisionReason"]
+    assert response["decision"] == "block"
+    assert "multiple" in response["reason"]
 
 
 def test_symlink_config_denies_without_running_probity(monkeypatch, tmp_path) -> None:
@@ -98,7 +103,7 @@ def test_symlink_config_denies_without_running_probity(monkeypatch, tmp_path) ->
     (repo / "probity.config.mjs").symlink_to(external)
     monkeypatch.setattr(module, "_probity_executable", lambda: (_ for _ in ()).throw(AssertionError()))
 
-    response = json.loads(module.dispatch(_payload(repo)))
+    response = json.loads(_dispatch(module, _payload(repo), "claude-code"))
 
     assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "regular file" in response["hookSpecificOutput"]["permissionDecisionReason"]
@@ -110,10 +115,10 @@ def test_missing_runtime_denies_only_an_opted_in_repo(monkeypatch, tmp_path) -> 
     (repo / "probity.config.ts").write_text("export default {}\n", encoding="utf-8")
     monkeypatch.setattr(module, "_probity_executable", lambda: None)
 
-    response = json.loads(module.dispatch(_payload(repo)))
+    response = json.loads(_dispatch(module, _payload(repo)))
 
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "unavailable" in response["hookSpecificOutput"]["permissionDecisionReason"]
+    assert response["decision"] == "block"
+    assert "unavailable" in response["reason"]
 
 
 def test_pinned_version_mismatch_denies_before_execution(monkeypatch, tmp_path) -> None:
@@ -126,10 +131,10 @@ def test_pinned_version_mismatch_denies_before_execution(monkeypatch, tmp_path) 
     monkeypatch.setenv("MESH_PROBITY_EXPECTED_VERSION", "1.10.0")
     monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
 
-    response = json.loads(module.dispatch(_payload(repo)))
+    response = json.loads(_dispatch(module, _payload(repo)))
 
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "pinned version" in response["hookSpecificOutput"]["permissionDecisionReason"]
+    assert response["decision"] == "block"
+    assert "pinned version" in response["reason"]
 
 
 def test_invalid_probity_output_fails_closed(monkeypatch, tmp_path) -> None:
@@ -141,10 +146,10 @@ def test_invalid_probity_output_fails_closed(monkeypatch, tmp_path) -> None:
     fake.chmod(0o755)
     monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
 
-    response = json.loads(module.dispatch(_payload(repo)))
+    response = json.loads(_dispatch(module, _payload(repo)))
 
-    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "invalid JSON" in response["hookSpecificOutput"]["permissionDecisionReason"]
+    assert response["decision"] == "block"
+    assert "invalid JSON" in response["reason"]
 
 
 def test_empty_probity_stdout_is_codex_allow(monkeypatch, tmp_path) -> None:
@@ -156,14 +161,57 @@ def test_empty_probity_stdout_is_codex_allow(monkeypatch, tmp_path) -> None:
     fake.chmod(0o755)
     monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
 
-    assert json.loads(module.dispatch(_payload(repo))) == {}
+    assert json.loads(_dispatch(module, _payload(repo))) == {}
 
 
 def test_invalid_or_non_pretool_payload_is_a_noop() -> None:
     module = _load_module()
 
-    assert json.loads(module.dispatch(b"not-json")) == {}
-    assert json.loads(module.dispatch(b'{"hook_event_name":"Stop"}')) == {}
+    assert json.loads(_dispatch(module, b"not-json")) == {}
+    assert json.loads(_dispatch(module, b'{"hook_event_name":"Stop"}')) == {}
+
+
+def test_claude_forwards_vendor_and_preserves_vendor_response(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    config = repo / "probity.config.mjs"
+    config.write_text("export default {}\n", encoding="utf-8")
+    capture = tmp_path / "capture"
+    fake = tmp_path / "probity"
+    fake.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE\"\ncat >/dev/null\n"
+        "printf '%s\\n' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\","
+        "\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"synthetic\"}}'\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("CAPTURE", str(capture))
+    monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
+
+    response = json.loads(_dispatch(module, _payload(repo), "claude-code"))
+
+    assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert capture.read_text(encoding="utf-8").splitlines() == [
+        "--agent",
+        "claude-code",
+        "--config",
+        str(config),
+    ]
+
+
+def test_wrong_vendor_response_fails_closed(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    (repo / "probity.config.ts").write_text("export default {}\n", encoding="utf-8")
+    fake = tmp_path / "probity"
+    fake.write_text("#!/bin/sh\ncat >/dev/null\nprintf '{\"decision\":\"allow\"}\\n'\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setattr(module, "_probity_executable", lambda: str(fake))
+
+    response = json.loads(_dispatch(module, _payload(repo)))
+
+    assert response["decision"] == "block"
+    assert "invalid vendor response" in response["reason"]
 
 
 def test_cli_never_exposes_probity_stderr(monkeypatch, tmp_path) -> None:
@@ -174,7 +222,7 @@ def test_cli_never_exposes_probity_stderr(monkeypatch, tmp_path) -> None:
     fake.chmod(0o755)
 
     proc = subprocess.run(
-        ["python3", str(MODULE_PATH)],
+        ["python3", str(MODULE_PATH), "--agent", "codex"],
         input=_payload(repo),
         env={**os.environ, "MESH_PROBITY_BIN": str(fake)},
         check=False,
@@ -183,4 +231,16 @@ def test_cli_never_exposes_probity_stderr(monkeypatch, tmp_path) -> None:
 
     assert proc.returncode == 0
     assert b"SECRET" not in proc.stdout + proc.stderr
-    assert json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert json.loads(proc.stdout)["decision"] == "block"
+
+
+def test_cli_rejects_missing_or_unknown_agent() -> None:
+    for args in ([], ["--agent", "agy"]):
+        proc = subprocess.run(
+            ["python3", str(MODULE_PATH), *args],
+            input=b"{}",
+            check=False,
+            capture_output=True,
+        )
+        assert proc.returncode == 2
+        assert b"codex|claude-code" in proc.stderr
