@@ -403,6 +403,8 @@ sessions; no shell startup file is required.
 
 ### Spec Kit development ledger
 
+Prerequisite: authenticated GitHub CLI `gh` 2.48 or newer.
+
 For planned features, Git owns intent and `tasks.md` owns task identity and
 completion. GitHub Issues are a one-way derived ledger; issue state never
 rewrites Spec Kit artifacts.

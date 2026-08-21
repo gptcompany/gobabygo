@@ -508,10 +508,10 @@ def test_gh_client_rejects_old_version_and_malformed_or_oversized_output(module)
     old = module.GhClient(
         "owner/repo",
         run=lambda args, input_text=None: module.CommandResult(
-            0, "gh version 2.39.9\n", ""
+            0, "gh version 2.47.9\n", ""
         ),
     )
-    with pytest.raises(module.LedgerError, match="2.40 or newer"):
+    with pytest.raises(module.LedgerError, match="2.48 or newer"):
         _ = old.version
 
     malformed = module.GhClient(

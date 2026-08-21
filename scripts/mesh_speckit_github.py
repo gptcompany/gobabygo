@@ -34,7 +34,7 @@ MAX_ISSUE_TITLE_CHARS = 256
 MAX_GH_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_REMOTE_ISSUES = 1_000
 MAX_BOUND_FEATURES = 100
-MIN_GH_VERSION = (2, 40, 0)
+MIN_GH_VERSION = (2, 48, 0)
 POST_APPLY_RETRY_DELAYS = (1.0, 2.0, 4.0)
 CALLER_WORKFLOW = Path(".github/workflows/speckit-ledger.yml")
 DEFAULT_RUNTIME_REPOSITORY = "gptcompany/gobabygo"
@@ -795,7 +795,7 @@ class GhClient:
                 raise LedgerError("cannot parse gh version")
             self._version = tuple(int(part) for part in match.groups())  # type: ignore[assignment]
             if self._version < MIN_GH_VERSION:
-                raise LedgerError("gh 2.40 or newer is required")
+                raise LedgerError("gh 2.48 or newer is required")
         return self._version
 
     def _paginated(self, endpoint: str, *, label: str) -> list[object]:
