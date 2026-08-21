@@ -642,7 +642,7 @@ def _capture_visible_target(
 
 
 _CODEX_ACTIVITY = re.compile(
-    r"(?im)(?:working(?:\s*\(|\s+)|esc to interrupt|ctrl\+c to stop)"
+    r"(?im)(?:^\s*(?:[•●◦]\s+)?working\s*\(|esc to interrupt|ctrl\+c to stop)"
 )
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _CODEX_DIM_PLACEHOLDER = re.compile(r"\x1b\[2m[^\x1b\n]+\x1b\[0m\s*$")
