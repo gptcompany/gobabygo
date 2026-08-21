@@ -15,10 +15,6 @@ on:
 jobs:
   reconcile:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      # The caller can only preserve or reduce this permission. Its PR job grants read.
-      issues: write
     steps:
       - name: Validate mode and runtime pin
         env:

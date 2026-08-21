@@ -70,7 +70,7 @@ def test_reusable_workflow_checks_out_caller_and_pinned_runtime() -> None:
     call = workflow["on"]["workflow_call"]
     assert set(call["inputs"]) == {"mode", "runtime_ref"}
     job = workflow["jobs"]["reconcile"]
-    assert job["permissions"] == {"contents": "read", "issues": "write"}
+    assert "permissions" not in job
     checkouts = [
         step for step in job["steps"] if step.get("uses") == "actions/checkout@v4"
     ]
