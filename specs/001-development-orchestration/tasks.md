@@ -47,7 +47,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 11: Automatic Runtime Preflight
 
-- [ ] T011 [US3] Expose and test a bounded immutable Gobabygo runtime pin in `mesh speckit status` only for a clean checkout with the expected origin, and pass it through new and resumed coordinator startup
+- [x] T011 [US3] Expose and test a bounded immutable Gobabygo runtime pin in `mesh speckit status` only for a clean checkout with the expected origin, and pass it through new and resumed coordinator startup
 
 ## Phase 12: Plan-First Repository Onboarding
 

@@ -2686,6 +2686,32 @@ def parse_speckit_status_json(raw: str, *, max_chars: int = 16384) -> dict[str, 
     project_state = token(project.get("state"))
     integrations = token_list(project.get("installed_integrations"))
     capabilities = token_list(project.get("enabled_capabilities"))
+    runtime = payload.get("orchestration_runtime")
+    runtime_repository = ""
+    runtime_commit = ""
+    runtime_reason = "unavailable"
+    runtime_trusted = False
+    if runtime is not None:
+        if not isinstance(runtime, dict) or not isinstance(runtime.get("trusted"), bool):
+            return None
+        runtime_repository = str(runtime.get("repository") or "")
+        runtime_trusted = runtime["trusted"]
+        raw_commit = runtime.get("commit")
+        raw_reason = runtime.get("reason")
+        if runtime_repository != "gptcompany/gobabygo":
+            return None
+        if runtime_trusted:
+            if not isinstance(raw_commit, str) or not re.fullmatch(
+                r"[0-9a-f]{40}", raw_commit
+            ) or raw_reason is not None:
+                return None
+            runtime_commit = raw_commit
+            runtime_reason = ""
+        else:
+            parsed_reason = token(raw_reason)
+            if raw_commit is not None or not parsed_reason:
+                return None
+            runtime_reason = parsed_reason
     if (
         required_version is None
         or installed_version is None
@@ -2706,6 +2732,10 @@ def parse_speckit_status_json(raw: str, *, max_chars: int = 16384) -> dict[str, 
         "enabled_capabilities": capabilities,
         "aligned": payload["aligned"],
         "update_available": payload["update_available"],
+        "runtime_repository": runtime_repository,
+        "runtime_commit": runtime_commit,
+        "runtime_trusted": runtime_trusted,
+        "runtime_reason": runtime_reason,
     }
 
 
@@ -2810,6 +2840,9 @@ def build_live_coordinator_system_prompt(
             f"- enabled={capabilities}",
             f"- aligned={'yes' if speckit_status['aligned'] else 'no'}",
             f"- update_available={'yes' if speckit_status['update_available'] else 'no'}",
+            f"- orchestration_runtime_trusted={'yes' if speckit_status['runtime_trusted'] else 'no'}",
+            f"- orchestration_runtime_commit={speckit_status['runtime_commit'] or '-'}",
+            f"- orchestration_runtime_reason={speckit_status['runtime_reason'] or '-'}",
             "Use only enabled phases. If alignment is no, continue direct coordination but do not "
             "present unavailable Spec Kit phases as executed.",
         ]

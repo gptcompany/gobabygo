@@ -32,6 +32,7 @@ DEFAULT_STATE_FILE = Path(
 ).expanduser()
 RELEASE_API = "https://api.github.com/repos/github/spec-kit/releases/latest"
 ALLOWED_INTEGRATIONS = ("claude", "codex", "agy")
+ORCHESTRATION_RUNTIME_REPOSITORY = "gptcompany/gobabygo"
 INTEGRATION_SKILL_ROOTS = {
     "claude": Path(".claude/skills"),
     "codex": Path(".agents/skills"),
@@ -424,6 +425,61 @@ def _load_cached_release(path: Path) -> dict[str, Any] | None:
     }
 
 
+def inspect_orchestration_runtime(runtime_root: Path = ROOT) -> dict[str, Any]:
+    """Return an immutable caller pin only for the trusted runtime checkout."""
+    result: dict[str, Any] = {
+        "repository": ORCHESTRATION_RUNTIME_REPOSITORY,
+        "trusted": False,
+        "commit": None,
+        "reason": "unavailable",
+    }
+    try:
+        root = _git_root(runtime_root)
+        origin = _run_command(
+            ["git", "-C", str(root), "config", "--get", "remote.origin.url"],
+            timeout=10,
+        )
+        allowed_origins = {
+            "https://github.com/gptcompany/gobabygo.git",
+            "git@github.com:gptcompany/gobabygo.git",
+            "ssh://git@github.com/gptcompany/gobabygo.git",
+        }
+        if origin.returncode != 0 or origin.stdout.strip() not in allowed_origins:
+            result["reason"] = "unexpected_origin"
+            return result
+        if _git_status(root):
+            result["reason"] = "dirty_checkout"
+            return result
+        commit = _git_head(root)
+        containing = _run_command(
+            [
+                "git",
+                "-C",
+                str(root),
+                "for-each-ref",
+                "--contains",
+                commit,
+                "--format=%(refname)",
+                "refs/remotes/origin/",
+            ],
+            timeout=10,
+        )
+        if containing.returncode != 0 or not any(
+            line == "refs/remotes/origin/master"
+            for line in containing.stdout.splitlines()
+        ):
+            result["reason"] = "commit_not_on_origin"
+            return result
+    except (OSError, SpeckitRuntimeError):
+        return result
+    return {
+        "repository": ORCHESTRATION_RUNTIME_REPOSITORY,
+        "trusted": True,
+        "commit": commit,
+        "reason": None,
+    }
+
+
 def build_status(
     repo: Path,
     *,
@@ -446,6 +502,7 @@ def build_status(
             latest_tuple and required_tuple and latest_tuple > required_tuple
         ),
         "runtime_aligned": installed["version"] == lock["version"],
+        "orchestration_runtime": inspect_orchestration_runtime(),
         "project": project,
         "aligned": installed["version"] == lock["version"] and project["state"] == "aligned",
     }
