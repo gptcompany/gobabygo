@@ -33,6 +33,14 @@ _TASK_RE = re.compile(r"^(T\d{3,})(?:\s+(.+))?$")
 _TASK_LIKE_RE = re.compile(r"^T\d+\b")
 _MARKER_RE = re.compile(r"^\[([^\]]+)\](?:\s+|$)")
 _STORY_RE = re.compile(r"^US\d+$")
+_MARKER_PREFIX = "<!-- mesh-speckit-task:"
+_MANAGED_MARKER_RE = re.compile(
+    r"<!--\s*mesh-speckit-task:(?P<version>[^\s]+)\s+"
+    r"repo=(?P<repository>[^\s]+)\s+"
+    r"feature=(?P<feature>[^\s]+)\s+"
+    r"task=(?P<task>T\d{3,})\s*-->"
+)
+_LEGACY_TITLE_RE = re.compile(r"^(?:\[[^\]]+\]\s+)?(?P<task>T\d{3,})\s*:")
 
 
 class LedgerError(ValueError):
@@ -74,6 +82,43 @@ class RenderedIssue:
     body: str
     labels: tuple[str, ...]
     desired_state: str
+
+
+@dataclass(frozen=True)
+class RemoteIssue:
+    number: int
+    title: str
+    body: str
+    state: str
+    labels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class BlockingDrift:
+    code: str
+    message: str
+    issue_number: int | None = None
+    task_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ReconcileAction:
+    task_id: str
+    operation: str
+    issue_number: int | None
+    title: str
+    body: str
+    add_labels: tuple[str, ...]
+    state: str
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ReconciliationPlan:
+    feature: LoadedFeature
+    aligned: bool
+    blocking: tuple[BlockingDrift, ...]
+    actions: tuple[ReconcileAction, ...]
 
 
 def _read_bounded(path: Path, limit: int, label: str) -> str:
@@ -295,3 +340,237 @@ def render_issue(feature: LoadedFeature, task: SpecTask) -> RenderedIssue:
         ),
         desired_state="closed" if task.completed else "open",
     )
+
+
+def _normalize_title(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _normalize_body(value: str) -> str:
+    normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.rstrip() for line in normalized.split("\n")]
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _label_set(labels: tuple[str, ...]) -> set[str]:
+    return {str(label).strip().casefold() for label in labels if str(label).strip()}
+
+
+def _task_sort_key(task_id: str) -> int:
+    return int(task_id[1:])
+
+
+def _inspect_remote_issues(
+    feature: LoadedFeature,
+    remote_issues: list[RemoteIssue] | tuple[RemoteIssue, ...],
+) -> tuple[dict[str, list[RemoteIssue]], list[BlockingDrift]]:
+    managed: dict[str, list[RemoteIssue]] = {}
+    blocking: list[BlockingDrift] = []
+    local_ids = {task.task_id for task in feature.tasks}
+    feature_label = f"speckit:{feature.binding.feature_id}".casefold()
+
+    for issue in sorted(remote_issues, key=lambda item: item.number):
+        body = _normalize_body(issue.body)
+        labels = _label_set(issue.labels)
+        markers = list(_MANAGED_MARKER_RE.finditer(body))
+        prefix_count = body.count(_MARKER_PREFIX)
+
+        if len(markers) > 1:
+            current = any(
+                marker.group("feature") == feature.binding.feature_id
+                for marker in markers
+            )
+            if current or feature_label in labels:
+                blocking.append(
+                    BlockingDrift(
+                        "multiple_markers",
+                        f"issue #{issue.number} contains multiple managed task markers",
+                        issue.number,
+                    )
+                )
+            continue
+
+        if len(markers) == 1:
+            marker = markers[0]
+            marker_feature = marker.group("feature")
+            if marker_feature != feature.binding.feature_id:
+                if feature_label in labels:
+                    blocking.append(
+                        BlockingDrift(
+                            "feature_label_mismatch",
+                            f"issue #{issue.number} carries the current feature label but a different marker",
+                            issue.number,
+                        )
+                    )
+                continue
+            task_id = marker.group("task")
+            if marker.group("version") != ISSUE_MARKER_VERSION:
+                blocking.append(
+                    BlockingDrift(
+                        "unsupported_marker",
+                        f"issue #{issue.number} uses unsupported managed marker version",
+                        issue.number,
+                        task_id,
+                    )
+                )
+                continue
+            if marker.group("repository") != feature.binding.repository:
+                blocking.append(
+                    BlockingDrift(
+                        "repository_mismatch",
+                        f"issue #{issue.number} marker repository does not match {feature.binding.repository}",
+                        issue.number,
+                        task_id,
+                    )
+                )
+                continue
+            if task_id not in local_ids:
+                blocking.append(
+                    BlockingDrift(
+                        "orphan_task",
+                        f"issue #{issue.number} references removed task {task_id}; restore {task_id} in tasks.md as completed or cancelled",
+                        issue.number,
+                        task_id,
+                    )
+                )
+                continue
+            managed.setdefault(task_id, []).append(issue)
+            continue
+
+        legacy_match = _LEGACY_TITLE_RE.match(_normalize_title(issue.title))
+        legacy_task = legacy_match.group("task") if legacy_match else None
+        if prefix_count or feature_label in labels:
+            blocking.append(
+                BlockingDrift(
+                    "malformed_marker",
+                    f"issue #{issue.number} is feature-associated but lacks one valid managed marker",
+                    issue.number,
+                    legacy_task,
+                )
+            )
+        elif legacy_task in local_ids:
+            blocking.append(
+                BlockingDrift(
+                    "legacy_task_issue",
+                    f"issue #{issue.number} looks like legacy output for {legacy_task}; migrate it explicitly before synchronization",
+                    issue.number,
+                    legacy_task,
+                )
+            )
+
+    for task_id, issues in sorted(managed.items(), key=lambda item: _task_sort_key(item[0])):
+        if len(issues) > 1:
+            numbers = ", ".join(f"#{item.number}" for item in issues)
+            blocking.append(
+                BlockingDrift(
+                    "duplicate_task_key",
+                    f"task {task_id} has duplicate managed issues: {numbers}",
+                    issues[0].number,
+                    task_id,
+                )
+            )
+    blocking.sort(
+        key=lambda item: (
+            item.issue_number if item.issue_number is not None else -1,
+            item.code,
+            item.task_id or "",
+        )
+    )
+    return managed, blocking
+
+
+def build_plan(
+    feature: LoadedFeature,
+    remote_issues: list[RemoteIssue] | tuple[RemoteIssue, ...],
+) -> ReconciliationPlan:
+    managed, blocking = _inspect_remote_issues(feature, remote_issues)
+    actions: list[ReconcileAction] = []
+
+    for task in sorted(feature.tasks, key=lambda item: _task_sort_key(item.task_id)):
+        desired = render_issue(feature, task)
+        matches = managed.get(task.task_id, [])
+        if len(matches) > 1:
+            continue
+        if not matches:
+            actions.append(
+                ReconcileAction(
+                    task_id=task.task_id,
+                    operation="create",
+                    issue_number=None,
+                    title=desired.title,
+                    body=desired.body,
+                    add_labels=desired.labels,
+                    state=desired.desired_state,
+                    reasons=("missing",),
+                )
+            )
+            continue
+
+        current = matches[0]
+        reasons: list[str] = []
+        if _normalize_title(current.title) != _normalize_title(desired.title):
+            reasons.append("title")
+        if _normalize_body(current.body) != _normalize_body(desired.body):
+            reasons.append("body")
+        current_labels = _label_set(current.labels)
+        add_labels = tuple(
+            label for label in desired.labels if label.casefold() not in current_labels
+        )
+        if add_labels:
+            reasons.append("labels")
+        state = str(current.state or "").strip().lower()
+        if state != desired.desired_state:
+            reasons.append("state")
+        actions.append(
+            ReconcileAction(
+                task_id=task.task_id,
+                operation="update" if reasons else "noop",
+                issue_number=current.number,
+                title=desired.title,
+                body=desired.body,
+                add_labels=add_labels,
+                state=desired.desired_state,
+                reasons=tuple(reasons),
+            )
+        )
+
+    aligned = not blocking and all(action.operation == "noop" for action in actions)
+    return ReconciliationPlan(
+        feature=feature,
+        aligned=aligned,
+        blocking=tuple(blocking),
+        actions=tuple(actions),
+    )
+
+
+def plan_to_dict(plan: ReconciliationPlan) -> dict[str, object]:
+    return {
+        "schema": "mesh.speckit.github-plan.v1",
+        "repository": plan.feature.binding.repository,
+        "feature_id": plan.feature.binding.feature_id,
+        "tasks_file": plan.feature.source_path,
+        "aligned": plan.aligned,
+        "blocking": [
+            {
+                "code": item.code,
+                "message": item.message,
+                "issue_number": item.issue_number,
+                "task_id": item.task_id,
+            }
+            for item in plan.blocking
+        ],
+        "actions": [
+            {
+                "task_id": item.task_id,
+                "operation": item.operation,
+                "issue_number": item.issue_number,
+                "state": item.state,
+                "add_labels": list(item.add_labels),
+                "reasons": list(item.reasons),
+                "title": item.title,
+            }
+            for item in plan.actions
+        ],
+    }

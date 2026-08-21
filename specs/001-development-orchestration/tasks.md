@@ -15,7 +15,7 @@ derived shared ledger and never rewrite this file.
 
 ## Phase 3: Reconciliation Model
 
-- [ ] T003 [US2] Implement and test mutation-free reconciliation planning, normalization, legacy detection, duplicate/orphan blocking, and idempotent replay in `scripts/mesh_speckit_github.py`
+- [x] T003 [US2] Implement and test mutation-free reconciliation planning, normalization, legacy detection, duplicate/orphan blocking, and idempotent replay in `scripts/mesh_speckit_github.py`
 
 ## Phase 4: GitHub Adapter
 

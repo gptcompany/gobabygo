@@ -181,3 +181,192 @@ def test_long_title_is_bounded_without_truncating_body(module, tmp_path: Path) -
     assert len(rendered.title) <= 256
     assert rendered.title.endswith("...")
     assert description.strip() in rendered.body
+
+
+def remote_issue(module, rendered, *, number: int = 1, **changes):
+    values = {
+        "number": number,
+        "title": rendered.title,
+        "body": rendered.body,
+        "state": rendered.desired_state,
+        "labels": rendered.labels,
+    }
+    values.update(changes)
+    return module.RemoteIssue(**values)
+
+
+def test_plan_creates_missing_tasks_in_numeric_order(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(
+        tmp_path,
+        tasks="- [ ] T010 Later\n- [x] T002 Earlier and complete\n",
+    )
+    loaded = module.load_feature(repo, feature)
+
+    plan = module.build_plan(loaded, [])
+
+    assert plan.aligned is False
+    assert plan.blocking == ()
+    assert [(item.task_id, item.operation, item.state) for item in plan.actions] == [
+        ("T002", "create", "closed"),
+        ("T010", "create", "open"),
+    ]
+
+
+def test_plan_treats_normalized_remote_content_as_aligned(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Stable task\n")
+    loaded = module.load_feature(repo, feature)
+    rendered = module.render_issue(loaded, loaded.tasks[0])
+    body = rendered.body.replace("\n", "\r\n").replace("\r\n", "  \r\n")
+    issue = remote_issue(
+        module,
+        rendered,
+        title="  [001-example]   T001: Stable task  ",
+        body=body,
+        labels=("human-priority", *reversed(rendered.labels)),
+    )
+
+    plan = module.build_plan(loaded, [issue])
+
+    assert plan.aligned is True
+    assert len(plan.actions) == 1
+    assert plan.actions[0].operation == "noop"
+    assert plan.actions[0].reasons == ()
+
+
+def test_plan_updates_machine_fields_and_authoritative_state(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 New description\n")
+    loaded = module.load_feature(repo, feature)
+    rendered = module.render_issue(loaded, loaded.tasks[0])
+    old = remote_issue(
+        module,
+        rendered,
+        title="Old title",
+        body=rendered.body.replace("New description", "Old description"),
+        state="closed",
+        labels=("speckit-task",),
+    )
+
+    plan = module.build_plan(loaded, [old])
+
+    action = plan.actions[0]
+    assert action.operation == "update"
+    assert action.issue_number == 1
+    assert action.state == "open"
+    assert action.add_labels == ("speckit:example-a1b2c3d4",)
+    assert action.reasons == ("title", "body", "labels", "state")
+
+
+def test_plan_blocks_duplicate_managed_issues(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 One task\n")
+    loaded = module.load_feature(repo, feature)
+    rendered = module.render_issue(loaded, loaded.tasks[0])
+
+    plan = module.build_plan(
+        loaded,
+        [
+            remote_issue(module, rendered, number=11),
+            remote_issue(module, rendered, number=12),
+        ],
+    )
+
+    assert plan.aligned is False
+    assert [item.code for item in plan.blocking] == ["duplicate_task_key"]
+    assert "#11, #12" in plan.blocking[0].message
+
+
+def test_plan_blocks_orphaned_published_task(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    orphan_task = module.SpecTask("T099", "Removed", True, False, None, 99)
+    orphan = module.render_issue(loaded, orphan_task)
+
+    plan = module.build_plan(loaded, [remote_issue(module, orphan, number=99)])
+
+    assert [item.code for item in plan.blocking] == ["orphan_task"]
+    assert "restore T099" in plan.blocking[0].message
+
+
+@pytest.mark.parametrize(
+    ("title", "body", "labels", "code"),
+    [
+        ("T001: Legacy", "No marker", (), "legacy_task_issue"),
+        (
+            "[001-example] T001: Broken",
+            "<!-- mesh-speckit-task:v2 feature=bad -->",
+            ("speckit:example-a1b2c3d4",),
+            "malformed_marker",
+        ),
+    ],
+)
+def test_plan_blocks_legacy_or_malformed_feature_issues(
+    module,
+    tmp_path: Path,
+    title: str,
+    body: str,
+    labels: tuple[str, ...],
+    code: str,
+) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    issue = module.RemoteIssue(7, title, body, "open", labels)
+
+    plan = module.build_plan(loaded, [issue])
+
+    assert [item.code for item in plan.blocking] == [code]
+
+
+def test_plan_ignores_same_task_id_from_another_feature(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    body = (
+        "<!-- mesh-speckit-task:v1 repo=owner/repo "
+        "feature=another-a1b2c3d4 task=T001 -->\n"
+    )
+    unrelated = module.RemoteIssue(
+        5,
+        "[another] T001: Other",
+        body,
+        "open",
+        ("speckit-task", "speckit:another-a1b2c3d4"),
+    )
+
+    plan = module.build_plan(loaded, [unrelated])
+
+    assert plan.blocking == ()
+    assert [(item.task_id, item.operation) for item in plan.actions] == [
+        ("T001", "create")
+    ]
+
+
+def test_plan_blocks_marker_repository_mismatch(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    body = (
+        "<!-- mesh-speckit-task:v1 repo=other/repo "
+        "feature=example-a1b2c3d4 task=T001 -->\n"
+    )
+    issue = module.RemoteIssue(
+        8,
+        "[001-example] T001: Current",
+        body,
+        "open",
+        ("speckit-task", "speckit:example-a1b2c3d4"),
+    )
+
+    plan = module.build_plan(loaded, [issue])
+
+    assert [item.code for item in plan.blocking] == ["repository_mismatch"]
+
+
+def test_plan_dict_is_stable_and_contains_no_remote_body(module, tmp_path: Path) -> None:
+    repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    loaded = module.load_feature(repo, feature)
+    issue = module.RemoteIssue(2, "T001: Legacy", "SECRET=remote", "open", ())
+
+    payload = module.plan_to_dict(module.build_plan(loaded, [issue]))
+    encoded = json.dumps(payload, sort_keys=True)
+
+    assert payload["schema"] == "mesh.speckit.github-plan.v1"
+    assert payload["repository"] == "owner/repo"
+    assert payload["aligned"] is False
+    assert "SECRET=remote" not in encoded
