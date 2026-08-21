@@ -702,6 +702,14 @@ def test_tracked_codex_send_accepts_completed_reply_with_empty_composer(
     assert result["delivery_tracked"] is True
     assert result["delegation_id"] == "delegation-next"
     assert sum("send-keys" in command for command in commands) == 2
+    assert module.codex_screen_shows_current_activity(completed) is False
+    worker = module.LiveSession(
+        owner="sam",
+        name="codex-worker",
+        pane_command="codex",
+        output=completed,
+    )
+    assert module.session_screen_state(worker) == "idle"
 
 
 def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> None:
@@ -2296,6 +2304,8 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
         ),
         ("────────────────────\n› [Pasted Content 1085 chars]\n  gpt-5.4 · /repo", False),
         ("────────────────────\n• Working (2s)\n› \n  gpt-5.4 · /repo", False),
+        ("────────────────────\n⠋ Working (12s)\n› \n  gpt-5.4 · /repo", False),
+        ("────────────────────\n▸ Working (5s)\n› \n  gpt-5.4 · /repo", False),
         ("────────────────────\n› 1. Approve\n  2. Cancel\n  gpt-5.4 · /repo", False),
         ("Codex starting", False),
     ],
@@ -2371,6 +2381,64 @@ def test_tracked_codex_send_refuses_occupied_composer_without_input_or_state_cha
     assert "composer is not empty and idle" in result["error"]
     assert not any("send-keys" in command for command in commands)
     assert state_path.read_text(encoding="utf-8") == state_before
+
+
+def test_tracked_codex_send_refuses_active_worker_without_input_or_state_change(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+    commands: list[list[str]] = []
+    active = (
+        "────────────────────\n"
+        "⠋ Working (12s)\n"
+        "› \n"
+        "  gpt-5.6-sol high · /repo"
+    )
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["codex-worker", "codex"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(
+        module,
+        "_capture_visible_target",
+        lambda captured_target, **_kwargs: {
+            **captured_target,
+            "command": "codex",
+            "output": active,
+        },
+    )
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": target,
+            "text": "DELEGATION_ID=delegation-next read /repo/brief.md",
+            "enter": True,
+            "delegation_id": "delegation-next",
+        }
+    )
+
+    assert "composer is not empty and idle" in result["error"]
+    assert not any("send-keys" in command for command in commands)
+    assert not state_path.exists()
+    worker = module.LiveSession(
+        owner="sam",
+        name="codex-worker",
+        pane_command="codex",
+        output=active,
+    )
+    assert module.session_screen_state(worker) == "busy"
 
 
 @pytest.mark.parametrize(
