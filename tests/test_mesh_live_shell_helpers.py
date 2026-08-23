@@ -1089,6 +1089,8 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
     assert "existing session $SESSION is a shell, not a Claude coordinator" in command
     assert "exit 5" in command
     assert "tmux set-environment" in command
+    assert "tmux set-option -g history-limit 20000" in command
+    assert 'tmux set-option -w -t "$SESSION" history-limit 20000' in command
     assert "tmux kill-session" not in command
     assert "mesh-live-session-start" in command
     assert 'chmod 600 "$start_file"' in command
@@ -1123,6 +1125,7 @@ _ws_mosh_attach_or_start claude-typo /data/sata/1TB/typo ''
     command = stage_capture.read_text(encoding="utf-8")
     assert "missing repo dir" in command
     assert "exit 3" in command
+    assert "tmux set-option -g history-limit 20000" in command
     assert 'TARGET_DIR="/data/sata/1TB"' not in command
     mosh_args = capture.read_text(encoding="utf-8")
     assert "<bash>" in mosh_args

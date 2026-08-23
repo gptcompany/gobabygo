@@ -331,8 +331,19 @@ fi
 MESH_REMOTE_TMUX_CREATE
 }
 
+_ws_remote_tmux_history() {
+  command cat <<'MESH_REMOTE_TMUX_HISTORY'
+if ! tmux set-option -g history-limit 20000 >/dev/null 2>&1; then
+  echo "[tmux] warning: could not set global history-limit" >&2
+fi
+if ! tmux set-option -w -t "$SESSION" history-limit 20000 >/dev/null 2>&1; then
+  echo "[tmux] warning: could not set session history-limit: $SESSION" >&2
+fi
+MESH_REMOTE_TMUX_HISTORY
+}
+
 _ws_ssh_attach_or_start_once() {
-  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup git_guard tmux_create
+  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup git_guard tmux_create tmux_history
   local -a ssh_opts=()
   session="$1"
   target_dir="$2"
@@ -343,6 +354,7 @@ _ws_ssh_attach_or_start_once() {
   locked_startup="$(_ws_remote_locked_startup)"
   git_guard="$(_ws_remote_coordinator_git_guard)"
   tmux_create="$(_ws_remote_tmux_create)"
+  tmux_history="$(_ws_remote_tmux_history)"
   ws_host="$(_ws_control_host)" || return $?
   if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
     local opt
@@ -391,6 +403,7 @@ if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
       esac
     fi
   fi
+  $tmux_history
   exec tmux attach -t \"\$SESSION\"
 fi
 if [[ -n \"\$RESUME_ID\" ]]; then
@@ -408,6 +421,7 @@ if [[ -n \"\$RESUME_ID\" ]]; then
 fi
 $locked_startup
 $tmux_create
+$tmux_history
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
   if [[ -n \"\$RESUME_ID\" ]]; then
@@ -554,7 +568,7 @@ _ws_remove_staged_mosh_command() {
 
 _ws_mosh_attach_or_start() {
   local session target_dir startup resume_id session_kind direct_host remote_command remote_script rc
-  local resume_guard locked_startup git_guard tmux_create
+  local resume_guard locked_startup git_guard tmux_create tmux_history
   session="$1"
   target_dir="$2"
   startup="${3:-}"
@@ -564,6 +578,7 @@ _ws_mosh_attach_or_start() {
   locked_startup="$(_ws_remote_locked_startup)"
   git_guard="$(_ws_remote_coordinator_git_guard)"
   tmux_create="$(_ws_remote_tmux_create)"
+  tmux_history="$(_ws_remote_tmux_history)"
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -z "$direct_host" || -z "$(command -v mosh 2>/dev/null)" ]]; then
     _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
@@ -625,6 +640,7 @@ if tmux has-session -t \"\$SESSION\" 2>/dev/null; then
       esac
     fi
   fi
+  $tmux_history
   exec tmux attach -t \"\$SESSION\"
 fi
 if [[ -n \"\$RESUME_ID\" ]]; then
@@ -642,6 +658,7 @@ if [[ -n \"\$RESUME_ID\" ]]; then
 fi
 $locked_startup
 $tmux_create
+$tmux_history
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
   if [[ -n \"\$RESUME_ID\" ]]; then
