@@ -310,7 +310,8 @@ mcoordinator rektslug --worker codex-rektslug-worker
         "dir=/data/sata/1TB/rektslug",
     ]
     assert lines[2].startswith(
-        "startup=claude --name claude-rektslug-coordinator --append-system-prompt "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude "
+        "--name claude-rektslug-coordinator --append-system-prompt "
     )
     assert "AUTONOMOUS" in lines[2]
     assert lines[3] == "kind=coordinator"
@@ -357,7 +358,8 @@ mcoordinator --all --session claude-live-coordinator
         "dir=/data/sata/1TB/coordination",
     ]
     assert lines[2].startswith(
-        "startup=claude --name claude-live-coordinator --append-system-prompt "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude "
+        "--name claude-live-coordinator --append-system-prompt "
     )
     assert "MULTI" in lines[2]
     assert lines[3] == "kind=coordinator"
@@ -473,7 +475,8 @@ mcoordinator --all --resume {resume_id}
         "dir=/data/sata/1TB/coordination",
     ]
     assert lines[2].startswith(
-        f"startup=claude --resume {resume_id} --name claude-coordinator "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 "
+        f"claude --resume {resume_id} --name claude-coordinator "
         "--append-system-prompt "
     )
     assert "FRESH" in lines[2]
@@ -626,7 +629,8 @@ mcoordinator rektslug --continue --worker codex-rektslug
         "dir=/data/sata/1TB/rektslug",
     ]
     assert lines[2].startswith(
-        "startup=claude --continue --name claude-rektslug-coordinator "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude --continue "
+        "--name claude-rektslug-coordinator "
         "--append-system-prompt "
     )
     assert "CURRENT" in lines[2]

@@ -877,5 +877,6 @@ mcoordinator() {
     startup="${claude_cmd}"
   fi
   startup="${startup} --name $(printf '%q' "$session") --append-system-prompt $(printf '%q' "$prompt")"
+  startup="CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 ${startup}"
   _ws_mosh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" coordinator
 }
