@@ -196,7 +196,9 @@ def test_ensure_codex_creates_fixed_yolo_worker_without_send_keys(monkeypatch, t
         "codex-rektslug",
         "-c",
         str(repo),
-        "exec /usr/local/bin/codex --dangerously-bypass-approvals-and-sandbox -C " + str(repo),
+        "exec /usr/local/bin/codex --dangerously-bypass-approvals-and-sandbox "
+        "--no-alt-screen -C "
+        + str(repo),
     ]
     assert not any("send-keys" in command for command in commands)
 

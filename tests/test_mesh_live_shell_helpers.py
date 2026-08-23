@@ -310,7 +310,8 @@ mcoordinator rektslug --worker codex-rektslug-worker
         "dir=/data/sata/1TB/rektslug",
     ]
     assert lines[2].startswith(
-        "startup=claude --name claude-rektslug-coordinator --append-system-prompt "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude "
+        "--name claude-rektslug-coordinator --append-system-prompt "
     )
     assert "AUTONOMOUS" in lines[2]
     assert lines[3] == "kind=coordinator"
@@ -357,7 +358,8 @@ mcoordinator --all --session claude-live-coordinator
         "dir=/data/sata/1TB/coordination",
     ]
     assert lines[2].startswith(
-        "startup=claude --name claude-live-coordinator --append-system-prompt "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude "
+        "--name claude-live-coordinator --append-system-prompt "
     )
     assert "MULTI" in lines[2]
     assert lines[3] == "kind=coordinator"
@@ -473,7 +475,8 @@ mcoordinator --all --resume {resume_id}
         "dir=/data/sata/1TB/coordination",
     ]
     assert lines[2].startswith(
-        f"startup=claude --resume {resume_id} --name claude-coordinator "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 "
+        f"claude --resume {resume_id} --name claude-coordinator "
         "--append-system-prompt "
     )
     assert "FRESH" in lines[2]
@@ -626,7 +629,8 @@ mcoordinator rektslug --continue --worker codex-rektslug
         "dir=/data/sata/1TB/rektslug",
     ]
     assert lines[2].startswith(
-        "startup=claude --continue --name claude-rektslug-coordinator "
+        "startup=CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 claude --continue "
+        "--name claude-rektslug-coordinator "
         "--append-system-prompt "
     )
     assert "CURRENT" in lines[2]
@@ -1085,6 +1089,8 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
     assert "existing session $SESSION is a shell, not a Claude coordinator" in command
     assert "exit 5" in command
     assert "tmux set-environment" in command
+    assert "tmux set-option -g history-limit 20000" in command
+    assert 'tmux set-option -w -t "$SESSION" history-limit 20000' in command
     assert "tmux kill-session" not in command
     assert "mesh-live-session-start" in command
     assert 'chmod 600 "$start_file"' in command
@@ -1119,6 +1125,7 @@ _ws_mosh_attach_or_start claude-typo /data/sata/1TB/typo ''
     command = stage_capture.read_text(encoding="utf-8")
     assert "missing repo dir" in command
     assert "exit 3" in command
+    assert "tmux set-option -g history-limit 20000" in command
     assert 'TARGET_DIR="/data/sata/1TB"' not in command
     mosh_args = capture.read_text(encoding="utf-8")
     assert "<bash>" in mosh_args

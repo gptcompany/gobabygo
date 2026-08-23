@@ -156,6 +156,14 @@ contract before starting tmux, then launches Claude on the Dell with resume and
 old conversation and the freshly generated contract. The contract uses the
 absolute `MESH_COORDINATOR_MESH_SCRIPT` path on the Dell, so the running
 coordinator does not depend on Mac aliases, shell functions, or `.zshrc`.
+Coordinator bootstrap also sets `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` so the
+conversation remains in native tmux/iTerm2 scrollback. This changes rendering
+only; resume history, prompts, locks, and workflow selection are unchanged.
+Every helper-driven tmux create or attach also raises the global and current
+window `history-limit` default to 20,000 lines. Existing panes retain the limit
+allocated when they were created; recreate or resume the session once to apply
+20,000 lines to that pane. Configuration is best-effort and never blocks access
+to an otherwise healthy session.
 
 Using `/resume` interactively is possible, but the startup option is preferred:
 it avoids a temporary conversation and makes contract injection explicit and
