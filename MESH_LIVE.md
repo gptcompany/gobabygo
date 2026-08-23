@@ -311,6 +311,12 @@ repository config commit to disable one project. Restore the reviewed
 from the Dell at every new, continue, or exact-resume startup. Invalid or
 unavailable status disables claims about installed Spec Kit phases but does not
 disable direct board, peek, incident coordination, or read-only review.
+The remote snapshot is terminated after 20 seconds by default. A second local
+wall-clock bound terminates the whole SSH client after at most 10 additional
+seconds, including descendants that accidentally retain its pipes. A timeout
+therefore omits the snapshot and continues coordinator bootstrap; it never
+disables the requested workflow. `MESH_COORDINATOR_STATUS_TIMEOUT` can set a
+different positive integer number of seconds for unusually slow workstations.
 
 Legacy repositories are reported as `project.state=legacy` when old
 `.specify/`, Speckit commands, or complete spec artifact sets exist without the
