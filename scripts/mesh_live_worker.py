@@ -340,6 +340,7 @@ def _ensure_worker(
         launch_argv = [
             executable,
             "--dangerously-bypass-approvals-and-sandbox",
+            "--no-alt-screen",
             "-C",
             str(repo),
         ]
