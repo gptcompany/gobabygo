@@ -576,6 +576,35 @@ _ws_remote_speckit_status /runtime/scripts/mesh /data/sata/1TB/coordination
 
 
 @pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_continues_without_snapshot_after_status_timeout(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    prompt_args_file = tmp_path / "prompt-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+unset MESH_COORDINATOR_SPECKIT_STATUS_JSON
+_ws_remote_speckit_status() {{ return 124; }}
+PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'CURRENT CONTRACT'; }}
+_ws_mosh_attach_or_start() {{ printf 'started=%s\ndir=%s\n' "$1" "$2"; }}
+MESH_COORDINATOR_STATE_REPO=/data/sata/1TB/coordination
+mcoordinator --all --workflow speckit
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "started=claude-coordinator" in proc.stdout
+    assert "dir=/data/sata/1TB/coordination" in proc.stdout
+    prompt_args = prompt_args_file.read_text(encoding="utf-8")
+    assert "<--workflow>" in prompt_args
+    assert "<speckit>" in prompt_args
+    assert "<--speckit-status-json>" not in prompt_args
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_mcoordinator_continues_latest_conversation_in_repo_scope(shell: str) -> None:
     helper = shlex.quote(str(HELPERS))
     proc = _run_shell(
