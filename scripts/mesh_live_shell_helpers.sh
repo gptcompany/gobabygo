@@ -719,9 +719,15 @@ mcodex() {
 
 _ws_remote_speckit_status() {
   local mesh_script target_dir control_host remote_script remote_command opt
+  local status_timeout transport_timeout
   local -a ssh_opts=()
   mesh_script="$1"
   target_dir="$2"
+  status_timeout="${MESH_COORDINATOR_STATUS_TIMEOUT:-20}"
+  if ! _mesh_live_is_uint "$status_timeout" || [[ "$status_timeout" -eq 0 ]]; then
+    status_timeout=20
+  fi
+  transport_timeout=$((status_timeout + 10))
   control_host="$(_ws_control_host)" || return $?
   if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
     while IFS= read -r -d '' opt; do
@@ -729,13 +735,24 @@ _ws_remote_speckit_status() {
     done < <(_mesh_collect_ssh_opts)
   fi
   remote_script='if [[ ! -x "$MESH_SCRIPT" || ! -d "$TARGET_DIR" ]]; then exit 3; fi
-output="$("$MESH_SCRIPT" speckit status "$TARGET_DIR" --json)"
+command -v timeout >/dev/null 2>&1 || exit 4
+output="$(timeout --signal=TERM --kill-after=2s "${STATUS_TIMEOUT}s" "$MESH_SCRIPT" speckit status "$TARGET_DIR" --json)"
 rc=$?
 if [[ $rc -ne 0 && $rc -ne 1 ]]; then exit $rc; fi
 printf "%s" "$output"'
-  printf -v remote_command 'MESH_SCRIPT=%q TARGET_DIR=%q bash -lc %q' \
-    "$mesh_script" "$target_dir" "$remote_script"
-  command ssh "${ssh_opts[@]}" -o BatchMode=yes -o ConnectTimeout=10 \
+  printf -v remote_command 'MESH_SCRIPT=%q TARGET_DIR=%q STATUS_TIMEOUT=%q bash -lc %q' \
+    "$mesh_script" "$target_dir" "$status_timeout" "$remote_script"
+  command python3 -c '
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(sys.argv[2:], check=False, timeout=int(sys.argv[1]))
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+raise SystemExit(result.returncode)
+' "$transport_timeout" ssh "${ssh_opts[@]}" -o BatchMode=yes \
+    -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
     "$control_host" "$remote_command"
 }
 

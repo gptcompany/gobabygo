@@ -537,10 +537,71 @@ _ws_remote_speckit_status /data/sata/1TB/gobabygo/scripts/mesh /data/sata/1TB/re
     assert "--json" in command
     assert "BatchMode=yes" in command
     assert "ConnectTimeout=10" in command
+    assert "ServerAliveInterval=5" in command
+    assert "ServerAliveCountMax=2" in command
+    assert "STATUS_TIMEOUT=20" in command
+    assert "timeout" in command
+    assert "--signal=TERM" in command
+    assert "--kill-after=2s" in command
     assert "send-keys" not in command
     assert "tmux" not in command
     assert " install " not in command
     assert " upgrade " not in command
+    assert 'timeout=int(sys.argv[1])' in HELPERS.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_remote_speckit_status_bounds_invalid_timeout_to_default(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _fake_capture_command(fake_bin, "ssh")
+    capture = tmp_path / "ssh-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export CAPTURE_FILE={shlex.quote(str(capture))}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+export MESH_COORDINATOR_STATUS_TIMEOUT=invalid
+_ws_control_host() {{ printf '%s' 'dell-vpn'; }}
+_ws_remote_speckit_status /runtime/scripts/mesh /data/sata/1TB/coordination
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "STATUS_TIMEOUT=20" in capture.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_continues_without_snapshot_after_status_timeout(
+    shell: str, tmp_path: Path
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    prompt_args_file = tmp_path / "prompt-args"
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+unset MESH_COORDINATOR_SPECKIT_STATUS_JSON
+_ws_remote_speckit_status() {{ return 124; }}
+PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'CURRENT CONTRACT'; }}
+_ws_mosh_attach_or_start() {{ printf 'started=%s\ndir=%s\n' "$1" "$2"; }}
+MESH_COORDINATOR_STATE_REPO=/data/sata/1TB/coordination
+mcoordinator --all --workflow speckit
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "started=claude-coordinator" in proc.stdout
+    assert "dir=/data/sata/1TB/coordination" in proc.stdout
+    prompt_args = prompt_args_file.read_text(encoding="utf-8")
+    assert "<--workflow>" in prompt_args
+    assert "<speckit>" in prompt_args
+    assert "<--speckit-status-json>" not in prompt_args
 
 
 @pytest.mark.parametrize("shell", _shells())
