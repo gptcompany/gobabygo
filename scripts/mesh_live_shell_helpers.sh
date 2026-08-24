@@ -450,18 +450,33 @@ exec tmux attach -t \"\$SESSION\"
 }
 
 _ws_ssh_attach_or_start() {
-  local session target_dir startup resume_id session_kind rc
+  local session target_dir startup resume_id session_kind rc retries max_retries retry_delay
   session="$1"
   target_dir="$2"
   startup="$3"
   resume_id="${4:-}"
   session_kind="${5:-}"
+  max_retries="${MESH_WS_SSH_RECONNECT_ATTEMPTS:-3}"
+  case "$max_retries" in
+    ''|*[!0-9]*) max_retries=3 ;;
+  esac
+  retry_delay="${MESH_WS_SSH_RECONNECT_DELAY:-3}"
+  case "$retry_delay" in
+    ''|*[!0-9]*) retry_delay=3 ;;
+  esac
+  retries=0
   while true; do
     _ws_ssh_attach_or_start_once "$session" "$target_dir" "$startup" "$resume_id" "$session_kind"
     rc=$?
     [[ "$rc" -eq 255 ]] || return "$rc"
-    printf '\n[ws] SSH disconnected. Reconnecting in 3s. Press Ctrl-C to stop.\n' >&2
-    sleep 3 || return "$rc"
+    if [[ "$retries" -ge "$max_retries" ]]; then
+      printf '\n[ws] SSH unavailable after %s reconnect attempt(s); tmux was not stopped.\n' "$retries" >&2
+      return "$rc"
+    fi
+    retries=$((retries + 1))
+    printf '\n[ws] SSH disconnected. Reconnecting in %ss (%s/%s). Press Ctrl-C to stop.\n' \
+      "$retry_delay" "$retries" "$max_retries" >&2
+    sleep "$retry_delay" || return "$rc"
   done
 }
 

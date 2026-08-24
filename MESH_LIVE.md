@@ -744,6 +744,9 @@ pull through an unrelated dirty worktree.
   and unlinked as execution begins, avoiding mosh and tmux command-length limits
   for coordinator prompts.
 - A mosh transport failure falls back to SSH without changing the tmux session.
+- SSH attach retries transport failures three times by default, then exits while
+  leaving tmux untouched. Set `MESH_WS_SSH_RECONNECT_ATTEMPTS` to another
+  non-negative count when a different operator policy is required.
 - Validation failures, stale coordinator detection, and operator interruption do
   not trigger a second attach attempt through SSH.
 - ProxyJump or Cloudflare SSH host: `attach` uses SSH directly.

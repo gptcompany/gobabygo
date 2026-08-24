@@ -1117,6 +1117,52 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
 
 
 @pytest.mark.parametrize("shell", _shells())
+def test_ssh_attach_stops_after_bounded_reconnect_attempts(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+attempts=0
+_ws_ssh_attach_or_start_once() {{ attempts=$((attempts + 1)); return 255; }}
+MESH_WS_SSH_RECONNECT_ATTEMPTS=2 MESH_WS_SSH_RECONNECT_DELAY=0 \
+  _ws_ssh_attach_or_start claude-coordinator /data/sata/1TB/coordination ''
+rc=$?
+printf 'rc=%s attempts=%s\n' "$rc" "$attempts"
+exit 0
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "rc=255 attempts=3\n"
+    assert "Reconnecting in 0s (1/2)" in proc.stderr
+    assert "Reconnecting in 0s (2/2)" in proc.stderr
+    assert "SSH unavailable after 2 reconnect attempt(s)" in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_ssh_attach_does_not_retry_remote_validation_failure(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+attempts=0
+_ws_ssh_attach_or_start_once() {{ attempts=$((attempts + 1)); return 5; }}
+MESH_WS_SSH_RECONNECT_DELAY=0 \
+  _ws_ssh_attach_or_start claude-coordinator /data/sata/1TB/coordination ''
+rc=$?
+printf 'rc=%s attempts=%s\n' "$rc" "$attempts"
+exit 0
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "rc=5 attempts=1\n"
+    assert "Reconnecting" not in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_mosh_start_fails_closed_for_missing_repo(shell: str, tmp_path: Path) -> None:
     helper = shlex.quote(str(HELPERS))
     fake_bin = tmp_path / "bin"
