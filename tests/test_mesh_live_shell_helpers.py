@@ -196,6 +196,24 @@ _ws_host_reachable sam@10.0.0.2
 
 
 @pytest.mark.parametrize("shell", _shells())
+def test_reachability_probe_has_wall_clock_timeout(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text("#!/bin/sh\nsleep 10\n", encoding="utf-8")
+    fake_ssh.chmod(0o755)
+    proc = _run_shell(
+        shell,
+        f"""
+export PATH={shlex.quote(str(tmp_path))}:$PATH
+source {helper}
+MESH_WS_PROBE_WALL_TIMEOUT=1 _ws_host_reachable sam@10.0.0.2
+""",
+    )
+
+    assert proc.returncode == 124
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_mosh_host_prefers_reachable_lan(shell: str) -> None:
     helper = shlex.quote(str(HELPERS))
     proc = _run_shell(

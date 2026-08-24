@@ -43,15 +43,32 @@ _ws_tmux_target_dir() {
 }
 
 _ws_host_reachable() {
-  local target
+  local target connect_timeout wall_timeout
   target="$1"
   [[ -n "$target" ]] || return 1
-  command ssh \
+  connect_timeout="${MESH_WS_PROBE_TIMEOUT:-3}"
+  case "$connect_timeout" in
+    ''|*[!0-9]*|0) connect_timeout=3 ;;
+  esac
+  wall_timeout="${MESH_WS_PROBE_WALL_TIMEOUT:-$((connect_timeout + 2))}"
+  case "$wall_timeout" in
+    ''|*[!0-9]*|0) wall_timeout=$((connect_timeout + 2)) ;;
+  esac
+  command python3 -c '
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(sys.argv[2:], check=False, timeout=int(sys.argv[1]))
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+raise SystemExit(result.returncode)
+' "$wall_timeout" ssh \
     -o BatchMode=yes \
     -o ControlMaster=no \
     -o ControlPath=none \
     -o ConnectionAttempts=1 \
-    -o ConnectTimeout="${MESH_WS_PROBE_TIMEOUT:-3}" \
+    -o ConnectTimeout="$connect_timeout" \
     "$target" true </dev/null >/dev/null 2>&1
 }
 

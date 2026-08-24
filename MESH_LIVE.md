@@ -734,7 +734,9 @@ pull through an unrelated dirty worktree.
 
 - Direct reachable LAN/VPN host: `attach` prefers mosh. The shell helpers try
   authenticated SSH over LAN first, then VPN, avoiding a stale VPN UDP path while
-  the operator is on the same LAN.
+  the operator is on the same LAN. Each reachability probe has both an SSH
+  connect timeout and a local wall-clock deadline, so a half-open endpoint cannot
+  stall fallback selection indefinitely.
 - Persistent create/attach runs one short read-only SSH preflight before mosh to
   validate the repo, scoped resume ID, and existing coordinator. This is required
   because mosh does not reliably propagate the remote command's exit status.
