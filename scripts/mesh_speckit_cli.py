@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -526,12 +527,22 @@ def _bounded_repo_path(root: Path, value: Path, *, label: str) -> tuple[Path, st
 def _bounded_sha256(path: Path, *, max_bytes: int, label: str) -> str:
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as handle:
-        while chunk := handle.read(64 * 1024):
-            size += len(chunk)
-            if size > max_bytes:
-                raise SpeckitRuntimeError(f"{label} exceeds the 1 MiB limit")
-            digest.update(chunk)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise SpeckitRuntimeError(f"unable to open {label} safely") from exc
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise SpeckitRuntimeError(f"{label} must be a regular file")
+            while chunk := handle.read(64 * 1024):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise SpeckitRuntimeError(f"{label} exceeds the 1 MiB limit")
+                digest.update(chunk)
+    except OSError as exc:
+        raise SpeckitRuntimeError(f"unable to read {label} safely") from exc
     return digest.hexdigest()
 
 

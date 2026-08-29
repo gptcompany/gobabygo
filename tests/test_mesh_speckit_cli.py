@@ -579,6 +579,17 @@ def test_delegation_context_accepts_immutable_decision_artifact(
         )
 
 
+def test_bounded_sha256_rejects_symlink(tmp_path: Path) -> None:
+    module = _load_module()
+    target = tmp_path / "target.md"
+    target.write_text("decision", encoding="utf-8")
+    link = tmp_path / "decision.md"
+    link.symlink_to(target)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="open .* safely"):
+        module._bounded_sha256(link, max_bytes=1024, label="decision artifact")
+
+
 def test_update_check_persists_allowlisted_metadata_only(monkeypatch, tmp_path) -> None:
     module = _load_module()
     state = tmp_path / "state" / "latest.json"
