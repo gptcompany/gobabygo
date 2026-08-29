@@ -96,6 +96,35 @@ def test_claude_state_ignores_monitor_transcript_before_current_status_bar() -> 
     assert claude_screen_state(active_main_turn) == LiveScreenState.busy
 
 
+def test_claude_dynamic_active_turn_above_composer_is_busy() -> None:
+    active = """old transcript
+● Concocting… (9m 29s · ↓ 22.0k tokens · thinking with xhigh effort)
+  ⎿ Tip: Use /btw for a side question
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  bypass permissions on
+"""
+    completed = """● Concocting… (9m 29s · ↓ 22.0k tokens · thinking with xhigh effort)
+✻ Cogitated for 9m 30s
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  bypass permissions on
+"""
+    interrupted = """● Befuddling… (10s · ↓ 613 tokens)
+  ⎿ Interrupted · What should Claude do instead?
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  bypass permissions on
+"""
+
+    assert claude_screen_state(active) == LiveScreenState.busy
+    assert claude_screen_state(completed) == LiveScreenState.idle
+    assert claude_screen_state(interrupted) == LiveScreenState.idle
+
+
 def test_classifies_observed_antigravity_tui_states() -> None:
     assert antigravity_screen_state(ANTIGRAVITY_IDLE) == LiveScreenState.idle
     assert classify_live_screen("antigravity", ANTIGRAVITY_BUSY) == LiveScreenState.busy

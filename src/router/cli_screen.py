@@ -24,7 +24,14 @@ _CLAUDE_SESSION_LIMIT = re.compile(
     r"\r?\n[ \t]*/upgrade to increase your usage limit\.[ \t]*$"
 )
 _CLAUDE_COMPLETED_ACTIVITY = re.compile(
-    r"(?im)^[ \t]*✻[ \t]+(?:crunched|worked)[^\n]*$"
+    r"(?im)^[ \t]*✻[ \t]+[A-Za-z][A-Za-z -]*[ \t]+for[ \t]+\d[^\n]*$"
+)
+_CLAUDE_ACTIVE_TURN = re.compile(
+    r"(?im)^[ \t]*[●✻][ \t]+[^\n]*…[ \t]*\([^\n)]*"
+    r"(?:tokens?|thinking|esc to interrupt)[^\n)]*\)[ \t]*$"
+)
+_CLAUDE_INTERRUPTED_TURN = re.compile(
+    r"(?im)^[ \t]*(?:⎿[ \t]*)?Interrupted[ \t]*·[^\n]*$"
 )
 _CLAUDE_SEPARATOR = re.compile(r"^[ \t]*[─━-]{20,}.*$")
 _ANTIGRAVITY_AWAITING_INPUT_MARKERS = (
@@ -128,6 +135,14 @@ def claude_current_region(captured: str) -> str:
         if _CLAUDE_SEPARATOR.match(line)
     ]
     start = separator_indexes[-1] + 1 if separator_indexes else 0
+    prelude = "\n".join(lines[max(0, start - 6) : start])
+    active = list(_CLAUDE_ACTIVE_TURN.finditer(prelude))
+    ended = [
+        *list(_CLAUDE_COMPLETED_ACTIVITY.finditer(prelude)),
+        *list(_CLAUDE_INTERRUPTED_TURN.finditer(prelude)),
+    ]
+    if active and active[-1].start() > max((item.start() for item in ended), default=-1):
+        return "\n".join([prelude, *lines[start:]])
     return "\n".join(lines[start:])
 
 
@@ -139,6 +154,8 @@ def claude_screen_state(captured: str) -> LiveScreenState:
     if detect_interactive_failure_screen("claude", body):
         return LiveScreenState.rate_limit
     current = claude_current_region(body)
+    if _CLAUDE_ACTIVE_TURN.search(current):
+        return LiveScreenState.busy
     if capture_shows_activity(current):
         return LiveScreenState.busy
     if prompt_is_idle(current):
