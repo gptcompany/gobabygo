@@ -2069,7 +2069,11 @@ def _tick_wake_message(token: str, speckit_update_notice: str = "") -> str:
         "unknown, awaiting_input, changed output, or a missing marker remains active or uncertain. "
         "Treat idle workers as reusable; activity_age alone never authorizes rotation. Report a "
         "ROTATION_CANDIDATE only with an additional verified reason, and never terminate or replace "
-        "a session from this tick. "
+        "a session from this tick. Do not reply TICK_IDLE while the accepted objective has a "
+        "dependency-ready incomplete task, an unreviewed result, or unreconciled authoritative "
+        "task state. Close only with implementation and test evidence, required independent review "
+        "and corrections, authoritative task reconciliation, and every authorized commit/push; "
+        "report a concrete blocker instead of silently stopping. "
         f"Reply TICK_IDLE when no action is needed.{update}"
     )
 
@@ -3223,6 +3227,7 @@ def build_live_coordinator_system_prompt(
             "13. When context is nearly exhausted, require a durable handoff in the target repository before more work.",
             "14. After writer completion, inspect git status, diff, commit, and relevant test evidence yourself, then run the mandatory code-review protocol.",
             "15. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision with the frozen scope and review verdict.",
+            "16. Continue until the accepted objective is professionally closed: all dependency-ready work is complete, required tests and independent reviews pass, accepted corrections are verified, authoritative tasks are reconciled, and authorized commits/pushes are accounted for. If progress is impossible, report the exact blocker and preserved handoff instead of becoming silently idle.",
             "",
             "Standing authorization:",
             "- Provider YOLO mode removes approval prompts; it does not expand this authorization.",

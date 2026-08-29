@@ -158,6 +158,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "does not need a second entry, daemon, database, router, or iTerm2 dependency",
         "exact Claude rate-limit menu",
         "manual_rate_limit",
+        "Professional closure requires implementation and test evidence",
         "install-mesh-live-cron.sh",
         "reports it once",
         "internal non-blocking lock",

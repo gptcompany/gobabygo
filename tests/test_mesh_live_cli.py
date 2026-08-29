@@ -3937,6 +3937,8 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
     assert "screen=idle in two fresh board/peek observations" in client.sends[1][1]
     assert "activity_age alone never authorizes rotation" in client.sends[1][1]
     assert "never terminate or replace a session from this tick" in client.sends[1][1]
+    assert "Do not reply TICK_IDLE while the accepted objective" in client.sends[1][1]
+    assert "report a concrete blocker instead of silently stopping" in client.sends[1][1]
     assert "required=0.16.5, latest=0.16.6" in client.sends[1][1]
     assert "never install or upgrade automatically" in client.sends[1][1]
     assert state["speckit_update_reported_version"] == "0.16.6"

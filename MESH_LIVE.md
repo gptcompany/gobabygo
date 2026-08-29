@@ -599,7 +599,12 @@ Apply mode has three actions:
    `Stop and wait for limit to reset` is already the selected option.
 2. It sends a fixed `MESH_LIVE_TICK` instruction only when a coordinator is at
    an empty idle prompt. The coordinator then boards and peeks dynamically and
-   decides whether existing work needs review, debate, or delegation.
+   decides whether existing work needs review, debate, or delegation. It may
+   report `TICK_IDLE` only when the accepted objective has no dependency-ready
+   incomplete task, unreviewed result, or unreconciled authoritative task
+   state. Professional closure requires implementation and test evidence,
+   required independent review and corrections, task reconciliation, and all
+   authorized commits/pushes; otherwise it reports the concrete blocker.
 3. It recognizes the exact Claude session-limit banner containing a reset time
    and IANA timezone, persists that schedule, waits through a 90-second grace
    period, and then sends one fixed `MESH_LIVE_RESET_WAKE` instruction to the
