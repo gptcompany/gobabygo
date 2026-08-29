@@ -3235,6 +3235,51 @@ def test_live_supervisor_observe_reports_missing_workers_after_two_ticks() -> No
     assert all(not hasattr(item, "output") for item in second.signals)
 
 
+def test_live_supervisor_reports_each_worker_screen_state() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output="● Concocting… (12s · ↓ 500 tokens)\n────────────────────\n❯\n",
+    )
+    codex = module.LiveSession(
+        owner="sam",
+        name="codex-review",
+        pane_id="%2",
+        pane_command="codex",
+        output="Do you trust this directory?\n› 1. Yes\n  2. No\nPress enter",
+    )
+    antigravity = module.LiveSession(
+        owner="sam",
+        name="antigravity-writer",
+        pane_id="%3",
+        pane_command="agy",
+        output=(
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            ">\n"
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            "? for shortcuts                                          Gemini 3.7 Flash · high"
+        ),
+    )
+    observations = module.build_live_tick_plan(
+        [coordinator], {coordinator.key}, now=100
+    )
+
+    signals = module.build_live_supervisor_signals(
+        observations,
+        [coordinator, codex, antigravity],
+        {coordinator.key},
+    )
+    by_key = {item.key: item for item in signals}
+
+    assert by_key["session/sam/codex-review"].state == "awaiting_input"
+    assert by_key["session/sam/codex-review"].severity == "warning"
+    assert by_key["session/sam/antigravity-writer"].state == "idle"
+    assert by_key["session/sam/antigravity-writer"].severity == "info"
+
+
 def test_tick_observe_and_apply_are_mutually_exclusive() -> None:
     module = _load_module()
 

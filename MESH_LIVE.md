@@ -586,9 +586,12 @@ MESH_LIVE_LOCAL=1 mesh live tick --apply
 `--observe` is the shadow supervisor path. It classifies only controlled tmux
 metadata, requires two consecutive observations before a transition, retains at
 most 100 events in the existing mode-0600 tick state file, and never stores pane
-captures or sends input. `--apply` records the same transitions under the same
-lock before evaluating its existing guarded actions, so the installed cron does
-not need a second entry, daemon, database, router, or iTerm2 dependency.
+captures or sends input. It reports every discovered Claude, Codex, and
+Antigravity session: `busy` and `idle` are informational, while capture errors,
+rate limits, unknown screens, and `awaiting_input` require inspection. `--apply`
+records the same transitions under the same lock before evaluating its existing
+guarded actions, so the installed cron does not need a second entry, daemon,
+database, router, or iTerm2 dependency.
 
 Apply mode has three actions:
 

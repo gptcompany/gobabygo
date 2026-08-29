@@ -1867,6 +1867,28 @@ def build_live_supervisor_signals(
                 reason=item.reason,
             )
         )
+    observed_keys = {(item.owner, item.name) for item in observations}
+    for session in workers:
+        if session.key in observed_keys:
+            continue
+        screen_state = session_screen_state(session)
+        if screen_state == "capture_error":
+            severity = "warning"
+            reason = "worker pane capture failed"
+        elif screen_state in {"awaiting_input", "rate_limit", "unknown"}:
+            severity = "warning"
+            reason = f"worker requires inspection: screen state is {screen_state}"
+        else:
+            severity = "info"
+            reason = f"worker screen state is {screen_state}"
+        signals.append(
+            SupervisorSignal(
+                key=f"session/{session.owner}/{session.name}",
+                state=screen_state,
+                severity=severity,
+                reason=reason,
+            )
+        )
     return signals
 
 
@@ -3727,6 +3749,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             targets, coordinator_keys = resolve_tick_candidates(sessions, args.coordinator)
             captured, capture_warnings = client.capture(targets, lines)
             _print_warnings(capture_warnings)
+            supervisor_sessions = list(captured)
+            if args.observe or args.apply:
+                captured_keys = {item.key for item in captured}
+                worker_targets = [
+                    item
+                    for item in sessions
+                    if _is_ai_worker_session(item, coordinator_keys)
+                    and item.key not in captured_keys
+                ]
+                captured_workers, worker_capture_warnings = client.capture(
+                    worker_targets, lines
+                )
+                _print_warnings(worker_capture_warnings)
+                supervisor_sessions.extend(captured_workers)
             observations = build_live_tick_plan(captured, coordinator_keys)
             if args.confirm_observations < 1 or args.confirm_observations > 5:
                 raise ValueError("tick --confirm-observations must be between 1 and 5")
@@ -3735,7 +3771,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     state = load_live_tick_state(args.state_file)
                     snapshot, changed = observe_live_supervisor(
                         observations,
-                        sessions,
+                        supervisor_sessions,
                         coordinator_keys,
                         state,
                         now=time.time(),
@@ -3781,7 +3817,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 observed_at = time.time()
                 snapshot, supervisor_changed = observe_live_supervisor(
                     observations,
-                    sessions,
+                    supervisor_sessions,
                     coordinator_keys,
                     state,
                     now=observed_at,

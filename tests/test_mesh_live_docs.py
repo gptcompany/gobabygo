@@ -153,6 +153,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "mesh live tick --apply",
         "mesh live tick --observe --json",
         "shadow supervisor path",
+        "every discovered Claude, Codex, and Antigravity session",
         "at most 100 events",
         "does not need a second entry, daemon, database, router, or iTerm2 dependency",
         "exact Claude rate-limit menu",
