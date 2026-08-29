@@ -2372,6 +2372,36 @@ def test_antigravity_delegation_requires_current_empty_idle_composer() -> None:
     assert module.antigravity_submit_verified(occupied, "pending") is False
 
 
+def test_antigravity_experience_survey_requires_exact_bottom_prompt() -> None:
+    module = _load_module()
+    survey = (
+        "WORKER_DONE DLG-SMOKEB-FIX3-AGY-20260830T0200Z\n\n"
+        " How's the CLI experience so far? Help us improve:\n"
+        " [1] Good  [2] Fine  [3] Bad  [0] Skip\n\n"
+        "? for shortcuts                         Gemini 3.7 Flash · high"
+    )
+
+    assert module.antigravity_screen_shows_experience_survey(survey) is True
+    assert module.antigravity_screen_shows_experience_survey(
+        survey + "\n> DELEGATION_ID=pending"
+    ) is False
+    assert module.antigravity_screen_shows_experience_survey(
+        survey.replace("[0] Skip", "[0] Delete")
+    ) is False
+
+    worker = module.LiveSession(
+        owner="sam",
+        name="antigravity-nautilus_dev",
+        pane_id="%7",
+        pane_command="agy",
+        output=survey,
+    )
+    sessions, coordinator_keys = module.resolve_tick_candidates([worker], [])
+    plan = module.build_live_tick_plan(sessions, coordinator_keys, now=100)
+    assert plan[0].proposed_action == "dismiss_antigravity_survey"
+    assert plan[0].screen_state == "awaiting_input"
+
+
 def test_tracked_codex_send_refuses_occupied_composer_without_input_or_state_change(
     monkeypatch, tmp_path
 ) -> None:
@@ -4016,6 +4046,91 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
 
     assert failed_results[0].status == "failed"
     assert "speckit_update_reported_version" not in failed_state
+
+
+def test_live_tick_apply_skips_exact_antigravity_survey_once() -> None:
+    module = _load_module()
+    survey = (
+        "WORKER_DONE DLG-SMOKEB-FIX3-AGY-20260830T0200Z\n\n"
+        "How's the CLI experience so far? Help us improve:\n"
+        "[1] Good  [2] Fine  [3] Bad  [0] Skip\n\n"
+        "? for shortcuts                         Gemini 3.7 Flash · high"
+    )
+    idle = ">\n\n? for shortcuts                         Gemini 3.7 Flash · high"
+    worker = module.LiveSession(
+        owner="sam",
+        name="antigravity-nautilus_dev",
+        pane_id="%7",
+        pane_command="agy",
+        output=survey,
+    )
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.outputs = [survey, idle]
+            self.sends: list[tuple[str, str, bool]] = []
+
+        def capture(self, targets, lines):
+            assert lines == 160
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(
+            self,
+            session,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
+            assert expected_commands == ("agy",)
+            assert allow_coordinator_wrapper is False
+            self.sends.append((session.name, text, enter))
+            return {}
+
+    state = {"version": 1, "sessions": {}}
+    persisted: list[dict] = []
+    client = FakeClient()
+    results, changed = module.execute_live_tick_actions(
+        client,
+        [worker],
+        set(),
+        state=state,
+        lines=160,
+        now=10_000.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        persist_state=lambda value: persisted.append(json.loads(json.dumps(value))),
+    )
+
+    assert changed is True
+    assert client.sends == [("antigravity-nautilus_dev", "0", False)]
+    assert [(item.action, item.status, item.verified) for item in results] == [
+        ("dismiss_antigravity_survey", "applied", True)
+    ]
+    saved_before_send = persisted[0]["sessions"]["sam/antigravity-nautilus_dev"]
+    assert saved_before_send["vendor_prompt_attempted_at"] == 10_000.0
+    assert state["sessions"]["sam/antigravity-nautilus_dev"][
+        "vendor_prompt_verified"
+    ] is True
+
+    repeated = FakeClient()
+    repeated.outputs = [survey]
+    repeat_results, repeat_changed = module.execute_live_tick_actions(
+        repeated,
+        [worker],
+        set(),
+        state=state,
+        lines=160,
+        now=10_100.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert repeat_changed is False
+    assert repeat_results[0].status == "throttled"
+    assert repeated.sends == []
 
 
 def test_speckit_update_notice_loads_only_validated_versions(tmp_path: Path) -> None:

@@ -593,7 +593,7 @@ records the same transitions under the same lock before evaluating its existing
 guarded actions, so the installed cron does not need a second entry, daemon,
 database, router, or iTerm2 dependency.
 
-Apply mode has three actions:
+Apply mode has four actions:
 
 1. It sends Enter only when the exact Claude rate-limit menu is present and
    `Stop and wait for limit to reset` is already the selected option.
@@ -610,12 +610,20 @@ Apply mode has three actions:
    period, and then sends one fixed `MESH_LIVE_RESET_WAKE` instruction to the
    same empty Claude pane. This resumes the interrupted request; it does not
    bypass or shorten the provider limit.
+4. It dismisses the exact Antigravity experience survey only when that survey
+   is the final visible UI and all options include `[0] Skip`. It verifies the
+   same pane still runs `agy`, persists a one-attempt tombstone before input,
+   sends only literal `0` without Enter, and then verifies that the survey
+   disappeared. Altered or ambiguous prompts fail closed. This policy never
+   applies to trust, permissions, authentication, destructive confirmation,
+   billing, or project decisions.
 
 Before any send, tick recaptures the same pane, revalidates its state, and
-requires the pane to still belong to the discovered session with Claude as its
-current process. A coordinator launched through the resume lock may have a shell
-as the tmux pane command; tick accepts it only when the tmux coordinator marker
-is present and that shell has exactly one direct child named `claude` or
+requires the pane to still belong to the discovered session with the expected
+provider process: Claude for limit/coordinator actions or `agy` for the exact
+survey dismissal. A coordinator launched through the resume lock may have a
+shell as the tmux pane command; tick accepts it only when the tmux coordinator
+marker is present and that shell has exactly one direct child named `claude` or
 `claude-code`. It records the attempt before I/O, recaptures after I/O, and
 throttles retries by screen fingerprint or coordinator wake time. Ambiguous or
 stale rate-limit screens are reported as `manual_rate_limit` and are never

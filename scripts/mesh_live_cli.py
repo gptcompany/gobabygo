@@ -687,6 +687,11 @@ _ANTIGRAVITY_IDLE_FOOTER = re.compile(
 _ANTIGRAVITY_CURRENT_ACTIVITY = re.compile(
     r"(?im)(?:generating\.\.\.|esc to cancel)[^\n]*\Z"
 )
+_ANTIGRAVITY_EXPERIENCE_SURVEY = re.compile(
+    r"(?s)(?:^|\n)\s*How's the CLI experience so far\? Help us improve:\s*\n"
+    r"\s*\[1\] Good\s+\[2\] Fine\s+\[3\] Bad\s+\[0\] Skip\s*\n"
+    r"\s*\? for shortcuts[^\n]*\Z"
+)
 
 
 def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
@@ -743,6 +748,12 @@ def antigravity_screen_is_ready_for_delegation(visible_screen: str) -> bool:
     """Accept only the observed empty Antigravity composer and idle footer."""
     body = _ANSI_ESCAPE.sub("", str(visible_screen or "")).replace("\xa0", " ")
     return _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip()) is not None
+
+
+def antigravity_screen_shows_experience_survey(visible_screen: str) -> bool:
+    """Recognize only the exact dismissible vendor survey at the screen bottom."""
+    body = _ANSI_ESCAPE.sub("", str(visible_screen or "")).replace("\xa0", " ")
+    return _ANTIGRAVITY_EXPERIENCE_SURVEY.search(body.rstrip()) is not None
 
 
 def antigravity_submit_verified(visible_screen: str, delegation_id: str) -> bool:
@@ -1614,6 +1625,8 @@ def session_screen_state(session: LiveSession) -> str:
         return "awaiting_input" if composer.strip() else "unknown"
     provider = ""
     if "agy" in commands:
+        if antigravity_screen_shows_experience_survey(session.output):
+            return "awaiting_input"
         provider = "antigravity"
     elif commands & {"claude", "claude-code"}:
         provider = "claude"
@@ -1659,6 +1672,14 @@ def _is_running_claude(session: LiveSession) -> bool:
     return bool(commands & {"claude", "claude-code"})
 
 
+def _is_running_antigravity(session: LiveSession) -> bool:
+    commands = {
+        Path(session.pane_command or "").name.lower(),
+        Path(session.pane_child_command or "").name.lower(),
+    }
+    return "agy" in commands
+
+
 def _session_limit_not_before(reset_label: str, timezone_name: str, now: float) -> float:
     try:
         timezone = ZoneInfo(timezone_name)
@@ -1701,7 +1722,11 @@ def resolve_tick_candidates(
         coordinators = [item for item in sessions if _is_default_coordinator_name(item.name)]
 
     coordinator_keys = {item.key for item in coordinators}
-    candidates = [item for item in sessions if _is_claude_session(item)]
+    candidates = [
+        item
+        for item in sessions
+        if _is_claude_session(item) or _is_running_antigravity(item)
+    ]
     for coordinator in coordinators:
         if coordinator.key not in {item.key for item in candidates}:
             candidates.append(coordinator)
@@ -1719,8 +1744,32 @@ def build_live_tick_plan(
     observed_at = time.time() if now is None else now
     observations: list[TickObservation] = []
     for session in sessions:
-        state = classify_screen("claude", session.output)
         is_coordinator = session.key in coordinator_keys
+        if _is_running_antigravity(session):
+            screen_state = session_screen_state(session)
+            if session.capture_error:
+                action = "none"
+                reason = "capture_error"
+            elif antigravity_screen_shows_experience_survey(session.output):
+                action = "dismiss_antigravity_survey"
+                reason = "exact Antigravity experience survey with Skip option"
+            else:
+                action = "none"
+                reason = f"screen state is {screen_state}"
+            observations.append(
+                TickObservation(
+                    owner=session.owner,
+                    name=session.name,
+                    pane_id=session.pane_id,
+                    coordinator=False,
+                    screen_state=screen_state,
+                    proposed_action=action,
+                    reason=reason,
+                )
+            )
+            continue
+
+        state = classify_screen("claude", session.output)
         if session.capture_error:
             action = "none"
             reason = "capture_error"
@@ -2168,7 +2217,12 @@ def execute_live_tick_actions(
         and state.get("speckit_update_reported_version") == pending_update.version
     ):
         pending_update = None
-    priorities = {"select_wait": 0, "wake_after_reset": 1, "wake_coordinator": 2}
+    priorities = {
+        "dismiss_antigravity_survey": 0,
+        "select_wait": 1,
+        "wake_after_reset": 2,
+        "wake_coordinator": 3,
+    }
     ordered = sorted(observations, key=lambda item: priorities.get(item.proposed_action, 2))
 
     for observation in ordered:
@@ -2183,7 +2237,22 @@ def execute_live_tick_actions(
             if _clear_session_limit_state(saved):
                 changed = True
 
+        if observation.proposed_action != "dismiss_antigravity_survey":
+            vendor_keys = (
+                "vendor_prompt_action",
+                "vendor_prompt_fingerprint",
+                "vendor_prompt_attempted_at",
+                "vendor_prompt_verified",
+            )
+            if any(key in saved for key in vendor_keys):
+                for key in vendor_keys:
+                    saved.pop(key, None)
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
+
         if observation.proposed_action not in {
+            "dismiss_antigravity_survey",
             "select_wait",
             "wake_after_reset",
             "wake_coordinator",
@@ -2203,6 +2272,68 @@ def execute_live_tick_actions(
 
         try:
             fresh = _capture_one_for_tick(client, session, lines)
+            if observation.proposed_action == "dismiss_antigravity_survey":
+                fingerprint = _tick_screen_fingerprint(fresh.output)
+                if (
+                    saved.get("vendor_prompt_action") == "dismiss_antigravity_survey"
+                    and saved.get("vendor_prompt_fingerprint") == fingerprint
+                    and saved.get("vendor_prompt_attempted_at")
+                ):
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="dismiss_antigravity_survey",
+                            status="throttled",
+                            reason="Skip was already attempted for this vendor prompt",
+                            verified=False,
+                        )
+                    )
+                    continue
+                if not _is_running_antigravity(fresh):
+                    raise LiveReadError("Antigravity process changed before survey dismissal")
+                if not antigravity_screen_shows_experience_survey(fresh.output):
+                    raise LiveReadError("Antigravity survey changed before Skip")
+                saved.update(
+                    {
+                        "pane_id": fresh.pane_id,
+                        "vendor_prompt_action": "dismiss_antigravity_survey",
+                        "vendor_prompt_fingerprint": fingerprint,
+                        "vendor_prompt_attempted_at": now,
+                    }
+                )
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
+                client.send(
+                    fresh,
+                    "0",
+                    enter=False,
+                    expected_commands=("agy",),
+                )
+                if verify_delay > 0:
+                    sleep_fn(verify_delay)
+                post = _capture_one_for_tick(client, fresh, lines)
+                verified = antigravity_screen_is_ready_for_delegation(post.output)
+                saved["vendor_prompt_verified"] = verified
+                results.append(
+                    TickActionResult(
+                        owner=session.owner,
+                        name=session.name,
+                        pane_id=session.pane_id,
+                        action="dismiss_antigravity_survey",
+                        status="applied",
+                        reason=(
+                            "Antigravity survey skipped and screen advanced"
+                            if verified
+                            else "Skip sent; empty Antigravity composer unverified"
+                        ),
+                        verified=verified,
+                    )
+                )
+                continue
+
             fresh_state = classify_screen("claude", fresh.output)
             if observation.proposed_action == "select_wait":
                 fingerprint = _tick_screen_fingerprint(fresh.output)
@@ -3578,7 +3709,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     tick = sub.add_parser(
         "tick",
-        help="Inspect Claude sessions and propose safe coordinator/limit actions.",
+        help="Inspect AI sessions and propose bounded coordinator/provider actions.",
     )
     tick.add_argument(
         "--coordinator",
@@ -3586,13 +3717,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=[],
         help="Exact coordinator session; repeat for multiple coordinators. Default: safe name discovery.",
     )
-    tick.add_argument("--lines", type=int, default=160, help="Captured lines per Claude session.")
+    tick.add_argument("--lines", type=int, default=160, help="Captured lines per AI session.")
     tick.add_argument("--json", action="store_true", help="Emit metadata-only structured JSON.")
     tick_mode = tick.add_mutually_exclusive_group()
     tick_mode.add_argument(
         "--apply",
         action="store_true",
-        help="Apply exact WAIT, post-reset wake, and idle-coordinator actions.",
+        help="Apply exact vendor dismissal, WAIT, post-reset wake, and coordinator actions.",
     )
     tick_mode.add_argument(
         "--observe",

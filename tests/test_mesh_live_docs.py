@@ -157,6 +157,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "at most 100 events",
         "does not need a second entry, daemon, database, router, or iTerm2 dependency",
         "exact Claude rate-limit menu",
+        "exact Antigravity experience survey",
+        "sends only literal `0` without Enter",
         "manual_rate_limit",
         "Professional closure requires implementation and test evidence",
         "install-mesh-live-cron.sh",
@@ -164,7 +166,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "internal non-blocking lock",
         "never stores pane captures",
         "do not point live tick at router-managed owners",
-        "Claude as its current process",
+        "expected provider process: Claude for limit/coordinator actions or `agy`",
         "cannot be read or its managed marker block is malformed",
         "cannot eliminate the race",
     ):
