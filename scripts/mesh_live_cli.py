@@ -22,11 +22,6 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-try:
-    from scripts.mesh_supervisor import SupervisorSignal, record_transitions
-except ModuleNotFoundError:  # Direct execution from scripts/.
-    from mesh_supervisor import SupervisorSignal, record_transitions
-
 
 DEFAULT_WS_HOST = "sam@10.0.0.2"
 DEFAULT_WS_LAN_HOST = "sam@172.23.0.42"
@@ -132,7 +127,7 @@ class TickActionResult:
 
 @dataclass(frozen=True)
 class LiveSupervisorSnapshot:
-    signals: tuple[SupervisorSignal, ...]
+    signals: tuple[Any, ...]
     events: tuple[dict[str, Any], ...]
 
 
@@ -1800,12 +1795,21 @@ def _is_ai_worker_session(
     return bool(commands & {"claude", "claude-code", "codex", "agy", "antigravity"}) or session.name.lower().startswith(prefixes)
 
 
+def _load_supervisor_api() -> tuple[Any, Callable[..., Any]]:
+    try:
+        from scripts.mesh_supervisor import SupervisorSignal, record_transitions
+    except ModuleNotFoundError:  # Direct local execution from scripts/.
+        from mesh_supervisor import SupervisorSignal, record_transitions
+    return SupervisorSignal, record_transitions
+
+
 def build_live_supervisor_signals(
     observations: Sequence[TickObservation],
     all_sessions: Sequence[LiveSession],
     coordinator_keys: set[tuple[str, str]],
-) -> list[SupervisorSignal]:
-    signals: list[SupervisorSignal] = []
+) -> list[Any]:
+    SupervisorSignal, _record_transitions = _load_supervisor_api()
+    signals: list[Any] = []
     signals.append(
         SupervisorSignal(
             key="fleet/coordinator",
@@ -1869,6 +1873,7 @@ def observe_live_supervisor(
     now: float,
     confirmations: int,
 ) -> tuple[LiveSupervisorSnapshot, bool]:
+    _SupervisorSignal, record_transitions = _load_supervisor_api()
     signals = build_live_supervisor_signals(
         observations, all_sessions, coordinator_keys
     )

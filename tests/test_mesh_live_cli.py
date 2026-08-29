@@ -4479,6 +4479,30 @@ def test_main_remote_payload_mode_success_and_error(monkeypatch, capsys) -> None
     assert "unsupported live operation" in output
 
 
+def test_remote_payload_script_is_standalone_without_supervisor_module(
+    tmp_path: Path,
+) -> None:
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_live_cli.py"
+    payload = {"op": "discover", "users": ["definitely-not-a-local-user"]}
+    source = f"_MESH_LIVE_REMOTE_PAYLOAD = {payload!r}\n"
+    source += script_path.read_text(encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    proc = subprocess.run(
+        [sys.executable, "-"],
+        cwd=tmp_path,
+        input=source,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["sessions"] == []
+
+
 def test_live_module_contains_no_tmux_lifecycle_mutation_primitives() -> None:
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "mesh_live_cli.py"
     source = script_path.read_text(encoding="utf-8")
