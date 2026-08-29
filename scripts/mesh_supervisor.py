@@ -181,7 +181,7 @@ def record_transitions(
             saved_signals[key] = saved
         candidate = str(saved.get("candidate_state") or "")
         if candidate == signal.state:
-            count = int(saved.get("candidate_count") or 0) + 1
+            count = min(int(saved.get("candidate_count") or 0) + 1, confirmations)
         else:
             candidate = signal.state
             count = 1

@@ -87,6 +87,11 @@ def test_transitions_require_confirmation_and_recover() -> None:
     assert events[0].previous_state == "workers_missing"
     assert events[0].state == "healthy"
 
+    module.record_transitions(
+        [healthy], state, observed_at=50, confirmations=2
+    )
+    assert state["supervisor"]["signals"]["fleet/workers"]["candidate_count"] == 2
+
 
 def test_transition_history_is_bounded_and_contains_no_capture() -> None:
     state: dict[str, object] = {"version": 1, "sessions": {}}
