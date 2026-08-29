@@ -556,6 +556,13 @@ bootstrap because a bare 1.1.x TUI may re-enter OAuth instead of loading the
 persisted headless token. If authentication or startup fails, the coordinator
 reports a blocker.
 
+Gobabygo-created Codex workers launch with the documented
+`check_for_update_on_startup=false` override. This prevents an update menu from
+occupying a worker composer; it does not install or hide updates globally.
+Codex upgrades remain a centrally managed, explicit `codex update` operation
+outside active worker sessions. Existing workers retain their launch arguments
+until they are deliberately recycled under the normal lifecycle guardrails.
+
 The active `MESH_COORDINATOR_MESH_SCRIPT` checkout is an immutable control-plane
 runtime even when Git reports detached HEAD. Both ensure commands reject that exact
 Git root before tmux mutation. Gobabygo development must use a separate clean

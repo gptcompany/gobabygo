@@ -68,6 +68,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "--dangerously-skip-permissions --new-project",
         "MESH_LIVE_REPO_ROOTS",
         "Neither bootstrap accepts task text",
+        "`check_for_update_on_startup=false` override",
+        "explicit `codex update` operation",
         "unavailable through the remote live endpoint",
         "operator's explicit objective",
         "ambiguous names fail before tmux mutation",

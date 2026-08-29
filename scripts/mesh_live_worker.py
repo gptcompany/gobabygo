@@ -341,6 +341,8 @@ def _ensure_worker(
             executable,
             "--dangerously-bypass-approvals-and-sandbox",
             "--no-alt-screen",
+            "-c",
+            "check_for_update_on_startup=false",
             "-C",
             str(repo),
         ]
