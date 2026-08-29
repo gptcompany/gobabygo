@@ -529,6 +529,56 @@ def test_delegation_context_rejects_unsupported_phase_paths_and_mutable_review_s
         )
 
 
+def test_delegation_context_accepts_immutable_decision_artifact(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    _project(repo)
+    feature = repo / "specs" / "001-runtime"
+    feature.mkdir(parents=True)
+    decision = feature / "decision.md"
+    decision.write_text("# Decision\n", encoding="utf-8")
+    lock = _lock(tmp_path / "lock.json")
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {
+            "available": True,
+            "executable": "/bin/specify",
+            "version": "0.16.5",
+            "error": None,
+        },
+    )
+
+    context = module.build_delegation_context(
+        repo,
+        phase="plan",
+        feature_dir=Path("specs/001-runtime"),
+        artifacts=[Path("decision.md")],
+        role="reviewer",
+        review_scope=(
+            f"artifact-sha256:{hashlib.sha256(decision.read_bytes()).hexdigest()}"
+        ),
+        lock_file=lock,
+    )
+
+    assert context["review_scope"] == (
+        f"artifact-sha256:{hashlib.sha256(decision.read_bytes()).hexdigest()}"
+    )
+
+    with pytest.raises(module.SpeckitRuntimeError, match="does not match"):
+        module.build_delegation_context(
+            repo,
+            phase="plan",
+            feature_dir=Path("specs/001-runtime"),
+            artifacts=[Path("decision.md")],
+            role="reviewer",
+            review_scope=f"artifact-sha256:{'0' * 64}",
+            lock_file=lock,
+        )
+
+
 def test_update_check_persists_allowlisted_metadata_only(monkeypatch, tmp_path) -> None:
     module = _load_module()
     state = tmp_path / "state" / "latest.json"

@@ -2066,6 +2066,13 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "does not authorize session termination or automatic replacement" in prompt
     assert "Claude remains coordinator and final adjudicator" in prompt
     assert "never swap roles silently" in prompt
+    assert "Bounded decision-challenge protocol" in prompt
+    assert "Use this protocol only for a cross-repository architecture choice" in prompt
+    assert "immutable scope `artifact-sha256:<digest>`" in prompt
+    assert "separate Codex session as the default read-only challenger" in prompt
+    assert "CHALLENGE_VERDICT: ACCEPT|REVISE|ESCALATE" in prompt
+    assert "at most two challenger rounds for one DECISION_ID" in prompt
+    assert "You remain final adjudicator" in prompt
 
 
 def test_coordinator_system_prompt_pins_antigravity_spawn_to_exact_worker() -> None:
@@ -2910,6 +2917,8 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
         "template_target_cli": "preferred-perspective-not-spawn-authorization",
         "writer_limit": "one-active-writer-per-repository",
         "reviewer_session": "different-from-writer-read-only",
+        "decision_challenger": "codex-read-only-two-rounds",
+        "decision_scope": "immutable-artifact-sha256",
         "automatic_spawn": "ensure-codex-or-antigravity-only",
         "missing_perspective": "report-degraded-coverage",
     }

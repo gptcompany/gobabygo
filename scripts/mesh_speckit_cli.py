@@ -46,9 +46,11 @@ _ISO_TIMESTAMP = re.compile(
     r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
 )
 _IMMUTABLE_REVIEW_SCOPE = re.compile(
-    r"^(?:commit:[0-9a-f]{40}(?:\.\.[0-9a-f]{40})?|diff-sha256:[0-9a-f]{64})$"
+    r"^(?:commit:[0-9a-f]{40}(?:\.\.[0-9a-f]{40})?"
+    r"|diff-sha256:[0-9a-f]{64}|artifact-sha256:[0-9a-f]{64})$"
 )
 _MAX_RELEASE_BYTES = 1024 * 1024
+_MAX_DELEGATION_ARTIFACT_BYTES = 1024 * 1024
 _MAX_MIGRATION_FILES = 512
 _MAX_MIGRATION_FILE_BYTES = 8 * 1024 * 1024
 _MAX_MIGRATION_TOTAL_BYTES = 32 * 1024 * 1024
@@ -521,6 +523,18 @@ def _bounded_repo_path(root: Path, value: Path, *, label: str) -> tuple[Path, st
     return resolved, relative.as_posix()
 
 
+def _bounded_sha256(path: Path, *, max_bytes: int, label: str) -> str:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(64 * 1024):
+            size += len(chunk)
+            if size > max_bytes:
+                raise SpeckitRuntimeError(f"{label} exceeds the 1 MiB limit")
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_delegation_context(
     repo: Path,
     *,
@@ -574,8 +588,29 @@ def build_delegation_context(
     if role == "reviewer":
         if not _IMMUTABLE_REVIEW_SCOPE.fullmatch(immutable_scope):
             raise SpeckitRuntimeError(
-                "reviewer requires --review-scope commit:<sha>[..<sha>] or diff-sha256:<digest>"
+                "reviewer requires --review-scope commit:<sha>[..<sha>], "
+                "diff-sha256:<digest>, or artifact-sha256:<digest>"
             )
+        if immutable_scope.startswith("artifact-sha256:"):
+            if len(allowed) != 1:
+                raise SpeckitRuntimeError(
+                    "artifact-sha256 review scope requires exactly one allowed artifact"
+                )
+            artifact_path = (root / allowed[0]).resolve()
+            if not artifact_path.is_file():
+                raise SpeckitRuntimeError(
+                    "artifact-sha256 review scope requires an existing regular file"
+                )
+            expected_digest = immutable_scope.removeprefix("artifact-sha256:")
+            actual_digest = _bounded_sha256(
+                artifact_path,
+                max_bytes=_MAX_DELEGATION_ARTIFACT_BYTES,
+                label="artifact-sha256 review artifact",
+            )
+            if actual_digest != expected_digest:
+                raise SpeckitRuntimeError(
+                    "artifact-sha256 review scope does not match the allowed artifact"
+                )
     elif immutable_scope:
         raise SpeckitRuntimeError("--review-scope is valid only for reviewer context")
 

@@ -3061,7 +3061,7 @@ def build_live_coordinator_system_prompt(
             "For every Spec Kit delegation, derive a provider-neutral bounded envelope before sending: "
             f"`{speckit_context_command} <repo-root> --phase <enabled-phase> --feature-dir "
             "<feature-dir> --artifact <feature-relative-path> --role <writer|reviewer> "
-            "[--review-scope commit:<sha>[..<sha>]|diff-sha256:<digest>]`.",
+            "[--review-scope commit:<sha>[..<sha>]|diff-sha256:<digest>|artifact-sha256:<digest>]`.",
             "Include the rendered SPECKIT_CONTEXT in the task or non-secret brief. Never invent a phase, "
             "copy the full capability inventory, or delegate when context generation fails. Reviewer context "
             "must use an immutable scope and remain read-only.",
@@ -3085,6 +3085,15 @@ def build_live_coordinator_system_prompt(
             "- Fan out only steps whose dependencies have completed. Give every role a distinct DELEGATION_ID and shared immutable evidence paths or commit IDs.",
             "- If the preferred perspective is unavailable, continue only when useful and report degraded coverage; never silently claim the missing review occurred.",
             "- Template implementation steps go to the authorized writer, regardless of their template target_cli. Final close remains your evidence-based decision.",
+            "",
+            "Bounded decision-challenge protocol:",
+            "1. Use this protocol only for a cross-repository architecture choice, a security/cost/irreversible decision, an unresolved high-impact tradeoff, or an explicit operator request. Routine implementation choices use normal review; do not manufacture debate.",
+            "2. Create one unique `DECISION_ID` and one non-secret decision artifact containing scope, verified facts, constraints, viable options, your recommendation, evidence paths or commits, and the exact open question. Store durable program decisions in the coordinator-level Spec Kit artifacts.",
+            "3. Freeze the artifact before challenge and compute its SHA-256. Render reviewer context for that artifact with immutable scope `artifact-sha256:<digest>`. Require the challenger to verify the same digest immediately before reading; if context generation or either digest verification fails, do not proceed.",
+            "4. Use a separate Codex session as the default read-only challenger. Its brief must prohibit edits, worker dispatch, session control, commits, pushes, deploys, and privileged or destructive actions. A declared substitute is allowed only with degraded model-diversity coverage.",
+            "5. Require the challenger to answer only against the frozen packet: strongest objection, missing evidence, option comparison, recommendation, confidence, and `CHALLENGE_VERDICT: ACCEPT|REVISE|ESCALATE`, followed by `WORKER_DONE <DELEGATION_ID>`.",
+            "6. Allow at most two challenger rounds for one DECISION_ID. A second round receives the original artifact, first response, and a frozen revision or rebuttal; never create an open-ended agent conversation or let the challenger contact workers directly.",
+            "7. You remain final adjudicator. Record accepted/rejected objections and the final decision in the Spec Kit decision artifact. Escalate unresolved destructive, privileged, security-boundary, material-cost, or product-authority choices to the operator; silence and timeout are not consent.",
             "",
             "Mandatory code-review protocol:",
             "1. Stop writer activity before review and freeze the exact scope. Prefer an immutable `<base-commit>..<writer-commit>` range. "
@@ -3246,6 +3255,8 @@ def build_live_workflow_projection(
             "template_target_cli": "preferred-perspective-not-spawn-authorization",
             "writer_limit": "one-active-writer-per-repository",
             "reviewer_session": "different-from-writer-read-only",
+            "decision_challenger": "codex-read-only-two-rounds",
+            "decision_scope": "immutable-artifact-sha256",
             "automatic_spawn": "ensure-codex-or-antigravity-only",
             "missing_perspective": "report-degraded-coverage",
         },
@@ -3263,7 +3274,7 @@ def render_live_workflow_projection(projection: dict[str, Any]) -> str:
         f"Binding: {projection['binding_policy']['repo_feature_binding']}",
         "Live policy: coordinator=final-adjudicator; writer=one-active-per-repo; "
         "reviewer=different-session-read-only; spawn=ensure-codex-or-antigravity-only; "
-        "missing-perspective=degraded-coverage",
+        "challenger=codex-read-only-two-rounds; missing-perspective=degraded-coverage",
         "Steps:",
     ]
     for step in projection["steps"]:
