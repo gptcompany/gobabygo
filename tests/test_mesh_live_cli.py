@@ -3838,9 +3838,12 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
         min_wake_minutes=25,
         wait_retry_minutes=60,
         verify_delay=0,
-        speckit_update_notice=(
-            "Spec Kit update metadata: required=0.16.5, latest=0.16.6. "
-            "Report this in the next operator summary; never install or upgrade automatically."
+        speckit_update_notice=module.SpeckitUpdateNotice(
+            version="0.16.6",
+            message=(
+                "Spec Kit update metadata: required=0.16.5, latest=0.16.6. "
+                "Report this in the next operator summary; never install or upgrade automatically."
+            ),
         ),
     )
 
@@ -3860,6 +3863,7 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
     assert "never terminate or replace a session from this tick" in client.sends[1][1]
     assert "required=0.16.5, latest=0.16.6" in client.sends[1][1]
     assert "never install or upgrade automatically" in client.sends[1][1]
+    assert state["speckit_update_reported_version"] == "0.16.6"
     encoded_state = json.dumps(state)
     assert "not-persisted" not in encoded_state
     assert "You've hit" not in encoded_state
@@ -3886,6 +3890,55 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
     assert [item.status for item in second_results] == ["throttled", "throttled"]
     assert throttled_client.sends == []
 
+    repeat_client = FakeClient()
+    repeat_client.outputs = {
+        "claude-coordinator": [coordinator_screen, "✻ Working"],
+    }
+    repeated_notice = module.SpeckitUpdateNotice(
+        version="0.16.6",
+        message="Spec Kit update metadata: required=0.16.5, latest=0.16.6.",
+    )
+    repeat_results, repeat_changed = module.execute_live_tick_actions(
+        repeat_client,
+        [sessions[1]],
+        {("sam", "claude-coordinator")},
+        state=state,
+        lines=160,
+        now=12_000.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        speckit_update_notice=repeated_notice,
+    )
+
+    assert repeat_changed is True
+    assert repeat_results[0].status == "applied"
+    assert len(repeat_client.sends) == 1
+    assert "latest=0.16.6" not in repeat_client.sends[0][1]
+
+    class FailingClient(FakeClient):
+        def send(self, *args, **kwargs):
+            raise module.LiveReadError("simulated key delivery failure")
+
+    failing_client = FailingClient()
+    failing_client.outputs = {"claude-coordinator": [coordinator_screen]}
+    failed_state = {"version": 1, "sessions": {}}
+    failed_results, _failed_changed = module.execute_live_tick_actions(
+        failing_client,
+        [sessions[1]],
+        {("sam", "claude-coordinator")},
+        state=failed_state,
+        lines=160,
+        now=10_000.0,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        speckit_update_notice=repeated_notice,
+    )
+
+    assert failed_results[0].status == "failed"
+    assert "speckit_update_reported_version" not in failed_state
+
 
 def test_speckit_update_notice_loads_only_validated_versions(tmp_path: Path) -> None:
     module = _load_module()
@@ -3909,20 +3962,22 @@ def test_speckit_update_notice_loads_only_validated_versions(tmp_path: Path) -> 
 
     notice = module.load_speckit_update_notice(str(state), str(lock))
 
-    assert notice == (
+    assert notice is not None
+    assert notice.version == "0.16.6"
+    assert notice.message == (
         "Spec Kit update metadata: required=0.16.5, latest=0.16.6. "
         "Report this in the next operator summary; never install or upgrade automatically."
     )
-    assert "IGNORE" not in notice
-    assert "secret" not in notice
+    assert "IGNORE" not in notice.message
+    assert "secret" not in notice.message
 
     state.write_text(json.dumps({"version": "0.16.5", "tag": "v0.16.5"}), encoding="utf-8")
-    assert module.load_speckit_update_notice(str(state), str(lock)) == ""
+    assert module.load_speckit_update_notice(str(state), str(lock)) is None
     state.write_text(
         json.dumps({"version": "0.16.7\nINJECT", "tag": "v0.16.7\nINJECT"}),
         encoding="utf-8",
     )
-    assert module.load_speckit_update_notice(str(state), str(lock)) == ""
+    assert module.load_speckit_update_notice(str(state), str(lock)) is None
 
 
 def test_live_tick_apply_never_sends_for_ambiguous_wait_or_changed_pane() -> None:

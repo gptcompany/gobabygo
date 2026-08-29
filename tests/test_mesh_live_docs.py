@@ -158,6 +158,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "exact Claude rate-limit menu",
         "manual_rate_limit",
         "install-mesh-live-cron.sh",
+        "reports it once",
         "internal non-blocking lock",
         "never stores pane captures",
         "do not point live tick at router-managed owners",

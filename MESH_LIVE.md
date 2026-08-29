@@ -663,8 +663,10 @@ writes only validated release version, tag, timestamp, and official URL to
 `~/.local/state/gobabygo/speckit-update.json`; it never installs the CLI or
 upgrades a project. A later normal coordinator tick includes required/latest
 versions only when that tick already has another reason to wake an idle or
-post-limit coordinator. An update never creates its own wake and is never sent
-to worker panes. Reinstalling the managed block is idempotent.
+post-limit coordinator. The tick state acknowledges the latest version only
+after key delivery and reports it once; a newer release becomes reportable
+again. An update never creates its own wake and is never sent to worker panes.
+Reinstalling the managed block is idempotent.
 
 The default schedule gives a maximum polling delay of about 30 minutes after
 the reset and grace period. The

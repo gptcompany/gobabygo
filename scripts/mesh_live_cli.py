@@ -131,6 +131,12 @@ class LiveSupervisorSnapshot:
     events: tuple[dict[str, Any], ...]
 
 
+@dataclass(frozen=True)
+class SpeckitUpdateNotice:
+    version: str
+    message: str
+
+
 class LiveReadError(RuntimeError):
     pass
 
@@ -1987,21 +1993,23 @@ def live_tick_state_lock(path: str):
             os.close(fd)
 
 
-def load_speckit_update_notice(state_path: str, lock_path: str) -> str:
+def load_speckit_update_notice(
+    state_path: str, lock_path: str
+) -> SpeckitUpdateNotice | None:
     """Load only validated versions from Spec Kit metadata and its committed lock."""
     state_file = Path(state_path).expanduser()
     lock_file = Path(lock_path).expanduser()
     try:
         if state_file.is_symlink() or lock_file.is_symlink():
-            return ""
+            return None
         if state_file.stat().st_size > 8192 or lock_file.stat().st_size > 8192:
-            return ""
+            return None
         state = json.loads(state_file.read_text(encoding="utf-8"))
         lock = json.loads(lock_file.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError):
-        return ""
+        return None
     if not isinstance(state, dict) or not isinstance(lock, dict):
-        return ""
+        return None
     version_pattern = re.compile(r"^(0|[1-9][0-9]*)\.(0|[0-9]+)\.(0|[0-9]+)$")
     latest = str(state.get("version") or "")
     required = str(lock.get("version") or "")
@@ -2013,14 +2021,17 @@ def load_speckit_update_notice(state_path: str, lock_path: str) -> str:
         or state.get("tag") != f"v{latest}"
         or lock.get("tag") != f"v{required}"
     ):
-        return ""
+        return None
     latest_tuple = tuple(int(part) for part in latest_match.groups())
     required_tuple = tuple(int(part) for part in required_match.groups())
     if latest_tuple <= required_tuple:
-        return ""
-    return (
-        f"Spec Kit update metadata: required={required}, latest={latest}. Report this in the next "
-        "operator summary; never install or upgrade automatically."
+        return None
+    return SpeckitUpdateNotice(
+        version=latest,
+        message=(
+            f"Spec Kit update metadata: required={required}, latest={latest}. Report this in the next "
+            "operator summary; never install or upgrade automatically."
+        ),
     )
 
 
@@ -2114,7 +2125,7 @@ def execute_live_tick_actions(
     verify_delay: float,
     sleep_fn: Callable[[float], None] = time.sleep,
     persist_state: Callable[[dict[str, Any]], None] | None = None,
-    speckit_update_notice: str = "",
+    speckit_update_notice: SpeckitUpdateNotice | None = None,
 ) -> tuple[list[TickActionResult], bool]:
     LiveScreenState, wait_selected, session_limit_reset, classify_screen = _load_cli_screen_api()
     observations = build_live_tick_plan(sessions, coordinator_keys, now=now)
@@ -2124,6 +2135,12 @@ def execute_live_tick_actions(
         raise LiveReadError("tick state sessions must be an object")
     changed = False
     results: list[TickActionResult] = []
+    pending_update = speckit_update_notice
+    if (
+        pending_update is not None
+        and state.get("speckit_update_reported_version") == pending_update.version
+    ):
+        pending_update = None
     priorities = {"select_wait": 0, "wake_after_reset": 1, "wake_coordinator": 2}
     ordered = sorted(observations, key=lambda item: priorities.get(item.proposed_action, 2))
 
@@ -2294,12 +2311,22 @@ def execute_live_tick_actions(
                     fresh,
                     _tick_session_limit_wake_message(
                         token,
-                        speckit_update_notice if observation.coordinator else "",
+                        (
+                            pending_update.message
+                            if observation.coordinator and pending_update
+                            else ""
+                        ),
                     ),
                     enter=True,
                     expected_commands=("claude", "claude-code"),
                     allow_coordinator_wrapper=observation.coordinator,
                 )
+                if observation.coordinator and pending_update:
+                    state["speckit_update_reported_version"] = pending_update.version
+                    pending_update = None
+                    changed = True
+                    if persist_state is not None:
+                        persist_state(state)
                 if verify_delay > 0:
                     sleep_fn(verify_delay)
                 post = _capture_one_for_tick(client, fresh, lines)
@@ -2341,7 +2368,9 @@ def execute_live_tick_actions(
             if fresh_state != LiveScreenState.idle:
                 raise LiveReadError(f"coordinator changed to {fresh_state.value} before wake")
             token = _tick_token(now, fresh)
-            message = _tick_wake_message(token, speckit_update_notice)
+            message = _tick_wake_message(
+                token, pending_update.message if pending_update else ""
+            )
             saved.update({"pane_id": fresh.pane_id, "last_wake_at": now, "last_wake_token": token})
             changed = True
             if persist_state is not None:
@@ -2353,6 +2382,12 @@ def execute_live_tick_actions(
                 expected_commands=("claude", "claude-code"),
                 allow_coordinator_wrapper=True,
             )
+            if pending_update:
+                state["speckit_update_reported_version"] = pending_update.version
+                pending_update = None
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
             if verify_delay > 0:
                 sleep_fn(verify_delay)
             post = _capture_one_for_tick(client, fresh, lines)
