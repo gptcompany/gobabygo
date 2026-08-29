@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Add a second control layer above the mechanical iTerm controller.
+Provide one provider-neutral policy core above deterministic control adapters.
 
 The controller stays deterministic and simple:
 
@@ -12,7 +12,9 @@ The controller stays deterministic and simple:
 - auto-approve known prompts
 - enforce turn and retry limits
 
-The supervisor observes controller behavior and handles controller failure modes.
+The iTerm controller may classify and remediate its bounded protocol failures.
+`mesh live tick` observes existing tmux sessions directly and records debounced
+metadata-only transitions. Live observation never remediates or sends input.
 
 ## Problem
 
@@ -42,17 +44,25 @@ Responsibilities:
 - run smoke tests
 - write handoff JSON
 
-### Layer 2: Supervisor
+### Layer 2: Supervisor Core
 
 Observes controller state and classifies anomalies.
 
-Responsibilities:
+Responsibilities shared by adapters:
 
-- read pane dumps, handoffs, timeout context
 - classify controller failure mode
-- apply bounded remediation when known
+- map known failures to bounded remediation policy
 - stop loops
 - write explicit supervisor outcome
+
+### Adapters
+
+- `mesh term`/iTerm2 may execute the existing allowlisted, bounded remediation.
+- `mesh live tick --observe` persists only controlled state, severity, reason,
+  timestamp, and transition history after two matching observations.
+- `mesh live tick --apply` records the same transitions before its existing,
+  separately guarded WAIT and coordinator wake actions.
+- No adapter introduces a second AI process, daemon, database, or router dependency.
 
 ## Supervisor Failure Classes
 
@@ -96,6 +106,9 @@ Examples:
 - Supervisor never edits repo files directly.
 - Supervisor never commits.
 - Supervisor never turns into a free-form orchestration agent.
+- Live supervisor state never contains pane captures.
+- Live observation never sends keyboard input.
+- A missing or unknown remediation mapping fails closed.
 
 ## Outputs
 
@@ -114,4 +127,3 @@ Add supervisor report fields:
   - product failure
   - worker failure
   - controller/supervisor failure
-

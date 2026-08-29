@@ -217,7 +217,8 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | - | `mesh live ensure-codex <repo>` | Locally create/reuse one deterministic native Codex worker; no task is sent |
 | - | `mesh live ensure-antigravity <repo>` | Locally create/reuse one deterministic native Antigravity worker; fixed no-tools bootstrap only |
 | - | `mesh live tick` | Inspect local Claude sessions and print a metadata-only action plan |
-| - | `mesh live tick --apply` | Apply only exact WAIT and idle-coordinator wake actions |
+| - | `mesh live tick --observe` | Persist debounced metadata-only supervisor transitions; never send input |
+| - | `mesh live tick --apply` | Record supervisor state, then apply guarded WAIT/session-limit/coordinator wake actions |
 | `wsend <session> <text>` | `mesh live send ...` | Type literal text into the selected pane |
 | `wsend <session> <text> --enter` | `mesh live send ... --enter` | Type text, then send Enter separately |
 | - | `mesh live send <codex-session> <text> --delegation-id <id> --enter` | Deliver and record a metadata-only recovery receipt |
@@ -259,6 +260,15 @@ program of work: specification, clarification, dependency analysis, gates, and
 final decisions stay global, while each implementation or review lane receives
 its exact repo and feature/task only at delegation time. Read-only evidence
 lanes may span repositories before any writer is selected.
+
+For consequential choices, the coordinator uses a bounded decision challenge,
+not an open-ended agent conversation. It freezes one non-secret Spec Kit
+decision artifact under a unique `DECISION_ID`, verifies its SHA-256, and sends
+it to a separate read-only Codex challenger by default. The challenger may run
+at most two rounds and returns objections plus
+`CHALLENGE_VERDICT: ACCEPT|REVISE|ESCALATE`. Claude remains final adjudicator;
+destructive, privileged, security-boundary, material-cost, and unresolved
+product-authority choices return to the operator.
 
 In adaptive coordinator scope, a handoff with multiple tasks, repositories, or
 durable decisions is always program work and must be reconciled into versioned
@@ -567,8 +577,16 @@ or uncertain.
 
 ```bash
 MESH_LIVE_LOCAL=1 mesh live tick --json
+MESH_LIVE_LOCAL=1 mesh live tick --observe --json
 MESH_LIVE_LOCAL=1 mesh live tick --apply
 ```
+
+`--observe` is the shadow supervisor path. It classifies only controlled tmux
+metadata, requires two consecutive observations before a transition, retains at
+most 100 events in the existing mode-0600 tick state file, and never stores pane
+captures or sends input. `--apply` records the same transitions under the same
+lock before evaluating its existing guarded actions, so the installed cron does
+not need a second entry, daemon, database, router, or iTerm2 dependency.
 
 Apply mode has three actions:
 

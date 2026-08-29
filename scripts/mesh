@@ -485,6 +485,7 @@ Usage:
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
   ./scripts/mesh live workflow show <name> [--scope repository|coordinator] [--json]
   ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--workflow direct|speckit|adaptive] [--worker <session>]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --observe [--json]
   ./scripts/mesh term list [--repo <repo-path>] [--output <file>]
   ./scripts/mesh term focus <repo-path> <role>
   ./scripts/mesh term send <repo-path> <role> <text>
@@ -543,6 +544,7 @@ Examples:
   ./scripts/mesh live workflow show speckit --scope coordinator --json
   ./scripts/mesh live coordinator-prompt --repo rektslug --session claude-rektslug-coordinator --worker codex-rektslug
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --json
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --observe --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
@@ -607,6 +609,7 @@ Usage:
   ./scripts/mesh live workflow show <name> [--scope repository|coordinator] [--json]
   ./scripts/mesh live coordinator-prompt <--repo <repo>|--all> --session <name> [--workflow direct|speckit|adaptive] [--worker <session>]
   ./scripts/mesh live tick [--coordinator <session>] [--json]
+  ./scripts/mesh live tick [--coordinator <session>] --observe [--state-file <path>]
   ./scripts/mesh live tick [--coordinator <session>] --apply [--state-file <path>]
 
 Behavior:
@@ -634,9 +637,11 @@ Behavior:
   Repository scope binds one repo at startup; coordinator scope late-binds repo and
   feature/task per concrete delegation while the global workflow remains with the coordinator.
   coordinator-prompt builds the system contract used by the mcoordinator shell helper.
-  tick is local-only and read-only by default; --apply handles only exact selected WAIT menus,
-  exact session-limit banners after their declared reset, and exactly idle coordinators.
-  It recaptures, persists attempts before I/O, verifies, and throttles.
+  tick is local-only and read-only by default. --observe persists only debounced,
+  metadata-only supervisor transitions and never sends input. --apply records the same
+  transitions, then handles only exact selected WAIT menus, exact session-limit banners
+  after their declared reset, and exactly idle coordinators. It recaptures, persists
+  attempts before I/O, verifies, and throttles.
   tick defaults to the invoking tmux owner; do not target router-managed owners.
 
 Env:
@@ -668,6 +673,7 @@ Examples:
   ./scripts/mesh live workflow show speckit --scope coordinator --json
   ./scripts/mesh live coordinator-prompt --repo rektslug --session claude-rektslug-coordinator --worker codex-rektslug
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --json
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --observe --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply
   MESH_MOSH_HOST=sam@10.0.0.2 ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live --host dell-vpn board --lines 0

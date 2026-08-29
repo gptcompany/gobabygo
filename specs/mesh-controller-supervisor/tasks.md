@@ -10,3 +10,7 @@
 - [x] T023: Fix same-window single-role repair discovery and validate it with a live smoke.
 - [x] T024: Add a stable `mesh speckit smoke` wrapper for the validated local regression path.
 - [x] T025: Verify the smoke wrapper expansion and help output locally.
+- [x] T026: Extract the provider-neutral policy and report core.
+- [x] T027: Add debounced metadata-only `mesh live tick --observe` transitions.
+- [x] T028: Record the same transitions in the existing guarded apply/cron path.
+- [x] T029: Add a bounded, immutable `DECISION_ID` challenger contract.

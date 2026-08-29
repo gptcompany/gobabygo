@@ -3293,6 +3293,60 @@ def test_tick_observe_main_persists_without_sending(
     assert "output" not in json.dumps(saved).lower()
 
 
+def test_tick_apply_also_persists_supervisor_observation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_module()
+    worker = module.LiveSession(
+        owner="sam",
+        name="codex-rektslug",
+        pane_id="%2",
+        pane_command="codex",
+        pane_child_command="",
+        output="› ",
+    )
+
+    class NoInputClient:
+        endpoint = module.LiveEndpoint(host="localhost", local=True, users=("sam",))
+
+        def capture(self, targets, lines):
+            return list(targets), []
+
+        def send(self, *args, **kwargs):
+            raise AssertionError("no Claude target means apply must not send pane input")
+
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda args: (NoInputClient(), [worker], []),
+    )
+    state_file = tmp_path / "tick.json"
+
+    rc = module.main(
+        [
+            "--local",
+            "tick",
+            "--apply",
+            "--confirm-observations",
+            "1",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["mode"] == "apply"
+    assert output["supervisor"]["signals"]
+    assert any(
+        item["state"] == "coordinator_missing"
+        for item in output["supervisor"]["events"]
+    )
+    saved = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "supervisor" in saved
+
+
 def _claude_session_limit_screen(reset: str = "12am") -> str:
     return (
         f"⎿  You've hit your session limit · resets {reset} (Asia/Bangkok)\n"

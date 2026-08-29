@@ -3738,6 +3738,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ValueError("tick --verify-delay must be between 0 and 30 seconds")
             with live_tick_state_lock(args.state_file):
                 state = load_live_tick_state(args.state_file)
+                observed_at = time.time()
+                snapshot, supervisor_changed = observe_live_supervisor(
+                    observations,
+                    sessions,
+                    coordinator_keys,
+                    state,
+                    now=observed_at,
+                    confirmations=args.confirm_observations,
+                )
                 speckit_update_notice = load_speckit_update_notice(
                     args.speckit_state_file,
                     args.speckit_lock_file,
@@ -3748,26 +3757,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                     coordinator_keys,
                     state=state,
                     lines=lines,
-                    now=time.time(),
+                    now=observed_at,
                     min_wake_minutes=args.min_wake_minutes,
                     wait_retry_minutes=args.wait_retry_minutes,
                     verify_delay=args.verify_delay,
                     persist_state=lambda value: save_live_tick_state(args.state_file, value),
                     speckit_update_notice=speckit_update_notice,
                 )
-                if changed:
+                if changed or supervisor_changed:
                     save_live_tick_state(args.state_file, state)
             if args.json:
                 print(
                     json.dumps(
                         {
                             "mode": "apply",
+                            "supervisor": {
+                                "signals": [asdict(item) for item in snapshot.signals],
+                                "events": list(snapshot.events),
+                            },
                             "results": [asdict(item) for item in results],
                         },
                         indent=2,
                     )
                 )
             else:
+                print(render_live_supervisor_snapshot(snapshot))
                 print(render_live_tick_results(results))
             failed = any(item.status == "failed" for item in results)
             return 1 if failed or any(item.capture_error for item in captured) else 0
