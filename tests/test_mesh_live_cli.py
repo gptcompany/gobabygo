@@ -2258,6 +2258,16 @@ def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expecte
             True,
         ),
         (
+            "1. Update now\n"
+            "2. Skip this version\n\n"
+            "REVIEW_VERDICT: CHANGES_REQUIRED\n"
+            "WORKER_DONE DLG-NETAUDIT-CODEX-20260829T2010Z\n\n"
+            "─ Worked for 6m 33s ─────────────────────\n\n"
+            "› Ask Codex to do anything\n\n"
+            "  gpt-5.6-sol medium · /repo",
+            True,
+        ),
+        (
             "• I'm working on the delegated review now.\n\n"
             "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n"
             "  gpt-5.6-sol medium · /repo",
@@ -2321,6 +2331,27 @@ def test_codex_delegation_requires_empty_idle_composer(screen: str, expected: bo
     module = _load_module()
 
     assert module.codex_screen_is_ready_for_delegation(screen) is expected
+
+
+def test_codex_completed_screen_with_plain_placeholder_is_supervisor_idle() -> None:
+    module = _load_module()
+    screen = (
+        "1. Update now\n"
+        "2. Skip this version\n\n"
+        "REVIEW_VERDICT: CHANGES_REQUIRED\n"
+        "WORKER_DONE DLG-NETAUDIT-CODEX-20260829T2010Z\n\n"
+        "─ Worked for 6m 33s ─────────────────────\n\n"
+        "› Ask Codex to do anything\n\n"
+        "  gpt-5.6-sol medium · /repo"
+    )
+    worker = module.LiveSession(
+        owner="sam",
+        name="codex-worker",
+        pane_command="codex",
+        output=screen,
+    )
+
+    assert module.session_screen_state(worker) == "idle"
 
 
 def test_antigravity_delegation_requires_current_empty_idle_composer() -> None:
