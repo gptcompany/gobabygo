@@ -3187,6 +3187,103 @@ def test_live_tick_plan_requires_exact_wait_selection_and_idle_coordinator() -> 
     }
 
 
+def test_live_supervisor_observe_reports_missing_workers_after_two_ticks() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="bash",
+        pane_child_command="claude",
+        output="header\n❯ ",
+    )
+    observations = module.build_live_tick_plan(
+        [coordinator], {coordinator.key}, now=100
+    )
+    state = {"version": 1, "sessions": {}}
+
+    first, changed = module.observe_live_supervisor(
+        observations,
+        [coordinator],
+        {coordinator.key},
+        state,
+        now=100,
+        confirmations=2,
+    )
+    second, changed_again = module.observe_live_supervisor(
+        observations,
+        [coordinator],
+        {coordinator.key},
+        state,
+        now=130,
+        confirmations=2,
+    )
+
+    assert changed is True
+    assert changed_again is True
+    assert first.events == ()
+    assert any(item["state"] == "workers_missing" for item in second.events)
+    assert all(not hasattr(item, "output") for item in second.signals)
+
+
+def test_tick_observe_and_apply_are_mutually_exclusive() -> None:
+    module = _load_module()
+
+    with pytest.raises(SystemExit):
+        module._parse_args(["--local", "tick", "--observe", "--apply"])
+
+
+def test_tick_observe_main_persists_without_sending(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="bash",
+        pane_child_command="claude",
+        output="header\n❯ ",
+    )
+
+    class ObserveOnlyClient:
+        endpoint = module.LiveEndpoint(host="localhost", local=True, users=("sam",))
+
+        def capture(self, targets, lines):
+            return list(targets), []
+
+        def send(self, *args, **kwargs):
+            raise AssertionError("tick --observe must never send pane input")
+
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda args: (ObserveOnlyClient(), [coordinator], []),
+    )
+    state_file = tmp_path / "tick.json"
+
+    rc = module.main(
+        [
+            "--local",
+            "tick",
+            "--observe",
+            "--confirm-observations",
+            "1",
+            "--state-file",
+            str(state_file),
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["mode"] == "observe"
+    assert any(item["state"] == "workers_missing" for item in output["events"])
+    saved = json.loads(state_file.read_text(encoding="utf-8"))
+    assert "supervisor" in saved
+    assert "output" not in json.dumps(saved).lower()
+
+
 def _claude_session_limit_screen(reset: str = "12am") -> str:
     return (
         f"⎿  You've hit your session limit · resets {reset} (Asia/Bangkok)\n"

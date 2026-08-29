@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from scripts import mesh_supervisor as module
@@ -52,3 +54,56 @@ def test_report_contains_bounded_policy_and_telemetry() -> None:
         "screen_changed_recently": False,
         "marker_seen_without_ack": False,
     }
+
+
+def test_transitions_require_confirmation_and_recover() -> None:
+    state: dict[str, object] = {"version": 1, "sessions": {}}
+    warning = module.SupervisorSignal(
+        key="fleet/workers",
+        state="workers_missing",
+        severity="warning",
+        reason="no workers",
+    )
+
+    events, _changed = module.record_transitions(
+        [warning], state, observed_at=10, confirmations=2
+    )
+    assert events == []
+    events, _changed = module.record_transitions(
+        [warning], state, observed_at=20, confirmations=2
+    )
+    assert [item.state for item in events] == ["workers_missing"]
+
+    healthy = module.SupervisorSignal(
+        key="fleet/workers",
+        state="healthy",
+        severity="info",
+        reason="one worker",
+    )
+    module.record_transitions([healthy], state, observed_at=30, confirmations=2)
+    events, _changed = module.record_transitions(
+        [healthy], state, observed_at=40, confirmations=2
+    )
+    assert events[0].previous_state == "workers_missing"
+    assert events[0].state == "healthy"
+
+
+def test_transition_history_is_bounded_and_contains_no_capture() -> None:
+    state: dict[str, object] = {"version": 1, "sessions": {}}
+    for index in range(5):
+        signal = module.SupervisorSignal(
+            key="session/sam/coordinator",
+            state=f"state-{index}",
+            severity="warning",
+            reason="metadata only",
+        )
+        module.record_transitions(
+            [signal], state, observed_at=float(index), confirmations=1, max_events=2
+        )
+
+    supervisor = state["supervisor"]
+    assert isinstance(supervisor, dict)
+    events = supervisor["events"]
+    assert isinstance(events, list)
+    assert len(events) == 2
+    assert "output" not in json.dumps(state).lower()

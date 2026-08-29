@@ -22,6 +22,11 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+try:
+    from scripts.mesh_supervisor import SupervisorSignal, record_transitions
+except ModuleNotFoundError:  # Direct execution from scripts/.
+    from mesh_supervisor import SupervisorSignal, record_transitions
+
 
 DEFAULT_WS_HOST = "sam@10.0.0.2"
 DEFAULT_WS_LAN_HOST = "sam@172.23.0.42"
@@ -123,6 +128,12 @@ class TickActionResult:
     status: str
     reason: str
     verified: bool
+
+
+@dataclass(frozen=True)
+class LiveSupervisorSnapshot:
+    signals: tuple[SupervisorSignal, ...]
+    events: tuple[dict[str, Any], ...]
 
 
 class LiveReadError(RuntimeError):
@@ -1776,6 +1787,120 @@ def render_live_tick_plan(observations: Sequence[TickObservation]) -> str:
     return "\n".join(lines)
 
 
+def _is_ai_worker_session(
+    session: LiveSession, coordinator_keys: set[tuple[str, str]]
+) -> bool:
+    if session.key in coordinator_keys:
+        return False
+    commands = {
+        Path(session.pane_command or "").name.lower(),
+        Path(session.pane_child_command or "").name.lower(),
+    }
+    prefixes = ("claude-", "codex-", "antigravity-", "agy-")
+    return bool(commands & {"claude", "claude-code", "codex", "agy", "antigravity"}) or session.name.lower().startswith(prefixes)
+
+
+def build_live_supervisor_signals(
+    observations: Sequence[TickObservation],
+    all_sessions: Sequence[LiveSession],
+    coordinator_keys: set[tuple[str, str]],
+) -> list[SupervisorSignal]:
+    signals: list[SupervisorSignal] = []
+    signals.append(
+        SupervisorSignal(
+            key="fleet/coordinator",
+            state="healthy" if coordinator_keys else "coordinator_missing",
+            severity="info" if coordinator_keys else "critical",
+            reason=(
+                "at least one coordinator session is present"
+                if coordinator_keys
+                else "no coordinator session matched the configured or safe default names"
+            ),
+        )
+    )
+    workers = [
+        item for item in all_sessions if _is_ai_worker_session(item, coordinator_keys)
+    ]
+    signals.append(
+        SupervisorSignal(
+            key="fleet/workers",
+            state="healthy" if workers else "workers_missing",
+            severity="info" if workers else "warning",
+            reason=(
+                f"{len(workers)} AI worker session(s) present"
+                if workers
+                else "no AI worker sessions are present after discovery"
+            ),
+        )
+    )
+    for item in observations:
+        if item.reason == "capture_error":
+            state, severity = "capture_error", "warning"
+        elif item.reason == "pane current command is not Claude":
+            state = "coordinator_not_running" if item.coordinator else "provider_not_running"
+            severity = "critical" if item.coordinator else "warning"
+        elif item.proposed_action == "manual_rate_limit":
+            state, severity = "manual_rate_limit", "warning"
+        elif item.proposed_action == "wake_after_reset":
+            state, severity = "session_limit", "info"
+        elif item.coordinator and item.proposed_action == "wake_coordinator":
+            state, severity = "coordinator_idle", "info"
+        elif item.screen_state in {"busy", "idle"}:
+            state, severity = "healthy", "info"
+        else:
+            state, severity = f"screen_{item.screen_state}", "info"
+        signals.append(
+            SupervisorSignal(
+                key=f"session/{item.owner}/{item.name}",
+                state=state,
+                severity=severity,
+                reason=item.reason,
+            )
+        )
+    return signals
+
+
+def observe_live_supervisor(
+    observations: Sequence[TickObservation],
+    all_sessions: Sequence[LiveSession],
+    coordinator_keys: set[tuple[str, str]],
+    state: dict[str, Any],
+    *,
+    now: float,
+    confirmations: int,
+) -> tuple[LiveSupervisorSnapshot, bool]:
+    signals = build_live_supervisor_signals(
+        observations, all_sessions, coordinator_keys
+    )
+    events, changed = record_transitions(
+        signals,
+        state,
+        observed_at=now,
+        confirmations=confirmations,
+        max_events=100,
+    )
+    return LiveSupervisorSnapshot(
+        signals=tuple(signals),
+        events=tuple(asdict(item) for item in events),
+    ), changed
+
+
+def render_live_supervisor_snapshot(snapshot: LiveSupervisorSnapshot) -> str:
+    lines = ["mesh live tick: observe (no input)"]
+    for signal in snapshot.signals:
+        lines.append(
+            f"{signal.key} state={signal.state} severity={signal.severity} reason={signal.reason}"
+        )
+    for event in snapshot.events:
+        lines.append(
+            f"event {event['key']} {event['previous_state'] or '-'}->{event['state']} "
+            f"severity={event['severity']}"
+        )
+    if not snapshot.events:
+        lines.append("events: none (waiting for confirmation or no transition)")
+    return "\n".join(lines)
+
+
 def _tick_state_key(owner: str, name: str) -> str:
     return f"{owner}/{name}"
 
@@ -3384,10 +3509,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     tick.add_argument("--lines", type=int, default=160, help="Captured lines per Claude session.")
     tick.add_argument("--json", action="store_true", help="Emit metadata-only structured JSON.")
-    tick.add_argument(
+    tick_mode = tick.add_mutually_exclusive_group()
+    tick_mode.add_argument(
         "--apply",
         action="store_true",
         help="Apply exact WAIT, post-reset wake, and idle-coordinator actions.",
+    )
+    tick_mode.add_argument(
+        "--observe",
+        action="store_true",
+        help="Persist debounced metadata-only transitions without sending pane input.",
     )
     tick.add_argument(
         "--state-file",
@@ -3409,6 +3540,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     tick.add_argument("--min-wake-minutes", type=int, default=25)
     tick.add_argument("--wait-retry-minutes", type=int, default=60)
     tick.add_argument("--verify-delay", type=float, default=1.0)
+    tick.add_argument(
+        "--confirm-observations",
+        type=int,
+        default=2,
+        help="Consecutive identical observations required for a supervisor transition.",
+    )
     args = parser.parse_args(argv)
     if args.cmd == "tick" and not args.users:
         args.users = _current_username()
@@ -3540,6 +3677,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             captured, capture_warnings = client.capture(targets, lines)
             _print_warnings(capture_warnings)
             observations = build_live_tick_plan(captured, coordinator_keys)
+            if args.confirm_observations < 1 or args.confirm_observations > 5:
+                raise ValueError("tick --confirm-observations must be between 1 and 5")
+            if args.observe:
+                with live_tick_state_lock(args.state_file):
+                    state = load_live_tick_state(args.state_file)
+                    snapshot, changed = observe_live_supervisor(
+                        observations,
+                        sessions,
+                        coordinator_keys,
+                        state,
+                        now=time.time(),
+                        confirmations=args.confirm_observations,
+                    )
+                    if changed:
+                        save_live_tick_state(args.state_file, state)
+                if args.json:
+                    print(
+                        json.dumps(
+                            {
+                                "mode": "observe",
+                                "signals": [asdict(item) for item in snapshot.signals],
+                                "events": list(snapshot.events),
+                            },
+                            indent=2,
+                        )
+                    )
+                else:
+                    print(render_live_supervisor_snapshot(snapshot))
+                return 1 if any(item.capture_error for item in captured) else 0
             if not args.apply:
                 if args.json:
                     print(
