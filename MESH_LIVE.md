@@ -186,6 +186,7 @@ Keep the direct controls for diagnosis and deliberate manual intervention:
 
 ```bash
 wboard 30
+wsupervisor
 wbrief --repo rektslug --lines 40
 wbrief --all --lines 30
 wsattach claude-coordinator
@@ -210,6 +211,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | Helper | Native command | Effect |
 | --- | --- | --- |
 | `wboard [query] [lines]` | `mesh live board [query] --lines N` | List/filter sessions; read-only |
+| `wsupervisor [--json]` | remote `mesh live tick --observe` | Fresh supervisor state; never sends pane input |
 | `wpeek <session> [lines]` | `mesh live peek <session> [lines]` | Capture one exact/unique pane; read-only |
 | `wbrief ...` | `mesh live brief ...` | Build a dynamic, redacted coordinator prompt; read-only |
 | `mcoordinator ...` | `mesh live coordinator-prompt ...` | Create/attach a persistent auto-configured Claude coordinator |

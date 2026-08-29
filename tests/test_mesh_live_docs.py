@@ -44,6 +44,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
 
     for required in (
         "wboard 30",
+        "wsupervisor",
         "wbrief --repo rektslug",
         "wbrief --all",
         "wsattach claude-coordinator",

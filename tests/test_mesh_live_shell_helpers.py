@@ -110,6 +110,61 @@ wsattach claude-rektslug --owner sam
 
 
 @pytest.mark.parametrize("shell", _shells())
+def test_wsupervisor_runs_canonical_runtime_locally(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    mesh = tmp_path / "mesh"
+    mesh.write_text(
+        "#!/bin/sh\nprintf 'local=%s args=%s\\n' \"${MESH_LIVE_LOCAL:-}\" \"$*\"\n",
+        encoding="utf-8",
+    )
+    mesh.chmod(0o755)
+    proc = _run_shell(
+        shell,
+        f"source {helper}\n"
+        f"MESH_COORDINATOR_MESH_SCRIPT={shlex.quote(str(mesh))} "
+        "wsupervisor --json\n",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "local=1 args=live tick --observe --json"
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_wsupervisor_uses_bounded_remote_command(shell: str, tmp_path: Path) -> None:
+    helper = shlex.quote(str(HELPERS))
+    capture_file = tmp_path / "ssh-args"
+    _fake_capture_command(tmp_path, "ssh")
+    proc = _run_shell(
+        shell,
+        f"""
+export PATH={shlex.quote(str(tmp_path))}:$PATH
+export CAPTURE_FILE={shlex.quote(str(capture_file))}
+source {helper}
+_ws_control_host() {{ printf '%s' 'sam@172.23.0.42'; }}
+_mesh_collect_ssh_opts() {{ :; }}
+MESH_COORDINATOR_MESH_SCRIPT=/runtime/scripts/mesh wsupervisor
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert capture_file.read_text(encoding="utf-8").splitlines() == [
+        "<-o>",
+        "<BatchMode=yes>",
+        "<sam@172.23.0.42>",
+        "<MESH_LIVE_LOCAL=1 /runtime/scripts/mesh live tick --observe>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_wsupervisor_rejects_unknown_options(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(shell, f"source {helper}\nwsupervisor --follow\n")
+
+    assert proc.returncode == 2
+    assert "Usage: wsupervisor [--json]" in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_wsattach_leaves_transport_auto_when_no_direct_host_exists(shell: str) -> None:
     helper = shlex.quote(str(HELPERS))
     proc = _run_shell(

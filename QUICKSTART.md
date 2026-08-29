@@ -210,6 +210,7 @@ source ~/.zshrc   # or source ~/.bashrc on bash hosts
 This enables:
 - `wss` / `wss <repo>` (quick SSH to WS using the reachable LAN/VPN fallback)
 - `wboard [query] [lines]` (live tmux board via `mesh live`, router/iTerm2 independent)
+- `wsupervisor [--json]` (fresh supervisor snapshot from the Dell; no pane input)
 - `wpeek <tmux-session> [lines]` (read one live tmux pane)
 - `wsend <tmux-session> [text] [--enter]` (literal send; Enter is always explicit)
 - `wbrief [--repo <repo>|--all]` (redacted dynamic prompt for coordinator debate and delegation)
@@ -269,6 +270,7 @@ python -m src.meshctl task cancel <task-id> --reason "stuck queued"
 python -m src.meshctl task fail <task-id> --reason "stuck review"
 wss <repo>
 wboard 40
+wsupervisor
 wpeek claude-rektslug 120
 wsend claude-rektslug "status?" --enter
 wbrief --repo rektslug

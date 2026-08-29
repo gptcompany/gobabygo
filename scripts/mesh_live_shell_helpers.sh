@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shell helpers for direct tmux operations on the workstation.
 
-unalias wboard wpeek wsend wbrief wsattach wsessions 2>/dev/null || true
+unalias wboard wpeek wsend wbrief wsattach wsessions wsupervisor 2>/dev/null || true
 unalias wtmux wclaude wcodex mtmux mclaude mcodex mcoordinator 2>/dev/null || true
 
 _mesh_live_run() {
@@ -199,6 +199,31 @@ wsattach() {
 
 wsessions() {
   _mesh_live_control_run live board --lines 0 "$@"
+}
+
+wsupervisor() {
+  local control_host repo_base remote_mesh remote_command opt
+  local -a args=(live tick --observe) ssh_opts=()
+  if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--json" ) ]]; then
+    echo "Usage: wsupervisor [--json]" >&2
+    return 2
+  fi
+  [[ "${1:-}" == "--json" ]] && args+=(--json)
+  repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
+  remote_mesh="${MESH_COORDINATOR_MESH_SCRIPT:-${repo_base}/gobabygo-runtime/scripts/mesh}"
+  if [[ -x "$remote_mesh" ]]; then
+    MESH_LIVE_LOCAL=1 command "$remote_mesh" "${args[@]}"
+    return $?
+  fi
+  control_host="$(_ws_control_host)" || return $?
+  if command -v _mesh_collect_ssh_opts >/dev/null 2>&1; then
+    while IFS= read -r -d '' opt; do
+      ssh_opts+=("$opt")
+    done < <(_mesh_collect_ssh_opts)
+  fi
+  printf -v remote_command 'MESH_LIVE_LOCAL=1 %q live tick --observe' "$remote_mesh"
+  [[ "${1:-}" == "--json" ]] && remote_command+=" --json"
+  command ssh "${ssh_opts[@]}" -o BatchMode=yes "$control_host" "$remote_command"
 }
 
 _ws_remote_resume_guard() {
