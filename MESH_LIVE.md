@@ -472,6 +472,12 @@ a task digest. Only the latest tracked delivery per pane is retained; any later
 Gobabygo input to that Codex pane invalidates it before sending. This keeps remote
 keyboard input bounded and auditable.
 
+For Claude, a text send with `--enter` waits one second between literal text and
+the separate Enter key. This bounded paste-settle also applies when a marked
+resumed coordinator exposes a shell wrapper with one direct Claude child. It
+does not retry, resend text, or delay Enter-only operations, Codex, or
+Antigravity.
+
 Tracked Antigravity sends use the same exact `DELEGATION_ID`, but do not create a
 recovery receipt. Mesh recaptures the visible pane and proceeds only when the
 current Antigravity footer is the observed empty idle composer (`>` plus
@@ -600,7 +606,7 @@ records the same transitions under the same lock before evaluating its existing
 guarded actions, so the installed cron does not need a second entry, daemon,
 database, router, or iTerm2 dependency.
 
-Apply mode has four actions:
+Apply mode has five actions:
 
 1. It sends Enter only when the exact Claude rate-limit menu is present and
    `Stop and wait for limit to reset` is already the selected option.
@@ -624,6 +630,14 @@ Apply mode has four actions:
    disappeared. Altered or ambiguous prompts fail closed. This policy never
    applies to trust, permissions, authentication, destructive confirmation,
    billing, or project decisions.
+5. It requests `/compact` before waking a marked coordinator only when Claude's
+   exact `/context-action` footer reports at least 90% usage and the current
+   composer is empty and idle. The attempt is persisted before input and is not
+   repeated for the same screen. While `Compacting conversation` remains
+   visible, the supervisor reports `coordinator_compacting` and never treats the
+   empty composer as idle. A stalled compaction is a warning requiring a durable
+   handoff and controlled fresh-session rotation; Mesh never sends `/clear` or
+   kills/replaces the coordinator automatically.
 
 Before any send, tick recaptures the same pane, revalidates its state, and
 requires the pane to still belong to the discovered session with the expected
@@ -661,7 +675,7 @@ I/O; an uncertain delivery is not retried automatically. The attempt tombstone
 is retained until a later tick observes that the pane is no longer on the exact
 session-limit screen, preventing stale scrollback from triggering a duplicate.
 
-Install the opt-in 30-minute user cron from the clean Dell runtime, not from the
+Install the opt-in 5-minute user cron from the clean Dell runtime, not from the
 Mac checkout:
 
 ```bash
@@ -691,8 +705,11 @@ after key delivery and reports it once; a newer release becomes reportable
 again. An update never creates its own wake and is never sent to worker panes.
 Reinstalling the managed block is idempotent.
 
-The default schedule gives a maximum polling delay of about 30 minutes after
-the reset and grace period. The
+The default schedule gives a maximum polling delay of about 5 minutes after a
+review transition, completed compaction, or reset grace period. A verified
+compaction receives one immediate-throttle exception on the next tick; normal
+idle wakes remain throttled to avoid spending coordinator tokens every five
+minutes. The
 state file is mode `0600` and stores hashes, timestamps, pane IDs, and delivery
 flags only; it never stores pane captures. The command uses an internal
 non-blocking lock, so overlapping cron/manual ticks fail closed. Use an explicit

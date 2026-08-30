@@ -4,7 +4,7 @@ umask 077
 
 BEGIN_MARKER="# >>> gobabygo-mesh-live-tick >>>"
 END_MARKER="# <<< gobabygo-mesh-live-tick <<<"
-INTERVAL=30
+INTERVAL=5
 MESH_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/mesh"
 STATE_FILE="${MESH_LIVE_TICK_STATE:-$HOME/.local/state/gobabygo/mesh-live-tick.json}"
 SPECKIT_STATE_FILE="${MESH_SPECKIT_UPDATE_STATE:-$HOME/.local/state/gobabygo/speckit-update.json}"

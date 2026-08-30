@@ -35,6 +35,8 @@ DEFAULT_SPECKIT_UPDATE_STATE_FILE = "~/.local/state/gobabygo/speckit-update.json
 DEFAULT_SPECKIT_LOCK_FILE = str(Path(__file__).resolve().parents[1] / "config" / "speckit.lock.json")
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
 SESSION_LIMIT_SCHEDULE_VERSION = 2
+CLAUDE_PASTE_SETTLE_SECONDS = 1.0
+CLAUDE_CONTEXT_COMPACT_THRESHOLD = 90
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
 CODEX_RECOVERY_VERIFY_INTERVAL = 0.25
 CODEX_DELIVERY_RECEIPT_MAX_AGE = 15 * 60
@@ -529,18 +531,17 @@ def _send_target(
     current_command = Path(target_parts[1]).name.lower()
     expected = {Path(str(item)).name.lower() for item in expected_commands if str(item).strip()}
     effective_command = current_command
+    coordinator_child = ""
     if (
-        expected
-        and effective_command not in expected
-        and allow_coordinator_wrapper
+        (allow_coordinator_wrapper or not expected)
         and current_command in {"bash", "zsh", "sh", "fish"}
         and _tmux_environment(prefix, name, "MESH_LIVE_COORDINATOR") == "1"
     ):
-        child_command = _pane_direct_child_command(
+        coordinator_child = _pane_direct_child_command(
             prefix, target_parts[2] if len(target_parts) == 3 else ""
         )
-        if child_command in expected:
-            effective_command = child_command
+        if allow_coordinator_wrapper and expected and coordinator_child in expected:
+            effective_command = coordinator_child
     if expected and effective_command not in expected:
         return {
             "error": (
@@ -569,6 +570,9 @@ def _send_target(
                 return {"error": redact_capture(detail)}
 
         if enter:
+            settle_command = coordinator_child or effective_command
+            if text and settle_command in {"claude", "claude-code"}:
+                time.sleep(CLAUDE_PASTE_SETTLE_SECONDS)
             try:
                 proc = _run_command([*prefix, "tmux", "send-keys", "-t", tmux_target, "Enter"])
             except (OSError, subprocess.SubprocessError) as exc:
@@ -1638,6 +1642,34 @@ def session_screen_state(session: LiveSession) -> str:
     return str(classify_screen(provider, session.output).value)
 
 
+def claude_context_usage_percent(screen: str) -> int | None:
+    lines = str(screen or "").splitlines()[-10:]
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index]
+        if "\U0001f9e0" not in line or "/context-action" not in line:
+            continue
+        if not any("\u23f5\u23f5" in item for item in lines[index + 1 : index + 4]):
+            continue
+        match = re.search(r"\b(\d{1,3})%\s*[^\r\n]*?/context-action\b", line)
+        if match is None:
+            continue
+        value = int(match.group(1))
+        return value if 0 <= value <= 100 else None
+    return None
+
+
+def claude_compaction_in_progress(screen: str) -> bool:
+    value = str(screen or "")
+    matches = list(
+        re.finditer(r"(?m)^\s*\u25cf Compacting conversation(?:\u2026|\.\.\.)", value)
+    )
+    if not matches:
+        return False
+    compacting = matches[-1].start()
+    usage = value.rfind("/context-action")
+    return usage > compacting and claude_context_usage_percent(value) is not None
+
+
 def session_activity_age_seconds(
     session: LiveSession, *, now: float | None = None
 ) -> int | None:
@@ -1770,12 +1802,17 @@ def build_live_tick_plan(
             continue
 
         state = classify_screen("claude", session.output)
+        context_usage = claude_context_usage_percent(session.output) if is_coordinator else None
+        compacting = is_coordinator and claude_compaction_in_progress(session.output)
         if session.capture_error:
             action = "none"
             reason = "capture_error"
         elif not _is_running_claude(session):
             action = "none"
             reason = "pane current command is not Claude"
+        elif compacting:
+            action = "none"
+            reason = f"coordinator context compaction is in progress at {context_usage}%"
         elif state == LiveScreenState.rate_limit:
             if wait_selected(session.output):
                 action = "select_wait"
@@ -1798,8 +1835,12 @@ def build_live_tick_plan(
                     action = "wake_after_reset"
                     reason = "exact Claude session-limit banner; wait for declared reset"
         elif is_coordinator and state == LiveScreenState.idle:
-            action = "wake_coordinator"
-            reason = "coordinator is at an empty idle prompt"
+            if context_usage is not None and context_usage >= CLAUDE_CONTEXT_COMPACT_THRESHOLD:
+                action = "compact_coordinator"
+                reason = f"coordinator context usage is {context_usage}% at an empty idle prompt"
+            else:
+                action = "wake_coordinator"
+                reason = "coordinator is at an empty idle prompt"
         else:
             action = "none"
             reason = f"screen state is {state.value}"
@@ -1903,6 +1944,10 @@ def build_live_supervisor_signals(
             state, severity = "manual_rate_limit", "warning"
         elif item.proposed_action == "wake_after_reset":
             state, severity = "session_limit", "info"
+        elif item.coordinator and item.proposed_action == "compact_coordinator":
+            state, severity = "coordinator_context_exhausted", "warning"
+        elif item.coordinator and "context compaction is in progress" in item.reason:
+            state, severity = "coordinator_compacting", "warning"
         elif item.coordinator and item.proposed_action == "wake_coordinator":
             state, severity = "coordinator_idle", "info"
         elif item.screen_state in {"busy", "idle"}:
@@ -2221,7 +2266,8 @@ def execute_live_tick_actions(
         "dismiss_antigravity_survey": 0,
         "select_wait": 1,
         "wake_after_reset": 2,
-        "wake_coordinator": 3,
+        "compact_coordinator": 3,
+        "wake_coordinator": 4,
     }
     ordered = sorted(observations, key=lambda item: priorities.get(item.proposed_action, 2))
 
@@ -2255,6 +2301,7 @@ def execute_live_tick_actions(
             "dismiss_antigravity_survey",
             "select_wait",
             "wake_after_reset",
+            "compact_coordinator",
             "wake_coordinator",
         }:
             results.append(
@@ -2335,6 +2382,67 @@ def execute_live_tick_actions(
                 continue
 
             fresh_state = classify_screen("claude", fresh.output)
+            if observation.proposed_action == "compact_coordinator":
+                usage = claude_context_usage_percent(fresh.output)
+                fingerprint = _tick_screen_fingerprint(fresh.output)
+                if (
+                    fresh_state != LiveScreenState.idle
+                    or usage is None
+                    or usage < CLAUDE_CONTEXT_COMPACT_THRESHOLD
+                    or claude_compaction_in_progress(fresh.output)
+                ):
+                    raise LiveReadError("coordinator context screen changed before compaction")
+                if saved.get("compact_fingerprint") == fingerprint:
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="compact_coordinator",
+                            status="throttled",
+                            reason="context compaction was already attempted for this screen",
+                            verified=False,
+                        )
+                    )
+                    continue
+                saved.update(
+                    {
+                        "pane_id": fresh.pane_id,
+                        "compact_fingerprint": fingerprint,
+                        "compact_attempted_at": now,
+                    }
+                )
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
+                client.send(
+                    fresh,
+                    "/compact",
+                    enter=True,
+                    expected_commands=("claude", "claude-code"),
+                    allow_coordinator_wrapper=True,
+                )
+                if verify_delay > 0:
+                    sleep_fn(verify_delay)
+                post = _capture_one_for_tick(client, fresh, lines)
+                verified = claude_compaction_in_progress(post.output)
+                saved["compact_verified"] = verified
+                results.append(
+                    TickActionResult(
+                        owner=session.owner,
+                        name=session.name,
+                        pane_id=session.pane_id,
+                        action="compact_coordinator",
+                        status="applied",
+                        reason=(
+                            "context compaction started"
+                            if verified
+                            else "context compaction requested; start unverified"
+                        ),
+                        verified=verified,
+                    )
+                )
+                continue
             if observation.proposed_action == "select_wait":
                 fingerprint = _tick_screen_fingerprint(fresh.output)
                 last_attempt = float(saved.get("wait_attempt_at") or 0)
@@ -2510,7 +2618,8 @@ def execute_live_tick_actions(
 
             last_wake = float(saved.get("last_wake_at") or 0)
             wake_after = max(1, min_wake_minutes) * 60
-            if (now - last_wake) < wake_after:
+            resume_after_compaction = saved.get("compact_verified") is True
+            if not resume_after_compaction and (now - last_wake) < wake_after:
                 results.append(
                     TickActionResult(
                         owner=session.owner,
@@ -2529,6 +2638,13 @@ def execute_live_tick_actions(
             message = _tick_wake_message(
                 token, pending_update.message if pending_update else ""
             )
+            if resume_after_compaction:
+                for compact_key in (
+                    "compact_fingerprint",
+                    "compact_attempted_at",
+                    "compact_verified",
+                ):
+                    saved.pop(compact_key, None)
             saved.update({"pane_id": fresh.pane_id, "last_wake_at": now, "last_wake_token": token})
             changed = True
             if persist_state is not None:
@@ -3355,7 +3471,9 @@ def build_live_coordinator_system_prompt(
             "WORKER_DONE or WORKER_BLOCKED: the delegated task and composer may echo both strings. Accept status only "
             "from one exact standalone line with the current DELEGATION_ID in the latest worker-authored response after "
             "delegation. Ignore task/brief echoes, quoted text, history, and composer content; ambiguous evidence remains active or uncertain.",
-            "13. When context is nearly exhausted, require a durable handoff in the target repository before more work.",
+            "13. Keep coordinator program state durable after each accepted decision, delegation, and reviewed result. "
+            "When context is nearly exhausted, stop new delegation, reconcile that state and write a concise handoff "
+            "before more work; do not rely on Claude auto-compaction as the only recovery path.",
             "14. After writer completion, inspect git status, diff, commit, and relevant test evidence yourself, then run the mandatory code-review protocol.",
             "15. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision with the frozen scope and review verdict.",
             "16. Continue until the accepted objective is professionally closed: all dependency-ready work is complete, required tests and independent reviews pass, accepted corrections are verified, authoritative tasks are reconciled, and authorized commits/pushes are accounted for. If progress is impossible, report the exact blocker and preserved handoff instead of becoming silently idle.",

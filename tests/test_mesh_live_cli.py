@@ -502,10 +502,12 @@ def test_send_rejects_empty_multiline_control_and_oversized_text() -> None:
 def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
     module = _load_module()
     commands: list[list[str]] = []
+    events: list[tuple[str, object]] = []
     hostile = "$(touch /tmp/not-created); --help"
 
     def fake_run(args: list[str], *, timeout: float = 10.0):
         commands.append(args)
+        events.append(("command", args))
         if "display-message" in args:
             return _completed(
                 args,
@@ -515,6 +517,7 @@ def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: events.append(("sleep", seconds)))
 
     result = module.handle_remote_request(
         {
@@ -541,6 +544,11 @@ def test_remote_send_uses_literal_text_then_explicit_enter(monkeypatch) -> None:
         ["tmux", "send-keys", "-t", "%7", "-l", "--", hostile],
         ["tmux", "send-keys", "-t", "%7", "Enter"],
     ]
+    assert events[-3:] == [
+        ("command", ["tmux", "send-keys", "-t", "%7", "-l", "--", hostile]),
+        ("sleep", module.CLAUDE_PASTE_SETTLE_SECONDS),
+        ("command", ["tmux", "send-keys", "-t", "%7", "Enter"]),
+    ]
 
 
 def test_send_accepts_claude_child_only_for_marked_coordinator_wrapper(monkeypatch) -> None:
@@ -561,6 +569,8 @@ def test_send_accepts_claude_child_only_for_marked_coordinator_wrapper(monkeypat
 
     monkeypatch.setattr(module, "_current_username", lambda: "sam")
     monkeypatch.setattr(module, "_run_command", fake_run)
+    sleeps: list[float] = []
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
     target = {"owner": "sam", "name": "claude-coordinator", "pane_id": "%2"}
 
     accepted = module._send_target(
@@ -572,6 +582,15 @@ def test_send_accepts_claude_child_only_for_marked_coordinator_wrapper(monkeypat
     )
     assert accepted["enter_sent"] is True
     assert any("send-keys" in command for command in commands)
+    assert sleeps == [module.CLAUDE_PASTE_SETTLE_SECONDS]
+
+    commands.clear()
+    generic = module._send_target(target, "operator message", enter=True)
+    assert generic["enter_sent"] is True
+    assert sleeps == [
+        module.CLAUDE_PASTE_SETTLE_SECONDS,
+        module.CLAUDE_PASTE_SETTLE_SECONDS,
+    ]
 
     coordinator_marker = ""
     commands.clear()
@@ -584,6 +603,30 @@ def test_send_accepts_claude_child_only_for_marked_coordinator_wrapper(monkeypat
     )
     assert "expected claude,claude-code, found bash" in refused["error"]
     assert not any("send-keys" in command for command in commands)
+
+
+def test_enter_only_and_codex_send_do_not_use_claude_paste_settle(monkeypatch) -> None:
+    module = _load_module()
+    current_command = "claude"
+    sleeps: list[float] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(["worker", current_command, "123"]) + "\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    target = {"owner": "sam", "name": "worker", "pane_id": "%3"}
+
+    assert module._send_target(target, "", enter=True)["enter_sent"] is True
+    current_command = "codex"
+    assert module._send_target(target, "review", enter=True)["enter_sent"] is True
+    assert sleeps == []
 
 
 def test_codex_preflight_capture_preserves_terminal_style(monkeypatch) -> None:
@@ -3255,6 +3298,129 @@ def test_live_tick_plan_requires_exact_wait_selection_and_idle_coordinator() -> 
         "claude-worker-ambiguous": "manual_rate_limit",
         "claude-worker-selected": "select_wait",
     }
+
+
+def test_live_tick_prioritizes_context_compaction_and_never_wakes_during_it() -> None:
+    module = _load_module()
+    footer = (
+        "sam@host:/coordination [Opus] \U0001f9e0 96% WARNING /context-action\n"
+        "\u23f5\u23f5 bypass permissions\n❯ "
+    )
+    exhausted = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output=footer,
+    )
+    compacting = module.replace(
+        exhausted,
+        output="❯ /compact\n\n\u25cf Compacting conversation...\n  progress 0%\n\n" + footer,
+    )
+
+    exhausted_plan = module.build_live_tick_plan(
+        [exhausted], {exhausted.key}, now=100
+    )
+    compacting_plan = module.build_live_tick_plan(
+        [compacting], {compacting.key}, now=100
+    )
+
+    assert module.claude_context_usage_percent(exhausted.output) == 96
+    assert exhausted_plan[0].proposed_action == "compact_coordinator"
+    assert compacting_plan[0].proposed_action == "none"
+    assert "compaction is in progress" in compacting_plan[0].reason
+    signals = module.build_live_supervisor_signals(
+        compacting_plan, [compacting], {compacting.key}
+    )
+    coordinator_signal = next(item for item in signals if item.key.endswith("claude-coordinator"))
+    assert coordinator_signal.state == "coordinator_compacting"
+    assert coordinator_signal.severity == "warning"
+    decoy = module.replace(
+        exhausted,
+        output="worker prose says 99% /context-action\n❯ ",
+    )
+    assert module.build_live_tick_plan([decoy], {decoy.key})[0].proposed_action == "wake_coordinator"
+
+
+def test_live_tick_requests_context_compaction_once_and_verifies_start() -> None:
+    module = _load_module()
+    exhausted_screen = (
+        "coordinator ready\n❯ \nfooter \U0001f9e0 94% WARNING /context-action\n"
+        "\u23f5\u23f5 bypass permissions"
+    )
+    compacting_screen = (
+        "❯ /compact\n\u25cf Compacting conversation...\n  progress 0%\n"
+        "❯ \nfooter \U0001f9e0 94% WARNING /context-action\n"
+        "\u23f5\u23f5 bypass permissions"
+    )
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output=exhausted_screen,
+    )
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.outputs = [exhausted_screen, compacting_screen]
+            self.sends: list[tuple[str, bool]] = []
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(self, session, text, *, enter, expected_commands=(), allow_coordinator_wrapper=False):
+            assert expected_commands == ("claude", "claude-code")
+            assert allow_coordinator_wrapper is True
+            self.sends.append((text, enter))
+            return {}
+
+    state = {"version": 1, "sessions": {}}
+    client = FakeClient()
+    persisted: list[dict] = []
+    results, changed = module.execute_live_tick_actions(
+        client,
+        [coordinator],
+        {coordinator.key},
+        state=state,
+        lines=160,
+        now=1000,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        persist_state=lambda value: persisted.append(json.loads(json.dumps(value))),
+    )
+
+    assert changed is True
+    assert client.sends == [("/compact", True)]
+    assert [(item.action, item.status, item.verified) for item in results] == [
+        ("compact_coordinator", "applied", True)
+    ]
+    saved = state["sessions"]["sam/claude-coordinator"]
+    assert saved["compact_attempted_at"] == 1000
+    assert saved["compact_verified"] is True
+    assert persisted[0]["sessions"]["sam/claude-coordinator"]["compact_attempted_at"] == 1000
+
+    resumed_screen = "compacted coordinator\n❯ "
+    resume_client = FakeClient()
+    resume_client.outputs = [resumed_screen, "* Working"]
+    resumed = module.replace(coordinator, output=resumed_screen)
+    resume_results, _ = module.execute_live_tick_actions(
+        resume_client,
+        [resumed],
+        {resumed.key},
+        state=state,
+        lines=160,
+        now=1001,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert resume_results[0].action == "wake_coordinator"
+    assert resume_results[0].status == "applied"
+    assert resume_client.sends[0][0].startswith("MESH_LIVE_TICK id=")
+    assert "compact_verified" not in saved
 
 
 def test_live_supervisor_observe_reports_missing_workers_after_two_ticks() -> None:

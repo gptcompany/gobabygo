@@ -117,6 +117,7 @@ def test_cron_installer_dry_run_does_not_modify_crontab(tmp_path: Path) -> None:
     )
 
     assert proc.returncode == 0, proc.stderr
+    assert "*/5 * * * * MESH_LIVE_LOCAL=1" in proc.stdout
     assert "live tick --apply" in proc.stdout
     assert store.read_text(encoding="utf-8") == original
 
