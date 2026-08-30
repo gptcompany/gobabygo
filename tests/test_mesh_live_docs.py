@@ -128,6 +128,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "waits one second between literal text",
         "at least 90% usage",
         "coordinator_compacting",
+        "stty -ixon",
         "never sends `/clear`",
         "one literal line up to 8192 characters",
         "non-secret brief inside the target repository",

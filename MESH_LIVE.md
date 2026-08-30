@@ -634,10 +634,16 @@ Apply mode has five actions:
    exact `/context-action` footer reports at least 90% usage and the current
    composer is empty and idle. The attempt is persisted before input and is not
    repeated for the same screen. While `Compacting conversation` remains
-   visible, the supervisor reports `coordinator_compacting` and never treats the
-   empty composer as idle. A stalled compaction is a warning requiring a durable
+   visible with its progress bar, including when Claude changes the context
+   footer to `???`, the supervisor reports `coordinator_compacting` and never
+   treats the empty composer or queued-message prompt as idle. A stalled compaction is a warning requiring a durable
    handoff and controlled fresh-session rotation; Mesh never sends `/clear` or
    kills/replaces the coordinator automatically.
+
+New coordinator sessions disable terminal XON/XOFF with `stty -ixon` before
+launching Claude. This prevents an accidental `Ctrl+S` from freezing pane
+rendering and delaying all tmux-delivered input; it does not alter existing
+sessions or intercept any other key.
 
 Before any send, tick recaptures the same pane, revalidates its state, and
 requires the pane to still belong to the discovered session with the expected

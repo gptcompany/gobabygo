@@ -3315,7 +3315,11 @@ def test_live_tick_prioritizes_context_compaction_and_never_wakes_during_it() ->
     )
     compacting = module.replace(
         exhausted,
-        output="❯ /compact\n\n\u25cf Compacting conversation...\n  progress 0%\n\n" + footer,
+        output=(
+            "❯ /compact\n\n\u25cf Compacting conversation...\n"
+            "  ▰▰▰▱▱ 16%\n\n❯ Press up to edit queued messages\n"
+            "footer \U0001f9e0 ???\n\u23f5\u23f5 bypass permissions"
+        ),
     )
 
     exhausted_plan = module.build_live_tick_plan(
@@ -3327,6 +3331,7 @@ def test_live_tick_prioritizes_context_compaction_and_never_wakes_during_it() ->
 
     assert module.claude_context_usage_percent(exhausted.output) == 96
     assert exhausted_plan[0].proposed_action == "compact_coordinator"
+    assert module.claude_compaction_in_progress(compacting.output) is True
     assert compacting_plan[0].proposed_action == "none"
     assert "compaction is in progress" in compacting_plan[0].reason
     signals = module.build_live_supervisor_signals(
@@ -3340,6 +3345,11 @@ def test_live_tick_prioritizes_context_compaction_and_never_wakes_during_it() ->
         output="worker prose says 99% /context-action\n❯ ",
     )
     assert module.build_live_tick_plan([decoy], {decoy.key})[0].proposed_action == "wake_coordinator"
+    completed = module.replace(
+        compacting,
+        output=compacting.output + "\n\u23bf Compacted (ctrl+o to see full summary)\n❯ ",
+    )
+    assert module.claude_compaction_in_progress(completed.output) is False
 
 
 def test_live_tick_requests_context_compaction_once_and_verifies_start() -> None:
@@ -3349,9 +3359,8 @@ def test_live_tick_requests_context_compaction_once_and_verifies_start() -> None
         "\u23f5\u23f5 bypass permissions"
     )
     compacting_screen = (
-        "❯ /compact\n\u25cf Compacting conversation...\n  progress 0%\n"
-        "❯ \nfooter \U0001f9e0 94% WARNING /context-action\n"
-        "\u23f5\u23f5 bypass permissions"
+        "❯ /compact\n\u25cf Compacting conversation...\n  ▰▱▱ 0%\n"
+        "❯ \nfooter \U0001f9e0 ???\n\u23f5\u23f5 bypass permissions"
     )
     coordinator = module.LiveSession(
         owner="sam",

@@ -360,6 +360,9 @@ if [[ -n "$STARTUP" ]]; then
   {
     printf "#!/usr/bin/env bash\n"
     printf "rm -f -- \\\"%s\\\"\n" "$start_file"
+    if [[ "$SESSION_KIND" == "coordinator" ]]; then
+      printf "stty -ixon 2>/dev/null || true\n"
+    fi
     printf "%s\n" "$session_command"
   } >"$start_file"
   printf -v start_file_q "%q" "$start_file"

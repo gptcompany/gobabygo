@@ -1659,15 +1659,18 @@ def claude_context_usage_percent(screen: str) -> int | None:
 
 
 def claude_compaction_in_progress(screen: str) -> bool:
-    value = str(screen or "")
+    value = "\n".join(str(screen or "").splitlines()[-40:])
     matches = list(
         re.finditer(r"(?m)^\s*\u25cf Compacting conversation(?:\u2026|\.\.\.)", value)
     )
     if not matches:
         return False
-    compacting = matches[-1].start()
-    usage = value.rfind("/context-action")
-    return usage > compacting and claude_context_usage_percent(value) is not None
+    trailing = value[matches[-1].end() :]
+    if re.search(r"(?m)^\s*\u23bf\s+Compacted\b", trailing):
+        return False
+    return re.search(
+        r"(?m)^\s*[▰▱]+\s+(?:100|[1-9]?\d)%\s*$", trailing
+    ) is not None
 
 
 def session_activity_age_seconds(

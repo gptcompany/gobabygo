@@ -1167,6 +1167,7 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
     assert "tmux kill-session" not in command
     assert "mesh-live-session-start" in command
     assert 'chmod 600 "$start_file"' in command
+    assert 'printf "stty -ixon 2>/dev/null || true' in command
     assert '"bash $start_file_q"' in command
     assert "rm -f --" in command
 
