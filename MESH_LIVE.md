@@ -606,7 +606,7 @@ records the same transitions under the same lock before evaluating its existing
 guarded actions, so the installed cron does not need a second entry, daemon,
 database, router, or iTerm2 dependency.
 
-Apply mode has five actions:
+Apply mode has six actions:
 
 1. It sends Enter only when the exact Claude rate-limit menu is present and
    `Stop and wait for limit to reset` is already the selected option.
@@ -639,6 +639,14 @@ Apply mode has five actions:
    treats the empty composer or queued-message prompt as idle. A stalled compaction is a warning requiring a durable
    handoff and controlled fresh-session rotation; Mesh never sends `/clear` or
    kills/replaces the coordinator automatically.
+6. It recovers one lost Enter only when the current Claude coordinator composer
+   contains the exact `MESH_LIVE_TICK` token already persisted by that same
+   tick state. Token text in history is ignored. The
+   recovery tombstone is written before one Enter and every repeat is refused.
+   A wake is verified only after Claude becomes `busy`; seeing its token in the
+   composer is explicitly not proof of submission. Human text, delegations,
+   unknown composer content, menus, and uncorrelated tokens never receive this
+   recovery.
 
 New coordinator sessions disable terminal XON/XOFF with `stty -ixon` before
 launching Claude. This prevents an accidental `Ctrl+S` from freezing pane

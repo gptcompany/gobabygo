@@ -640,7 +640,8 @@ Behavior:
   tick is local-only and read-only by default. --observe persists only debounced,
   metadata-only supervisor transitions and never sends input. --apply records the same
   transitions, then handles only exact selected WAIT menus, exact session-limit banners
-  after their declared reset, and exactly idle coordinators. It recaptures, persists
+  after their declared reset, exactly idle coordinators, and one Enter recovery for an
+  exact persisted coordinator wake token still in the current composer. It recaptures, persists
   attempts before I/O, verifies, and throttles.
   tick defaults to the invoking tmux owner; do not target router-managed owners.
 

@@ -3432,6 +3432,176 @@ def test_live_tick_requests_context_compaction_once_and_verifies_start() -> None
     assert "compact_verified" not in saved
 
 
+def test_claude_wake_recovery_matches_only_exact_current_composer_token() -> None:
+    module = _load_module()
+    token = "0123456789abcdef"
+    separator = "────────────────────────────────────────────────────────────────────────────────"
+    current = (
+        f"old MESH_LIVE_TICK id={token}:\n{separator}\n"
+        f"❯ MESH_LIVE_TICK id={token}: inspect authorized sessions now\n"
+        f"{separator}\n  bypass permissions"
+    )
+    human = (
+        f"old MESH_LIVE_TICK id={token}:\n{separator}\n"
+        f"❯ continue T007\n{separator}\n  bypass permissions"
+    )
+
+    assert module.claude_composer_contains_tick_wake(current, token)
+    assert not module.claude_composer_contains_tick_wake(human, token)
+    assert not module.claude_composer_contains_tick_wake(
+        current, "fedcba9876543210"
+    )
+
+
+def test_live_tick_recovers_one_exact_pending_coordinator_wake() -> None:
+    module = _load_module()
+    token = "0123456789abcdef"
+    separator = "────────────────────────────────────────────────────────────────────────────────"
+    pending = (
+        f"history\n{separator}\n"
+        f"❯ MESH_LIVE_TICK id={token}: inspect authorized sessions now\n"
+        f"{separator}\n  bypass permissions"
+    )
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output=pending,
+    )
+
+    class FakeClient:
+        def __init__(self, outputs):
+            self.outputs = list(outputs)
+            self.sends: list[tuple[str, bool]] = []
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(self, session, text, *, enter, expected_commands=(), allow_coordinator_wrapper=False):
+            assert expected_commands == ("claude", "claude-code")
+            assert allow_coordinator_wrapper is True
+            self.sends.append((text, enter))
+            return {}
+
+    state = {
+        "version": 1,
+        "sessions": {
+            "sam/claude-coordinator": {
+                "last_wake_at": 900,
+                "last_wake_token": token,
+                "last_wake_verified": False,
+            }
+        },
+    }
+    persisted: list[dict] = []
+    client = FakeClient([pending, "✻ Working\n❯ "])
+    results, changed = module.execute_live_tick_actions(
+        client,
+        [coordinator],
+        {coordinator.key},
+        state=state,
+        lines=160,
+        now=1000,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        persist_state=lambda value: persisted.append(json.loads(json.dumps(value))),
+    )
+
+    assert changed is True
+    assert client.sends == [("", True)]
+    assert [(item.action, item.status, item.verified) for item in results] == [
+        ("recover_coordinator_wake", "applied", True)
+    ]
+    saved = state["sessions"]["sam/claude-coordinator"]
+    assert saved["wake_recovery_token"] == token
+    assert saved["wake_recovery_verified"] is True
+    assert persisted[0]["sessions"]["sam/claude-coordinator"][
+        "wake_recovery_token"
+    ] == token
+
+    retry = FakeClient([pending])
+    retry_results, _ = module.execute_live_tick_actions(
+        retry,
+        [coordinator],
+        {coordinator.key},
+        state=state,
+        lines=160,
+        now=1010,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert retry_results[0].status == "throttled"
+    assert retry.sends == []
+
+
+def test_coordinator_wake_token_in_composer_is_not_verified_submission() -> None:
+    module = _load_module()
+    idle = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output="ready\n❯ ",
+    )
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.outputs = ["ready\n❯ ", ""]
+            self.sent_text = ""
+
+        def capture(self, targets, lines):
+            output = self.outputs.pop(0)
+            if not output:
+                output = f"────────────────────\n❯ {self.sent_text}\n────────────────────"
+            return [module.replace(targets[0], output=output)], []
+
+        def send(self, session, text, *, enter, expected_commands=(), allow_coordinator_wrapper=False):
+            self.sent_text = text
+            return {}
+
+    state = {"version": 1, "sessions": {}}
+    client = FakeClient()
+    results, _ = module.execute_live_tick_actions(
+        client,
+        [idle],
+        {idle.key},
+        state=state,
+        lines=160,
+        now=10_000,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert results[0].action == "wake_coordinator"
+    assert results[0].verified is False
+    assert state["sessions"]["sam/claude-coordinator"]["last_wake_verified"] is False
+
+
+def test_supervisor_marks_coordinator_awaiting_input_as_warning() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output="history\n❯ human draft",
+    )
+    observations = module.build_live_tick_plan(
+        [coordinator], {coordinator.key}, now=100
+    )
+    signals = module.build_live_supervisor_signals(
+        observations, [coordinator], {coordinator.key}
+    )
+    signal = next(item for item in signals if item.key.endswith("claude-coordinator"))
+
+    assert signal.state == "coordinator_awaiting_input"
+    assert signal.severity == "warning"
+
+
 def test_live_supervisor_observe_reports_missing_workers_after_two_ticks() -> None:
     module = _load_module()
     coordinator = module.LiveSession(

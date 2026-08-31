@@ -1673,6 +1673,22 @@ def claude_compaction_in_progress(screen: str) -> bool:
     ) is not None
 
 
+def claude_composer_contains_tick_wake(screen: str, token: str) -> bool:
+    wake_token = str(token or "").strip()
+    if not re.fullmatch(r"[a-f0-9]{16}", wake_token):
+        return False
+    try:
+        from src.router.cli_screen import claude_current_region
+    except ModuleNotFoundError:
+        repo_root = str(Path(__file__).resolve().parents[1])
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from src.router.cli_screen import claude_current_region
+    current = claude_current_region(screen).replace("\xa0", " ")
+    pattern = rf"(?m)^\s*❯\s*MESH_LIVE_TICK id={re.escape(wake_token)}:"
+    return len(re.findall(pattern, current)) == 1
+
+
 def session_activity_age_seconds(
     session: LiveSession, *, now: float | None = None
 ) -> int | None:
@@ -1953,6 +1969,8 @@ def build_live_supervisor_signals(
             state, severity = "coordinator_compacting", "warning"
         elif item.coordinator and item.proposed_action == "wake_coordinator":
             state, severity = "coordinator_idle", "info"
+        elif item.coordinator and item.screen_state == "awaiting_input":
+            state, severity = "coordinator_awaiting_input", "warning"
         elif item.screen_state in {"busy", "idle"}:
             state, severity = "healthy", "info"
         else:
@@ -2265,14 +2283,37 @@ def execute_live_tick_actions(
         and state.get("speckit_update_reported_version") == pending_update.version
     ):
         pending_update = None
+    adjusted_observations: list[TickObservation] = []
+    for observation in observations:
+        session = by_key[(observation.owner, observation.name)]
+        saved = session_state.get(_tick_state_key(session.owner, session.name))
+        if not isinstance(saved, dict):
+            saved = {}
+        wake_token = str(saved.get("last_wake_token") or "")
+        if (
+            observation.coordinator
+            and observation.proposed_action == "none"
+            and observation.screen_state == LiveScreenState.awaiting_input.value
+            and claude_composer_contains_tick_wake(session.output, wake_token)
+        ):
+            observation = replace(
+                observation,
+                proposed_action="recover_coordinator_wake",
+                reason="exact pending MESH_LIVE_TICK token in current coordinator composer",
+            )
+        adjusted_observations.append(observation)
+
     priorities = {
         "dismiss_antigravity_survey": 0,
         "select_wait": 1,
         "wake_after_reset": 2,
         "compact_coordinator": 3,
-        "wake_coordinator": 4,
+        "recover_coordinator_wake": 4,
+        "wake_coordinator": 5,
     }
-    ordered = sorted(observations, key=lambda item: priorities.get(item.proposed_action, 2))
+    ordered = sorted(
+        adjusted_observations, key=lambda item: priorities.get(item.proposed_action, 2)
+    )
 
     for observation in ordered:
         session = by_key[(observation.owner, observation.name)]
@@ -2305,6 +2346,7 @@ def execute_live_tick_actions(
             "select_wait",
             "wake_after_reset",
             "compact_coordinator",
+            "recover_coordinator_wake",
             "wake_coordinator",
         }:
             results.append(
@@ -2385,6 +2427,66 @@ def execute_live_tick_actions(
                 continue
 
             fresh_state = classify_screen("claude", fresh.output)
+            if observation.proposed_action == "recover_coordinator_wake":
+                wake_token = str(saved.get("last_wake_token") or "")
+                if (
+                    fresh_state != LiveScreenState.awaiting_input
+                    or not claude_composer_contains_tick_wake(
+                        fresh.output, wake_token
+                    )
+                ):
+                    raise LiveReadError("coordinator wake composer changed before recovery")
+                if saved.get("wake_recovery_token") == wake_token:
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="recover_coordinator_wake",
+                            status="throttled",
+                            reason="Enter recovery was already attempted for this wake token",
+                            verified=False,
+                        )
+                    )
+                    continue
+                saved.update(
+                    {
+                        "pane_id": fresh.pane_id,
+                        "wake_recovery_token": wake_token,
+                        "wake_recovery_attempted_at": now,
+                    }
+                )
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
+                client.send(
+                    fresh,
+                    "",
+                    enter=True,
+                    expected_commands=("claude", "claude-code"),
+                    allow_coordinator_wrapper=True,
+                )
+                if verify_delay > 0:
+                    sleep_fn(verify_delay)
+                post = _capture_one_for_tick(client, fresh, lines)
+                verified = classify_screen("claude", post.output) == LiveScreenState.busy
+                saved["wake_recovery_verified"] = verified
+                results.append(
+                    TickActionResult(
+                        owner=session.owner,
+                        name=session.name,
+                        pane_id=session.pane_id,
+                        action="recover_coordinator_wake",
+                        status="applied",
+                        reason=(
+                            "pending coordinator wake submitted"
+                            if verified
+                            else "wake Enter delivered; submission unverified"
+                        ),
+                        verified=verified,
+                    )
+                )
+                continue
             if observation.proposed_action == "compact_coordinator":
                 usage = claude_context_usage_percent(fresh.output)
                 fingerprint = _tick_screen_fingerprint(fresh.output)
@@ -2600,7 +2702,7 @@ def execute_live_tick_actions(
                     sleep_fn(verify_delay)
                 post = _capture_one_for_tick(client, fresh, lines)
                 post_state = classify_screen("claude", post.output)
-                verified = token in post.output or post_state == LiveScreenState.busy
+                verified = post_state == LiveScreenState.busy
                 saved["session_limit_verified"] = verified
                 results.append(
                     TickActionResult(
@@ -2648,6 +2750,12 @@ def execute_live_tick_actions(
                     "compact_verified",
                 ):
                     saved.pop(compact_key, None)
+            for recovery_key in (
+                "wake_recovery_token",
+                "wake_recovery_attempted_at",
+                "wake_recovery_verified",
+            ):
+                saved.pop(recovery_key, None)
             saved.update({"pane_id": fresh.pane_id, "last_wake_at": now, "last_wake_token": token})
             changed = True
             if persist_state is not None:
@@ -2669,7 +2777,7 @@ def execute_live_tick_actions(
                 sleep_fn(verify_delay)
             post = _capture_one_for_tick(client, fresh, lines)
             post_state = classify_screen("claude", post.output)
-            verified = token in post.output or post_state == LiveScreenState.busy
+            verified = post_state == LiveScreenState.busy
             saved["last_wake_verified"] = verified
             results.append(
                 TickActionResult(
