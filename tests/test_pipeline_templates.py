@@ -75,6 +75,12 @@ def test_canonical_review_convergence_policy_is_bounded() -> None:
     assert policy["verdicts"] == ["PASS", "CHANGES_REQUIRED"]
     assert policy["max_correction_rounds"] == 2
     assert policy["round_tracking"] == "durable_per_frozen_task_scope"
+    assert policy["reviewer_timeout"] == {
+        "minutes": 60,
+        "max_fallbacks": 1,
+        "timeout_is_consent": False,
+        "exhausted_action": "ESCALATE",
+    }
     assert policy["loop_exits"] == ["REPLAN", "ESCALATE", "BACKLOG"]
     assert policy["mutation_budget"]["default_per_critical_invariant"] == 1
     assert policy["release"]["deploy_authority"] == "explicit_operator_decision"
@@ -94,6 +100,14 @@ def test_review_convergence_rejects_unbounded_rounds() -> None:
 
     with pytest.raises(ValueError, match="positive integer"):
         normalized_review_convergence(document)
+
+
+def test_review_convergence_rejects_unbounded_reviewer_fallbacks() -> None:
+    loaded = load_pipeline_templates(default_pipeline_template_file())
+    loaded["review_convergence"]["reviewer_timeout"]["max_fallbacks"] = 2
+
+    with pytest.raises(ValueError, match="max_fallbacks must be 1"):
+        normalized_review_convergence(loaded)
 
 
 def test_load_reports_invalid_yaml_as_value_error(tmp_path: Path) -> None:

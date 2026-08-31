@@ -2118,6 +2118,7 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "speckit review status <repo-root> <feature-dir> <Tnnn> --json" in prompt
     assert "Revision mismatch is a concurrency result" in prompt
     assert "speckit review record --evidence-file <report>" in prompt
+    assert "One timeout permits one fallback on a different reviewer session" in prompt
     assert "Never send a planned correction unless the transaction returns `CORRECTION_OPEN`" in prompt
     assert "exit 0 with `RELEASE_PASSED`" in prompt
     assert (
@@ -3060,6 +3061,12 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
         "verdicts": ["PASS", "CHANGES_REQUIRED"],
         "max_correction_rounds": 2,
         "round_tracking": "durable_per_frozen_task_scope",
+        "reviewer_timeout": {
+            "minutes": 60,
+            "max_fallbacks": 1,
+            "timeout_is_consent": False,
+            "exhausted_action": "ESCALATE",
+        },
         "loop_exits": ["REPLAN", "ESCALATE", "BACKLOG"],
         "triage": {
             "in_scope_high_medium": "block",

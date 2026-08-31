@@ -502,6 +502,13 @@ mutable scope, duplicate review, invented invariant, mutation-budget overflow,
 blocking PASS, third correction, or unsafe BACKLOG is rejected without changing
 the ledger.
 
+`open` also returns a canonical review deadline from the repository policy.
+After that deadline, and only when no valid final marker exists, the coordinator
+may transact `timeout --expect-revision <revision>`. The first timeout permits
+one fallback on a different reviewer session for the same scope; the second
+timeout moves the task to `ESCALATED`. Timeout is never PASS or consent, and the
+periodic tick only wakes the coordinator to make this ledger-backed decision.
+
 On failure, `correction` increments the persisted round; `decide` may stop and
 REPLAN or ESCALATE immediately. After a DELTA PASS, `candidate` must freeze a
 new full candidate before INVARIANT or RELEASE review. Only ledger status

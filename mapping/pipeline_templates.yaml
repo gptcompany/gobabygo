@@ -5,6 +5,11 @@ review_convergence:
   verdicts: [PASS, CHANGES_REQUIRED]
   max_correction_rounds: 2
   round_tracking: durable_per_frozen_task_scope
+  reviewer_timeout:
+    minutes: 60
+    max_fallbacks: 1
+    timeout_is_consent: false
+    exhausted_action: ESCALATE
   loop_exits: [REPLAN, ESCALATE, BACKLOG]
   triage:
     in_scope_high_medium: block

@@ -242,6 +242,69 @@ def test_invariant_and_reviewer_identity_are_enforced(tmp_path: Path) -> None:
     assert opened["invariant"] == "at most two corrections"
 
 
+def test_review_timeout_allows_one_different_fallback_then_escalates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    opened = _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    assert opened["fallback_attempt"] == 0
+    assert opened["deadline_at"] > opened["opened_at"]
+    status = review.review_status(repo, feature, "T001")
+    assert status["review_deadline_at"] == opened["deadline_at"]
+
+    with pytest.raises(review.ReviewLedgerError, match="deadline has not elapsed"):
+        review.timeout_review(repo, feature, "T001", expected_revision=2)
+    assert review.review_status(repo, feature, "T001")["revision"] == 2
+
+    monkeypatch.setattr(review, "_now", lambda: "2100-01-01T00:00:00+00:00")
+    timed_out = review.timeout_review(repo, feature, "T001", expected_revision=2)
+    assert timed_out["status"] == "READY_FOR_REVIEW"
+    assert timed_out["fallback_allowed"] is True
+
+    with pytest.raises(review.ReviewLedgerError, match="different session"):
+        _open(repo, feature, 3, level="RELEASE", scope=SCOPE_A)
+
+    fallback = review.open_review(
+        repo,
+        feature,
+        "T001",
+        level="RELEASE",
+        scope=SCOPE_A,
+        reviewer_session="codex-project-alt",
+        delegation_id="review-fallback",
+        invariant="",
+        expected_revision=3,
+    )
+    assert fallback["fallback_attempt"] == 1
+
+    monkeypatch.setattr(review, "_now", lambda: "2200-01-01T00:00:00+00:00")
+    exhausted = review.timeout_review(repo, feature, "T001", expected_revision=4)
+    assert exhausted["status"] == "ESCALATED"
+    assert exhausted["fallback_allowed"] is False
+    assert review.review_check(repo, feature, "T001", scope=SCOPE_A)["release_passed"] is False
+
+
+def test_delta_timeout_preserves_open_correction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    review.open_correction(
+        repo, feature, "T001", delegation_id="fix-1", expected_revision=3
+    )
+    _open(repo, feature, 4, level="DELTA", scope=DELTA_1)
+
+    monkeypatch.setattr(review, "_now", lambda: "2100-01-01T00:00:00+00:00")
+    timed_out = review.timeout_review(repo, feature, "T001", expected_revision=5)
+
+    assert timed_out["status"] == "CORRECTION_OPEN"
+    assert timed_out["fallback_allowed"] is True
+    assert review.review_status(repo, feature, "T001")["correction_round"] == 1
+
+
 def test_revision_cas_and_external_drift_fail_closed(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)

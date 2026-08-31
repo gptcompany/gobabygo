@@ -64,6 +64,31 @@ def normalized_review_convergence(document: dict[str, Any]) -> dict[str, Any]:
             "'durable_per_frozen_task_scope'"
         )
 
+    reviewer_timeout = policy.get("reviewer_timeout")
+    if not isinstance(reviewer_timeout, dict):
+        raise ValueError("review_convergence.reviewer_timeout must be a mapping")
+    timeout_minutes = reviewer_timeout.get("minutes")
+    if (
+        isinstance(timeout_minutes, bool)
+        or not isinstance(timeout_minutes, int)
+        or not 1 <= timeout_minutes <= 1440
+    ):
+        raise ValueError(
+            "review_convergence.reviewer_timeout.minutes must be an integer from 1 to 1440"
+        )
+    if reviewer_timeout.get("max_fallbacks") != 1:
+        raise ValueError(
+            "review_convergence.reviewer_timeout.max_fallbacks must be 1"
+        )
+    if reviewer_timeout.get("timeout_is_consent") is not False:
+        raise ValueError(
+            "review_convergence.reviewer_timeout.timeout_is_consent must be false"
+        )
+    if reviewer_timeout.get("exhausted_action") != "ESCALATE":
+        raise ValueError(
+            "review_convergence.reviewer_timeout.exhausted_action must be 'ESCALATE'"
+        )
+
     mutation = policy.get("mutation_budget")
     if not isinstance(mutation, dict):
         raise ValueError("review_convergence.mutation_budget must be a mapping")

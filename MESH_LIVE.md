@@ -486,6 +486,12 @@ mesh speckit review record <repo> <feature-dir> T001 \
 
 `record` hashes a real non-symlink report inside the feature. It does not parse
 review prose. `PASS` with blocking high/medium or safety findings fails closed.
+`open` records an event from which `status` derives the canonical review
+deadline. Once elapsed, `timeout --expect-revision <revision>` permits exactly
+one fallback using a different reviewer session for the same immutable scope;
+a second timeout moves the task to `ESCALATED`. Timeout is never consent or a
+review verdict. Tick only wakes the coordinator; it does not infer or write the
+review transition from pane output.
 A failed review permits an immediate `decide`, or at most two `correction`
 transactions. Each correction must receive a DELTA review. DELTA PASS produces
 `CANDIDATE_UPDATE_REQUIRED`; use `candidate --scope <new-immutable-scope>`

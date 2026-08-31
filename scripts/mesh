@@ -761,7 +761,7 @@ Usage:
   ./scripts/mesh speckit github plan <feature-dir> [--json]
   ./scripts/mesh speckit github check <feature-dir> [--json]
   ./scripts/mesh speckit github install-caller <repo-path> --runtime-ref <40-char-sha> [--accept-pin-update] [--apply] [--json]
-  ./scripts/mesh speckit review <status|check|init|open|record|correction|candidate|budget|decide> [...]
+  ./scripts/mesh speckit review <status|check|init|open|record|timeout|correction|candidate|budget|decide> [...]
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
