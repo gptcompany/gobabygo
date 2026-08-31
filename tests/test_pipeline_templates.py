@@ -71,7 +71,7 @@ def test_canonical_review_convergence_policy_is_bounded() -> None:
     policy = normalized_review_convergence(loaded)
 
     assert policy["schema"] == "mesh.review.v1"
-    assert policy["levels"] == ["delta", "invariant", "release"]
+    assert policy["levels"] == ["DELTA", "INVARIANT", "RELEASE"]
     assert policy["verdicts"] == ["PASS", "CHANGES_REQUIRED"]
     assert policy["max_correction_rounds"] == 2
     assert policy["loop_exits"] == ["REPLAN", "ESCALATE", "BACKLOG"]
@@ -83,7 +83,7 @@ def test_review_convergence_rejects_unbounded_rounds() -> None:
     document = {
         "review_convergence": {
             "schema": "mesh.review.v1",
-            "levels": ["delta", "invariant", "release"],
+            "levels": ["DELTA", "INVARIANT", "RELEASE"],
             "verdicts": ["PASS", "CHANGES_REQUIRED"],
             "loop_exits": ["REPLAN", "ESCALATE", "BACKLOG"],
             "max_correction_rounds": 0,

@@ -3044,7 +3044,7 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
     }
     assert projection["review_convergence"] == {
         "schema": "mesh.review.v1",
-        "levels": ["delta", "invariant", "release"],
+        "levels": ["DELTA", "INVARIANT", "RELEASE"],
         "verdicts": ["PASS", "CHANGES_REQUIRED"],
         "max_correction_rounds": 2,
         "loop_exits": ["REPLAN", "ESCALATE", "BACKLOG"],
@@ -3060,7 +3060,7 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
             "expansion_requires": "concrete_uncovered_failure_mode",
         },
         "release": {
-            "pass_requires_level": "release",
+            "pass_requires_level": "RELEASE",
             "review_per_frozen_candidate": 1,
             "deploy_authority": "explicit_operator_decision",
         },

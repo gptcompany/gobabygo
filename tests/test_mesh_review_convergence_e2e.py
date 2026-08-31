@@ -37,9 +37,9 @@ def test_speckit_review_policy_reaches_cli_and_coordinator_contract(
     )
     assert projection.returncode == 0, projection.stderr
     policy = json.loads(projection.stdout)["review_convergence"]
-    assert policy["levels"] == ["delta", "invariant", "release"]
+    assert policy["levels"] == ["DELTA", "INVARIANT", "RELEASE"]
     assert policy["max_correction_rounds"] == 2
-    assert policy["release"]["pass_requires_level"] == "release"
+    assert policy["release"]["pass_requires_level"] == "RELEASE"
     assert policy["release"]["deploy_authority"] == "explicit_operator_decision"
 
     prompt = _mesh(

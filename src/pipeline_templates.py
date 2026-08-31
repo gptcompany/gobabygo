@@ -8,7 +8,7 @@ from typing import Any
 import yaml
 
 
-_REVIEW_LEVELS = ("delta", "invariant", "release")
+_REVIEW_LEVELS = ("DELTA", "INVARIANT", "RELEASE")
 _REVIEW_VERDICTS = ("PASS", "CHANGES_REQUIRED")
 _REVIEW_LOOP_EXITS = ("REPLAN", "ESCALATE", "BACKLOG")
 
@@ -73,23 +73,33 @@ def normalized_review_convergence(document: dict[str, Any]) -> dict[str, Any]:
             "must be a non-negative integer"
         )
 
-    expected_mappings = {
-        "triage": {
-            "in_scope_high_medium": "block",
-            "release_boundary_high_medium": "block",
-            "adjacent_out_of_scope": (
-                "backlog_unless_acceptance_or_release_safety_is_invalidated"
-            ),
-        },
-        "release": {
-            "pass_requires_level": "release",
-            "review_per_frozen_candidate": 1,
-            "deploy_authority": "explicit_operator_decision",
-        },
+    expected_triage = {
+        "in_scope_high_medium": "block",
+        "release_boundary_high_medium": "block",
+        "adjacent_out_of_scope": (
+            "backlog_unless_acceptance_or_release_safety_is_invalidated"
+        ),
     }
-    for key, expected in expected_mappings.items():
-        if policy.get(key) != expected:
-            raise ValueError(f"review_convergence.{key} must be {expected}")
+    if policy.get("triage") != expected_triage:
+        raise ValueError(f"review_convergence.triage must be {expected_triage}")
+
+    release = policy.get("release")
+    if not isinstance(release, dict):
+        raise ValueError("review_convergence.release must be a mapping")
+    if release.get("pass_requires_level") != "RELEASE":
+        raise ValueError(
+            "review_convergence.release.pass_requires_level must be 'RELEASE'"
+        )
+    review_count = release.get("review_per_frozen_candidate")
+    if isinstance(review_count, bool) or review_count != 1:
+        raise ValueError(
+            "review_convergence.release.review_per_frozen_candidate must be 1"
+        )
+    if release.get("deploy_authority") != "explicit_operator_decision":
+        raise ValueError(
+            "review_convergence.release.deploy_authority must be "
+            "'explicit_operator_decision'"
+        )
     if mutation.get("expansion_requires") != "concrete_uncovered_failure_mode":
         raise ValueError(
             "review_convergence.mutation_budget.expansion_requires must be "

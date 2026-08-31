@@ -3724,7 +3724,7 @@ def render_live_workflow_projection(projection: dict[str, Any]) -> str:
         "Live policy: coordinator=final-adjudicator; writer=one-active-per-repo; "
         "reviewer=different-session-read-only; spawn=ensure-codex-or-antigravity-only; "
         "challenger=codex-read-only-two-rounds; missing-perspective=degraded-coverage",
-        "Review convergence: levels=delta,invariant,release; verdicts=PASS,CHANGES_REQUIRED; "
+        "Review convergence: levels=DELTA,INVARIANT,RELEASE; verdicts=PASS,CHANGES_REQUIRED; "
         f"max-corrections={projection['review_convergence']['max_correction_rounds']}; "
         "release-pass=release-level-only; deploy=operator-decision",
         "Steps:",
