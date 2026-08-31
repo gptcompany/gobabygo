@@ -529,6 +529,20 @@ def test_delegation_context_rejects_unsupported_phase_paths_and_mutable_review_s
         )
 
 
+def test_immutable_review_scope_normalizer_is_reusable_and_canonical() -> None:
+    module = _load_module()
+
+    assert module.normalize_immutable_review_scope(
+        "  COMMIT:" + ("A" * 40) + ".." + ("B" * 40) + "  "
+    ) == "commit:" + ("a" * 40) + ".." + ("b" * 40)
+    assert module.normalize_immutable_review_scope(
+        "DIFF-SHA256:" + ("C" * 64)
+    ) == "diff-sha256:" + ("c" * 64)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="reviewer requires"):
+        module.normalize_immutable_review_scope("HEAD")
+
+
 def test_delegation_context_accepts_immutable_decision_artifact(
     monkeypatch, tmp_path
 ) -> None:

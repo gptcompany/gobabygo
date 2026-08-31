@@ -91,6 +91,17 @@ class _MigrationInterrupted(BaseException):
         super().__init__(f"received {signal.Signals(signal_number).name}")
 
 
+def normalize_immutable_review_scope(value: str) -> str:
+    """Return one canonical immutable review scope or fail closed."""
+    scope = str(value or "").strip().lower()
+    if not _IMMUTABLE_REVIEW_SCOPE.fullmatch(scope):
+        raise SpeckitRuntimeError(
+            "reviewer requires --review-scope commit:<sha>[..<sha>], "
+            "diff-sha256:<digest>, or artifact-sha256:<digest>"
+        )
+    return scope
+
+
 @contextmanager
 def _defer_migration_signals():
     pending: list[int] = []
@@ -597,11 +608,7 @@ def build_delegation_context(
 
     immutable_scope = str(review_scope or "").strip().lower()
     if role == "reviewer":
-        if not _IMMUTABLE_REVIEW_SCOPE.fullmatch(immutable_scope):
-            raise SpeckitRuntimeError(
-                "reviewer requires --review-scope commit:<sha>[..<sha>], "
-                "diff-sha256:<digest>, or artifact-sha256:<digest>"
-            )
+        immutable_scope = normalize_immutable_review_scope(immutable_scope)
         if immutable_scope.startswith("artifact-sha256:"):
             if len(allowed) != 1:
                 raise SpeckitRuntimeError(
