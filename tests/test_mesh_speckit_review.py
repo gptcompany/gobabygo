@@ -799,3 +799,77 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
     checked = run("check", *common, "--scope", SCOPE_B)
     assert checked["release_passed"] is True
     assert checked["revision"] == 9
+
+
+def test_mesh_cli_executes_bounded_reviewer_timeout_end_to_end(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    env = {**os.environ, "MESH_SPECKIT_PYTHON": sys.executable}
+
+    def run(*arguments: str) -> dict:
+        proc = subprocess.run(
+            ["bash", str(MESH), "speckit", "review", *arguments, "--json"],
+            cwd=ROOT,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout)
+
+    common = (str(repo), str(feature), "T001")
+    run(
+        "init",
+        *common,
+        "--scope",
+        SCOPE_A,
+        "--writer-session",
+        "agy-project",
+        "--expect-revision",
+        "0",
+    )
+    run(
+        "open",
+        *common,
+        "--level",
+        "RELEASE",
+        "--scope",
+        SCOPE_A,
+        "--reviewer-session",
+        "codex-project",
+        "--delegation-id",
+        "review-initial",
+        "--expect-revision",
+        "1",
+    )
+
+    ledger_path = feature / "review-ledger.json"
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    payload["tasks"]["T001"]["events"][-1]["at"] = "2000-01-01T00:00:00+00:00"
+    ledger_path.write_text(json.dumps(payload), encoding="utf-8")
+    first = run("timeout", *common, "--expect-revision", "2")
+    assert first["status"] == "READY_FOR_REVIEW"
+    assert first["fallback_allowed"] is True
+
+    run(
+        "open",
+        *common,
+        "--level",
+        "RELEASE",
+        "--scope",
+        SCOPE_A,
+        "--reviewer-session",
+        "codex-project-alt",
+        "--delegation-id",
+        "review-fallback",
+        "--expect-revision",
+        "3",
+    )
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    payload["tasks"]["T001"]["events"][-1]["at"] = "2000-01-01T00:00:00+00:00"
+    ledger_path.write_text(json.dumps(payload), encoding="utf-8")
+    second = run("timeout", *common, "--expect-revision", "4")
+    assert second["status"] == "ESCALATED"
+    assert second["fallback_allowed"] is False
+    assert run("status", *common)["revision"] == 5
