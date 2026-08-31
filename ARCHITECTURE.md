@@ -142,6 +142,7 @@ Development work has non-overlapping authorities:
 |---|---|
 | Feature intent and acceptance | Git-tracked Spec Kit artifacts |
 | Task identity and completion | `tasks.md` |
+| Planned review scope, rounds, and release gate | Feature-local `review-ledger.json` |
 | Shared task discussion | GitHub Issues and pull requests |
 | Code validity | CI plus immutable-scope review |
 | Live process state | tmux through Mesh Live |
@@ -158,8 +159,15 @@ For repository-scoped planned work, coordinator startup carries that runtime
 commit only from a clean checkout on `origin/master`. The coordinator composes
 the existing plan-first caller and binding operations on the planning branch;
 workers never become ledger writers and custom caller content is not replaced.
-implementation delegation, preventing agent session state from becoming an
-implicit task ledger.
+The immutable task key is carried into every implementation delegation,
+preventing agent session state from becoming an implicit task ledger.
+
+For planned Spec Kit work, `mesh speckit review` serializes review transitions
+with a global CAS revision, Git-internal `flock`, and atomic feature-local JSON
+replacement. It reuses the bound GitHub ledger identity and immutable review
+scope validator, but does not use the router review worker or database. The
+router verifier remains the authority only for explicitly router-managed task
+rows.
 
 Meaning:
 

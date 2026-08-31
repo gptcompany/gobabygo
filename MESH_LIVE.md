@@ -458,6 +458,46 @@ Before each correction, persist its scope and next round in authoritative tasks
 or coordinator state. Resume and compaction reconstruct the count from that
 state and prior review evidence; they never reset it implicitly.
 
+For a bound Spec Kit task, `review-ledger.json` makes those transitions
+transactional. `tasks.md` remains authoritative for intent and completion;
+`review-ledger.json` is authoritative only for review scope, round, verdict,
+and release-gate state; GitHub Issues remain a derived view. The coordinator
+reads the current global revision before every mutation and supplies it as
+`--expect-revision`. A mismatch requires a fresh status read and decision, not
+an automatic retry.
+
+```bash
+mesh speckit review status <repo> <feature-dir> --json
+
+mesh speckit review init <repo> <feature-dir> T001 \
+  --scope commit:<writer-sha> --writer-session agy-repo \
+  --invariant "named critical invariant" --mutation-budget 1 \
+  --expect-revision <revision>
+
+mesh speckit review open <repo> <feature-dir> T001 \
+  --level RELEASE --scope commit:<writer-sha> \
+  --reviewer-session codex-repo --delegation-id <id> \
+  --expect-revision <revision>
+
+mesh speckit review record <repo> <feature-dir> T001 \
+  --verdict PASS --evidence-file <feature-dir>/review-T001.md \
+  --mutations-run 1 --expect-revision <revision>
+```
+
+`record` hashes a real non-symlink report inside the feature. It does not parse
+review prose. `PASS` with blocking high/medium or safety findings fails closed.
+A failed review permits an immediate `decide`, or at most two `correction`
+transactions. Each correction must receive a DELTA review. DELTA PASS produces
+`CANDIDATE_UPDATE_REQUIRED`; use `candidate --scope <new-immutable-scope>`
+before another INVARIANT or RELEASE review. `budget` only increases the frozen
+mutation budget with a concrete reason. `RELEASE_PASSED` closes the review gate
+but never authorizes merge, push, deploy, or money-path activation.
+
+The ledger and referenced reports are normal non-secret feature artifacts.
+Include them only through the repository's normal authorized Git flow. The
+ledger CLI itself does not commit, push, touch source, send tmux input, use the
+router, or contact GitHub.
+
 The router/database remains optional for durable managed orchestration. Loading
 the live projection never creates a router thread and never takes ownership of
 manual tmux sessions.

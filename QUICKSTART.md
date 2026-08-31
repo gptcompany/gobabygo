@@ -468,6 +468,48 @@ Custom workflow content, a dirty/unpublished runtime, malformed repository
 state, unavailable `gh`, or a failed Action is an explicit blocker. Workers do
 not own onboarding or issue mutation.
 
+### Transactional Spec Kit review
+
+For a planned, GitHub-bound task, use the feature-local review ledger rather
+than reconstructing review rounds from chat history:
+
+```bash
+# Read the global CAS revision first. Status never writes.
+mesh speckit review status /path/to/repo specs/001-feature --json
+
+# Freeze one task cycle. Repeat --invariant for each critical invariant.
+mesh speckit review init /path/to/repo specs/001-feature T001 \
+  --scope commit:<writer-sha> --writer-session agy-repo \
+  --invariant "release cannot bypass the gate" --mutation-budget 1 \
+  --expect-revision <revision>
+
+# Register the independent reviewer before dispatch.
+mesh speckit review open /path/to/repo specs/001-feature T001 \
+  --level RELEASE --scope commit:<writer-sha> \
+  --reviewer-session codex-repo --delegation-id <id> \
+  --expect-revision <revision>
+
+# Save the exact reviewer output as a non-secret feature report, then record it.
+mesh speckit review record /path/to/repo specs/001-feature T001 \
+  --verdict PASS --evidence-file specs/001-feature/review-T001.md \
+  --mutations-run 1 --expect-revision <revision>
+```
+
+Every mutation performs a global revision compare-and-swap under a Git-internal
+`flock`, validates the closed FSM, fsyncs a same-directory temporary file, and
+atomically replaces `review-ledger.json`. A stale revision, self-review,
+mutable scope, duplicate review, invented invariant, mutation-budget overflow,
+blocking PASS, third correction, or unsafe BACKLOG is rejected without changing
+the ledger.
+
+On failure, `correction` increments the persisted round; `decide` may stop and
+REPLAN or ESCALATE immediately. After a DELTA PASS, `candidate` must freeze a
+new full candidate before INVARIANT or RELEASE review. Only ledger status
+`RELEASE_PASSED` satisfies the review gate. It remains separate from task
+completion and from merge, push, deploy, or money-path authorization. The
+ledger/report files use the repository's normal authorized Git flow; the CLI
+does not perform those operations.
+
 ### Git hook chaining
 
 Git supports one effective `core.hooksPath`. On the Dell, keep the global value

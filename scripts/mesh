@@ -778,6 +778,9 @@ Runtime management:
   writes are intentionally restricted to the repository GitHub Actions workflow.
   github install-caller emits a minimal reusable-workflow caller pinned to one
   immutable Gobabygo commit and is plan-only unless --apply is explicit.
+  review maintains a feature-local transactional FSM with CAS revision, Git-internal
+  flock, immutable scopes, bounded correction rounds, and evidence-file digests.
+  It never parses reviewer prose or performs Git, GitHub, router, tmux, or deploy I/O.
 
 Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.

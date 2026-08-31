@@ -151,6 +151,13 @@ the planning PR when its clean runtime pin is trusted; custom workflows and
 untrusted runtime state fail closed. See
 [QUICKSTART.md](QUICKSTART.md#spec-kit-development-ledger).
 
+`mesh speckit review` adds a local transactional review gate for each bound
+Spec Kit task. It records immutable scopes, CAS revisions, at most two
+correction rounds, evidence-file digests, mutation budgets, and RELEASE PASS in
+`specs/<feature>/review-ledger.json`. It has no router, tmux, GitHub, commit,
+push, or deploy side effects. See
+[QUICKSTART.md](QUICKSTART.md#transactional-spec-kit-review).
+
 ### Optional Claude and Codex TDD gate
 
 Gobabygo pins Probity but does not enable TDD enforcement globally. The engine
@@ -190,7 +197,7 @@ to disable one repository, revert its `probity.config.*` commit.
 - `ccs codex` keeps the existing provider bridge. Antigravity uses the native `agy` CLI as user `sam`, with `--new-project` to pin the selected repository; it does not use CCS or Claude hooks.
 - For existing manual sessions, use `mesh live`; tmux is authoritative for live pane/process state. For router-managed tasks and sessions, the router DB remains authoritative. iTerm2 is only an optional view.
 - `mcoordinator <repo> --worker <session>` bootstraps the default adaptive tmux coordinator; `mcoordinator --all` handles multi-repo scope without requiring iTerm2 or the router. Adaptive mode uses direct coordination for bounded operational work and projects the canonical `speckit` template for feature/architecture work with independent challenge and adjudication; `--workflow direct|speckit|adaptive` is explicit override. Repo scope binds one repository, while `--all` keeps the specification and decisions at coordinator level and late-binds repo plus feature/task for each concrete delegation.
-- Unpinned Mesh Live coordination defaults to Antigravity as the sole writer and Codex as the primary reviewer in a different session. This is an overridable preference, not an exclusive capability map. Reviews are read-only, tied to an exact commit range or recorded diff snapshot, and require severity-ordered `file:line` findings plus an explicit verdict.
+- Unpinned Mesh Live coordination defaults to Antigravity as the sole writer and Codex as the primary reviewer in a different session. This is an overridable preference, not an exclusive capability map. Reviews are read-only, tied to an exact commit range or recorded diff snapshot, require severity-ordered `file:line` findings, and use the transactional Spec Kit review ledger for planned work.
 - `mesh ui <repo>` is part of the router-managed operator flow and opens role panels. It boots each pane through central role policy and may attach to a matching router-backed tmux session.
 - `mesh ui` remains an optional legacy iTerm2 layout. Any `worker-gemini` role in that path is deprecated and cannot create new router work; use `mesh live ensure-antigravity` for the active third-provider lane.
 - `mesh` with no arguments now opens a small interactive launcher for the current repo root (`attach`, `sessions`, `ui`, `start`, plus `attach --all`).

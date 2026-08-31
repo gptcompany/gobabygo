@@ -34,6 +34,21 @@ def test_primary_docs_define_one_way_development_ledger() -> None:
         documents["QUICKSTART.md"].split()
     )
     assert "workers never become ledger writers" in documents["ARCHITECTURE.md"]
+    assert "Planned review scope, rounds, and release gate" in documents["ARCHITECTURE.md"]
+
+
+def test_speckit_docs_define_transactional_review_authority() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    quickstart = (ROOT / "QUICKSTART.md").read_text(encoding="utf-8")
+    runbook = (ROOT / "MESH_LIVE.md").read_text(encoding="utf-8")
+
+    for document in (readme, quickstart, runbook):
+        normalized = " ".join(document.split())
+        assert "review-ledger.json" in normalized
+        assert "deploy" in normalized
+    assert "global revision compare-and-swap" in " ".join(quickstart.split())
+    assert "RELEASE_PASSED" in quickstart
+    assert "does not parse review prose" in " ".join(runbook.split())
 
 
 def test_docs_keep_runtime_rollout_pinned_and_non_vendored() -> None:
