@@ -60,7 +60,7 @@ def test_workflow_retains_machine_readable_reports() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
     assert text.count("tee speckit-ledger-report.json") == 2
-    assert text.count("actions/upload-artifact@v4") == 2
+    assert text.count("actions/upload-artifact@v6") == 2
     assert workflow["jobs"]["check"]["steps"][-1]["if"] == "always()"
     assert workflow["jobs"]["apply"]["steps"][-1]["if"] == "always()"
 
@@ -72,7 +72,7 @@ def test_reusable_workflow_checks_out_caller_and_pinned_runtime() -> None:
     job = workflow["jobs"]["reconcile"]
     assert "permissions" not in job
     checkouts = [
-        step for step in job["steps"] if step.get("uses") == "actions/checkout@v4"
+        step for step in job["steps"] if step.get("uses") == "actions/checkout@v6"
     ]
     assert len(checkouts) == 2
     assert checkouts[0]["with"]["persist-credentials"] == "false"
