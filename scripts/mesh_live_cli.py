@@ -3605,7 +3605,9 @@ def build_live_coordinator_system_prompt(
     )
 
 
-def _load_pipeline_template_api() -> tuple[Callable[..., Any], Callable[..., Any], Callable[..., Any]]:
+def _load_pipeline_template_api() -> tuple[
+    Callable[..., Any], Callable[..., Any], Callable[..., Any], Callable[..., Any]
+]:
     repo_root = str(Path(__file__).resolve().parents[1])
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
@@ -3613,9 +3615,15 @@ def _load_pipeline_template_api() -> tuple[Callable[..., Any], Callable[..., Any
         default_pipeline_template_file,
         load_pipeline_templates,
         normalized_pipeline_steps,
+        normalized_review_convergence,
     )
 
-    return default_pipeline_template_file, load_pipeline_templates, normalized_pipeline_steps
+    return (
+        default_pipeline_template_file,
+        load_pipeline_templates,
+        normalized_pipeline_steps,
+        normalized_review_convergence,
+    )
 
 
 def build_live_workflow_projection(
@@ -3630,7 +3638,9 @@ def build_live_workflow_projection(
     workflow_scope = str(scope or "repository").strip().lower()
     if workflow_scope not in {"repository", "coordinator"}:
         raise ValueError(f"unsupported workflow scope '{workflow_scope}'")
-    default_file, load_templates, normalize_steps = _load_pipeline_template_api()
+    default_file, load_templates, normalize_steps, normalize_review = (
+        _load_pipeline_template_api()
+    )
     source = Path(default_file()).resolve()
     loaded = load_templates(source)
     templates = loaded["templates"]
@@ -3688,6 +3698,7 @@ def build_live_workflow_projection(
             "automatic_spawn": "ensure-codex-or-antigravity-only",
             "missing_perspective": "report-degraded-coverage",
         },
+        "review_convergence": normalize_review(loaded),
         "steps": steps,
     }
 
@@ -3703,6 +3714,9 @@ def render_live_workflow_projection(projection: dict[str, Any]) -> str:
         "Live policy: coordinator=final-adjudicator; writer=one-active-per-repo; "
         "reviewer=different-session-read-only; spawn=ensure-codex-or-antigravity-only; "
         "challenger=codex-read-only-two-rounds; missing-perspective=degraded-coverage",
+        "Review convergence: levels=delta,invariant,release; verdicts=PASS,CHANGES_REQUIRED; "
+        f"max-corrections={projection['review_convergence']['max_correction_rounds']}; "
+        "release-pass=release-level-only; deploy=operator-decision",
         "Steps:",
     ]
     for step in projection["steps"]:

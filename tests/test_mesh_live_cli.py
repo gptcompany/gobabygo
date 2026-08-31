@@ -3026,6 +3026,29 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
         "automatic_spawn": "ensure-codex-or-antigravity-only",
         "missing_perspective": "report-degraded-coverage",
     }
+    assert projection["review_convergence"] == {
+        "schema": "mesh.review.v1",
+        "levels": ["delta", "invariant", "release"],
+        "verdicts": ["PASS", "CHANGES_REQUIRED"],
+        "max_correction_rounds": 2,
+        "loop_exits": ["REPLAN", "ESCALATE", "BACKLOG"],
+        "triage": {
+            "in_scope_high_medium": "block",
+            "release_boundary_high_medium": "block",
+            "adjacent_out_of_scope": (
+                "backlog_unless_acceptance_or_release_safety_is_invalidated"
+            ),
+        },
+        "mutation_budget": {
+            "default_per_critical_invariant": 1,
+            "expansion_requires": "concrete_uncovered_failure_mode",
+        },
+        "release": {
+            "pass_requires_level": "release",
+            "review_per_frozen_candidate": 1,
+            "deploy_authority": "explicit_operator_decision",
+        },
+    }
 
 
 def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> None:
@@ -3046,6 +3069,7 @@ def test_main_prints_workflow_without_live_discovery(monkeypatch, capsys) -> Non
         == "ensure-codex-or-antigravity-only"
     )
     assert output["steps"][20]["name"] == "confidence-gate-post-impl.adjudicator"
+    assert output["review_convergence"]["max_correction_rounds"] == 2
 
 
 def test_coordinator_workflow_projection_late_binds_each_delegation() -> None:
@@ -3099,7 +3123,12 @@ def test_main_reports_missing_workflow_source_without_traceback(monkeypatch, cap
     monkeypatch.setattr(
         module,
         "_load_pipeline_template_api",
-        lambda: (lambda: Path("/missing/pipeline_templates.yaml"), missing_loader, lambda n, t: []),
+        lambda: (
+            lambda: Path("/missing/pipeline_templates.yaml"),
+            missing_loader,
+            lambda n, t: [],
+            lambda document: {},
+        ),
     )
 
     rc = module.main(["workflow", "show", "speckit"])

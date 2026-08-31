@@ -12,6 +12,7 @@ from src.pipeline_templates import (
     default_pipeline_template_file,
     load_pipeline_templates,
     normalized_pipeline_steps,
+    normalized_review_convergence,
 )
 
 
@@ -62,6 +63,36 @@ def test_load_rejects_missing_templates_mapping(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="templates.*mapping"):
         load_pipeline_templates(path)
+
+
+def test_canonical_review_convergence_policy_is_bounded() -> None:
+    loaded = load_pipeline_templates(default_pipeline_template_file())
+
+    policy = normalized_review_convergence(loaded)
+
+    assert policy["schema"] == "mesh.review.v1"
+    assert policy["levels"] == ["delta", "invariant", "release"]
+    assert policy["verdicts"] == ["PASS", "CHANGES_REQUIRED"]
+    assert policy["max_correction_rounds"] == 2
+    assert policy["loop_exits"] == ["REPLAN", "ESCALATE", "BACKLOG"]
+    assert policy["mutation_budget"]["default_per_critical_invariant"] == 1
+    assert policy["release"]["deploy_authority"] == "explicit_operator_decision"
+
+
+def test_review_convergence_rejects_unbounded_rounds() -> None:
+    document = {
+        "review_convergence": {
+            "schema": "mesh.review.v1",
+            "levels": ["delta", "invariant", "release"],
+            "verdicts": ["PASS", "CHANGES_REQUIRED"],
+            "loop_exits": ["REPLAN", "ESCALATE", "BACKLOG"],
+            "max_correction_rounds": 0,
+            "mutation_budget": {"default_per_critical_invariant": 1},
+        }
+    }
+
+    with pytest.raises(ValueError, match="positive integer"):
+        normalized_review_convergence(document)
 
 
 def test_load_reports_invalid_yaml_as_value_error(tmp_path: Path) -> None:

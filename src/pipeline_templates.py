@@ -8,6 +8,11 @@ from typing import Any
 import yaml
 
 
+_REVIEW_LEVELS = ("delta", "invariant", "release")
+_REVIEW_VERDICTS = ("PASS", "CHANGES_REQUIRED")
+_REVIEW_LOOP_EXITS = ("REPLAN", "ESCALATE", "BACKLOG")
+
+
 def default_pipeline_template_file() -> Path:
     """Return the repository's canonical pipeline template file."""
     return Path(__file__).resolve().parents[1] / "mapping" / "pipeline_templates.yaml"
@@ -29,6 +34,69 @@ def load_pipeline_templates(path: str | Path) -> dict[str, Any]:
     if not isinstance(templates, dict):
         raise ValueError("Template YAML must contain 'templates' mapping")
     return data
+
+
+def normalized_review_convergence(document: dict[str, Any]) -> dict[str, Any]:
+    """Validate and copy the canonical bounded review policy."""
+    raw = document.get("review_convergence")
+    if not isinstance(raw, dict):
+        raise ValueError("Template YAML must contain 'review_convergence' mapping")
+
+    policy = dict(raw)
+    if policy.get("schema") != "mesh.review.v1":
+        raise ValueError("review_convergence.schema must be 'mesh.review.v1'")
+    expected_sequences = {
+        "levels": _REVIEW_LEVELS,
+        "verdicts": _REVIEW_VERDICTS,
+        "loop_exits": _REVIEW_LOOP_EXITS,
+    }
+    for key, expected in expected_sequences.items():
+        value = policy.get(key)
+        if not isinstance(value, list) or tuple(value) != expected:
+            raise ValueError(f"review_convergence.{key} must be {list(expected)}")
+
+    rounds = policy.get("max_correction_rounds")
+    if isinstance(rounds, bool) or not isinstance(rounds, int) or rounds < 1:
+        raise ValueError("review_convergence.max_correction_rounds must be a positive integer")
+
+    mutation = policy.get("mutation_budget")
+    if not isinstance(mutation, dict):
+        raise ValueError("review_convergence.mutation_budget must be a mapping")
+    default_budget = mutation.get("default_per_critical_invariant")
+    if (
+        isinstance(default_budget, bool)
+        or not isinstance(default_budget, int)
+        or default_budget < 0
+    ):
+        raise ValueError(
+            "review_convergence.mutation_budget.default_per_critical_invariant "
+            "must be a non-negative integer"
+        )
+
+    expected_mappings = {
+        "triage": {
+            "in_scope_high_medium": "block",
+            "release_boundary_high_medium": "block",
+            "adjacent_out_of_scope": (
+                "backlog_unless_acceptance_or_release_safety_is_invalidated"
+            ),
+        },
+        "release": {
+            "pass_requires_level": "release",
+            "review_per_frozen_candidate": 1,
+            "deploy_authority": "explicit_operator_decision",
+        },
+    }
+    for key, expected in expected_mappings.items():
+        if policy.get(key) != expected:
+            raise ValueError(f"review_convergence.{key} must be {expected}")
+    if mutation.get("expansion_requires") != "concrete_uncovered_failure_mode":
+        raise ValueError(
+            "review_convergence.mutation_budget.expansion_requires must be "
+            "'concrete_uncovered_failure_mode'"
+        )
+
+    return policy
 
 
 def normalized_pipeline_steps(
