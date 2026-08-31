@@ -33,6 +33,8 @@ DEFAULT_TICK_STATE_FILE = "~/.local/state/gobabygo/mesh-live-tick.json"
 DEFAULT_CODEX_RECOVERY_STATE_FILE = "~/.local/state/gobabygo/mesh-live-codex-recovery.json"
 DEFAULT_SPECKIT_UPDATE_STATE_FILE = "~/.local/state/gobabygo/speckit-update.json"
 DEFAULT_SPECKIT_LOCK_FILE = str(Path(__file__).resolve().parents[1] / "config" / "speckit.lock.json")
+COORDINATOR_CONTRACT_MARKER = "MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1"
+COORDINATOR_REVIEW_CAPABILITY = "MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1"
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
 SESSION_LIMIT_SCHEDULE_VERSION = 2
 CLAUDE_PASTE_SETTLE_SECONDS = 1.0
@@ -3449,6 +3451,8 @@ def build_live_coordinator_system_prompt(
 
     return "\n".join(
         [
+            COORDINATOR_CONTRACT_MARKER,
+            COORDINATOR_REVIEW_CAPABILITY,
             "You are the persistent autonomous coordinator for existing AI CLI sessions on the Dell workstation.",
             f"Coordinator session: {coordinator_session}.",
             f"Operational scope: {scope}.",

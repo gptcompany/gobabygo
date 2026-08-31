@@ -367,7 +367,7 @@ def test_mcoordinator_bootstraps_repo_coordinator(shell: str, tmp_path: Path) ->
         f"""
 source {helper}
 PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
-_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'AUTONOMOUS PROMPT'; }}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'AUTONOMOUS PROMPT'; }}
 _ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nkind=%s\n' "$1" "$2" "$3" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
@@ -415,7 +415,7 @@ def test_mcoordinator_bootstraps_multi_repo_coordinator(shell: str, tmp_path: Pa
         f"""
 source {helper}
 PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
-_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'MULTI PROMPT'; }}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'MULTI PROMPT'; }}
 _ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nkind=%s\n' "$1" "$2" "$3" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_MESH_SCRIPT=/data/sata/1TB/gobabygo/scripts/mesh
@@ -456,7 +456,7 @@ def test_mcoordinator_uses_explicit_multi_repo_state_repository(shell: str) -> N
         shell,
         f"""
 source {helper}
-_mesh_live_run() {{ printf '%s' 'PROMPT'; }}
+_mesh_live_run() {{ printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'PROMPT'; }}
 _ws_mosh_attach_or_start() {{ printf 'dir=%s\n' "$2"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_STATE_REPO=/data/sata/1TB/program-state
@@ -496,7 +496,7 @@ def test_mcoordinator_forwards_explicit_workflow(shell: str, tmp_path: Path) -> 
         f"""
 source {helper}
 PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
-_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'SPECKIT PROMPT'; }}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'SPECKIT PROMPT'; }}
 _ws_mosh_attach_or_start() {{ :; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 mcoordinator rektslug --workflow speckit
@@ -526,6 +526,37 @@ mcoordinator rektslug --workflow unknown
 
 
 @pytest.mark.parametrize("shell", _shells())
+@pytest.mark.parametrize(
+    ("prompt", "expected_error"),
+    [
+        ("OLD CONTRACT", "incompatible coordinator contract"),
+        (
+            "MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1",
+            "missing the transactional review capability",
+        ),
+    ],
+)
+def test_mcoordinator_rejects_stale_contract_before_tmux(
+    shell: str, prompt: str, expected_error: str
+) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ printf '%s\n' {shlex.quote(prompt)}; }}
+_ws_mosh_attach_or_start() {{ echo 'unexpected tmux access'; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+mcoordinator --all
+""",
+    )
+
+    assert proc.returncode == 2
+    assert expected_error in proc.stderr
+    assert "unexpected tmux access" not in proc.stdout
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_mcoordinator_resumes_with_fresh_gobabygo_contract(shell: str) -> None:
     helper = shlex.quote(str(HELPERS))
     resume_id = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
@@ -533,7 +564,7 @@ def test_mcoordinator_resumes_with_fresh_gobabygo_contract(shell: str) -> None:
         shell,
         f"""
 source {helper}
-_mesh_live_run() {{ printf '%s' 'FRESH GOBABYGO CONTRACT'; }}
+_mesh_live_run() {{ printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'FRESH GOBABYGO CONTRACT'; }}
 _ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nresume=%s\nkind=%s\n' "$1" "$2" "$3" "$4" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_CLAUDE_CMD=claude
@@ -570,7 +601,7 @@ def test_mcoordinator_forwards_fresh_speckit_status_on_resume(
         f"""
 source {helper}
 PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
-_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'FRESH CONTRACT'; }}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'FRESH CONTRACT'; }}
 _ws_mosh_attach_or_start() {{ :; }}
 MESH_COORDINATOR_SPECKIT_STATUS_JSON={shlex.quote(status)}
 MESH_WS_REPO_BASE=/data/sata/1TB
@@ -664,7 +695,7 @@ source {helper}
 unset MESH_COORDINATOR_SPECKIT_STATUS_JSON
 _ws_remote_speckit_status() {{ return 124; }}
 PROMPT_ARGS_FILE={shlex.quote(str(prompt_args_file))}
-_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s' 'CURRENT CONTRACT'; }}
+_mesh_live_run() {{ printf '<%s>\n' "$@" > "$PROMPT_ARGS_FILE"; printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'CURRENT CONTRACT'; }}
 _ws_mosh_attach_or_start() {{ printf 'started=%s\ndir=%s\n' "$1" "$2"; }}
 MESH_COORDINATOR_STATE_REPO=/data/sata/1TB/coordination
 mcoordinator --all --workflow speckit
@@ -687,7 +718,7 @@ def test_mcoordinator_continues_latest_conversation_in_repo_scope(shell: str) ->
         shell,
         f"""
 source {helper}
-_mesh_live_run() {{ printf '%s' 'CURRENT CONTRACT'; }}
+_mesh_live_run() {{ printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'CURRENT CONTRACT'; }}
 _ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nkind=%s\n' "$1" "$2" "$3" "$5"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_CLAUDE_CMD=claude

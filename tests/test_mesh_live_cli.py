@@ -1833,6 +1833,10 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
         mesh_script="/data/sata/1TB/gobabygo/scripts/mesh",
     )
 
+    assert prompt.splitlines()[:2] == [
+        "MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1",
+        "MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1",
+    ]
     assert "persistent autonomous coordinator" in prompt
     assert "repository rektslug" in prompt
     assert "exactly codex-rektslug-worker" in prompt

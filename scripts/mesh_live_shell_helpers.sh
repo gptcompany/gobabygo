@@ -835,7 +835,7 @@ raise SystemExit(result.returncode)
 
 mcoordinator() {
   local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh state_repo
-  local prompt claude_cmd startup usage speckit_status_json
+  local prompt claude_cmd startup usage speckit_status_json contract_marker review_capability
   local -a prompt_args=()
   usage="Usage: mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
   repo=""
@@ -945,6 +945,17 @@ mcoordinator() {
   fi
   [[ -n "$speckit_status_json" ]] && prompt_args+=(--speckit-status-json "$speckit_status_json")
   prompt="$(_mesh_live_run "${prompt_args[@]}")" || return $?
+  contract_marker="MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1"
+  review_capability="MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1"
+  if ! printf '%s\n' "$prompt" | grep -Fqx -- "$contract_marker"; then
+    echo "[mcoordinator] remote runtime returned an incompatible coordinator contract" >&2
+    echo "[mcoordinator] update the Dell Gobabygo runtime before bootstrap or resume" >&2
+    return 2
+  fi
+  if ! printf '%s\n' "$prompt" | grep -Fqx -- "$review_capability"; then
+    echo "[mcoordinator] coordinator contract is missing the transactional review capability" >&2
+    return 2
+  fi
   claude_cmd="${MESH_COORDINATOR_CLAUDE_CMD:-claude}"
   if [[ "$continue_mode" -eq 1 ]]; then
     startup="${claude_cmd} --continue"

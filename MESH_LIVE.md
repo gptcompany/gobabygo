@@ -156,6 +156,10 @@ contract before starting tmux, then launches Claude on the Dell with resume and
 old conversation and the freshly generated contract. The contract uses the
 absolute `MESH_COORDINATOR_MESH_SCRIPT` path on the Dell, so the running
 coordinator does not depend on Mac aliases, shell functions, or `.zshrc`.
+Before any tmux create or attach, the helper requires the exact coordinator
+contract marker and transactional-review capability from that remote runtime.
+A stale, truncated, or incompatible runtime therefore fails before Claude or
+tmux mutation instead of silently resuming with an obsolete contract.
 Coordinator bootstrap also sets `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` so the
 conversation remains in native tmux/iTerm2 scrollback. This changes rendering
 only; resume history, prompts, locks, and workflow selection are unchanged.

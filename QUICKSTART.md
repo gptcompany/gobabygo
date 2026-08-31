@@ -335,6 +335,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - after a reboot use explicit `--continue` or deterministic `--resume <id>`;
   the helper resumes Claude and appends the current Gobabygo system contract in
   the same startup command
+- bootstrap and resume require exact contract and transactional-review markers
+  from the Dell runtime before tmux access; update a stale runtime rather than
+  silently starting with an older contract
 - exact `--resume <id>` rejects the same UUID in another active tmux coordinator
   and holds a private per-UUID lock while Claude runs; `--continue` cannot offer
   this guarantee because its UUID is selected inside Claude after startup
