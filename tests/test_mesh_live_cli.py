@@ -2114,6 +2114,12 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "Mutation tests are evidence, not a quality counter" in prompt
     assert "one independent RELEASE review per frozen release candidate" in prompt
     assert "RELEASE PASS is evidence of review completion, never authorization to deploy" in prompt
+    assert "transactionally gated by the feature's `review-ledger.json`" in prompt
+    assert "speckit review status <repo-root> <feature-dir> <Tnnn> --json" in prompt
+    assert "Revision mismatch is a concurrency result" in prompt
+    assert "speckit review record --evidence-file <report>" in prompt
+    assert "Never send a planned correction unless the transaction returns `CORRECTION_OPEN`" in prompt
+    assert "status is `RELEASE_PASSED`" in prompt
     assert "If the reviewer mutated tracked state" in prompt
     assert "Never let the reviewer silently become the fixer" in prompt
     assert "speckit context <repo-root> --phase <enabled-phase>" in prompt

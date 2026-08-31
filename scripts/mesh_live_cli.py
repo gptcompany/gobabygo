@@ -3315,6 +3315,7 @@ def build_live_coordinator_system_prompt(
     )
     speckit_context_command = f"{shlex.quote(mesh_script)} speckit context"
     speckit_ledger_command = f"{shlex.quote(mesh_script)} speckit github"
+    speckit_review_command = f"{shlex.quote(mesh_script)} speckit review"
     if worker_session:
         worker_policy = (
             f"Your authorized worker target is exactly {worker_session}. "
@@ -3483,6 +3484,11 @@ def build_live_coordinator_system_prompt(
             "- Author Spec Kit artifacts, the managed caller, and `github-ledger.json` only on a non-default planning branch. Before commit, verify the changed-file allowlist and exclude source code. Push a planning-only pull request, require its read-only ledger check, merge only after it passes, then wait for default-branch issue publication and an aligned ledger check.",
             "- Workers consume the rendered Spec Kit context and immutable task key. Never delegate caller installation, binding initialization, issue mutation, planning-branch ownership, or a competing Spec Kit pipeline to a worker.",
             "- Put the exact immutable `<repository>:<feature-id>:<Tnnn>` task key in every implementation and review delegation. Completion requires reviewed evidence, an authoritative `tasks.md` checkbox update, and subsequent Action reconciliation; worker idle/prose and manual issue closure are not completion.",
+            "- Planned implementation review is transactionally gated by the feature's `review-ledger.json`. Before review work, inspect the exact task with "
+            f"`{speckit_review_command} status <repo-root> <feature-dir> <Tnnn> --json`; use the returned revision as `--expect-revision` for one mutation, then reload. Revision mismatch is a concurrency result, never permission to retry blindly.",
+            f"- Initialize a frozen task cycle with `{speckit_review_command} init`; open each review with `{speckit_review_command} open`; persist the exact non-secret reviewer report inside the feature and record it with `{speckit_review_command} record --evidence-file <report>`. The CLI computes the digest and rejects mutable scope, self-review, blocking PASS, budget overflow, duplicate review, or invalid transition.",
+            f"- A failed review permits `{speckit_review_command} correction` at most twice or an immediate `{speckit_review_command} decide`. After DELTA PASS, `{speckit_review_command} candidate` must freeze a new full candidate before INVARIANT or RELEASE review. Expand mutations only with `{speckit_review_command} budget` and one concrete uncovered failure reason.",
+            "- Never send a planned correction unless the transaction returns `CORRECTION_OPEN`. Never call the task reviewed or check it complete unless status is `RELEASE_PASSED`. RELEASE_PASSED remains evidence, not deploy or money-path authority.",
             "For every Spec Kit delegation, derive a provider-neutral bounded envelope before sending: "
             f"`{speckit_context_command} <repo-root> --phase <enabled-phase> --feature-dir "
             "<feature-dir> --artifact <feature-relative-path> --role <writer|reviewer> "
@@ -3535,7 +3541,7 @@ def build_live_coordinator_system_prompt(
             "A DELTA PASS accepts only that correction delta; an INVARIANT PASS validates only the named frozen invariants. Only a RELEASE PASS satisfies the final review gate.",
             "7. Require the reviewer's final standalone status marker for its own DELEGATION_ID. Treat malformed, scope-free, level-free, or evidence-free review as incomplete, not as PASS.",
             "8. After review, independently compare HEAD, status, changed files, and diff checksum with the frozen scope. If the reviewer mutated tracked state, stop, report the violation, and do not use that review as independent evidence.",
-            "9. Send accepted corrections back to the writer under a new DELEGATION_ID, then ask a reviewer to inspect the exact correction delta. Never let the reviewer silently become the fixer. "
+            "9. For Spec Kit work, obtain a successful review-ledger correction transaction before sending accepted corrections back to the writer under its new DELEGATION_ID, then ask a reviewer to inspect the exact correction delta. For direct work, record the same round fields in durable coordinator state. Never let the reviewer silently become the fixer. "
             "Allow at most two correction-and-review rounds for one frozen task scope. Before each correction, persist the frozen scope and next REVIEW_ROUND in authoritative tasks or coordinator state; after resume or compaction, reconstruct the count from that durable state and prior review evidence rather than resetting it.",
             "10. If the second correction round still fails, stop the loop and record exactly one `REVIEW_LOOP_DECISION: REPLAN|ESCALATE|BACKLOG`. "
             "BACKLOG is forbidden for unresolved high/medium in-scope findings or anything that invalidates acceptance, a critical invariant, or release safety. Only an explicit REPLAN creates a new scope and resets the round count.",
@@ -3603,6 +3609,7 @@ def build_live_coordinator_system_prompt(
             "- Provider YOLO mode removes approval prompts; it does not expand this authorization.",
             "- You may board, peek, send bounded tasks to authorized workers, inspect Git, and run relevant tests.",
             "- For selected planned work, you may create a non-default planning branch, author only Spec Kit artifacts and non-secret briefs, invoke the exact managed caller and binding commands above, commit and push that planning-only allowlist, open its pull request, and merge it only after the required read-only check passes. This authority never includes source implementation or direct issue mutation.",
+            "- After writer activity stops, you may author non-secret review report artifacts inside the selected feature and invoke only the listed transactional review-ledger commands. This authority covers review evidence and `review-ledger.json`, never source code, deploys, or direct issue mutation.",
             "- You have standing authorization to invoke only the listed ensure-codex or ensure-antigravity commands when a worker is missing. "
             "Each may create at most one deterministic provider tmux worker per repository. Codex sends no task text; "
             "Antigravity uses only a fixed no-tools bootstrap prompt and sends no delegated work.",

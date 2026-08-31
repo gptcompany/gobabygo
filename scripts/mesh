@@ -761,6 +761,7 @@ Usage:
   ./scripts/mesh speckit github plan <feature-dir> [--json]
   ./scripts/mesh speckit github check <feature-dir> [--json]
   ./scripts/mesh speckit github install-caller <repo-path> --runtime-ref <40-char-sha> [--accept-pin-update] [--apply] [--json]
+  ./scripts/mesh speckit review <status|init|open|record|correction|candidate|budget|decide> [...]
   ./scripts/mesh speckit run <repo-path> --feature text [--task text] [--auto]
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
@@ -866,6 +867,19 @@ run_speckit_github() {
   command "$py_bin" "$github_cli" "$@"
 }
 
+run_speckit_review() {
+  local py_bin="${MESH_SPECKIT_PYTHON:-}"
+  local review_cli="${REPO_ROOT}/scripts/mesh_speckit_review.py"
+  if [[ ! -f "$review_cli" ]]; then
+    echo "Error: missing Spec Kit review ledger CLI at $review_cli" >&2
+    return 1
+  fi
+  if [[ -z "$py_bin" ]]; then
+    py_bin="$(detect_python)" || return $?
+  fi
+  command "$py_bin" "$review_cli" "$@"
+}
+
 run_speckit_short() {
   local subcmd="${1:-}"
   if [[ "$subcmd" == "" || "$subcmd" == "-h" || "$subcmd" == "--help" ]]; then
@@ -880,6 +894,11 @@ run_speckit_short() {
     github)
       shift
       run_speckit_github "$@"
+      exit $?
+      ;;
+    review)
+      shift
+      run_speckit_review "$@"
       exit $?
       ;;
   esac

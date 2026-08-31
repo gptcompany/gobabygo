@@ -79,6 +79,7 @@ def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     assert "speckit github plan" in proc.stdout
     assert "speckit github check" in proc.stdout
     assert "speckit github install-caller" in proc.stdout
+    assert "speckit review <status|init|open|record|correction|candidate|budget|decide>" in proc.stdout
     assert "writes are intentionally restricted" in proc.stdout
     assert "Legacy iTerm2 run options" in proc.stdout
 
@@ -118,6 +119,49 @@ def test_github_ledger_subcommand_forwards_exact_arguments(tmp_path) -> None:
         str(ROOT / "scripts" / "mesh_speckit_github.py"),
         "check",
         "/tmp/example feature",
+        "--json",
+    ]
+
+
+def test_review_ledger_subcommand_forwards_exact_arguments(tmp_path) -> None:
+    capture = tmp_path / "args.json"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_FILE\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(MESH),
+            "speckit",
+            "review",
+            "status",
+            "/tmp/example repo",
+            "specs/001-feature",
+            "T001",
+            "--json",
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "CAPTURE_FILE": str(capture),
+            "MESH_SPECKIT_PYTHON": str(fake_python),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == [
+        str(ROOT / "scripts" / "mesh_speckit_review.py"),
+        "status",
+        "/tmp/example repo",
+        "specs/001-feature",
+        "T001",
         "--json",
     ]
 

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
 from scripts import mesh_speckit_review as review
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MESH = ROOT / "scripts" / "mesh"
 
 
 SCOPE_A = "commit:" + ("a" * 40)
@@ -386,3 +392,80 @@ def test_evidence_rejects_symlinked_path_components(tmp_path: Path) -> None:
             mutations_run=0,
             expected_revision=2,
         )
+
+
+def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    report = feature / "release-review.md"
+    report.write_text("No findings.\nREVIEW_VERDICT: PASS\n", encoding="utf-8")
+    env = {**os.environ, "MESH_SPECKIT_PYTHON": sys.executable}
+
+    commands = [
+        [
+            "init",
+            str(repo),
+            str(feature),
+            "T001",
+            "--scope",
+            SCOPE_A,
+            "--writer-session",
+            "agy-project",
+            "--invariant",
+            "release requires RELEASE PASS",
+            "--expect-revision",
+            "0",
+            "--json",
+        ],
+        [
+            "open",
+            str(repo),
+            str(feature),
+            "T001",
+            "--level",
+            "RELEASE",
+            "--scope",
+            SCOPE_A,
+            "--reviewer-session",
+            "codex-project",
+            "--delegation-id",
+            "review-release-1",
+            "--expect-revision",
+            "1",
+            "--json",
+        ],
+        [
+            "record",
+            str(repo),
+            str(feature),
+            "T001",
+            "--verdict",
+            "PASS",
+            "--evidence-file",
+            str(report),
+            "--mutations-run",
+            "1",
+            "--expect-revision",
+            "2",
+            "--json",
+        ],
+        ["status", str(repo), str(feature), "T001", "--json"],
+    ]
+    outputs: list[dict] = []
+    for command in commands:
+        proc = subprocess.run(
+            ["bash", str(MESH), "speckit", "review", *command],
+            cwd=ROOT,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == 0, proc.stderr
+        outputs.append(json.loads(proc.stdout))
+
+    assert [item["revision"] for item in outputs] == [1, 2, 3, 3]
+    assert outputs[-1]["status"] == "RELEASE_PASSED"
+    assert outputs[-1]["events"][-1]["data"]["evidence"]["path"] == (
+        "release-review.md"
+    )
