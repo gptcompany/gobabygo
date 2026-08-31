@@ -510,6 +510,13 @@ completion and from merge, push, deploy, or money-path authorization. The
 ledger/report files use the repository's normal authorized Git flow; the CLI
 does not perform those operations.
 
+```bash
+mesh speckit review check /path/to/repo specs/001-feature T001
+```
+
+`check` exits `0` only for `RELEASE_PASSED`, `1` for a valid unsatisfied gate,
+and `2` when the ledger or command is invalid.
+
 ### Git hook chaining
 
 Git supports one effective `core.hooksPath`. On the Dell, keep the global value

@@ -858,6 +858,20 @@ def review_status(
     }
 
 
+def review_check(repo: Path, feature_dir: Path, task_id: str) -> dict[str, Any]:
+    status = review_status(repo, feature_dir, task_id)
+    return {
+        "schema": SCHEMA,
+        "feature_key": status["feature_key"],
+        "revision": status["revision"],
+        "ledger_file": status["ledger_file"],
+        "task": status["task"],
+        "task_key": status["task_key"],
+        "status": status["status"],
+        "release_passed": status["status"] == "RELEASE_PASSED",
+    }
+
+
 def _common(command: argparse.ArgumentParser, *, revision: bool = True) -> None:
     command.add_argument("repo", type=Path)
     command.add_argument("feature_dir", type=Path)
@@ -875,6 +889,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     status.add_argument("feature_dir", type=Path)
     status.add_argument("task", nargs="?")
     status.add_argument("--json", action="store_true")
+    check = sub.add_parser("check")
+    check.add_argument("repo", type=Path)
+    check.add_argument("feature_dir", type=Path)
+    check.add_argument("task")
+    check.add_argument("--json", action="store_true")
     init = sub.add_parser("init")
     _common(init)
     init.add_argument("--scope", required=True)
@@ -930,6 +949,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "status":
             output = review_status(args.repo, args.feature_dir, args.task)
+        elif args.command == "check":
+            output = review_check(args.repo, args.feature_dir, args.task)
         elif args.command == "init":
             output = initialize_task(
                 args.repo,
@@ -1007,6 +1028,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Error: operating system failure: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(output, indent=2, sort_keys=True) if args.json else _render(output))
+    if args.command == "check" and not output["release_passed"]:
+        return 1
     return 0
 
 

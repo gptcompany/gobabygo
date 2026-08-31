@@ -492,6 +492,8 @@ transactions. Each correction must receive a DELTA review. DELTA PASS produces
 before another INVARIANT or RELEASE review. `budget` only increases the frozen
 mutation budget with a concrete reason. `RELEASE_PASSED` closes the review gate
 but never authorizes merge, push, deploy, or money-path activation.
+`mesh speckit review check <repo> <feature-dir> <Tnnn>` exits `0` only for
+`RELEASE_PASSED`, `1` while the gate is unsatisfied, and `2` for invalid input.
 
 The ledger and referenced reports are normal non-secret feature artifacts.
 Include them only through the repository's normal authorized Git flow. The

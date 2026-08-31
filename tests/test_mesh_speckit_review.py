@@ -125,6 +125,7 @@ def test_release_pass_is_terminal_and_durable(tmp_path: Path) -> None:
     assert evidence["path"] == "review-2.md"
     assert len(evidence["sha256"]) == 64
     assert (feature / "review-ledger.json").is_file()
+    assert review.review_check(repo, feature, "T001")["release_passed"] is True
 
 
 def test_pass_rejects_blocking_findings_without_mutation(tmp_path: Path) -> None:
@@ -257,6 +258,48 @@ def test_revision_cas_and_external_drift_fail_closed(tmp_path: Path) -> None:
         review.review_status(repo, feature)
 
 
+def test_semantically_corrupt_ledger_fails_closed(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    ledger_path = feature / "review-ledger.json"
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    payload["tasks"]["T001"]["status"] = "REVIEW_OPEN"
+    ledger_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(review.ReviewLedgerError, match="active review status mismatch"):
+        review.review_status(repo, feature, "T001")
+
+
+def test_lock_contention_fails_without_writing(tmp_path: Path) -> None:
+    repo, feature_path = _feature(tmp_path)
+    feature = review.load_feature(repo, feature_path)
+
+    with review._ledger_lock(feature):
+        with pytest.raises(review.ReviewLedgerError, match="another review ledger"):
+            _init(repo, feature_path)
+
+    assert not (feature_path / "review-ledger.json").exists()
+
+
+def test_atomic_replace_failure_preserves_previous_ledger(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    ledger = feature / "review-ledger.json"
+    previous = ledger.read_bytes()
+
+    def fail_replace(_source: Path, _target: Path) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(review.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+
+    assert ledger.read_bytes() == previous
+    assert not list(feature.glob(".review-ledger.json.*.tmp"))
+
+
 def test_mutation_budget_requires_explicit_reasoned_expansion(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
@@ -284,6 +327,41 @@ def test_mutation_budget_requires_explicit_reasoned_expansion(tmp_path: Path) ->
         expected_revision=3,
     )
     assert result["status"] == "RELEASE_PASSED"
+
+
+def test_duplicate_review_and_mutation_overflow_preserve_revision(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="INVARIANT", scope=SCOPE_A, invariant="at most two corrections")
+    _record(repo, feature, 2, "PASS")
+
+    with pytest.raises(review.ReviewLedgerError, match="already recorded"):
+        _open(
+            repo,
+            feature,
+            3,
+            level="INVARIANT",
+            scope=SCOPE_A,
+            invariant="at most two corrections",
+        )
+    assert review.review_status(repo, feature, "T001")["revision"] == 3
+
+    _open(repo, feature, 3, level="RELEASE", scope=SCOPE_A)
+    (feature / "overflow-review.md").write_text("review\n", encoding="utf-8")
+    with pytest.raises(review.ReviewLedgerError, match="exceed frozen budget"):
+        review.record_review(
+            repo,
+            feature,
+            "T001",
+            verdict="PASS",
+            evidence_file=feature / "overflow-review.md",
+            blocking_high=0,
+            blocking_medium=0,
+            invalidates_safety=False,
+            mutations_run=2,
+            expected_revision=4,
+        )
+    assert review.review_status(repo, feature, "T001")["revision"] == 4
 
 
 def test_replan_starts_new_cycle_without_losing_event_history(tmp_path: Path) -> None:
@@ -469,3 +547,42 @@ def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path) -
     assert outputs[-1]["events"][-1]["data"]["evidence"]["path"] == (
         "release-review.md"
     )
+
+    check = subprocess.run(
+        [
+            "bash",
+            str(MESH),
+            "speckit",
+            "review",
+            "check",
+            str(repo),
+            str(feature),
+            "T001",
+            "--json",
+        ],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert check.returncode == 0, check.stderr
+    assert json.loads(check.stdout)["release_passed"] is True
+
+
+def test_check_exit_codes_distinguish_unsatisfied_and_invalid(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+
+    assert review.main(["check", str(repo), str(feature), "T001", "--json"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "READY_FOR_REVIEW"
+    assert output["release_passed"] is False
+
+    assert review.main(["check", str(repo), str(feature), "T999", "--json"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not initialized" in captured.err
