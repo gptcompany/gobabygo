@@ -586,3 +586,135 @@ def test_check_exit_codes_distinguish_unsatisfied_and_invalid(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "not initialized" in captured.err
+
+
+def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    failed_report = feature / "release-failed.md"
+    failed_report.write_text("One medium finding.\n", encoding="utf-8")
+    delta_report = feature / "delta-pass.md"
+    delta_report.write_text("Correction verified.\n", encoding="utf-8")
+    release_report = feature / "release-pass.md"
+    release_report.write_text("Release scope verified.\n", encoding="utf-8")
+    env = {**os.environ, "MESH_SPECKIT_PYTHON": sys.executable}
+
+    def run(*arguments: str, expected: int = 0) -> dict:
+        proc = subprocess.run(
+            ["bash", str(MESH), "speckit", "review", *arguments, "--json"],
+            cwd=ROOT,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == expected, proc.stderr
+        return json.loads(proc.stdout)
+
+    common = (str(repo), str(feature), "T001")
+    assert run(
+        "init",
+        *common,
+        "--scope",
+        SCOPE_A,
+        "--writer-session",
+        "agy-project",
+        "--invariant",
+        "release requires RELEASE PASS",
+        "--expect-revision",
+        "0",
+    )["status"] == "READY_FOR_REVIEW"
+    assert run("check", *common, expected=1)["release_passed"] is False
+    run(
+        "open",
+        *common,
+        "--level",
+        "RELEASE",
+        "--scope",
+        SCOPE_A,
+        "--reviewer-session",
+        "codex-project",
+        "--delegation-id",
+        "release-1",
+        "--expect-revision",
+        "1",
+    )
+    assert run(
+        "record",
+        *common,
+        "--verdict",
+        "CHANGES_REQUIRED",
+        "--evidence-file",
+        str(failed_report),
+        "--blocking-medium",
+        "1",
+        "--expect-revision",
+        "2",
+    )["status"] == "CHANGES_REQUIRED"
+    assert run(
+        "correction",
+        *common,
+        "--delegation-id",
+        "fix-1",
+        "--expect-revision",
+        "3",
+    )["round"] == 1
+    run(
+        "open",
+        *common,
+        "--level",
+        "DELTA",
+        "--scope",
+        DELTA_1,
+        "--reviewer-session",
+        "codex-project",
+        "--delegation-id",
+        "delta-1",
+        "--expect-revision",
+        "4",
+    )
+    assert run(
+        "record",
+        *common,
+        "--verdict",
+        "PASS",
+        "--evidence-file",
+        str(delta_report),
+        "--expect-revision",
+        "5",
+    )["status"] == "CANDIDATE_UPDATE_REQUIRED"
+    assert run(
+        "candidate",
+        *common,
+        "--scope",
+        SCOPE_B,
+        "--expect-revision",
+        "6",
+    )["status"] == "READY_FOR_REVIEW"
+    run(
+        "open",
+        *common,
+        "--level",
+        "RELEASE",
+        "--scope",
+        SCOPE_B,
+        "--reviewer-session",
+        "codex-project",
+        "--delegation-id",
+        "release-2",
+        "--expect-revision",
+        "7",
+    )
+    assert run(
+        "record",
+        *common,
+        "--verdict",
+        "PASS",
+        "--evidence-file",
+        str(release_report),
+        "--expect-revision",
+        "8",
+    )["status"] == "RELEASE_PASSED"
+    checked = run("check", *common)
+    assert checked["release_passed"] is True
+    assert checked["revision"] == 9
