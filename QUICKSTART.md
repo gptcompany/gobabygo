@@ -511,11 +511,13 @@ ledger/report files use the repository's normal authorized Git flow; the CLI
 does not perform those operations.
 
 ```bash
-mesh speckit review check /path/to/repo specs/001-feature T001
+mesh speckit review check /path/to/repo specs/001-feature T001 \
+  --scope commit:<current-writer-sha>
 ```
 
-`check` exits `0` only for `RELEASE_PASSED`, `1` for a valid unsatisfied gate,
-and `2` when the ledger or command is invalid.
+`check` exits `0` only when the supplied immutable scope is the frozen
+`RELEASE_PASSED` candidate, `1` for its valid unsatisfied gate, and `2` when the
+ledger, task, scope, or command is invalid or stale.
 
 ### Git hook chaining
 

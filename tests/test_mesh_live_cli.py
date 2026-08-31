@@ -2120,7 +2120,10 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "speckit review record --evidence-file <report>" in prompt
     assert "Never send a planned correction unless the transaction returns `CORRECTION_OPEN`" in prompt
     assert "exit 0 with `RELEASE_PASSED`" in prompt
-    assert "speckit review check <repo-root> <feature-dir> <Tnnn>" in prompt
+    assert (
+        "speckit review check <repo-root> <feature-dir> <Tnnn> --scope "
+        "<current-immutable-scope>" in prompt
+    )
     assert "If the reviewer mutated tracked state" in prompt
     assert "Never let the reviewer silently become the fixer" in prompt
     assert "speckit context <repo-root> --phase <enabled-phase>" in prompt

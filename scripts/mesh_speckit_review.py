@@ -858,8 +858,18 @@ def review_status(
     }
 
 
-def review_check(repo: Path, feature_dir: Path, task_id: str) -> dict[str, Any]:
+def review_check(
+    repo: Path, feature_dir: Path, task_id: str, *, scope: str
+) -> dict[str, Any]:
+    _feature, _task, current_task_key = _load_bound_task(repo, feature_dir, task_id)
+    expected_scope = normalize_immutable_review_scope(scope)
     status = review_status(repo, feature_dir, task_id)
+    if status["task_key"] != current_task_key:
+        raise ReviewLedgerError("review ledger task identity no longer matches tasks.md")
+    if status["frozen_scope"] != expected_scope:
+        raise ReviewLedgerError(
+            "review gate scope mismatch: supplied candidate is not the frozen candidate"
+        )
     return {
         "schema": SCHEMA,
         "feature_key": status["feature_key"],
@@ -867,6 +877,7 @@ def review_check(repo: Path, feature_dir: Path, task_id: str) -> dict[str, Any]:
         "ledger_file": status["ledger_file"],
         "task": status["task"],
         "task_key": status["task_key"],
+        "scope": expected_scope,
         "status": status["status"],
         "release_passed": status["status"] == "RELEASE_PASSED",
     }
@@ -893,6 +904,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     check.add_argument("repo", type=Path)
     check.add_argument("feature_dir", type=Path)
     check.add_argument("task")
+    check.add_argument("--scope", required=True)
     check.add_argument("--json", action="store_true")
     init = sub.add_parser("init")
     _common(init)
@@ -950,7 +962,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "status":
             output = review_status(args.repo, args.feature_dir, args.task)
         elif args.command == "check":
-            output = review_check(args.repo, args.feature_dir, args.task)
+            output = review_check(
+                args.repo, args.feature_dir, args.task, scope=args.scope
+            )
         elif args.command == "init":
             output = initialize_task(
                 args.repo,

@@ -125,7 +125,7 @@ def test_release_pass_is_terminal_and_durable(tmp_path: Path) -> None:
     assert evidence["path"] == "review-2.md"
     assert len(evidence["sha256"]) == 64
     assert (feature / "review-ledger.json").is_file()
-    assert review.review_check(repo, feature, "T001")["release_passed"] is True
+    assert review.review_check(repo, feature, "T001", scope=SCOPE_A)["release_passed"] is True
 
 
 def test_pass_rejects_blocking_findings_without_mutation(tmp_path: Path) -> None:
@@ -558,6 +558,8 @@ def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path) -
             str(repo),
             str(feature),
             "T001",
+            "--scope",
+            SCOPE_A,
             "--json",
         ],
         cwd=ROOT,
@@ -577,15 +579,31 @@ def test_check_exit_codes_distinguish_unsatisfied_and_invalid(
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
 
-    assert review.main(["check", str(repo), str(feature), "T001", "--json"]) == 1
+    assert review.main(
+        ["check", str(repo), str(feature), "T001", "--scope", SCOPE_A, "--json"]
+    ) == 1
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "READY_FOR_REVIEW"
     assert output["release_passed"] is False
 
-    assert review.main(["check", str(repo), str(feature), "T999", "--json"]) == 2
+    assert review.main(
+        ["check", str(repo), str(feature), "T999", "--scope", SCOPE_A, "--json"]
+    ) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "not initialized" in captured.err
+    assert "task not found in tasks.md" in captured.err
+
+
+def test_check_rejects_stale_candidate_scope(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    _record(repo, feature, 2, "PASS")
+
+    with pytest.raises(review.ReviewLedgerError, match="scope mismatch"):
+        review.review_check(repo, feature, "T001", scope=SCOPE_B)
+
+    assert review.review_status(repo, feature, "T001")["revision"] == 3
 
 
 def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
@@ -624,7 +642,7 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--expect-revision",
         "0",
     )["status"] == "READY_FOR_REVIEW"
-    assert run("check", *common, expected=1)["release_passed"] is False
+    assert run("check", *common, "--scope", SCOPE_A, expected=1)["release_passed"] is False
     run(
         "open",
         *common,
@@ -715,6 +733,6 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--expect-revision",
         "8",
     )["status"] == "RELEASE_PASSED"
-    checked = run("check", *common)
+    checked = run("check", *common, "--scope", SCOPE_B)
     assert checked["release_passed"] is True
     assert checked["revision"] == 9
