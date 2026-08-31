@@ -421,15 +421,37 @@ The live adapter follows these boundaries:
    names a different lead. The coordinator synthesizes and adjudicates but does
    not edit source code.
 
+Before behavior-changing work, freeze acceptance criteria, named critical
+invariants, and the mutation budget. The default is one representative mutation
+per critical invariant; expansion requires a concrete uncovered failure mode,
+not a desire to increase a mutation count.
+
 Every code review freezes an exact commit range or a recorded HEAD, changed-file
 list, status, and diff checksum after writer activity stops. Findings come first,
 ordered by severity. Each finding includes exact `file:line`, impact, evidence
-or reproduction, and bounded fix direction. The reviewer then reports missing
-tests, residual risks, and exactly one `REVIEW_VERDICT: PASS` or
-`REVIEW_VERDICT: CHANGES_REQUIRED`; unresolved high/medium findings forbid PASS.
+or reproduction, bounded fix direction, `SCOPE_CLASS:
+IN_SCOPE|RELEASE_BOUNDARY|ADJACENT`, and `DISPOSITION:
+FIX_NOW|REPLAN|BACKLOG`. Adjacent findings normally enter the durable backlog,
+but cannot be deferred when they invalidate acceptance, a critical invariant,
+or release safety.
+
+The reviewer then reports missing tests, residual risks, `REVIEW_LEVEL:
+DELTA|INVARIANT|RELEASE`, exact immutable `REVIEW_SCOPE`, and exactly one
+`REVIEW_VERDICT: PASS` or `REVIEW_VERDICT: CHANGES_REQUIRED`. A delta PASS
+accepts only its correction, an invariant PASS only the named invariants, and
+only a release PASS satisfies the final review gate. Unresolved high/medium
+in-scope or release-boundary findings forbid PASS. Release PASS does not
+authorize merge, push, deploy, or money-path enablement; those remain separate
+operator or standing-authority decisions.
+
 The coordinator verifies afterward that the read-only reviewer did not mutate
 tracked state. Corrections return to the writer under a new delegation ID and
-the reviewer inspects the exact correction delta.
+the reviewer inspects the exact correction delta. One frozen task scope permits
+at most two correction-and-review rounds. A second failure must end with
+`REVIEW_LOOP_DECISION: REPLAN|ESCALATE|BACKLOG`; BACKLOG cannot hide a blocking
+finding, and only explicit REPLAN resets the count. Run one independent release
+review per frozen release candidate. Do not add reviewers after release PASS
+unless the candidate changes or new concrete evidence invalidates it.
 
 The router/database remains optional for durable managed orchestration. Loading
 the live projection never creates a router thread and never takes ownership of

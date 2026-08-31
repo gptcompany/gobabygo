@@ -2095,7 +2095,23 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "No findings." in prompt
     assert "REVIEW_VERDICT: PASS" in prompt
     assert "REVIEW_VERDICT: CHANGES_REQUIRED" in prompt
-    assert "PASS is forbidden while any unresolved high- or medium-severity finding remains" in prompt
+    assert "REVIEW_LEVEL: DELTA|INVARIANT|RELEASE" in prompt
+    assert "exact immutable `REVIEW_SCOPE: <scope>`" in prompt
+    assert "SCOPE_CLASS: IN_SCOPE|RELEASE_BOUNDARY|ADJACENT" in prompt
+    assert "DISPOSITION: FIX_NOW|REPLAN|BACKLOG" in prompt
+    assert (
+        "PASS is forbidden while any unresolved high- or medium-severity in-scope or "
+        "release-boundary finding remains"
+        in prompt
+    )
+    assert "Only a RELEASE PASS satisfies the final review gate" in prompt
+    assert "at most two correction-and-review rounds" in prompt
+    assert "REVIEW_LOOP_DECISION: REPLAN|ESCALATE|BACKLOG" in prompt
+    assert "Only an explicit REPLAN creates a new scope and resets the round count" in prompt
+    assert "one representative mutation per critical invariant" in prompt
+    assert "Mutation tests are evidence, not a quality counter" in prompt
+    assert "one independent RELEASE review per frozen release candidate" in prompt
+    assert "RELEASE PASS is evidence of review completion, never authorization to deploy" in prompt
     assert "If the reviewer mutated tracked state" in prompt
     assert "Never let the reviewer silently become the fixer" in prompt
     assert "speckit context <repo-root> --phase <enabled-phase>" in prompt

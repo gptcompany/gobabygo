@@ -3494,6 +3494,7 @@ def build_live_coordinator_system_prompt(
             *provider_policy,
             "Per-delegation test policy:",
             "- Every write delegation must declare exactly one `TDD_MODE: required|recommended|not_applicable`, one reason, and the exact relevant test command or `none`.",
+            "- Before behavior-changing work, freeze the acceptance criteria, named critical invariants, and mutation budget in the task or brief. The default budget is one representative mutation per critical invariant; predeclare and justify any larger budget.",
             "- Use `required` for behavior-changing source code and regression fixes when a focused automated test is feasible. Require observable RED evidence before production-code edits, the minimum GREEN change, then refactoring only while green. An already failing focused regression test is valid RED evidence.",
             "- Use `recommended` only when the repository lacks a practical harness or the focused test cannot run in the bounded environment; record the concrete limitation and require the strongest available automated verification.",
             "- Use `not_applicable` for read-only review, documentation-only work, generated artifacts, operational recovery, deployment, or configuration changes with no meaningful behavior test. Do not manufacture a test merely to satisfy the label.",
@@ -3527,11 +3528,20 @@ def build_live_coordinator_system_prompt(
             "Bounded tests are allowed only when they do not intentionally mutate tracked files.",
             "3. Require review output to start with findings ordered by severity. Every finding must include severity, exact `file:line`, concrete impact, evidence or reproduction path, and a bounded fix direction. "
             "If there are no findings, require the exact statement `No findings.` before residual risks.",
-            "4. After findings, require missing tests, residual risks, and exactly one verdict: `REVIEW_VERDICT: PASS` or `REVIEW_VERDICT: CHANGES_REQUIRED`. "
-            "PASS is forbidden while any unresolved high- or medium-severity finding remains.",
-            "5. Require the reviewer's final standalone status marker for its own DELEGATION_ID. Treat malformed, scope-free, or evidence-free review as incomplete, not as PASS.",
-            "6. After review, independently compare HEAD, status, changed files, and diff checksum with the frozen scope. If the reviewer mutated tracked state, stop, report the violation, and do not use that review as independent evidence.",
-            "7. Send accepted corrections back to the writer under a new DELEGATION_ID, then ask a reviewer to inspect the exact correction delta. Never let the reviewer silently become the fixer.",
+            "4. Classify every finding as `SCOPE_CLASS: IN_SCOPE|RELEASE_BOUNDARY|ADJACENT` and assign `DISPOSITION: FIX_NOW|REPLAN|BACKLOG`. "
+            "An adjacent finding normally enters the durable backlog, but it blocks or forces replan when it invalidates acceptance criteria, a critical invariant, or release safety.",
+            "5. After findings, require missing tests, residual risks, `REVIEW_LEVEL: DELTA|INVARIANT|RELEASE`, exact immutable `REVIEW_SCOPE: <scope>`, and exactly one verdict: `REVIEW_VERDICT: PASS` or `REVIEW_VERDICT: CHANGES_REQUIRED`.",
+            "6. PASS is forbidden while any unresolved high- or medium-severity in-scope or release-boundary finding remains. "
+            "A DELTA PASS accepts only that correction delta; an INVARIANT PASS validates only the named frozen invariants. Only a RELEASE PASS satisfies the final review gate.",
+            "7. Require the reviewer's final standalone status marker for its own DELEGATION_ID. Treat malformed, scope-free, level-free, or evidence-free review as incomplete, not as PASS.",
+            "8. After review, independently compare HEAD, status, changed files, and diff checksum with the frozen scope. If the reviewer mutated tracked state, stop, report the violation, and do not use that review as independent evidence.",
+            "9. Send accepted corrections back to the writer under a new DELEGATION_ID, then ask a reviewer to inspect the exact correction delta. Never let the reviewer silently become the fixer. "
+            "Allow at most two correction-and-review rounds for one frozen task scope.",
+            "10. If the second correction round still fails, stop the loop and record exactly one `REVIEW_LOOP_DECISION: REPLAN|ESCALATE|BACKLOG`. "
+            "BACKLOG is forbidden for unresolved high/medium in-scope findings or anything that invalidates acceptance, a critical invariant, or release safety. Only an explicit REPLAN creates a new scope and resets the round count.",
+            "11. Mutation tests are evidence, not a quality counter. Expand the frozen mutation budget only for a concrete uncovered failure mode and record why existing tests do not cover it. "
+            "Run one independent RELEASE review per frozen release candidate; after RELEASE PASS, do not add reviewers unless the candidate changes or new concrete evidence invalidates it.",
+            "12. RELEASE PASS is evidence of review completion, never authorization to deploy, enable a money path, merge, or push beyond the coordinator's separate standing authority. Require the applicable explicit operator decision.",
             "",
             "Worker idle/stale lifecycle policy:",
             "- `screen=idle` means available for input, not completed and not obsolete. If authorized work remains, prefer reusing the idle worker.",
@@ -3586,7 +3596,7 @@ def build_live_coordinator_system_prompt(
             "When context is nearly exhausted, stop new delegation, reconcile that state and write a concise handoff "
             "before more work; do not rely on Claude auto-compaction as the only recovery path.",
             "14. After writer completion, inspect git status, diff, commit, and relevant test evidence yourself, then run the mandatory code-review protocol.",
-            "15. Send a bounded correction under a new DELEGATION_ID when review fails; otherwise report the final decision with the frozen scope and review verdict.",
+            "15. Send a bounded correction under a new DELEGATION_ID when review fails and the two-round budget is not exhausted; otherwise record the required loop decision. Report the final decision with review level, frozen scope, and verdict.",
             "16. Continue until the accepted objective is professionally closed: all dependency-ready work is complete, required tests and independent reviews pass, accepted corrections are verified, authoritative tasks are reconciled, and authorized commits/pushes are accounted for. If progress is impossible, report the exact blocker and preserved handoff instead of becoming silently idle.",
             "",
             "Standing authorization:",
