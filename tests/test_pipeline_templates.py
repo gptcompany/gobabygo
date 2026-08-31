@@ -74,6 +74,7 @@ def test_canonical_review_convergence_policy_is_bounded() -> None:
     assert policy["levels"] == ["DELTA", "INVARIANT", "RELEASE"]
     assert policy["verdicts"] == ["PASS", "CHANGES_REQUIRED"]
     assert policy["max_correction_rounds"] == 2
+    assert policy["round_tracking"] == "durable_per_frozen_task_scope"
     assert policy["loop_exits"] == ["REPLAN", "ESCALATE", "BACKLOG"]
     assert policy["mutation_budget"]["default_per_critical_invariant"] == 1
     assert policy["release"]["deploy_authority"] == "explicit_operator_decision"

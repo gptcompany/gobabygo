@@ -436,8 +436,10 @@ but cannot be deferred when they invalidate acceptance, a critical invariant,
 or release safety.
 
 The reviewer then reports missing tests, residual risks, `REVIEW_LEVEL:
-DELTA|INVARIANT|RELEASE`, exact immutable `REVIEW_SCOPE`, and exactly one
-`REVIEW_VERDICT: PASS` or `REVIEW_VERDICT: CHANGES_REQUIRED`. A delta PASS
+DELTA|INVARIANT|RELEASE`, exact immutable `REVIEW_SCOPE`, and
+`REVIEW_ROUND: 0|1|2` plus `REVIEW_VERDICT: PASS` or `REVIEW_VERDICT:
+CHANGES_REQUIRED`. Round 0 is initial review; rounds 1 and 2 review corrections.
+A delta PASS
 accepts only its correction, an invariant PASS only the named invariants, and
 only a release PASS satisfies the final review gate. Unresolved high/medium
 in-scope or release-boundary findings forbid PASS. Release PASS does not
@@ -452,6 +454,9 @@ at most two correction-and-review rounds. A second failure must end with
 finding, and only explicit REPLAN resets the count. Run one independent release
 review per frozen release candidate. Do not add reviewers after release PASS
 unless the candidate changes or new concrete evidence invalidates it.
+Before each correction, persist its scope and next round in authoritative tasks
+or coordinator state. Resume and compaction reconstruct the count from that
+state and prior review evidence; they never reset it implicitly.
 
 The router/database remains optional for durable managed orchestration. Loading
 the live projection never creates a router thread and never takes ownership of

@@ -3530,13 +3530,13 @@ def build_live_coordinator_system_prompt(
             "If there are no findings, require the exact statement `No findings.` before residual risks.",
             "4. Classify every finding as `SCOPE_CLASS: IN_SCOPE|RELEASE_BOUNDARY|ADJACENT` and assign `DISPOSITION: FIX_NOW|REPLAN|BACKLOG`. "
             "An adjacent finding normally enters the durable backlog, but it blocks or forces replan when it invalidates acceptance criteria, a critical invariant, or release safety.",
-            "5. After findings, require missing tests, residual risks, `REVIEW_LEVEL: DELTA|INVARIANT|RELEASE`, exact immutable `REVIEW_SCOPE: <scope>`, and exactly one verdict: `REVIEW_VERDICT: PASS` or `REVIEW_VERDICT: CHANGES_REQUIRED`.",
+            "5. After findings, require missing tests, residual risks, `REVIEW_LEVEL: DELTA|INVARIANT|RELEASE`, exact immutable `REVIEW_SCOPE: <scope>`, `REVIEW_ROUND: 0|1|2`, and exactly one verdict: `REVIEW_VERDICT: PASS` or `REVIEW_VERDICT: CHANGES_REQUIRED`. Round 0 is the initial review; rounds 1 and 2 review corrections.",
             "6. PASS is forbidden while any unresolved high- or medium-severity in-scope or release-boundary finding remains. "
             "A DELTA PASS accepts only that correction delta; an INVARIANT PASS validates only the named frozen invariants. Only a RELEASE PASS satisfies the final review gate.",
             "7. Require the reviewer's final standalone status marker for its own DELEGATION_ID. Treat malformed, scope-free, level-free, or evidence-free review as incomplete, not as PASS.",
             "8. After review, independently compare HEAD, status, changed files, and diff checksum with the frozen scope. If the reviewer mutated tracked state, stop, report the violation, and do not use that review as independent evidence.",
             "9. Send accepted corrections back to the writer under a new DELEGATION_ID, then ask a reviewer to inspect the exact correction delta. Never let the reviewer silently become the fixer. "
-            "Allow at most two correction-and-review rounds for one frozen task scope.",
+            "Allow at most two correction-and-review rounds for one frozen task scope. Before each correction, persist the frozen scope and next REVIEW_ROUND in authoritative tasks or coordinator state; after resume or compaction, reconstruct the count from that durable state and prior review evidence rather than resetting it.",
             "10. If the second correction round still fails, stop the loop and record exactly one `REVIEW_LOOP_DECISION: REPLAN|ESCALATE|BACKLOG`. "
             "BACKLOG is forbidden for unresolved high/medium in-scope findings or anything that invalidates acceptance, a critical invariant, or release safety. Only an explicit REPLAN creates a new scope and resets the round count.",
             "11. Mutation tests are evidence, not a quality counter. Expand the frozen mutation budget only for a concrete uncovered failure mode and record why existing tests do not cover it. "
@@ -3596,7 +3596,7 @@ def build_live_coordinator_system_prompt(
             "When context is nearly exhausted, stop new delegation, reconcile that state and write a concise handoff "
             "before more work; do not rely on Claude auto-compaction as the only recovery path.",
             "14. After writer completion, inspect git status, diff, commit, and relevant test evidence yourself, then run the mandatory code-review protocol.",
-            "15. Send a bounded correction under a new DELEGATION_ID when review fails and the two-round budget is not exhausted; otherwise record the required loop decision. Report the final decision with review level, frozen scope, and verdict.",
+            "15. Send a bounded correction under a new DELEGATION_ID only after persisting its REVIEW_ROUND and only when the two-round budget is not exhausted; otherwise record the required loop decision. Report the final decision with review level, round, frozen scope, and verdict.",
             "16. Continue until the accepted objective is professionally closed: all dependency-ready work is complete, required tests and independent reviews pass, accepted corrections are verified, authoritative tasks are reconciled, and authorized commits/pushes are accounted for. If progress is impossible, report the exact blocker and preserved handoff instead of becoming silently idle.",
             "",
             "Standing authorization:",
@@ -3726,7 +3726,8 @@ def render_live_workflow_projection(projection: dict[str, Any]) -> str:
         "challenger=codex-read-only-two-rounds; missing-perspective=degraded-coverage",
         "Review convergence: levels=DELTA,INVARIANT,RELEASE; verdicts=PASS,CHANGES_REQUIRED; "
         f"max-corrections={projection['review_convergence']['max_correction_rounds']}; "
-        "release-pass=release-level-only; deploy=operator-decision",
+        "rounds=durable-per-frozen-scope; release-pass=release-level-only; "
+        "deploy=operator-decision",
         "Steps:",
     ]
     for step in projection["steps"]:

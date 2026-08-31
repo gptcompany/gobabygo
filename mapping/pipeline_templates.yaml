@@ -4,6 +4,7 @@ review_convergence:
   levels: [DELTA, INVARIANT, RELEASE]
   verdicts: [PASS, CHANGES_REQUIRED]
   max_correction_rounds: 2
+  round_tracking: durable_per_frozen_task_scope
   loop_exits: [REPLAN, ESCALATE, BACKLOG]
   triage:
     in_scope_high_medium: block

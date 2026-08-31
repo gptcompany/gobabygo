@@ -58,6 +58,11 @@ def normalized_review_convergence(document: dict[str, Any]) -> dict[str, Any]:
     rounds = policy.get("max_correction_rounds")
     if isinstance(rounds, bool) or not isinstance(rounds, int) or rounds < 1:
         raise ValueError("review_convergence.max_correction_rounds must be a positive integer")
+    if policy.get("round_tracking") != "durable_per_frozen_task_scope":
+        raise ValueError(
+            "review_convergence.round_tracking must be "
+            "'durable_per_frozen_task_scope'"
+        )
 
     mutation = policy.get("mutation_budget")
     if not isinstance(mutation, dict):

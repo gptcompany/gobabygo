@@ -39,6 +39,7 @@ def test_speckit_review_policy_reaches_cli_and_coordinator_contract(
     policy = json.loads(projection.stdout)["review_convergence"]
     assert policy["levels"] == ["DELTA", "INVARIANT", "RELEASE"]
     assert policy["max_correction_rounds"] == 2
+    assert policy["round_tracking"] == "durable_per_frozen_task_scope"
     assert policy["release"]["pass_requires_level"] == "RELEASE"
     assert policy["release"]["deploy_authority"] == "explicit_operator_decision"
 
@@ -54,6 +55,7 @@ def test_speckit_review_policy_reaches_cli_and_coordinator_contract(
     )
     assert prompt.returncode == 0, prompt.stderr
     assert "REVIEW_LEVEL: DELTA|INVARIANT|RELEASE" in prompt.stdout
+    assert "REVIEW_ROUND: 0|1|2" in prompt.stdout
     assert "Only a RELEASE PASS satisfies the final review gate" in prompt.stdout
     assert "REVIEW_LOOP_DECISION: REPLAN|ESCALATE|BACKLOG" in prompt.stdout
     assert "never authorization to deploy" in prompt.stdout
