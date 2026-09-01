@@ -1749,6 +1749,7 @@ def _session_limit_not_before(reset_label: str, timezone_name: str, now: float) 
         hour += 12
     minute = int(match.group(2) or 0)
     candidates: set[float] = set()
+    observed_date_candidates: set[float] = set()
     for day_offset in (-1, 0, 1):
         local_date = (observed + timedelta(days=day_offset)).date()
         for fold in (0, 1):
@@ -1769,12 +1770,24 @@ def _session_limit_not_before(reset_label: str, timezone_name: str, now: float) 
                 and round_trip.minute == minute
             ):
                 candidates.add(timestamp)
+                if day_offset == 0:
+                    observed_date_candidates.add(timestamp)
+    if not observed_date_candidates:
+        raise ValueError(
+            "session-limit reset has no valid local-time occurrence on observed date"
+        )
     if not candidates:
         raise ValueError("session-limit reset has no valid local-time occurrence")
-    reset_timestamp = min(
-        candidates,
-        key=lambda value: (abs(value - now), value < now),
-    )
+    future_ambiguous_candidates = {
+        value for value in observed_date_candidates if value >= now
+    }
+    if len(observed_date_candidates) > 1 and future_ambiguous_candidates:
+        reset_timestamp = min(future_ambiguous_candidates)
+    else:
+        reset_timestamp = min(
+            candidates,
+            key=lambda value: (abs(value - now), value < now),
+        )
     due = reset_timestamp + SESSION_LIMIT_RESET_GRACE_SECONDS
     return max(now, due) if reset_timestamp <= now else due
 

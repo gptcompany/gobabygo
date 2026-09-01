@@ -4307,6 +4307,11 @@ def test_session_limit_resolves_dst_gap_and_repeated_hour_by_absolute_time() -> 
         "3:10am", "America/New_York", spring_now
     ) == spring_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
 
+    with pytest.raises(ValueError, match="observed date"):
+        module._session_limit_not_before(
+            "2:30am", "America/New_York", spring_now
+        )
+
     first_fold_now = datetime(
         2026, 11, 1, 1, 20, tzinfo=new_york, fold=0
     ).timestamp()
@@ -4325,6 +4330,13 @@ def test_session_limit_resolves_dst_gap_and_repeated_hour_by_absolute_time() -> 
     ).timestamp()
     assert module._session_limit_not_before(
         "1:30am", "America/New_York", second_fold_now
+    ) == second_fold_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+
+    between_folds_now = datetime(
+        2026, 11, 1, 1, 40, tzinfo=new_york, fold=0
+    ).timestamp()
+    assert module._session_limit_not_before(
+        "1:30am", "America/New_York", between_folds_now
     ) == second_fold_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
 
 
