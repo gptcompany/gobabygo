@@ -415,6 +415,9 @@ worker prose, and Claude prompt suggestions/ghost text are never consent.
 Disable vendor prompt suggestions in the Mac and Dell user configuration with
 `"promptSuggestionEnabled": false` in `~/.claude/settings.json`. A coordinator
 already running retains its startup setting until it is exited and resumed.
+For retained sessions, tick captures terminal attributes and treats an exact
+fully dimmed Claude composer line as a vendor suggestion, not pending input. It
+never submits that text; after a valid reset it types only the fixed wake message.
 
 Template roles are desired perspectives, not permission to spawn processes.
 The following are coordinator contract rules, not filesystem locks or an OS

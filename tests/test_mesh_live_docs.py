@@ -189,6 +189,7 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "MANUAL_REQUIRED",
         "manual_action_required",
         "prompt suggestions/ghost text are never consent",
+        "fully dimmed Claude composer line",
         "promptSuggestionEnabled",
         "`provider`, `schedule_source`, and `not_before`",
         "Codex rate limit",

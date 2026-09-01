@@ -66,6 +66,7 @@ class LiveSession:
     pane_child_command: str = ""
     pane_pid: int = 0
     pane_child_pid: int = 0
+    prompt_suggestion: bool = False
     pane_dead: bool = False
     role: str = ""
     repo_name: str = ""
@@ -91,6 +92,7 @@ class LiveSession:
             pane_child_command=str(raw.get("pane_child_command") or ""),
             pane_pid=_as_int(raw.get("pane_pid")),
             pane_child_pid=_as_int(raw.get("pane_child_pid")),
+            prompt_suggestion=_as_bool(raw.get("prompt_suggestion")),
             pane_dead=_as_bool(raw.get("pane_dead")),
             role=str(raw.get("role") or ""),
             repo_name=str(raw.get("repo_name") or ""),
@@ -221,12 +223,17 @@ class LiveClient:
                 "pane_child_command",
                 "pane_pid",
                 "pane_child_pid",
+                "prompt_suggestion",
             ):
                 if field in capture:
                     metadata[field] = (
                         _as_int(capture[field])
                         if field.endswith("_pid")
-                        else str(capture[field] or "")
+                        else (
+                            _as_bool(capture[field])
+                            if field == "prompt_suggestion"
+                            else str(capture[field] or "")
+                        )
                     )
             enriched.append(
                 replace(
@@ -519,7 +526,17 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, Any],
     tmux_target = pane_id or name
     try:
         proc = _run_command(
-            [*prefix, "tmux", "capture-pane", "-p", "-S", f"-{lines}", "-t", tmux_target]
+            [
+                *prefix,
+                "tmux",
+                "capture-pane",
+                "-p",
+                "-e",
+                "-S",
+                f"-{lines}",
+                "-t",
+                tmux_target,
+            ]
         )
     except (OSError, subprocess.SubprocessError) as exc:
         result["error"] = str(exc)
@@ -530,6 +547,9 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, Any],
         )
     else:
         captured_lines = proc.stdout.rstrip("\n").splitlines()
+        result["prompt_suggestion"] = _claude_prompt_is_dim_suggestion(
+            "\n".join(captured_lines[-lines:])
+        )
         result["output"] = redact_capture("\n".join(captured_lines[-lines:]))
         if not target.get("pane_pid"):
             return result, []
@@ -776,6 +796,19 @@ _CODEX_ACTIVITY = re.compile(
     r"(?im)(?:working\s*\(|esc to interrupt|ctrl\+c to stop)"
 )
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _claude_prompt_is_dim_suggestion(visible_screen: str) -> bool:
+    for line in reversed(str(visible_screen or "").splitlines()):
+        if "❯" not in _ANSI_ESCAPE.sub("", line):
+            continue
+        marker = line.rfind("❯")
+        suffix = line[marker + 1 :]
+        return (
+            re.fullmatch(r"[ \xa0]*\x1b\[2m[^\r\n]+\x1b\[0m[ \t]*", suffix)
+            is not None
+        )
+    return False
 _CODEX_DIM_PLACEHOLDER = re.compile(r"\x1b\[2m[^\x1b\n]+\x1b\[0m\s*$")
 _CODEX_UNSAFE_INPUT = re.compile(
     r"(?im)(?:press enter|\bconfirm(?:ation)?\b|\bapprove\b|\byes/no\b|\by/n\b|"
@@ -2012,7 +2045,7 @@ def build_live_tick_plan(
                 action = "none"
                 reason = "session-limit reset metadata is ambiguous"
             elif (
-                _claude_pending_composer_fingerprint(session.output)
+                _session_pending_composer_fingerprint(session)
                 and not is_coordinator
             ):
                 action = "none"
@@ -2088,7 +2121,7 @@ def project_persisted_session_limit_schedules(
         if reset is None:
             projected.append(observation)
             continue
-        pending = _claude_pending_composer_fingerprint(session.output)
+        pending = _session_pending_composer_fingerprint(session)
         fingerprint = _tick_session_limit_fingerprint(session, *reset, pending)
         if (
             saved.get("session_limit_schedule_version")
@@ -2583,6 +2616,12 @@ def _claude_pending_composer_fingerprint(screen: str) -> str:
     return hashlib.sha256(current.encode("utf-8", errors="replace")).hexdigest()
 
 
+def _session_pending_composer_fingerprint(session: LiveSession) -> str:
+    if session.prompt_suggestion:
+        return ""
+    return _claude_pending_composer_fingerprint(session.output)
+
+
 def _clear_session_limit_state(saved: dict[str, Any]) -> bool:
     keys = (
         "session_limit_fingerprint",
@@ -2998,8 +3037,8 @@ def execute_live_tick_actions(
                 if fresh_state != LiveScreenState.session_limit or reset is None:
                     raise LiveReadError("session-limit screen changed before scheduled wake")
                 reset_label, timezone_name = reset
-                pending_composer_fingerprint = _claude_pending_composer_fingerprint(
-                    fresh.output
+                pending_composer_fingerprint = _session_pending_composer_fingerprint(
+                    fresh
                 )
                 fingerprint = _tick_session_limit_fingerprint(
                     fresh,

@@ -192,7 +192,38 @@ def test_reader_captures_exact_pane_with_bounded_history(monkeypatch) -> None:
     )
 
     assert result["captures"][0]["output"] == "line three\nline four"
-    assert ["capture-pane", "-p", "-S", "-2", "-t", "%7"] == seen[-6:]
+    assert ["capture-pane", "-p", "-e", "-S", "-2", "-t", "%7"] == seen[-7:]
+
+
+def test_reader_marks_dim_claude_prompt_suggestion_before_redaction(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(
+        module,
+        "_run_command",
+        lambda args, timeout=10.0: _completed(
+            args,
+            stdout="❯\xa0\x1b[2mDEC-11: generated suggestion\x1b[0m\n",
+        ),
+    )
+
+    result = module.handle_remote_request(
+        {
+            "op": "capture",
+            "lines": 20,
+            "targets": [
+                {"owner": "sam", "name": "claude-coordinator", "pane_id": "%4"}
+            ],
+        }
+    )
+
+    capture = result["captures"][0]
+    assert capture["prompt_suggestion"] is True
+    assert capture["output"] == "❯\xa0DEC-11: generated suggestion"
+    assert "\x1b" not in capture["output"]
 
 
 def test_reader_redacts_capture_before_returning_response(monkeypatch) -> None:
@@ -4180,6 +4211,84 @@ def _claude_session_limit_with_pending_prompt(
     reset: str = "12am",
 ) -> str:
     return _claude_session_limit_screen(reset).replace("❯ \n", f"❯ {prompt}\n")
+
+
+def test_claude_dim_prompt_suggestion_is_not_pending_operator_input() -> None:
+    module = _load_module()
+    ghost = "❯\xa0\x1b[2mDEC-11: generated suggestion\x1b[0m"
+
+    assert module._claude_prompt_is_dim_suggestion(ghost) is True
+    assert module._claude_prompt_is_dim_suggestion(
+        "❯ DEC-11: operator input"
+    ) is False
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        output="❯ DEC-11: generated suggestion",
+        prompt_suggestion=True,
+    )
+    assert module._session_pending_composer_fingerprint(session) == ""
+
+
+def test_live_tick_replaces_dim_claude_suggestion_with_fixed_reset_wake() -> None:
+    module = _load_module()
+    now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    screen = _claude_session_limit_with_pending_prompt(
+        "DEC-11: generated suggestion"
+    )
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output=screen,
+        prompt_suggestion=True,
+    )
+
+    class GhostClient:
+        def __init__(self) -> None:
+            self.outputs = [session, module.replace(session, output="✻ Working\n❯ ")]
+            self.sends: list[str] = []
+
+        def capture(self, targets, lines):
+            return [self.outputs.pop(0)], []
+
+        def send(
+            self,
+            target,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
+            assert "DEC-11" not in text
+            assert text.startswith("MESH_LIVE_RESET_WAKE id=")
+            assert enter is True
+            self.sends.append(text)
+            return {}
+
+    client = GhostClient()
+    state = {"version": 1, "sessions": {}}
+    results, changed = module.execute_live_tick_actions(
+        client,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert changed is True
+    assert len(client.sends) == 1
+    assert results[0].status == "applied"
+    assert results[0].verified is True
+    assert state["sessions"]["sam/claude-coordinator"][
+        "session_limit_pending_composer"
+    ] is False
 
 
 def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:

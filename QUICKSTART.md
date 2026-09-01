@@ -378,7 +378,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - Claude prompt suggestions/ghost text are vendor-generated UI, not submitted
   operator authority. Disable them globally with
   `"promptSuggestionEnabled": false` in `~/.claude/settings.json`; restart or
-  resume an already-running Claude session for the setting to take effect
+  resume an already-running Claude session for the setting to take effect.
+  Mesh detects an exact fully dimmed suggestion in retained sessions and never
+  submits it as operator input
 - board reports provider `screen` state and tmux `activity_age`; completion needs
   the exact marker plus stable idle state in two observations, while age alone
   never triggers worker replacement
