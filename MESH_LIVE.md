@@ -714,7 +714,7 @@ rate-limit policy is intentionally asymmetric:
 
 | Provider state | `schedule_source` | Behavior |
 | --- | --- | --- |
-| Claude session-limit banner with exact minute and IANA timezone | `vendor_banner` | persist reset plus 90-second grace; recapture and attempt one guarded wake |
+| Claude session-limit banner with exact minute and IANA timezone | `vendor_banner` | persist reset plus 90-second grace; recapture and attempt one guarded wake; retry only an unchanged pending composer as described below |
 | Codex rate limit | `unsupported` | warning only; wait or declare another authorized worker |
 | Antigravity rate limit | `unsupported` | warning only; wait or declare another authorized worker |
 
@@ -746,8 +746,10 @@ Apply mode has six actions:
    and IANA timezone, persists that schedule, and waits through a 90-second
    grace period. An empty pane receives one fixed `MESH_LIVE_RESET_WAKE`.
    When the coordinator already contains the interrupted prompt, two matching
-   observations are required and only one bare Enter is sent; the state stores
-   its hash, never its text. A changed prompt, pane, process, menu, or a pending
+   observations are required and only a bare Enter is sent; if delivery remains
+   unverified, the same byte-identical composer may receive at most two further
+   Enter-only attempts, each after at least ten minutes. The state stores its
+   hash, attempt count, and timestamp, never its text. A changed prompt, pane, process, menu, or a pending
    prompt outside the coordinator fails closed. This resumes the interrupted
    request without bypassing or shortening the provider limit.
 4. It dismisses the exact Antigravity experience survey only when that survey
@@ -809,14 +811,17 @@ across two observations before one Enter is allowed. Because the banner has no
 date, tick maps its time to the nearest past or future occurrence in the named
 timezone, preferring the future occurrence on an exact tie. A future occurrence
 waits through the 90-second grace; a past occurrence whose grace has elapsed
-makes the single
-guarded attempt at the next observation. For example, `resets 12am` first seen
+makes the guarded attempt at the next observation. For example, `resets 12am` first seen
 at `5am` is due immediately, while the same banner seen at `4pm` waits for the
 next midnight. This handles stale panes after a reboot without always
-postponing them to the following day. One attempt is recorded before keyboard
-I/O; an uncertain delivery is not retried automatically. The attempt tombstone
-is retained until a later tick observes that the pane is no longer on the exact
-session-limit screen, preventing stale scrollback from triggering a duplicate.
+postponing them to the following day. An empty composer receives exactly one
+fixed wake and is never retried. An unchanged pending coordinator composer may
+receive at most three Enter-only attempts in total, at least ten minutes apart,
+only while every pane, process, banner, timezone, and composer fingerprint guard
+still matches and the previous delivery remains unverified. Each attempt is
+recorded before keyboard I/O. The tombstone is retained until a later tick
+observes that the pane is no longer on the exact session-limit screen,
+preventing stale scrollback or changed input from triggering a duplicate.
 
 Install the opt-in 5-minute user cron from the clean Dell runtime, not from the
 Mac checkout:

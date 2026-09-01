@@ -117,7 +117,7 @@ does not claim that providers expose equivalent limit semantics.
 
 | Provider/UI state | Exact evidence required | Automated action | Timing authority |
 | --- | --- | --- | --- |
-| Claude session limit | Current banner with reset minute, IANA timezone, `/upgrade` line, valid Claude process and unchanged pane | Persist one schedule; after reset plus 90 seconds, recapture and send one guarded wake | Parsed vendor banner and persisted `not_before` only |
+| Claude session limit | Current banner with reset minute, IANA timezone, `/upgrade` line, valid Claude process and unchanged pane | Persist one schedule; after reset plus 90 seconds, recapture and send one guarded wake. An unchanged pending coordinator composer permits at most three Enter-only attempts total, at least ten minutes apart; an empty composer remains one-shot | Parsed vendor banner and persisted `not_before` only |
 | Claude interactive rate menu | Current complete menu with `Stop and wait for limit to reset` visibly selected | Persist one-attempt tombstone, send one Enter, recapture | No clock calculation; current menu selection only |
 | Codex account/rate exhaustion | Current Codex screen classified `rate_limit` | Warning and declared provider substitution only | None; automatic wake is unsupported |
 | Antigravity account/rate exhaustion | Current AGY screen classified `rate_limit` | Warning and declared provider substitution only | None; automatic wake is unsupported |

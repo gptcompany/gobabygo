@@ -4121,6 +4121,112 @@ def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
     assert repeated.sends == []
 
 
+def test_live_tick_retries_unchanged_unverified_pending_composer_with_bounds() -> None:
+    module = _load_module()
+    now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    screen = _claude_session_limit_with_pending_prompt("DEC-11: keep scope local")
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output=screen,
+    )
+    state = {
+        "version": 1,
+        "sessions": {
+            "sam/claude-coordinator": {
+                "pane_id": "%1",
+                "session_limit_fingerprint": (
+                    module._tick_session_limit_fingerprint(
+                        session,
+                        "12am",
+                        "Asia/Bangkok",
+                        module._claude_pending_composer_fingerprint(screen),
+                    )
+                ),
+                "session_limit_schedule_version": (
+                    module.SESSION_LIMIT_SCHEDULE_VERSION
+                ),
+                "session_limit_not_before": now,
+                "session_limit_pending_composer": True,
+                "session_limit_attempted_at": (
+                    now - module.SESSION_LIMIT_PENDING_RETRY_SECONDS
+                ),
+                "session_limit_attempt_count": 1,
+                "session_limit_verified": False,
+            }
+        },
+    }
+
+    class RetryClient:
+        def __init__(self, expected_count: int, outputs: int = 2) -> None:
+            self.expected_count = expected_count
+            self.outputs = [screen] * outputs
+            self.sends: list[tuple[str, bool]] = []
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(
+            self,
+            target,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
+            saved = state["sessions"]["sam/claude-coordinator"]
+            assert saved["session_limit_attempt_count"] == self.expected_count
+            assert text == ""
+            assert enter is True
+            self.sends.append((text, enter))
+            return {}
+
+    def run(client, observed_at):
+        return module.execute_live_tick_actions(
+            client,
+            [session],
+            {session.key},
+            state=state,
+            lines=160,
+            now=observed_at,
+            min_wake_minutes=25,
+            wait_retry_minutes=60,
+            verify_delay=0,
+        )
+
+    second = RetryClient(2)
+    results, changed = run(second, now)
+    assert changed is True
+    assert second.sends == [("", True)]
+    assert results[0].status == "applied"
+    assert results[0].verified is False
+
+    early = RetryClient(2, outputs=1)
+    results, changed = run(early, now + 300)
+    assert changed is False
+    assert early.sends == []
+    assert "backoff" in results[0].reason
+
+    third = RetryClient(3)
+    results, changed = run(
+        third, now + module.SESSION_LIMIT_PENDING_RETRY_SECONDS
+    )
+    assert changed is True
+    assert third.sends == [("", True)]
+    assert results[0].verified is False
+
+    exhausted = RetryClient(3, outputs=1)
+    results, changed = run(
+        exhausted, now + 2 * module.SESSION_LIMIT_PENDING_RETRY_SECONDS
+    )
+    assert changed is False
+    assert exhausted.sends == []
+    assert "retry limit reached" in results[0].reason
+
+
 def test_live_tick_pending_session_limit_fails_closed_on_scope_or_prompt_change() -> None:
     module = _load_module()
     now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()

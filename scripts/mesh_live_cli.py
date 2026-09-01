@@ -38,6 +38,8 @@ COORDINATOR_CONTRACT_MARKER = "MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.
 COORDINATOR_REVIEW_CAPABILITY = "MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1"
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
 SESSION_LIMIT_SCHEDULE_VERSION = 4
+SESSION_LIMIT_PENDING_RETRY_SECONDS = 10 * 60
+SESSION_LIMIT_PENDING_MAX_ATTEMPTS = 3
 CLAUDE_PASTE_SETTLE_SECONDS = 1.0
 CLAUDE_CONTEXT_COMPACT_THRESHOLD = 90
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
@@ -2452,6 +2454,7 @@ def _clear_session_limit_state(saved: dict[str, Any]) -> bool:
         "session_limit_schedule_version",
         "session_limit_not_before",
         "session_limit_attempted_at",
+        "session_limit_attempt_count",
         "session_limit_token",
         "session_limit_verified",
         "session_limit_pending_composer",
@@ -2914,24 +2917,53 @@ def execute_live_tick_actions(
                         )
                     )
                     continue
-                if saved.get("session_limit_attempted_at"):
-                    results.append(
-                        TickActionResult(
-                            owner=session.owner,
-                            name=session.name,
-                            pane_id=session.pane_id,
-                            action="wake_after_reset",
-                            status="throttled",
-                            reason="session-limit wake was already attempted for this reset",
-                            verified=False,
-                            not_before=not_before,
-                        )
+                attempted_at = float(saved.get("session_limit_attempted_at") or 0)
+                try:
+                    attempt_count = int(
+                        saved.get("session_limit_attempt_count")
+                        or (1 if attempted_at else 0)
                     )
-                    continue
+                except (TypeError, ValueError) as exc:
+                    raise LiveReadError(
+                        "invalid persisted session-limit attempt count"
+                    ) from exc
+                if attempt_count < 0:
+                    raise LiveReadError("invalid persisted session-limit attempt count")
+                if attempted_at:
+                    retry_blocker = ""
+                    if saved.get("session_limit_verified") is True:
+                        retry_blocker = "session-limit wake was already verified"
+                    elif not pending_composer_fingerprint:
+                        retry_blocker = (
+                            "session-limit wake was already attempted for an empty composer"
+                        )
+                    elif attempt_count >= SESSION_LIMIT_PENDING_MAX_ATTEMPTS:
+                        retry_blocker = (
+                            "pending composer retry limit reached for this reset"
+                        )
+                    elif now - attempted_at < SESSION_LIMIT_PENDING_RETRY_SECONDS:
+                        retry_blocker = (
+                            "pending composer retry backoff has not elapsed"
+                        )
+                    if retry_blocker:
+                        results.append(
+                            TickActionResult(
+                                owner=session.owner,
+                                name=session.name,
+                                pane_id=session.pane_id,
+                                action="wake_after_reset",
+                                status="throttled",
+                                reason=retry_blocker,
+                                verified=False,
+                                not_before=not_before,
+                            )
+                        )
+                        continue
                 token = _tick_token(now, fresh)
                 saved.update(
                     {
                         "session_limit_attempted_at": now,
+                        "session_limit_attempt_count": attempt_count + 1,
                         "session_limit_token": token,
                     }
                 )

@@ -194,6 +194,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "Codex rate limit",
         "Antigravity rate limit",
         "An elapsed `not_before` authorizes an attempt",
+        "at most three Enter-only attempts in total",
+        "An empty composer receives exactly one",
         "workstation restarts",
         "install-mesh-live-cron.sh",
         "reports it once",
@@ -226,5 +228,7 @@ def test_supervisor_spec_freezes_provider_limit_boundaries() -> None:
     assert "Provider Rate-Limit Capability Matrix" in spec
     assert "Parsed vendor banner and persisted `not_before` only" in spec
     assert "automatic wake is unsupported" in spec
+    assert "at most three Enter-only attempts total" in spec
+    assert "an empty composer remains one-shot" in spec
     assert "Reaching `not_before` authorizes only a fresh guarded attempt" in spec
     assert "cannot guess a time" in spec
