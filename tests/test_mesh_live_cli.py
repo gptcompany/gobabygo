@@ -3369,6 +3369,49 @@ def test_live_tick_plan_requires_exact_wait_selection_and_idle_coordinator() -> 
     }
 
 
+@pytest.mark.parametrize(
+    "name",
+    (
+        "claude-coordinator",
+        "claude-rektslug-coordinator",
+        "claude-coordinator-0901",
+        "claude-rektslug-coordinator-resumed",
+    ),
+)
+def test_live_tick_recognizes_fresh_coordinator_session_names(name: str) -> None:
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam",
+        name=name,
+        pane_id="%1",
+        pane_command="claude",
+        output="❯ ",
+    )
+
+    _sessions, coordinator_keys = module.resolve_tick_candidates([session], [])
+
+    assert coordinator_keys == {session.key}
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("claude-worker", "codex-coordinator", "my-claude-coordinator"),
+)
+def test_live_tick_rejects_non_coordinator_session_names(name: str) -> None:
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam",
+        name=name,
+        pane_id="%1",
+        pane_command="claude",
+        output="❯ ",
+    )
+
+    _sessions, coordinator_keys = module.resolve_tick_candidates([session], [])
+
+    assert coordinator_keys == set()
+
+
 def test_live_tick_prioritizes_context_compaction_and_never_wakes_during_it() -> None:
     module = _load_module()
     footer = (

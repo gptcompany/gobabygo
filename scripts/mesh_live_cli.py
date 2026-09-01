@@ -1758,7 +1758,13 @@ def _session_limit_not_before(reset_label: str, timezone_name: str, now: float) 
 
 
 def _is_default_coordinator_name(name: str) -> bool:
-    return re.fullmatch(r"claude(?:-[A-Za-z0-9_.-]+)?-coordinator", str(name or "")) is not None
+    return (
+        re.fullmatch(
+            r"claude(?:-[A-Za-z0-9_.-]+)?-coordinator(?:-[A-Za-z0-9_.-]+)?",
+            str(name or ""),
+        )
+        is not None
+    )
 
 
 def resolve_tick_candidates(
