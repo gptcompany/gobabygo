@@ -367,6 +367,10 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   inspection; mesh live does not auto-clear it or send a naked Enter
 - on the Dell runtime, `mesh live tick` is read-only and `tick --apply` only
   handles an exact selected Claude WAIT menu or wakes an exactly idle coordinator
+- Claude reset timing comes only from an exact vendor minute/timezone persisted
+  as `not_before`; Codex and AGY rate limits report `schedule_source=unsupported`
+  and are never assigned guessed wake times. Passing `not_before` permits one
+  guarded attempt and still requires fresh provider-state evidence
 - before `TICK_IDLE` or closure, the coordinator runs `mesh speckit
   manual-actions <state-repo> --all --json`; unresolved `DEC-* [D]` entries are
   reported as `MANUAL_REQUIRED` with blocked task IDs and appear as a supervisor

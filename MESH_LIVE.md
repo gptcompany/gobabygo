@@ -707,6 +707,24 @@ records the same transitions under the same lock before evaluating its existing
 guarded actions, so the installed cron does not need a second entry, daemon,
 database, router, or iTerm2 dependency.
 
+Tick and supervisor JSON expose `provider`, `schedule_source`, and `not_before`
+without requiring prose parsing. `not_before` is an epoch timestamp; concise
+terminal output renders it as UTC ISO-8601 so Mac, Dell, and CI agree. Current
+rate-limit policy is intentionally asymmetric:
+
+| Provider state | `schedule_source` | Behavior |
+| --- | --- | --- |
+| Claude session-limit banner with exact minute and IANA timezone | `vendor_banner` | persist reset plus 90-second grace; recapture and attempt one guarded wake |
+| Codex rate limit | `unsupported` | warning only; wait or declare another authorized worker |
+| Antigravity rate limit | `unsupported` | warning only; wait or declare another authorized worker |
+
+An elapsed `not_before` authorizes an attempt, not a claim that the provider is
+available or that its task resumed. Coordinator calculations, transcript prose,
+activity age, blind Enter, resend, and automatic session rotation cannot create
+or shorten a schedule. The mode-0600 tick state survives cron invocations and
+workstation restarts; a changed pane, process, banner, timezone, or pending
+composer must pass fresh guards before any input.
+
 When an idle coordinator's current visible output contains the exact standalone
 `MANUAL_REQUIRED count=N` marker, the supervisor reports
 `manual_action_required` as a warning and does not wake it again. Similar prose
