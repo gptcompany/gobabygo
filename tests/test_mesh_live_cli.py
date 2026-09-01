@@ -4770,6 +4770,78 @@ def test_main_tick_cli_projects_vendor_schedule_with_simulated_clock(
     )
 
 
+def test_main_tick_cli_preserves_matching_persisted_vendor_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    timezone = ZoneInfo("Asia/Bangkok")
+    original_due = (
+        datetime(2026, 9, 1, 19, 10, tzinfo=timezone).timestamp()
+        + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+    after_due = datetime(2026, 9, 1, 19, 15, tzinfo=timezone).timestamp()
+    screen = _claude_session_limit_screen("7:10pm")
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%4",
+        pane_command="claude",
+        output=screen,
+    )
+    fingerprint = module._tick_session_limit_fingerprint(
+        coordinator, "7:10pm", "Asia/Bangkok"
+    )
+    state_path = tmp_path / "tick.json"
+    module.save_live_tick_state(
+        str(state_path),
+        {
+            "version": 1,
+            "sessions": {
+                "sam/claude-coordinator": {
+                    "session_limit_schedule_version": (
+                        module.SESSION_LIMIT_SCHEDULE_VERSION
+                    ),
+                    "session_limit_fingerprint": fingerprint,
+                    "session_limit_not_before": original_due,
+                }
+            },
+        },
+    )
+
+    class ReadOnlyClient:
+        endpoint = module.LiveEndpoint(host="localhost", local=True, users=("sam",))
+
+        def capture(self, targets, lines):
+            return list(targets), []
+
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda args: (ReadOnlyClient(), [coordinator], []),
+    )
+    monkeypatch.setattr(module.time, "time", lambda: after_due)
+
+    rc = module.main(
+        ["--local", "tick", "--json", "--state-file", str(state_path)]
+    )
+
+    assert rc == 0
+    observation = json.loads(capsys.readouterr().out)["observations"][0]
+    assert observation["not_before"] == original_due
+
+
+@pytest.mark.parametrize("value", [None, True, 0, float("nan"), float("inf")])
+def test_persisted_vendor_schedule_rejects_invalid_timestamps(value) -> None:
+    module = _load_module()
+
+    with pytest.raises(module.LiveReadError, match="invalid persisted"):
+        module._persisted_session_limit_not_before(
+            {"session_limit_not_before": value}
+        )
+
+
 def test_live_tick_state_round_trip_is_private_and_contains_no_capture(tmp_path: Path) -> None:
     module = _load_module()
     state_path = tmp_path / "state" / "tick.json"

@@ -23,6 +23,7 @@
 - [x] T033: Expose the provider, schedule source, and canonical `not_before` in tick/supervisor JSON and concise operator output. A passed timestamp means only that a guarded wake may be attempted; it never proves the provider is available or the delegated task resumed.
 - [x] T034: Add regression tests for reset minutes, midnight, DST/zone transitions, stale and changed banners, process/pane replacement, persisted state across restart, pending composer refusal, one-attempt behavior, and post-wake verification. Include a real local CLI E2E with a simulated clock and a read-only Dell smoke against any naturally present limit screen; never induce account exhaustion.
 - [x] T035: Align the coordinator contract and runbook, obtain an exact-range independent review, run the full suite, deploy by clean fast-forward to the Dell runtime, and verify the five-minute managed scheduler preserves and consumes the same persisted `not_before` after restart.
+- [ ] T036: Project the exact matching persisted Claude schedule into dry-run, supervisor, and apply output instead of recalculating a passed reset banner. Reject malformed persisted timestamps, independently review the fix, and verify on the Dell that the reported `not_before` remains canonical after the guarded wake.
 
 ### Phase 2 Dependencies
 

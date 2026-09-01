@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 import pwd
 import re
@@ -1953,6 +1954,57 @@ def build_live_tick_plan(
     return observations
 
 
+def project_persisted_session_limit_schedules(
+    observations: Sequence[TickObservation],
+    sessions: Sequence[LiveSession],
+    state: dict[str, Any],
+) -> list[TickObservation]:
+    _, _, session_limit_reset, _ = _load_cli_screen_api()
+    by_key = {item.key: item for item in sessions}
+    session_state = state.get("sessions", {})
+    if not isinstance(session_state, dict):
+        raise LiveReadError("tick state sessions must be an object")
+    projected: list[TickObservation] = []
+    for observation in observations:
+        if observation.proposed_action != "wake_after_reset":
+            projected.append(observation)
+            continue
+        session = by_key.get((observation.owner, observation.name))
+        saved = session_state.get(_tick_state_key(observation.owner, observation.name))
+        if session is None or not isinstance(saved, dict):
+            projected.append(observation)
+            continue
+        reset = session_limit_reset(session.output, allow_pending_prompt=True)
+        if reset is None:
+            projected.append(observation)
+            continue
+        pending = _claude_pending_composer_fingerprint(session.output)
+        fingerprint = _tick_session_limit_fingerprint(session, *reset, pending)
+        if (
+            saved.get("session_limit_schedule_version")
+            != SESSION_LIMIT_SCHEDULE_VERSION
+            or saved.get("session_limit_fingerprint") != fingerprint
+        ):
+            projected.append(observation)
+            continue
+        not_before = _persisted_session_limit_not_before(saved)
+        projected.append(replace(observation, not_before=not_before))
+    return projected
+
+
+def _persisted_session_limit_not_before(saved: dict[str, Any]) -> float:
+    raw = saved.get("session_limit_not_before")
+    if isinstance(raw, bool):
+        raise LiveReadError("invalid persisted session-limit schedule")
+    try:
+        not_before = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise LiveReadError("invalid persisted session-limit schedule") from exc
+    if not math.isfinite(not_before) or not_before <= 0:
+        raise LiveReadError("invalid persisted session-limit schedule")
+    return not_before
+
+
 def render_live_tick_plan(observations: Sequence[TickObservation]) -> str:
     lines = ["mesh live tick: dry-run"]
     for item in observations:
@@ -2787,10 +2839,7 @@ def execute_live_tick_actions(
                     == SESSION_LIMIT_SCHEDULE_VERSION
                 )
                 if same_fingerprint and current_schedule:
-                    try:
-                        not_before = float(saved["session_limit_not_before"])
-                    except (KeyError, TypeError, ValueError):
-                        raise LiveReadError("invalid persisted session-limit schedule")
+                    not_before = _persisted_session_limit_not_before(saved)
                 else:
                     not_before = _session_limit_not_before(
                         reset_label, timezone_name, now
@@ -4376,6 +4425,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.observe:
                 with live_tick_state_lock(args.state_file):
                     state = load_live_tick_state(args.state_file)
+                    observations = project_persisted_session_limit_schedules(
+                        observations, captured, state
+                    )
                     snapshot, changed = observe_live_supervisor(
                         observations,
                         supervisor_sessions,
@@ -4401,6 +4453,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(render_live_supervisor_snapshot(snapshot))
                 return 1 if any(item.capture_error for item in captured) else 0
             if not args.apply:
+                state = load_live_tick_state(args.state_file)
+                observations = project_persisted_session_limit_schedules(
+                    observations, captured, state
+                )
                 if args.json:
                     print(
                         json.dumps(
@@ -4422,6 +4478,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             with live_tick_state_lock(args.state_file):
                 state = load_live_tick_state(args.state_file)
                 observed_at = time.time()
+                observations = project_persisted_session_limit_schedules(
+                    observations, captured, state
+                )
                 snapshot, supervisor_changed = observe_live_supervisor(
                     observations,
                     supervisor_sessions,
