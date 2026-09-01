@@ -36,7 +36,7 @@ DEFAULT_SPECKIT_LOCK_FILE = str(Path(__file__).resolve().parents[1] / "config" /
 COORDINATOR_CONTRACT_MARKER = "MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1"
 COORDINATOR_REVIEW_CAPABILITY = "MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1"
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
-SESSION_LIMIT_SCHEDULE_VERSION = 3
+SESSION_LIMIT_SCHEDULE_VERSION = 4
 CLAUDE_PASTE_SETTLE_SECONDS = 1.0
 CLAUDE_CONTEXT_COMPACT_THRESHOLD = 90
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
@@ -1748,15 +1748,35 @@ def _session_limit_not_before(reset_label: str, timezone_name: str, now: float) 
     if match.group(3) == "pm":
         hour += 12
     minute = int(match.group(2) or 0)
-    reset = observed.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    previous_reset = reset if reset <= observed else reset - timedelta(days=1)
-    next_reset = reset if reset > observed else reset + timedelta(days=1)
-    if observed - previous_reset < next_reset - observed:
-        reset = previous_reset
-    else:
-        reset = next_reset
-    due = reset.timestamp() + SESSION_LIMIT_RESET_GRACE_SECONDS
-    return max(now, due) if reset <= observed else due
+    candidates: set[float] = set()
+    for day_offset in (-1, 0, 1):
+        local_date = (observed + timedelta(days=day_offset)).date()
+        for fold in (0, 1):
+            local_reset = datetime(
+                local_date.year,
+                local_date.month,
+                local_date.day,
+                hour,
+                minute,
+                tzinfo=timezone,
+                fold=fold,
+            )
+            timestamp = local_reset.timestamp()
+            round_trip = datetime.fromtimestamp(timestamp, timezone)
+            if (
+                round_trip.date() == local_date
+                and round_trip.hour == hour
+                and round_trip.minute == minute
+            ):
+                candidates.add(timestamp)
+    if not candidates:
+        raise ValueError("session-limit reset has no valid local-time occurrence")
+    reset_timestamp = min(
+        candidates,
+        key=lambda value: (abs(value - now), value < now),
+    )
+    due = reset_timestamp + SESSION_LIMIT_RESET_GRACE_SECONDS
+    return max(now, due) if reset_timestamp <= now else due
 
 
 def _is_default_coordinator_name(name: str) -> bool:

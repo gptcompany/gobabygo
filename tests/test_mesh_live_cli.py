@@ -4293,6 +4293,41 @@ def test_session_limit_first_observation_uses_declared_reset_or_runs_now() -> No
     ) == minute_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
 
 
+def test_session_limit_resolves_dst_gap_and_repeated_hour_by_absolute_time() -> None:
+    module = _load_module()
+    new_york = ZoneInfo("America/New_York")
+
+    spring_now = datetime(
+        2026, 3, 8, 1, 50, tzinfo=new_york
+    ).timestamp()
+    spring_reset = datetime(
+        2026, 3, 8, 3, 10, tzinfo=new_york
+    ).timestamp()
+    assert module._session_limit_not_before(
+        "3:10am", "America/New_York", spring_now
+    ) == spring_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+
+    first_fold_now = datetime(
+        2026, 11, 1, 1, 20, tzinfo=new_york, fold=0
+    ).timestamp()
+    first_fold_reset = datetime(
+        2026, 11, 1, 1, 30, tzinfo=new_york, fold=0
+    ).timestamp()
+    assert module._session_limit_not_before(
+        "1:30am", "America/New_York", first_fold_now
+    ) == first_fold_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+
+    second_fold_now = datetime(
+        2026, 11, 1, 1, 20, tzinfo=new_york, fold=1
+    ).timestamp()
+    second_fold_reset = datetime(
+        2026, 11, 1, 1, 30, tzinfo=new_york, fold=1
+    ).timestamp()
+    assert module._session_limit_not_before(
+        "1:30am", "America/New_York", second_fold_now
+    ) == second_fold_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+
+
 def test_live_tick_resumes_empty_claude_worker_from_persisted_vendor_schedule() -> None:
     module = _load_module()
     timezone = ZoneInfo("Asia/Bangkok")
@@ -4677,6 +4712,50 @@ def test_main_tick_is_local_metadata_only_dry_run(monkeypatch, capsys) -> None:
     assert payload["mode"] == "dry-run"
     assert payload["observations"][0]["proposed_action"] == "wake_coordinator"
     assert "raw" not in json.dumps(payload)
+
+
+def test_main_tick_cli_projects_vendor_schedule_with_simulated_clock(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = _load_module()
+    now = datetime(
+        2026, 9, 1, 18, 38, tzinfo=ZoneInfo("Asia/Bangkok")
+    ).timestamp()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%4",
+        pane_command="claude",
+        output=_claude_session_limit_screen("7:10pm"),
+    )
+
+    class ReadOnlyClient:
+        endpoint = module.LiveEndpoint(host="localhost", local=True, users=("sam",))
+
+        def capture(self, targets, lines):
+            return list(targets), []
+
+        def send(self, *args, **kwargs):
+            raise AssertionError("dry-run CLI must not send pane input")
+
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda args: (ReadOnlyClient(), [coordinator], []),
+    )
+    monkeypatch.setattr(module.time, "time", lambda: now)
+
+    rc = module.main(["--local", "tick", "--json"])
+
+    assert rc == 0
+    output = json.loads(capsys.readouterr().out)
+    observation = output["observations"][0]
+    assert observation["provider"] == "claude"
+    assert observation["schedule_source"] == "vendor_banner"
+    assert observation["not_before"] == (
+        datetime(2026, 9, 1, 19, 10, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+        + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
 
 
 def test_live_tick_state_round_trip_is_private_and_contains_no_capture(tmp_path: Path) -> None:
