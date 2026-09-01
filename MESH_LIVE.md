@@ -748,7 +748,8 @@ Apply mode has six actions:
    When the coordinator already contains the interrupted prompt, two matching
    observations are required and only a bare Enter is sent; if delivery remains
    unverified, the same byte-identical composer may receive at most two further
-   Enter-only attempts, each after at least ten minutes. The state stores its
+   Enter-only attempts, each after at least four minutes (normally the next
+   five-minute managed tick). The state stores its
    hash, attempt count, and timestamp, never its text. A changed prompt, pane, process, menu, or a pending
    prompt outside the coordinator fails closed. This resumes the interrupted
    request without bypassing or shortening the provider limit.
@@ -816,7 +817,8 @@ at `5am` is due immediately, while the same banner seen at `4pm` waits for the
 next midnight. This handles stale panes after a reboot without always
 postponing them to the following day. An empty composer receives exactly one
 fixed wake and is never retried. An unchanged pending coordinator composer may
-receive at most three Enter-only attempts in total, at least ten minutes apart,
+receive at most three Enter-only attempts in total, at least four minutes apart,
+so scheduler jitter cannot defer an eligible retry by an extra cron interval,
 only while every pane, process, banner, timezone, and composer fingerprint guard
 still matches and the previous delivery remains unverified. Each attempt is
 recorded before keyboard I/O. The tombstone is retained until a later tick

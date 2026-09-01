@@ -38,7 +38,7 @@ COORDINATOR_CONTRACT_MARKER = "MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.
 COORDINATOR_REVIEW_CAPABILITY = "MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1"
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
 SESSION_LIMIT_SCHEDULE_VERSION = 4
-SESSION_LIMIT_PENDING_RETRY_SECONDS = 10 * 60
+SESSION_LIMIT_PENDING_RETRY_SECONDS = 4 * 60
 SESSION_LIMIT_PENDING_MAX_ATTEMPTS = 3
 CLAUDE_PASTE_SETTLE_SECONDS = 1.0
 CLAUDE_CONTEXT_COMPACT_THRESHOLD = 90
@@ -4021,7 +4021,7 @@ def build_live_coordinator_system_prompt(
             "Worker idle/stale lifecycle policy:",
             "- `screen=idle` means available for input, not completed and not obsolete. If authorized work remains, prefer reusing the idle worker.",
             "- For Claude session limits, the persisted Mesh tick schedule derived from the exact current vendor reset minute and IANA timezone is the sole timing authority for coordinators and workers. Never calculate, shorten, or replace `not_before` from prose, transcript timestamps, activity age, or another provider's behavior.",
-            "- Reaching `not_before` authorizes a guarded recapture-and-wake attempt after the configured grace; it does not prove Claude is available or that work resumed. An empty composer remains one-shot. Only an unchanged pending coordinator composer with an unverified delivery may receive up to three Enter-only attempts total, at least ten minutes apart; every retry requires the same pane, Claude process, banner, timezone, and composer fingerprint. Require fresh screen evidence afterward.",
+            "- Reaching `not_before` authorizes a guarded recapture-and-wake attempt after the configured grace; it does not prove Claude is available or that work resumed. An empty composer remains one-shot. Only an unchanged pending coordinator composer with an unverified delivery may receive up to three Enter-only attempts total, at least four minutes apart (normally the next five-minute managed tick); every retry requires the same pane, Claude process, banner, timezone, and composer fingerprint. Require fresh screen evidence afterward.",
             "- Codex and Antigravity have no supported automatic reset schedule. On `provider_rate_limit`, report the exact provider/session blocker and either wait or explicitly declare a substitution using another authorized worker. Never guess a wake time, send blind Enter, resend the task, or rotate the limited session.",
             "- On every tick, reconcile each idle worker with the current objective and delegation ledger: delegate the next dependency-ready task, verify a just-finished task, or report TICK_IDLE when no work exists.",
             "- Treat `activity_age` as supporting evidence only. Age alone never authorizes closing or replacing a session.",

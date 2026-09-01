@@ -4375,15 +4375,15 @@ def test_live_tick_retries_unchanged_unverified_pending_composer_with_bounds(
     state = module.load_live_tick_state(str(state_path))
 
     early = RetryClient(2, outputs=1)
-    results, changed = run(early, now + 300)
+    results, changed = run(
+        early, now + module.SESSION_LIMIT_PENDING_RETRY_SECONDS - 1
+    )
     assert changed is False
     assert early.sends == []
     assert "backoff" in results[0].reason
 
     third = RetryClient(3)
-    results, changed = run(
-        third, now + module.SESSION_LIMIT_PENDING_RETRY_SECONDS
-    )
+    results, changed = run(third, now + 300)
     assert changed is True
     assert third.sends == [("", True)]
     assert results[0].verified is False
