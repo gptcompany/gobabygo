@@ -211,3 +211,15 @@ def test_architecture_distinguishes_manual_and_router_managed_truth() -> None:
     assert "Coordinator scope keeps the program objective" in architecture
     assert "late-binds `{repo}` plus `{feature}`" in architecture
     assert "router/database remains optional durable history" in architecture
+
+
+def test_supervisor_spec_freezes_provider_limit_boundaries() -> None:
+    spec = (ROOT / "specs" / "mesh-controller-supervisor" / "spec.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Provider Rate-Limit Capability Matrix" in spec
+    assert "Parsed vendor banner and persisted `not_before` only" in spec
+    assert "automatic wake is unsupported" in spec
+    assert "Reaching `not_before` authorizes only a fresh guarded attempt" in spec
+    assert "cannot guess a time" in spec

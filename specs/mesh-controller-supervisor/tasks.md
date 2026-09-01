@@ -17,7 +17,7 @@
 
 ## Phase 2: Provider Rate-Limit Scheduling
 
-- [ ] T030: Freeze a provider capability matrix for Claude, Codex, and Antigravity from currently observed exact UI evidence. Record which provider exposes a machine-parseable reset time and timezone; do not infer parity across CLIs.
+- [x] T030: Freeze a provider capability matrix for Claude, Codex, and Antigravity from currently observed exact UI evidence. Record which provider exposes a machine-parseable reset time and timezone; do not infer parity across CLIs.
 - [ ] T031: Make the persisted Claude session-limit schedule the sole timing authority for coordinator and worker wakeups. Require the exact current banner, IANA timezone, reset minute, 90-second grace, owner/session/pane fingerprint, one-attempt tombstone, and a fresh recapture before input; coordinator prose and arithmetic must never override `not_before`.
 - [ ] T032: Keep Codex and Antigravity rate limits fail-closed until each provider exposes an exact, tested reset contract. Report a provider-specific blocker, allow an explicitly declared worker substitution, and forbid guessed wake times, blind Enter, task resend, or automatic session replacement.
 - [ ] T033: Expose the provider, schedule source, and canonical `not_before` in tick/supervisor JSON and concise operator output. A passed timestamp means only that a guarded wake may be attempted; it never proves the provider is available or the delegated task resumed.

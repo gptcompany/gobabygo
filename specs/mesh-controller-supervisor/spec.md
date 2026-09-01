@@ -110,6 +110,34 @@ Examples:
 - Live observation never sends keyboard input.
 - A missing or unknown remediation mapping fails closed.
 
+## Provider Rate-Limit Capability Matrix
+
+This matrix describes only UI contracts currently recognized by Gobabygo. It
+does not claim that providers expose equivalent limit semantics.
+
+| Provider/UI state | Exact evidence required | Automated action | Timing authority |
+| --- | --- | --- | --- |
+| Claude session limit | Current banner with reset minute, IANA timezone, `/upgrade` line, valid Claude process and unchanged pane | Persist one schedule; after reset plus 90 seconds, recapture and send one guarded wake | Parsed vendor banner and persisted `not_before` only |
+| Claude interactive rate menu | Current complete menu with `Stop and wait for limit to reset` visibly selected | Persist one-attempt tombstone, send one Enter, recapture | No clock calculation; current menu selection only |
+| Codex account/rate exhaustion | Current Codex screen classified `rate_limit` | Warning and declared provider substitution only | None; automatic wake is unsupported |
+| Antigravity account/rate exhaustion | Current AGY screen classified `rate_limit` | Warning and declared provider substitution only | None; automatic wake is unsupported |
+
+The Antigravity experience survey is not a rate limit. Its exact `[0] Skip`
+remediation remains a separate one-key UI rule.
+
+### Scheduling Invariants
+
+- Coordinator prose, transcript timestamps, activity age, and another provider's
+  behavior cannot create or change a reset schedule.
+- A persisted schedule is scoped to owner, session, pane, exact reset label,
+  timezone, and pending-composer fingerprint. Changed current evidence is a new
+  observation, never proof that the old schedule succeeded.
+- Reaching `not_before` authorizes only a fresh guarded attempt. Provider
+  availability and task resumption require post-input screen evidence.
+- A provider without a parsed reset contract remains blocked. The coordinator
+  may declare and use a different authorized worker, but cannot guess a time,
+  send blind Enter, resend a task, or rotate the limited session automatically.
+
 ## Outputs
 
 Add supervisor report fields:
