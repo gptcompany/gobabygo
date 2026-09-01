@@ -64,6 +64,7 @@ class LiveSession:
     pane_path: str = ""
     pane_command: str = ""
     pane_child_command: str = ""
+    pane_pid: int = 0
     pane_dead: bool = False
     role: str = ""
     repo_name: str = ""
@@ -87,6 +88,7 @@ class LiveSession:
             pane_path=str(raw.get("pane_path") or ""),
             pane_command=str(raw.get("pane_command") or ""),
             pane_child_command=str(raw.get("pane_child_command") or ""),
+            pane_pid=_as_int(raw.get("pane_pid")),
             pane_dead=_as_bool(raw.get("pane_dead")),
             role=str(raw.get("role") or ""),
             repo_name=str(raw.get("repo_name") or ""),
@@ -237,6 +239,8 @@ class LiveClient:
             "text": text,
             "enter": bool(enter),
         }
+        if session.pane_pid > 0:
+            payload["target"]["pane_pid"] = session.pane_pid
         if expected_commands:
             payload["expected_commands"] = list(expected_commands)
         if allow_coordinator_wrapper:
@@ -455,23 +459,24 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
         repo_name = _tmux_environment(prefix, name, "MESH_UI_REPO_NAME")
         if not repo_name and pane_path:
             repo_name = Path(pane_path).name
-        sessions.append(
-            {
-                "owner": owner,
-                "name": name,
-                "created_at": _as_int(created_at),
-                "activity_at": _as_int(activity_at),
-                "windows": _as_int(windows),
-                "attached": _as_int(attached),
-                "pane_id": pane_id,
-                "pane_path": pane_path,
-                "pane_command": pane_command,
-                "pane_child_command": pane_child_command,
-                "pane_dead": _as_bool(pane_dead),
-                "role": role,
-                "repo_name": repo_name,
-            }
-        )
+        session_record = {
+            "owner": owner,
+            "name": name,
+            "created_at": _as_int(created_at),
+            "activity_at": _as_int(activity_at),
+            "windows": _as_int(windows),
+            "attached": _as_int(attached),
+            "pane_id": pane_id,
+            "pane_path": pane_path,
+            "pane_command": pane_command,
+            "pane_child_command": pane_child_command,
+            "pane_dead": _as_bool(pane_dead),
+            "role": role,
+            "repo_name": repo_name,
+        }
+        if _as_int(pane_pid) > 0:
+            session_record["pane_pid"] = _as_int(pane_pid)
+        sessions.append(session_record)
     return sessions, []
 
 
@@ -514,6 +519,7 @@ def _send_target(
     owner = str(target.get("owner") or "")
     name = str(target.get("name") or "")
     pane_id = str(target.get("pane_id") or "")
+    expected_pane_pid = str(target.get("pane_pid") or "")
     prefix = _tmux_prefix(owner)
     if prefix is None:
         return {"error": "tmux owner is unavailable"}
@@ -537,6 +543,10 @@ def _send_target(
     if len(target_parts) not in {2, 3} or target_parts[0] != name:
         return {"error": "send target pane no longer belongs to the discovered session"}
     current_command = Path(target_parts[1]).name.lower()
+    if expected_pane_pid and (
+        len(target_parts) != 3 or target_parts[2] != expected_pane_pid
+    ):
+        return {"error": "send target process identity changed"}
     expected = {Path(str(item)).name.lower() for item in expected_commands if str(item).strip()}
     effective_command = current_command
     coordinator_child = ""
@@ -2445,6 +2455,8 @@ def _tick_session_limit_fingerprint(
         reset_label,
         timezone_name,
     ]
+    if session.pane_pid > 0:
+        components.append(f"pid={session.pane_pid}")
     if pending_composer_fingerprint:
         components.append(pending_composer_fingerprint)
     seed = ":".join(components)
@@ -2510,6 +2522,11 @@ def _capture_one_for_tick(
         raise LiveReadError(
             f"tick pane changed for {session.owner}/{session.name}: "
             f"{session.pane_id} -> {result.pane_id}"
+        )
+    if session.pane_pid > 0 and result.pane_pid != session.pane_pid:
+        raise LiveReadError(
+            f"tick pane process changed for {session.owner}/{session.name}: "
+            f"{session.pane_pid} -> {result.pane_pid}"
         )
     return result
 

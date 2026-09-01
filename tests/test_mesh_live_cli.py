@@ -1195,6 +1195,42 @@ def test_remote_send_rejects_changed_session_or_process(monkeypatch) -> None:
     assert len(commands) == 1
 
 
+def test_remote_send_rejects_replaced_process_with_same_command(monkeypatch) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        return _completed(
+            args,
+            stdout=module._FIELD_SEPARATOR.join(
+                ["claude-worker", "claude", "200"]
+            )
+            + "\n",
+        )
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {
+                "owner": "sam",
+                "name": "claude-worker",
+                "pane_id": "%2",
+                "pane_pid": 100,
+            },
+            "text": "",
+            "enter": True,
+            "expected_commands": ["claude", "claude-code"],
+        }
+    )
+
+    assert result["error"] == "send target process identity changed"
+    assert len(commands) == 1
+
+
 def test_remote_send_redacts_text_from_timeout_error(monkeypatch) -> None:
     module = _load_module()
     secret = "OPENAI_API_KEY=must-not-leak-from-timeout"
@@ -1260,7 +1296,9 @@ def test_live_client_send_passes_expected_process_guard() -> None:
 
     endpoint = module.LiveEndpoint(host="dell-vpn", local=False, users=("sam",))
     client = module.LiveClient(endpoint, request_fn=fake_request)
-    session = module.LiveSession(owner="sam", name="claude-worker", pane_id="%2")
+    session = module.LiveSession(
+        owner="sam", name="claude-worker", pane_id="%2", pane_pid=123
+    )
 
     client.send(
         session,
@@ -1270,6 +1308,7 @@ def test_live_client_send_passes_expected_process_guard() -> None:
     )
 
     assert observed["expected_commands"] == ["claude", "claude-code"]
+    assert observed["target"]["pane_pid"] == 123
 
 
 def test_live_client_send_passes_codex_delegation_receipt_request() -> None:
@@ -4294,7 +4333,7 @@ def test_persisted_session_limit_attempt_migrates_legacy_timestamp() -> None:
     ) == (100.0, 1)
 
 
-@pytest.mark.parametrize("replacement", ["pane", "process"])
+@pytest.mark.parametrize("replacement", ["pane", "process", "pid"])
 def test_pending_session_limit_retry_rejects_pane_or_process_replacement(
     replacement: str,
 ) -> None:
@@ -4306,6 +4345,7 @@ def test_pending_session_limit_retry_rejects_pane_or_process_replacement(
         name="claude-coordinator",
         pane_id="%1",
         pane_command="claude",
+        pane_pid=100,
         output=screen,
     )
     pending = module._claude_pending_composer_fingerprint(screen)
@@ -4324,11 +4364,14 @@ def test_pending_session_limit_retry_rejects_pane_or_process_replacement(
         "session_limit_verified": False,
     }
     state = {"version": 1, "sessions": {"sam/claude-coordinator": saved}}
-    changed_session = (
-        module.replace(session, pane_id="%9")
-        if replacement == "pane"
-        else module.replace(session, pane_command="bash", pane_child_command="zsh")
-    )
+    if replacement == "pane":
+        changed_session = module.replace(session, pane_id="%9")
+    elif replacement == "process":
+        changed_session = module.replace(
+            session, pane_command="bash", pane_child_command="zsh"
+        )
+    else:
+        changed_session = module.replace(session, pane_pid=200)
 
     class ReplacedClient:
         def capture(self, targets, lines):
