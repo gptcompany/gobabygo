@@ -37,9 +37,11 @@ Read in this order:
 ## Quick Start
 
 ```bash
-python -m pip install '.[dev]'
-pytest -q
+./scripts/test -q
 ```
+
+This uses the locked Python 3.11 `uv` environment and installs the repository's
+development extras. It does not depend on the current shell's global Python.
 
 ## Historical Runtime Snapshot (March 2026)
 

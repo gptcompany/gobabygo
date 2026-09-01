@@ -1020,17 +1020,25 @@ class TestStartUpterm:
         assert "--skip-host-key-check" not in popen_args
 
     @patch("src.router.session_worker.os.makedirs")
+    @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen", side_effect=FileNotFoundError)
-    def test_binary_not_found(self, mock_popen: Mock, mock_makedirs: Mock) -> None:
+    def test_binary_not_found(
+        self, mock_popen: Mock, mock_open_file: Mock, mock_makedirs: Mock
+    ) -> None:
         worker = _make_worker()
         p, target = worker._start_upterm("mesh-sess")
         assert p is None
         assert target is None
 
     @patch("src.router.session_worker.os.makedirs")
+    @patch("builtins.open", new_callable=mock_open)
     @patch("src.router.session_worker.subprocess.Popen", side_effect=PermissionError("denied"))
     def test_launch_oserror_logs_actual_error(
-        self, mock_popen: Mock, mock_makedirs: Mock, caplog: pytest.LogCaptureFixture
+        self,
+        mock_popen: Mock,
+        mock_open_file: Mock,
+        mock_makedirs: Mock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         worker = _make_worker()
         with caplog.at_level("WARNING"):

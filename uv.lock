@@ -26,7 +26,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.19.0" },
-    { name = "cloudevents", specifier = ">=1.12.0" },
+    { name = "cloudevents", specifier = ">=1.12.0,<2.0.0" },
     { name = "jsonschema", specifier = ">=4.20.0" },
     { name = "prometheus-client", specifier = ">=0.20.0" },
     { name = "pydantic", specifier = ">=2.0" },

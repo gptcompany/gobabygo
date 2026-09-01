@@ -970,8 +970,10 @@ def test_ui_role_bootstrap_prompt_for_boss_mentions_president_and_mesh_send():
     assert "Do not inspect files or implement changes yourself" not in prompt
 
 
-def test_ui_role_bootstrap_prompt_mentions_absolute_mesh_fallback_for_president():
+def test_ui_role_bootstrap_prompt_mentions_absolute_mesh_fallback_for_president(monkeypatch):
     module = _load_module()
+    monkeypatch.delenv("MESH_CONTROL_REPO", raising=False)
+    monkeypatch.setenv("MESH_WS_REPO_BASE", "/media/sam/1TB")
     cfg = module.UiConfig(
         repo="/media/sam/1TB/demo",
         repo_name="demo",
