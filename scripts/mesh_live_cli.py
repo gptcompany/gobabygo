@@ -130,6 +130,7 @@ class TickActionResult:
     status: str
     reason: str
     verified: bool
+    not_before: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -2224,6 +2225,26 @@ def render_live_supervisor_snapshot(snapshot: LiveSupervisorSnapshot) -> str:
     return "\n".join(lines)
 
 
+def project_action_result_schedules(
+    snapshot: LiveSupervisorSnapshot,
+    results: Sequence[TickActionResult],
+) -> LiveSupervisorSnapshot:
+    schedules = {
+        f"session/{_tick_state_key(item.owner, item.name)}": item.not_before
+        for item in results
+        if item.action == "wake_after_reset" and item.not_before > 0
+    }
+    if not schedules:
+        return snapshot
+    return replace(
+        snapshot,
+        signals=tuple(
+            replace(signal, not_before=schedules.get(signal.key, signal.not_before))
+            for signal in snapshot.signals
+        ),
+    )
+
+
 def _tick_state_key(owner: str, name: str) -> str:
     return f"{owner}/{name}"
 
@@ -2873,6 +2894,7 @@ def execute_live_tick_actions(
                             status="scheduled",
                             reason=f"waiting until reset plus {SESSION_LIMIT_RESET_GRACE_SECONDS}s grace",
                             verified=False,
+                            not_before=not_before,
                         )
                     )
                     continue
@@ -2888,6 +2910,7 @@ def execute_live_tick_actions(
                             status="scheduled",
                             reason="pending coordinator prompt requires one stable follow-up observation",
                             verified=False,
+                            not_before=not_before,
                         )
                     )
                     continue
@@ -2901,6 +2924,7 @@ def execute_live_tick_actions(
                             status="throttled",
                             reason="session-limit wake was already attempted for this reset",
                             verified=False,
+                            not_before=not_before,
                         )
                     )
                     continue
@@ -2961,6 +2985,7 @@ def execute_live_tick_actions(
                             else "post-reset wake sent; delivery unverified"
                         ),
                         verified=verified,
+                        not_before=not_before,
                     )
                 )
                 continue
@@ -3052,9 +3077,15 @@ def execute_live_tick_actions(
 def render_live_tick_results(results: Sequence[TickActionResult]) -> str:
     lines = ["mesh live tick: apply"]
     for item in results:
+        schedule = (
+            f" not_before={datetime.fromtimestamp(item.not_before, timezone.utc).isoformat()}"
+            if item.not_before > 0
+            else ""
+        )
         lines.append(
             f"{item.owner}/{item.name} pane={item.pane_id or '-'} action={item.action} "
-            f"status={item.status} verified={'yes' if item.verified else 'no'} reason={item.reason}"
+            f"status={item.status} verified={'yes' if item.verified else 'no'}"
+            f"{schedule} reason={item.reason}"
         )
     if len(lines) == 1:
         lines.append("no Claude sessions found")
@@ -4506,6 +4537,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     persist_state=lambda value: save_live_tick_state(args.state_file, value),
                     speckit_update_notice=speckit_update_notice,
                 )
+                snapshot = project_action_result_schedules(snapshot, results)
                 if changed or supervisor_changed:
                     save_live_tick_state(args.state_file, state)
             if args.json:

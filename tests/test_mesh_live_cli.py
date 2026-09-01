@@ -4832,6 +4832,104 @@ def test_main_tick_cli_preserves_matching_persisted_vendor_schedule(
     assert observation["not_before"] == original_due
 
 
+def test_main_tick_apply_reports_schedule_from_changed_atomic_recapture(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    timezone = ZoneInfo("Asia/Bangkok")
+    now = datetime(2026, 9, 1, 19, 15, tzinfo=timezone).timestamp()
+    initial_screen = _claude_session_limit_screen("7:10pm")
+    changed_screen = _claude_session_limit_screen("8:10pm")
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%4",
+        pane_command="claude",
+        output=initial_screen,
+    )
+    initial_due = (
+        datetime(2026, 9, 1, 19, 10, tzinfo=timezone).timestamp()
+        + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+    changed_due = (
+        datetime(2026, 9, 1, 20, 10, tzinfo=timezone).timestamp()
+        + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+    state_path = tmp_path / "tick.json"
+    module.save_live_tick_state(
+        str(state_path),
+        {
+            "version": 1,
+            "sessions": {
+                "sam/claude-coordinator": {
+                    "session_limit_schedule_version": (
+                        module.SESSION_LIMIT_SCHEDULE_VERSION
+                    ),
+                    "session_limit_fingerprint": (
+                        module._tick_session_limit_fingerprint(
+                            coordinator, "7:10pm", "Asia/Bangkok"
+                        )
+                    ),
+                    "session_limit_not_before": initial_due,
+                }
+            },
+        },
+    )
+
+    class ChangingClient:
+        endpoint = module.LiveEndpoint(host="localhost", local=True, users=("sam",))
+
+        def __init__(self) -> None:
+            self.capture_count = 0
+
+        def capture(self, targets, lines):
+            if not targets:
+                return [], []
+            self.capture_count += 1
+            output = initial_screen if self.capture_count == 1 else changed_screen
+            return [module.replace(targets[0], output=output)], []
+
+        def send(self, *args, **kwargs):
+            raise AssertionError("changed future schedule must not send pane input")
+
+    client = ChangingClient()
+    monkeypatch.setattr(
+        module,
+        "_discover_with_fallback",
+        lambda args: (client, [coordinator], []),
+    )
+    monkeypatch.setattr(module.time, "time", lambda: now)
+
+    rc = module.main(
+        [
+            "--local",
+            "tick",
+            "--apply",
+            "--json",
+            "--verify-delay",
+            "0",
+            "--state-file",
+            str(state_path),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    signal = next(
+        item
+        for item in payload["supervisor"]["signals"]
+        if item["key"] == "session/sam/claude-coordinator"
+    )
+    assert signal["not_before"] == changed_due
+    assert payload["results"][0]["not_before"] == changed_due
+    saved = module.load_live_tick_state(str(state_path))["sessions"][
+        "sam/claude-coordinator"
+    ]
+    assert saved["session_limit_not_before"] == changed_due
+
+
 @pytest.mark.parametrize("value", [None, True, 0, float("nan"), float("inf")])
 def test_persisted_vendor_schedule_rejects_invalid_timestamps(value) -> None:
     module = _load_module()
