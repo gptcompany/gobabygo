@@ -52,6 +52,7 @@ _IMMUTABLE_REVIEW_SCOPE = re.compile(
 )
 _MAX_RELEASE_BYTES = 1024 * 1024
 _MAX_DELEGATION_ARTIFACT_BYTES = 1024 * 1024
+_MAX_TASKS_FILE_BYTES = 2 * 1024 * 1024
 _MAX_MIGRATION_FILES = 512
 _MAX_MIGRATION_FILE_BYTES = 8 * 1024 * 1024
 _MAX_MIGRATION_TOTAL_BYTES = 32 * 1024 * 1024
@@ -79,6 +80,15 @@ _LEGACY_COMMAND_NAMES = {
     "tasks.md",
     "taskstoissues.md",
 }
+_TASK_HEADER = re.compile(
+    r"(?m)^[ \t]*-[ \t]+\[(?P<state>[ xX])\][ \t]+\*\*(?P<id>[A-Za-z][A-Za-z0-9._-]*)\*\*"
+    r"(?P<suffix>[^\n]*)$"
+)
+_DECISION_SUFFIX = re.compile(r"^\s*\[D\]\s+(?P<title>\S(?:.*\S)?)\s*$")
+_BLOCKED_BY = re.compile(
+    r"(?im)^\s*\*{0,2}(?:Bloccato da|Blocked by)\*{0,2}\s*:\s*(?P<value>[^\n]+)$"
+)
+_DECISION_REFERENCE = re.compile(r"(?<![A-Za-z0-9._-])DEC-[A-Za-z0-9._-]+")
 
 
 class SpeckitRuntimeError(RuntimeError):
@@ -520,6 +530,100 @@ def build_status(
         "orchestration_runtime": inspect_orchestration_runtime(),
         "project": project,
         "aligned": installed["version"] == lock["version"] and project["state"] == "aligned",
+    }
+
+
+def _read_tasks_file(path: Path) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise SpeckitRuntimeError(f"unable to open tasks file safely: {path}") from exc
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            file_stat = os.fstat(handle.fileno())
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise SpeckitRuntimeError(f"tasks file must be a regular file: {path}")
+            if file_stat.st_size > _MAX_TASKS_FILE_BYTES:
+                raise SpeckitRuntimeError(f"tasks file exceeds the 2 MiB limit: {path}")
+            raw = handle.read(_MAX_TASKS_FILE_BYTES + 1)
+    except OSError as exc:
+        raise SpeckitRuntimeError(f"unable to read tasks file safely: {path}") from exc
+    if len(raw) > _MAX_TASKS_FILE_BYTES:
+        raise SpeckitRuntimeError(f"tasks file exceeds the 2 MiB limit: {path}")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SpeckitRuntimeError(f"tasks file is not valid UTF-8: {path}") from exc
+
+
+def _bounded_manual_title(value: str) -> str:
+    title = re.sub(r"[\x00-\x1f\x7f]+", " ", value)
+    return re.sub(r"\s+", " ", title).strip()[:240]
+
+
+def _manual_actions_from_tasks(path: Path) -> list[dict[str, Any]]:
+    text = _read_tasks_file(path)
+    headers = list(_TASK_HEADER.finditer(text))
+    decisions: dict[str, dict[str, Any]] = {}
+    for header in headers:
+        decision = _DECISION_SUFFIX.fullmatch(header.group("suffix"))
+        decision_id = header.group("id")
+        if (
+            header.group("state") != " "
+            or decision is None
+            or not decision_id.startswith("DEC-")
+        ):
+            continue
+        decisions[decision_id] = {
+            "id": decision_id,
+            "title": _bounded_manual_title(decision.group("title")),
+            "line": text.count("\n", 0, header.start()) + 1,
+            "feature_dir": str(path.parent),
+            "blocked_tasks": [],
+        }
+
+    for index, header in enumerate(headers):
+        if header.group("state") != " ":
+            continue
+        task_id = header.group("id")
+        if task_id.startswith("DEC-"):
+            continue
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        block = text[header.end() : end]
+        for blocked in _BLOCKED_BY.finditer(block):
+            for decision_id in _DECISION_REFERENCE.findall(blocked.group("value")):
+                action = decisions.get(decision_id)
+                if action is not None and task_id not in action["blocked_tasks"]:
+                    action["blocked_tasks"].append(task_id)
+
+    return [decisions[key] for key in sorted(decisions)]
+
+
+def build_manual_actions(target: Path, *, scan_all: bool = False) -> dict[str, Any]:
+    target = target.expanduser()
+    if scan_all:
+        if not target.is_dir():
+            raise SpeckitRuntimeError(f"manual-actions root is not a directory: {target}")
+        tasks_files = sorted(target.glob("specs/*/tasks.md"), key=lambda path: path.as_posix())
+    else:
+        tasks_file = target / "tasks.md" if target.is_dir() else target
+        if tasks_file.name != "tasks.md":
+            raise SpeckitRuntimeError("manual-actions target must be a feature directory or tasks.md")
+        if not tasks_file.exists() and not tasks_file.is_symlink():
+            raise SpeckitRuntimeError(f"tasks file does not exist: {tasks_file}")
+        tasks_files = [tasks_file]
+
+    actions: list[dict[str, Any]] = []
+    for tasks_file in tasks_files:
+        actions.extend(_manual_actions_from_tasks(tasks_file))
+    actions.sort(key=lambda item: (item["feature_dir"], item["id"]))
+    return {
+        "schema": "mesh.speckit.manual-actions.v1",
+        "target": str(target),
+        "scan_all": scan_all,
+        "count": len(actions),
+        "actions": actions,
     }
 
 
@@ -1504,6 +1608,19 @@ def _render_context(payload: dict[str, Any]) -> str:
     )
 
 
+def _render_manual_actions(payload: dict[str, Any]) -> str:
+    if not payload["actions"]:
+        return "MANUAL_CLEAR count=0"
+    lines = [f"MANUAL_REQUIRED count={payload['count']}"]
+    for action in payload["actions"]:
+        blocked = ",".join(action["blocked_tasks"]) or "-"
+        lines.append(
+            f"{action['id']} feature={action['feature_dir']} line={action['line']} "
+            f"blocked={blocked} title={action['title']}"
+        )
+    return "\n".join(lines)
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock-file", type=Path, default=DEFAULT_LOCK_FILE)
@@ -1539,6 +1656,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     context.add_argument("--role", choices=("writer", "reviewer"), required=True)
     context.add_argument("--review-scope", default="")
     context.add_argument("--json", action="store_true")
+    manual = sub.add_parser("manual-actions")
+    manual.add_argument("target", type=Path)
+    manual.add_argument("--all", action="store_true", dest="scan_all")
+    manual.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -1559,6 +1680,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 review_scope=args.review_scope,
                 lock_file=args.lock_file,
             )
+            aligned = True
+        elif args.command == "manual-actions":
+            output = build_manual_actions(args.target, scan_all=args.scan_all)
             aligned = True
         elif args.command == "project":
             plan = build_project_plan(
@@ -1631,6 +1755,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"ready_to_apply={'yes' if output['ready_to_apply'] else 'no'}")
     elif args.command == "context":
         print(_render_context(output))
+    elif args.command == "manual-actions":
+        print(_render_manual_actions(output))
     else:
         print(_render_status(status))
     return 0 if aligned else 1

@@ -74,6 +74,80 @@ def test_committed_lock_is_exact_and_active_providers_only() -> None:
     assert lock["integrations"] == ["claude", "codex", "agy"]
 
 
+def test_manual_actions_reports_only_open_decisions_and_blocked_tasks(tmp_path) -> None:
+    module = _load_module()
+    feature = tmp_path / "specs" / "096-gate"
+    feature.mkdir(parents=True)
+    (feature / "tasks.md").write_text(
+        """# Tasks
+
+- [ ] **DEC-9** [D] Provenienza eventi money path
+- [x] **DEC-8** [D] Decisione gia presa
+- [ ] **T041** Implementare il verifier
+  *Bloccato da*: DEC-9, DEC-8
+- [ ] **T042** Testare il verifier
+  **Blocked by**: DEC-9
+- [x] **T043** Task chiuso
+  *Bloccato da*: DEC-9
+""",
+        encoding="utf-8",
+    )
+
+    result = module.build_manual_actions(feature)
+
+    assert result["schema"] == "mesh.speckit.manual-actions.v1"
+    assert result["count"] == 1
+    assert result["actions"] == [
+        {
+            "id": "DEC-9",
+            "title": "Provenienza eventi money path",
+            "line": 3,
+            "feature_dir": str(feature),
+            "blocked_tasks": ["T041", "T042"],
+        }
+    ]
+
+
+def test_manual_actions_all_is_deterministic_and_bounded(tmp_path) -> None:
+    module = _load_module()
+    for feature_name, decision_id in (("002-zeta", "DEC-2"), ("001-alpha", "DEC-1")):
+        feature = tmp_path / "specs" / feature_name
+        feature.mkdir(parents=True)
+        (feature / "tasks.md").write_text(
+            f"- [ ] **{decision_id}** [D] Choose " + "x" * 300 + "\n",
+            encoding="utf-8",
+        )
+
+    result = module.build_manual_actions(tmp_path, scan_all=True)
+
+    assert [item["id"] for item in result["actions"]] == ["DEC-1", "DEC-2"]
+    assert all(len(item["title"]) == 240 for item in result["actions"])
+
+
+def test_manual_actions_rejects_symlinked_tasks_file(tmp_path) -> None:
+    module = _load_module()
+    outside = tmp_path / "outside.md"
+    outside.write_text("- [ ] **DEC-1** [D] Unsafe\n", encoding="utf-8")
+    feature = tmp_path / "specs" / "001-feature"
+    feature.mkdir(parents=True)
+    (feature / "tasks.md").symlink_to(outside)
+
+    with pytest.raises(module.SpeckitRuntimeError, match="open tasks file safely"):
+        module.build_manual_actions(feature)
+
+
+def test_manual_actions_cli_emits_clear_state(tmp_path, capsys) -> None:
+    module = _load_module()
+    feature = tmp_path / "specs" / "001-feature"
+    feature.mkdir(parents=True)
+    (feature / "tasks.md").write_text("- [x] **DEC-1** [D] Done\n", encoding="utf-8")
+
+    rc = module.main(["manual-actions", str(feature)])
+
+    assert rc == 0
+    assert capsys.readouterr().out == "MANUAL_CLEAR count=0\n"
+
+
 def test_lock_rejects_gemini(tmp_path) -> None:
     module = _load_module()
     path = _lock(tmp_path / "lock.json", integrations=["claude", "codex", "gemini"])

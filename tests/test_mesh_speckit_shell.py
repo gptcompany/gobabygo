@@ -70,6 +70,7 @@ def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     assert "speckit status [repo-path]" in proc.stdout
     assert "speckit capabilities [repo-path]" in proc.stdout
     assert "speckit context <repo-path>" in proc.stdout
+    assert "speckit manual-actions <feature-dir|tasks.md>" in proc.stdout
     assert "speckit update-check" in proc.stdout
     assert "speckit install <version>" in proc.stdout
     assert "speckit project init" in proc.stdout
@@ -82,6 +83,38 @@ def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     assert "speckit review <status|check|init|open|record|timeout|correction|candidate|budget|decide>" in proc.stdout
     assert "writes are intentionally restricted" in proc.stdout
     assert "Legacy iTerm2 run options" in proc.stdout
+
+
+def test_manual_actions_subcommand_forwards_exact_arguments(tmp_path) -> None:
+    capture = tmp_path / "args.json"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_FILE\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    proc = subprocess.run(
+        ["bash", str(MESH), "speckit", "manual-actions", "/tmp/example repo", "--all", "--json"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "CAPTURE_FILE": str(capture),
+            "MESH_SPECKIT_PYTHON": str(fake_python),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == [
+        str(ROOT / "scripts" / "mesh_speckit_cli.py"),
+        "manual-actions",
+        "/tmp/example repo",
+        "--all",
+        "--json",
+    ]
 
 
 def test_github_ledger_subcommand_forwards_exact_arguments(tmp_path) -> None:
