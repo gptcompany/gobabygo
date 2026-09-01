@@ -143,6 +143,12 @@ multi-repo specs, decisions, tasks, and handoffs live in the exact Git root
 `/data/sata/1TB/coordination`. Mesh Live still owns tmux delivery and review;
 Spec Kit does not launch nested CLI workers. See [MESH_LIVE.md](MESH_LIVE.md).
 
+`mesh speckit manual-actions <feature-dir>` lists unresolved `DEC-* [D]`
+operator decisions and their blocked tasks directly from authoritative
+`tasks.md`; add `--all` with a repo root to scan every feature. It is read-only,
+returns `MANUAL_CLEAR` or `MANUAL_REQUIRED`, and creates no database or second
+ledger.
+
 For development orchestration, `mesh speckit github init|plan|check|install-caller` publishes
 approved `tasks.md` files to a namespaced, one-way GitHub Issues ledger. The
 planning artifacts merge before implementation starts; only GitHub Actions may

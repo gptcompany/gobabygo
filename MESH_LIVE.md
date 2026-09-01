@@ -396,6 +396,26 @@ interactive `speckit-taskstoissues` as fallback. A custom caller, untrusted
 runtime pin, unavailable GitHub CLI, or failed Action remains a precise blocker;
 none permits direct issue mutation or worker-owned onboarding.
 
+Manual product, architecture, security-boundary, cost, deploy, and money-path
+decisions remain checklist entries in authoritative `tasks.md`; they do not get
+a separate database. Inspect one feature or the coordinator program with:
+
+```bash
+mesh speckit manual-actions specs/001-feature
+mesh speckit manual-actions /data/sata/1TB/coordination --all --json
+```
+
+The read-only command returns `MANUAL_CLEAR` or `MANUAL_REQUIRED` and correlates
+each open `DEC-* [D]` with task IDs that declare it under `Blocked by` or
+`Bloccato da`. The coordinator runs it at bootstrap/resume, before every
+`TICK_IDLE`, and before closure. It presents the exact decision, bounded
+options, recommendation, and blocked tasks, then records only an explicitly
+submitted operator answer in the authoritative artifact. Silence, pane output,
+worker prose, and Claude prompt suggestions/ghost text are never consent.
+Disable vendor prompt suggestions in the Mac and Dell user configuration with
+`"promptSuggestionEnabled": false` in `~/.claude/settings.json`. A coordinator
+already running retains its startup setting until it is exited and resumed.
+
 Template roles are desired perspectives, not permission to spawn processes.
 The following are coordinator contract rules, not filesystem locks or an OS
 sandbox. `mesh live` validates session identity and bounded keyboard delivery,
@@ -686,6 +706,11 @@ rate limits, unknown screens, and `awaiting_input` require inspection. `--apply`
 records the same transitions under the same lock before evaluating its existing
 guarded actions, so the installed cron does not need a second entry, daemon,
 database, router, or iTerm2 dependency.
+
+When an idle coordinator's current visible output contains the exact standalone
+`MANUAL_REQUIRED count=N` marker, the supervisor reports
+`manual_action_required` as a warning and does not wake it again. Similar prose
+and stale markers outside the bounded visible tail do not match.
 
 Apply mode has six actions:
 

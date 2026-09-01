@@ -260,6 +260,7 @@ mesh live brief --repo rektslug
 mesh live brief --all --coordinator claude-coordinator
 mesh live workflow show speckit --json
 mesh live workflow show speckit --scope coordinator --json
+mesh speckit manual-actions /data/sata/1TB/coordination --all
 MESH_LIVE_LOCAL=1 mesh live tick --json
 mesh thread create --name rektslug-live-delegation
 mesh thread add-step --thread rektslug-live-delegation --title "Implement fix" --step-index 0 --repo /data/sata/1TB/rektslug --cli codex --payload '{"prompt":"Implement the approved fix."}'
@@ -366,6 +367,14 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
   inspection; mesh live does not auto-clear it or send a naked Enter
 - on the Dell runtime, `mesh live tick` is read-only and `tick --apply` only
   handles an exact selected Claude WAIT menu or wakes an exactly idle coordinator
+- before `TICK_IDLE` or closure, the coordinator runs `mesh speckit
+  manual-actions <state-repo> --all --json`; unresolved `DEC-* [D]` entries are
+  reported as `MANUAL_REQUIRED` with blocked task IDs and appear as a supervisor
+  warning, never as silent idle state
+- Claude prompt suggestions/ghost text are vendor-generated UI, not submitted
+  operator authority. Disable them globally with
+  `"promptSuggestionEnabled": false` in `~/.claude/settings.json`; restart or
+  resume an already-running Claude session for the setting to take effect
 - board reports provider `screen` state and tmux `activity_age`; completion needs
   the exact marker plus stable idle state in two observations, while age alone
   never triggers worker replacement
@@ -416,6 +425,19 @@ Prerequisite: authenticated GitHub CLI `gh` 2.48 or newer.
 For planned features, Git owns intent and `tasks.md` owns task identity and
 completion. GitHub Issues are a one-way derived ledger; issue state never
 rewrites Spec Kit artifacts.
+
+Mandatory operator decisions stay in the same ledger:
+
+```bash
+# One feature, or every feature under a repository.
+mesh speckit manual-actions specs/001-feature
+mesh speckit manual-actions /data/sata/1TB/coordination --all --json
+```
+
+Only open checklist entries with a `DEC-*` ID marked `[D]` are projected. A
+submitted operator answer is recorded back in the authoritative decision/task
+artifact before dependent work continues. Silence, pane text, worker prose, and
+Claude prompt suggestions are never consent.
 
 ```bash
 # Once per feature: inspect, then commit the immutable binding with planning artifacts.

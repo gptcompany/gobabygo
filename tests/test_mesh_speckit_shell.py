@@ -117,6 +117,35 @@ def test_manual_actions_subcommand_forwards_exact_arguments(tmp_path) -> None:
     ]
 
 
+def test_manual_actions_real_cli_e2e_on_fictitious_feature(tmp_path) -> None:
+    feature = tmp_path / "specs" / "001-release-gate"
+    feature.mkdir(parents=True)
+    (feature / "tasks.md").write_text(
+        """# Fictitious release gate
+
+- [ ] **DEC-1** [D] Enable the fictitious money path?
+- [ ] **T001** Ship the fictitious release
+  *Blocked by*: DEC-1
+""",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        ["bash", str(MESH), "speckit", "manual-actions", str(tmp_path), "--all", "--json"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["schema"] == "mesh.speckit.manual-actions.v1"
+    assert payload["count"] == 1
+    assert payload["actions"][0]["id"] == "DEC-1"
+    assert payload["actions"][0]["blocked_tasks"] == ["T001"]
+
+
 def test_github_ledger_subcommand_forwards_exact_arguments(tmp_path) -> None:
     capture = tmp_path / "args.json"
     fake_python = tmp_path / "python"
