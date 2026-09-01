@@ -38,6 +38,9 @@ class SupervisorSignal:
     state: str
     severity: str
     reason: str
+    provider: str = ""
+    schedule_source: str = ""
+    not_before: float = 0.0
 
 
 @dataclass(frozen=True)

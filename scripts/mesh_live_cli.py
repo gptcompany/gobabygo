@@ -3,7 +3,7 @@
 
 import argparse
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -116,6 +116,8 @@ class TickObservation:
     proposed_action: str
     reason: str
     not_before: float = 0.0
+    provider: str = ""
+    schedule_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -1833,6 +1835,10 @@ def build_live_tick_plan(
                     screen_state=screen_state,
                     proposed_action=action,
                     reason=reason,
+                    provider="antigravity",
+                    schedule_source=(
+                        "unsupported" if screen_state == "rate_limit" else ""
+                    ),
                 )
             )
             continue
@@ -1905,6 +1911,10 @@ def build_live_tick_plan(
                 proposed_action=action,
                 reason=reason,
                 not_before=not_before,
+                provider="claude",
+                schedule_source=(
+                    "vendor_banner" if action == "wake_after_reset" else ""
+                ),
             )
         )
     return observations
@@ -1914,14 +1924,17 @@ def render_live_tick_plan(observations: Sequence[TickObservation]) -> str:
     lines = ["mesh live tick: dry-run"]
     for item in observations:
         schedule = (
-            f" not_before={datetime.fromtimestamp(item.not_before).astimezone().isoformat()}"
+            f" not_before={datetime.fromtimestamp(item.not_before, timezone.utc).isoformat()}"
             if item.not_before
             else ""
         )
+        metadata = f" provider={item.provider or '-'}"
+        if item.schedule_source:
+            metadata += f" schedule_source={item.schedule_source}"
         lines.append(
             f"{item.owner}/{item.name} pane={item.pane_id or '-'} "
             f"state={item.screen_state} action={item.proposed_action}{schedule} "
-            f"reason={item.reason}"
+            f"reason={item.reason}{metadata}"
         )
     if len(lines) == 1:
         lines.append("no Claude sessions found")
@@ -1941,6 +1954,20 @@ def _is_ai_worker_session(
     return bool(commands & {"claude", "claude-code", "codex", "agy", "antigravity"}) or session.name.lower().startswith(prefixes)
 
 
+def _live_session_provider(session: LiveSession) -> str:
+    commands = {
+        Path(session.pane_command or "").name.lower(),
+        Path(session.pane_child_command or "").name.lower(),
+    }
+    if commands & {"claude", "claude-code"}:
+        return "claude"
+    if commands & {"codex", "codex-cli"}:
+        return "codex"
+    if commands & {"agy", "antigravity"}:
+        return "antigravity"
+    return "unknown"
+
+
 def _load_supervisor_api() -> tuple[Any, Callable[..., Any]]:
     try:
         from scripts.mesh_supervisor import SupervisorSignal, record_transitions
@@ -1956,6 +1983,7 @@ def build_live_supervisor_signals(
 ) -> list[Any]:
     SupervisorSignal, _record_transitions = _load_supervisor_api()
     signals: list[Any] = []
+    sessions_by_key = {item.key: item for item in all_sessions}
     signals.append(
         SupervisorSignal(
             key="fleet/coordinator",
@@ -1984,6 +2012,10 @@ def build_live_supervisor_signals(
         )
     )
     for item in observations:
+        observed_session = sessions_by_key.get((item.owner, item.name))
+        provider = item.provider or (
+            _live_session_provider(observed_session) if observed_session else "unknown"
+        )
         signal_reason = item.reason
         if item.reason == "capture_error":
             state, severity = "capture_error", "warning"
@@ -2017,6 +2049,9 @@ def build_live_supervisor_signals(
                 state=state,
                 severity=severity,
                 reason=signal_reason,
+                provider=provider,
+                schedule_source=item.schedule_source,
+                not_before=item.not_before,
             )
         )
     observed_keys = {(item.owner, item.name) for item in observations}
@@ -2046,6 +2081,10 @@ def build_live_supervisor_signals(
                 state=state,
                 severity=severity,
                 reason=reason,
+                provider=_live_session_provider(session),
+                schedule_source=(
+                    "unsupported" if screen_state == "rate_limit" else ""
+                ),
             )
         )
     return signals
@@ -2080,8 +2119,15 @@ def observe_live_supervisor(
 def render_live_supervisor_snapshot(snapshot: LiveSupervisorSnapshot) -> str:
     lines = ["mesh live tick: observe (no input)"]
     for signal in snapshot.signals:
+        schedule = (
+            f" not_before={datetime.fromtimestamp(signal.not_before, timezone.utc).isoformat()}"
+            if signal.not_before
+            else ""
+        )
         lines.append(
-            f"{signal.key} state={signal.state} severity={signal.severity} reason={signal.reason}"
+            f"{signal.key} state={signal.state} severity={signal.severity} "
+            f"provider={signal.provider or '-'} schedule_source={signal.schedule_source or '-'}"
+            f"{schedule} reason={signal.reason}"
         )
     for event in snapshot.events:
         lines.append(

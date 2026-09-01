@@ -3802,6 +3802,9 @@ def test_supervisor_reports_codex_and_antigravity_limits_without_wake() -> None:
     assert worker_signals["session/sam/antigravity-worker"].state == "provider_rate_limit"
     assert all(item.severity == "warning" for item in worker_signals.values())
     assert all("no automatic reset contract" in item.reason for item in worker_signals.values())
+    assert worker_signals["session/sam/codex-worker"].provider == "codex"
+    assert worker_signals["session/sam/antigravity-worker"].provider == "antigravity"
+    assert all(item.schedule_source == "unsupported" for item in worker_signals.values())
 
 
 def test_live_supervisor_observe_reports_missing_workers_after_two_ticks() -> None:
@@ -4199,8 +4202,22 @@ def test_live_tick_schedules_exact_session_limit_without_sending() -> None:
 
     assert plan[0].screen_state == "session_limit"
     assert plan[0].proposed_action == "wake_after_reset"
+    assert plan[0].provider == "claude"
+    assert plan[0].schedule_source == "vendor_banner"
     expected = datetime(2026, 8, 14, 0, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
     assert plan[0].not_before == expected + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    signals = module.build_live_supervisor_signals(
+        plan, [session], {session.key}
+    )
+    signal = next(item for item in signals if item.key.endswith("claude-coordinator"))
+    assert signal.provider == "claude"
+    assert signal.schedule_source == "vendor_banner"
+    assert signal.not_before == plan[0].not_before
+    rendered = module.render_live_supervisor_snapshot(
+        module.LiveSupervisorSnapshot(signals=tuple(signals), events=())
+    )
+    assert "provider=claude schedule_source=vendor_banner" in rendered
+    assert "not_before=2026-08-13T17:01:30+00:00" in rendered
 
     class CaptureOnlyClient:
         def __init__(self) -> None:
