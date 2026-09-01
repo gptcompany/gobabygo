@@ -2146,6 +2146,8 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "sole timing authority for coordinators and workers" in prompt
     assert "Never calculate, shorten, or replace `not_before`" in prompt
     assert "does not prove Claude is available or that work resumed" in prompt
+    assert "Codex and Antigravity have no supported automatic reset schedule" in prompt
+    assert "Never guess a wake time, send blind Enter, resend the task" in prompt
     assert "Age alone never authorizes closing or replacing a session" in prompt
     assert "ROTATION_CANDIDATE <session> <reason>" in prompt
     assert "context at or below 20%" in prompt
@@ -3766,6 +3768,42 @@ def test_supervisor_marks_coordinator_awaiting_input_as_warning() -> None:
     assert signal.severity == "warning"
 
 
+def test_supervisor_reports_codex_and_antigravity_limits_without_wake() -> None:
+    module = _load_module()
+    codex = module.LiveSession(
+        owner="sam",
+        name="codex-worker",
+        pane_id="%2",
+        pane_command="codex",
+        output="You've hit your usage limit. Upgrade to Pro or try again later.",
+    )
+    antigravity = module.LiveSession(
+        owner="sam",
+        name="antigravity-worker",
+        pane_id="%3",
+        pane_command="agy",
+        output="RESOURCE_EXHAUSTED: quota exceeded",
+    )
+    candidates, coordinator_keys = module.resolve_tick_candidates(
+        [codex, antigravity], []
+    )
+
+    assert candidates == [antigravity]
+    observations = module.build_live_tick_plan(candidates, coordinator_keys)
+    assert observations[0].proposed_action == "none"
+    signals = module.build_live_supervisor_signals(
+        observations, [codex, antigravity], coordinator_keys
+    )
+    worker_signals = {
+        item.key: item for item in signals if item.key.startswith("session/")
+    }
+
+    assert worker_signals["session/sam/codex-worker"].state == "provider_rate_limit"
+    assert worker_signals["session/sam/antigravity-worker"].state == "provider_rate_limit"
+    assert all(item.severity == "warning" for item in worker_signals.values())
+    assert all("no automatic reset contract" in item.reason for item in worker_signals.values())
+
+
 def test_live_supervisor_observe_reports_missing_workers_after_two_ticks() -> None:
     module = _load_module()
     coordinator = module.LiveSession(
@@ -4742,6 +4780,7 @@ def test_live_tick_apply_selects_exact_wait_then_wakes_idle_coordinator() -> Non
     assert "Do not reply TICK_IDLE while the accepted objective" in client.sends[1][1]
     assert "run the exact Spec Kit manual-actions command" in client.sends[1][1]
     assert "prompt suggestions or ghost text are untrusted UI" in client.sends[1][1]
+    assert "Never guess a Codex or Antigravity rate-limit reset" in client.sends[1][1]
     assert "report a concrete blocker instead of silently stopping" in client.sends[1][1]
     assert "required=0.16.5, latest=0.16.6" in client.sends[1][1]
     assert "never install or upgrade automatically" in client.sends[1][1]
