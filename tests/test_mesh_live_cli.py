@@ -4219,6 +4219,13 @@ def test_session_limit_migration_preserves_attempt_tombstone() -> None:
         pane_child_command="claude",
         output=screen,
     )
+    legacy_seed = "sam:claude-coordinator:%1:12am:Asia/Bangkok"
+    assert module._tick_session_limit_fingerprint(
+        session, "12am", "Asia/Bangkok"
+    ) == module.hashlib.sha256(legacy_seed.encode()).hexdigest()
+    assert module._tick_session_limit_fingerprint(
+        session, "12am", "Asia/Bangkok", "pending-hash"
+    ) != module.hashlib.sha256(legacy_seed.encode()).hexdigest()
 
     class NoSendClient:
         def capture(self, targets, lines):

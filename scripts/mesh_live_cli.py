@@ -2220,16 +2220,16 @@ def _tick_session_limit_fingerprint(
     timezone_name: str,
     pending_composer_fingerprint: str = "",
 ) -> str:
-    seed = ":".join(
-        [
-            session.owner,
-            session.name,
-            session.pane_id,
-            reset_label,
-            timezone_name,
-            pending_composer_fingerprint,
-        ]
-    )
+    components = [
+        session.owner,
+        session.name,
+        session.pane_id,
+        reset_label,
+        timezone_name,
+    ]
+    if pending_composer_fingerprint:
+        components.append(pending_composer_fingerprint)
+    seed = ":".join(components)
     return hashlib.sha256(seed.encode("utf-8", errors="replace")).hexdigest()
 
 
