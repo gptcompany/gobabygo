@@ -3875,6 +3875,181 @@ def _claude_session_limit_screen(reset: str = "12am") -> str:
     )
 
 
+def _claude_session_limit_with_pending_prompt(
+    prompt: str = "continue the interrupted task",
+    reset: str = "12am",
+) -> str:
+    return _claude_session_limit_screen(reset).replace("❯ \n", f"❯ {prompt}\n")
+
+
+def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
+    module = _load_module()
+    now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    screen = _claude_session_limit_with_pending_prompt()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="bash",
+        pane_child_command="claude",
+        output=screen,
+    )
+
+    plan = module.build_live_tick_plan([session], {session.key}, now=now)
+    assert plan[0].screen_state == "session_limit"
+    assert plan[0].proposed_action == "wake_after_reset"
+
+    class PendingClient:
+        def __init__(self, outputs):
+            self.outputs = list(outputs)
+            self.sends: list[tuple[str, bool]] = []
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(
+            self,
+            target,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
+            assert expected_commands == ("claude", "claude-code")
+            assert allow_coordinator_wrapper is True
+            self.sends.append((text, enter))
+            return {}
+
+    state = {"version": 1, "sessions": {}}
+    update_notice = module.SpeckitUpdateNotice(
+        version="1.0.2",
+        message="Spec Kit update metadata: required=1.0.1, latest=1.0.2.",
+    )
+    first = PendingClient([screen])
+    results, changed = module.execute_live_tick_actions(
+        first,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        speckit_update_notice=update_notice,
+    )
+    assert changed is True
+    assert results[0].status == "scheduled"
+    assert "stable follow-up" in results[0].reason
+    assert first.sends == []
+    encoded = json.dumps(state)
+    assert "continue the interrupted task" not in encoded
+    assert state["sessions"]["sam/claude-coordinator"][
+        "session_limit_pending_composer"
+    ] is True
+
+    second = PendingClient([screen, "✻ Working\n❯ "])
+    results, changed = module.execute_live_tick_actions(
+        second,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now + 300,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        speckit_update_notice=update_notice,
+    )
+    assert changed is True
+    assert second.sends == [("", True)]
+    assert results[0].status == "applied"
+    assert results[0].verified is True
+    assert "speckit_update_reported_version" not in state
+
+    repeated = PendingClient([screen])
+    results, changed = module.execute_live_tick_actions(
+        repeated,
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now + 600,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert changed is False
+    assert results[0].status == "throttled"
+    assert repeated.sends == []
+
+
+def test_live_tick_pending_session_limit_fails_closed_on_scope_or_prompt_change() -> None:
+    module = _load_module()
+    now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    original = _claude_session_limit_with_pending_prompt("original task")
+    changed_screen = _claude_session_limit_with_pending_prompt("different task")
+    worker = module.LiveSession(
+        owner="sam",
+        name="claude-worker",
+        pane_id="%2",
+        pane_command="claude",
+        output=original,
+    )
+    worker_plan = module.build_live_tick_plan([worker], set(), now=now)
+    assert worker_plan[0].proposed_action == "none"
+    assert "outside a coordinator" in worker_plan[0].reason
+
+    coordinator = module.replace(worker, name="claude-coordinator", pane_id="%1")
+
+    class NoSendClient:
+        def __init__(self, output):
+            self.output = output
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.output)], []
+
+        def send(self, *args, **kwargs):
+            raise AssertionError("a new or changed pending prompt must not be submitted")
+
+    state = {"version": 1, "sessions": {}}
+    module.execute_live_tick_actions(
+        NoSendClient(original),
+        [coordinator],
+        {coordinator.key},
+        state=state,
+        lines=160,
+        now=now,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    old_fingerprint = state["sessions"]["sam/claude-coordinator"][
+        "session_limit_fingerprint"
+    ]
+
+    changed_session = module.replace(coordinator, output=changed_screen)
+    results, changed = module.execute_live_tick_actions(
+        NoSendClient(changed_screen),
+        [changed_session],
+        {changed_session.key},
+        state=state,
+        lines=160,
+        now=now + 300,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert changed is True
+    assert results[0].status == "scheduled"
+    assert state["sessions"]["sam/claude-coordinator"][
+        "session_limit_fingerprint"
+    ] != old_fingerprint
+    assert "original task" not in json.dumps(state)
+    assert "different task" not in json.dumps(state)
+
+
 def test_live_tick_schedules_exact_session_limit_without_sending() -> None:
     module = _load_module()
     now = datetime(2026, 8, 13, 16, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()

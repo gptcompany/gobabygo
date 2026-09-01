@@ -700,10 +700,13 @@ Apply mode has six actions:
    required independent review and corrections, task reconciliation, and all
    authorized commits/pushes; otherwise it reports the concrete blocker.
 3. It recognizes the exact Claude session-limit banner containing a reset time
-   and IANA timezone, persists that schedule, waits through a 90-second grace
-   period, and then sends one fixed `MESH_LIVE_RESET_WAKE` instruction to the
-   same empty Claude pane. This resumes the interrupted request; it does not
-   bypass or shorten the provider limit.
+   and IANA timezone, persists that schedule, and waits through a 90-second
+   grace period. An empty pane receives one fixed `MESH_LIVE_RESET_WAKE`.
+   When the coordinator already contains the interrupted prompt, two matching
+   observations are required and only one bare Enter is sent; the state stores
+   its hash, never its text. A changed prompt, pane, process, menu, or a pending
+   prompt outside the coordinator fails closed. This resumes the interrupted
+   request without bypassing or shortening the provider limit.
 4. It dismisses the exact Antigravity experience survey only when that survey
    is the final visible UI and all options include `[0] Skip`. It verifies the
    same pane still runs `agy`, persists a one-attempt tombstone before input,
@@ -756,12 +759,14 @@ evidence. The current contract does not authorize `kill-session` or automatic
 replacement; those remain an explicit guarded operator lifecycle action.
 
 The session-limit wake is guarded. The banner must include the exact
-`/upgrade to increase your usage limit.` line and an empty prompt. Unknown
-timezones, malformed times, non-empty composers, changed panes, or changed
-processes cause no send. Because the banner has no date, tick maps its time to
-the nearest past or future occurrence in the named timezone, preferring the
-future occurrence on an exact tie. A future occurrence waits through the
-90-second grace; a past occurrence whose grace has elapsed makes the single
+`/upgrade to increase your usage limit.` line. Unknown timezones, malformed
+times, changed panes, changed processes, or non-coordinator pending composers
+cause no send. A coordinator's pending composer must remain byte-identical
+across two observations before one Enter is allowed. Because the banner has no
+date, tick maps its time to the nearest past or future occurrence in the named
+timezone, preferring the future occurrence on an exact tie. A future occurrence
+waits through the 90-second grace; a past occurrence whose grace has elapsed
+makes the single
 guarded attempt at the next observation. For example, `resets 12am` first seen
 at `5am` is due immediately, while the same banner seen at `4pm` waits for the
 next midnight. This handles stale panes after a reboot without always

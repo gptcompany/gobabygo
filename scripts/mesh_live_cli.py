@@ -36,7 +36,7 @@ DEFAULT_SPECKIT_LOCK_FILE = str(Path(__file__).resolve().parents[1] / "config" /
 COORDINATOR_CONTRACT_MARKER = "MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1"
 COORDINATOR_REVIEW_CAPABILITY = "MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1"
 SESSION_LIMIT_RESET_GRACE_SECONDS = 90
-SESSION_LIMIT_SCHEDULE_VERSION = 2
+SESSION_LIMIT_SCHEDULE_VERSION = 3
 CLAUDE_PASTE_SETTLE_SECONDS = 1.0
 CLAUDE_CONTEXT_COMPACT_THRESHOLD = 90
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
@@ -1686,7 +1686,7 @@ def claude_composer_contains_tick_wake(screen: str, token: str) -> bool:
         if repo_root not in sys.path:
             sys.path.insert(0, repo_root)
         from src.router.cli_screen import claude_current_region
-    current = claude_current_region(screen).replace("\xa0", " ")
+    current = claude_current_region(screen)
     pattern = rf"(?m)^\s*❯\s*MESH_LIVE_TICK id={re.escape(wake_token)}:"
     return len(re.findall(pattern, current)) == 1
 
@@ -1842,10 +1842,16 @@ def build_live_tick_plan(
                 action = "manual_rate_limit"
                 reason = "rate limit detected but WAIT selection is ambiguous"
         elif state == LiveScreenState.session_limit:
-            reset = session_limit_reset(session.output)
+            reset = session_limit_reset(session.output, allow_pending_prompt=True)
             if reset is None:
                 action = "none"
                 reason = "session-limit reset metadata is ambiguous"
+            elif (
+                _claude_pending_composer_fingerprint(session.output)
+                and not is_coordinator
+            ):
+                action = "none"
+                reason = "session-limit prompt contains pending input outside a coordinator"
             else:
                 try:
                     not_before = _session_limit_not_before(*reset, observed_at)
@@ -2209,12 +2215,43 @@ def _tick_session_limit_wake_message(token: str, speckit_update_notice: str = ""
 
 
 def _tick_session_limit_fingerprint(
-    session: LiveSession, reset_label: str, timezone_name: str
+    session: LiveSession,
+    reset_label: str,
+    timezone_name: str,
+    pending_composer_fingerprint: str = "",
 ) -> str:
     seed = ":".join(
-        [session.owner, session.name, session.pane_id, reset_label, timezone_name]
+        [
+            session.owner,
+            session.name,
+            session.pane_id,
+            reset_label,
+            timezone_name,
+            pending_composer_fingerprint,
+        ]
     )
     return hashlib.sha256(seed.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _claude_pending_composer_fingerprint(screen: str) -> str:
+    try:
+        from src.router.cli_screen import (
+            claude_current_region,
+            last_prompt_line_has_content,
+        )
+    except ModuleNotFoundError:
+        repo_root = str(Path(__file__).resolve().parents[1])
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from src.router.cli_screen import (
+            claude_current_region,
+            last_prompt_line_has_content,
+        )
+
+    current = claude_current_region(screen).replace("\xa0", " ")
+    if not last_prompt_line_has_content(current):
+        return ""
+    return hashlib.sha256(current.encode("utf-8", errors="replace")).hexdigest()
 
 
 def _clear_session_limit_state(saved: dict[str, Any]) -> bool:
@@ -2225,6 +2262,8 @@ def _clear_session_limit_state(saved: dict[str, Any]) -> bool:
         "session_limit_attempted_at",
         "session_limit_token",
         "session_limit_verified",
+        "session_limit_pending_composer",
+        "session_limit_stability_observed_at",
     )
     changed = any(key in saved for key in keys)
     for key in keys:
@@ -2606,12 +2645,20 @@ def execute_live_tick_actions(
                 continue
 
             if observation.proposed_action == "wake_after_reset":
-                reset = session_limit_reset(fresh.output)
+                reset = session_limit_reset(
+                    fresh.output, allow_pending_prompt=observation.coordinator
+                )
                 if fresh_state != LiveScreenState.session_limit or reset is None:
                     raise LiveReadError("session-limit screen changed before scheduled wake")
                 reset_label, timezone_name = reset
+                pending_composer_fingerprint = _claude_pending_composer_fingerprint(
+                    fresh.output
+                )
                 fingerprint = _tick_session_limit_fingerprint(
-                    fresh, reset_label, timezone_name
+                    fresh,
+                    reset_label,
+                    timezone_name,
+                    pending_composer_fingerprint,
                 )
                 same_fingerprint = (
                     saved.get("session_limit_fingerprint") == fingerprint
@@ -2639,6 +2686,10 @@ def execute_live_tick_actions(
                                 SESSION_LIMIT_SCHEDULE_VERSION
                             ),
                             "session_limit_not_before": not_before,
+                            "session_limit_pending_composer": bool(
+                                pending_composer_fingerprint
+                            ),
+                            "session_limit_stability_observed_at": now,
                         }
                     )
                     changed = True
@@ -2653,6 +2704,21 @@ def execute_live_tick_actions(
                             action="wake_after_reset",
                             status="scheduled",
                             reason=f"waiting until reset plus {SESSION_LIMIT_RESET_GRACE_SECONDS}s grace",
+                            verified=False,
+                        )
+                    )
+                    continue
+                if pending_composer_fingerprint and not (
+                    same_fingerprint and current_schedule
+                ):
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="wake_after_reset",
+                            status="scheduled",
+                            reason="pending coordinator prompt requires one stable follow-up observation",
                             verified=False,
                         )
                     )
@@ -2682,19 +2748,27 @@ def execute_live_tick_actions(
                     persist_state(state)
                 client.send(
                     fresh,
-                    _tick_session_limit_wake_message(
-                        token,
-                        (
-                            pending_update.message
-                            if observation.coordinator and pending_update
-                            else ""
-                        ),
+                    (
+                        ""
+                        if pending_composer_fingerprint
+                        else _tick_session_limit_wake_message(
+                            token,
+                            (
+                                pending_update.message
+                                if observation.coordinator and pending_update
+                                else ""
+                            ),
+                        )
                     ),
                     enter=True,
                     expected_commands=("claude", "claude-code"),
                     allow_coordinator_wrapper=observation.coordinator,
                 )
-                if observation.coordinator and pending_update:
+                if (
+                    observation.coordinator
+                    and pending_update
+                    and not pending_composer_fingerprint
+                ):
                     state["speckit_update_reported_version"] = pending_update.version
                     pending_update = None
                     changed = True

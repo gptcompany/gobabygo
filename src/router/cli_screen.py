@@ -149,7 +149,7 @@ def claude_current_region(captured: str) -> str:
 def claude_screen_state(captured: str) -> LiveScreenState:
     """Classify Claude from its current composer/status region, not transcript words."""
     body = str(captured or "")
-    if claude_session_limit_reset(body):
+    if claude_session_limit_reset(body, allow_pending_prompt=True):
         return LiveScreenState.session_limit
     if detect_interactive_failure_screen("claude", body):
         return LiveScreenState.rate_limit
@@ -247,7 +247,9 @@ def claude_wait_option_selected(captured: str) -> bool:
     return not capture_shows_activity("\n".join(trailing))
 
 
-def claude_session_limit_reset(captured: str) -> tuple[str, str] | None:
+def claude_session_limit_reset(
+    captured: str, *, allow_pending_prompt: bool = False
+) -> tuple[str, str] | None:
     """Return the current session-limit reset label and IANA timezone."""
     body = str(captured or "").replace("\xa0", " ")
     matches = list(_CLAUDE_SESSION_LIMIT.finditer(body))
@@ -262,9 +264,15 @@ def claude_session_limit_reset(captured: str) -> tuple[str, str] | None:
         for line in trailing.splitlines()
         if line.replace("\xa0", " ").lstrip().startswith("❯")
     ]
-    if len(prompts) != 1 or prompts[0][1:].strip():
+    if len(prompts) != 1:
         return None
-    if not prompt_is_idle(trailing):
+    pending_prompt = bool(prompts[0][1:].strip())
+    if pending_prompt and not allow_pending_prompt:
+        return None
+    if pending_prompt:
+        if capture_shows_activity(trailing):
+            return None
+    elif not prompt_is_idle(trailing):
         return None
     return match.group("time").lower().replace(" ", ""), match.group("timezone")
 

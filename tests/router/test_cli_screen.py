@@ -72,6 +72,10 @@ def test_classifies_live_cli_states() -> None:
     assert classify_live_screen("claude", "header\n❯ pending") == LiveScreenState.awaiting_input
     assert classify_live_screen("claude", RATE_LIMIT_SELECTED) == LiveScreenState.rate_limit
     assert classify_live_screen("claude", SESSION_LIMIT) == LiveScreenState.session_limit
+    assert (
+        classify_live_screen("claude", SESSION_LIMIT.replace("❯\n", "❯ continue task\n"))
+        == LiveScreenState.session_limit
+    )
 
 
 def test_claude_state_ignores_monitor_transcript_before_current_status_bar() -> None:
@@ -203,6 +207,12 @@ def test_session_limit_requires_exact_current_banner_and_empty_prompt() -> None:
     )
     assert claude_session_limit_reset(SESSION_LIMIT.replace("/upgrade", "/other")) is None
     assert claude_session_limit_reset(f"{SESSION_LIMIT.rstrip()} pending") is None
+    pending = SESSION_LIMIT.replace("❯\n", "❯ continue task\n")
+    assert claude_session_limit_reset(pending) is None
+    assert claude_session_limit_reset(pending, allow_pending_prompt=True) == (
+        "12am",
+        "Asia/Bangkok",
+    )
     assert claude_session_limit_reset(
         f"{SESSION_LIMIT}\n❯ later request\nanswer\n❯ "
     ) is None
