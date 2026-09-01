@@ -2143,6 +2143,9 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "Reviewer context must use an immutable scope" in prompt
     assert "Worker idle/stale lifecycle policy" in prompt
     assert "`screen=idle` means available for input, not completed and not obsolete" in prompt
+    assert "sole timing authority for coordinators and workers" in prompt
+    assert "Never calculate, shorten, or replace `not_before`" in prompt
+    assert "does not prove Claude is available or that work resumed" in prompt
     assert "Age alone never authorizes closing or replacing a session" in prompt
     assert "ROTATION_CANDIDATE <session> <reason>" in prompt
     assert "context at or below 20%" in prompt
@@ -4225,6 +4228,87 @@ def test_session_limit_first_observation_uses_declared_reset_or_runs_now() -> No
     assert module._session_limit_not_before("12am", "Asia/Bangkok", afternoon) == (
         next_midnight + module.SESSION_LIMIT_RESET_GRACE_SECONDS
     )
+
+    before_minute_reset = datetime(
+        2026, 9, 1, 18, 38, tzinfo=timezone
+    ).timestamp()
+    minute_reset = datetime(2026, 9, 1, 19, 10, tzinfo=timezone).timestamp()
+    assert module._session_limit_not_before(
+        "7:10pm", "Asia/Bangkok", before_minute_reset
+    ) == minute_reset + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+
+
+def test_live_tick_resumes_empty_claude_worker_from_persisted_vendor_schedule() -> None:
+    module = _load_module()
+    timezone = ZoneInfo("Asia/Bangkok")
+    before = datetime(2026, 9, 1, 18, 38, tzinfo=timezone).timestamp()
+    due = (
+        datetime(2026, 9, 1, 19, 10, tzinfo=timezone).timestamp()
+        + module.SESSION_LIMIT_RESET_GRACE_SECONDS
+    )
+    screen = _claude_session_limit_screen("7:10pm")
+    worker = module.LiveSession(
+        owner="sam",
+        name="claude-worker",
+        pane_id="%8",
+        pane_command="claude",
+        output=screen,
+    )
+
+    class WorkerClient:
+        def __init__(self, outputs):
+            self.outputs = list(outputs)
+            self.sends: list[tuple[str, bool, bool]] = []
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(
+            self,
+            session,
+            text,
+            *,
+            enter,
+            expected_commands=(),
+            allow_coordinator_wrapper=False,
+        ):
+            assert expected_commands == ("claude", "claude-code")
+            self.sends.append((text, enter, allow_coordinator_wrapper))
+            return {}
+
+    state = {"version": 1, "sessions": {}}
+    scheduled = WorkerClient([screen])
+    results, _changed = module.execute_live_tick_actions(
+        scheduled,
+        [worker],
+        set(),
+        state=state,
+        lines=160,
+        now=before,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert results[0].status == "scheduled"
+    assert scheduled.sends == []
+    assert state["sessions"]["sam/claude-worker"]["session_limit_not_before"] == due
+
+    wake = WorkerClient([screen, "✻ Working\n❯ "])
+    results, _changed = module.execute_live_tick_actions(
+        wake,
+        [worker],
+        set(),
+        state=state,
+        lines=160,
+        now=due,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+    assert results[0].status == "applied"
+    assert results[0].verified is True
+    assert wake.sends[0][0].startswith("MESH_LIVE_RESET_WAKE id=")
+    assert wake.sends[0][1:] == (True, False)
 
 
 def test_session_limit_replaces_legacy_persisted_schedule() -> None:

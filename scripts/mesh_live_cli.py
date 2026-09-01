@@ -3665,6 +3665,8 @@ def build_live_coordinator_system_prompt(
             "",
             "Worker idle/stale lifecycle policy:",
             "- `screen=idle` means available for input, not completed and not obsolete. If authorized work remains, prefer reusing the idle worker.",
+            "- For Claude session limits, the persisted Mesh tick schedule derived from the exact current vendor reset minute and IANA timezone is the sole timing authority for coordinators and workers. Never calculate, shorten, or replace `not_before` from prose, transcript timestamps, activity age, or another provider's behavior.",
+            "- Reaching `not_before` authorizes only one guarded recapture-and-wake attempt after the configured grace; it does not prove Claude is available or that work resumed. Require fresh screen evidence afterward.",
             "- On every tick, reconcile each idle worker with the current objective and delegation ledger: delegate the next dependency-ready task, verify a just-finished task, or report TICK_IDLE when no work exists.",
             "- Treat `activity_age` as supporting evidence only. Age alone never authorizes closing or replacing a session.",
             "- Report `ROTATION_CANDIDATE <session> <reason>` only when the worker is detached and stably idle and an additional reason exists: context at or below 20%, persistent degraded/unknown TUI, stale provider/MCP configuration, or an explicit request for a fresh independent context.",
