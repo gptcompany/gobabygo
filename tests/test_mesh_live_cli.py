@@ -2146,6 +2146,9 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "sole timing authority for coordinators and workers" in prompt
     assert "Never calculate, shorten, or replace `not_before`" in prompt
     assert "does not prove Claude is available or that work resumed" in prompt
+    assert "An empty composer remains one-shot" in prompt
+    assert "up to three Enter-only attempts total" in prompt
+    assert "same pane, Claude process, banner, timezone, and composer fingerprint" in prompt
     assert "Codex and Antigravity have no supported automatic reset schedule" in prompt
     assert "Never guess a wake time, send blind Enter, resend the task" in prompt
     assert "Age alone never authorizes closing or replacing a session" in prompt
@@ -4289,6 +4292,66 @@ def test_persisted_session_limit_attempt_migrates_legacy_timestamp() -> None:
     assert module._persisted_session_limit_attempt(
         {"session_limit_attempted_at": 100.0}
     ) == (100.0, 1)
+
+
+@pytest.mark.parametrize("replacement", ["pane", "process"])
+def test_pending_session_limit_retry_rejects_pane_or_process_replacement(
+    replacement: str,
+) -> None:
+    module = _load_module()
+    now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
+    screen = _claude_session_limit_with_pending_prompt("DEC-11: keep scope local")
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output=screen,
+    )
+    pending = module._claude_pending_composer_fingerprint(screen)
+    saved = {
+        "pane_id": "%1",
+        "session_limit_fingerprint": module._tick_session_limit_fingerprint(
+            session, "12am", "Asia/Bangkok", pending
+        ),
+        "session_limit_schedule_version": module.SESSION_LIMIT_SCHEDULE_VERSION,
+        "session_limit_not_before": now,
+        "session_limit_pending_composer": True,
+        "session_limit_attempted_at": (
+            now - module.SESSION_LIMIT_PENDING_RETRY_SECONDS
+        ),
+        "session_limit_attempt_count": 1,
+        "session_limit_verified": False,
+    }
+    state = {"version": 1, "sessions": {"sam/claude-coordinator": saved}}
+    changed_session = (
+        module.replace(session, pane_id="%9")
+        if replacement == "pane"
+        else module.replace(session, pane_command="bash", pane_child_command="zsh")
+    )
+
+    class ReplacedClient:
+        def capture(self, targets, lines):
+            return [changed_session], []
+
+        def send(self, *args, **kwargs):
+            raise AssertionError("a replaced pane or process must never receive input")
+
+    results, changed = module.execute_live_tick_actions(
+        ReplacedClient(),
+        [session],
+        {session.key},
+        state=state,
+        lines=160,
+        now=now,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+    )
+
+    assert changed is False
+    assert results[0].status == "failed"
+    assert saved["session_limit_attempt_count"] == 1
 
 
 def test_live_tick_pending_session_limit_fails_closed_on_scope_or_prompt_change() -> None:

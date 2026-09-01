@@ -2864,6 +2864,10 @@ def execute_live_tick_actions(
                 continue
 
             if observation.proposed_action == "wake_after_reset":
+                if not _is_running_claude(fresh):
+                    raise LiveReadError(
+                        "pane current command is not Claude before scheduled wake"
+                    )
                 reset = session_limit_reset(
                     fresh.output, allow_pending_prompt=observation.coordinator
                 )
@@ -3893,7 +3897,7 @@ def build_live_coordinator_system_prompt(
             "Worker idle/stale lifecycle policy:",
             "- `screen=idle` means available for input, not completed and not obsolete. If authorized work remains, prefer reusing the idle worker.",
             "- For Claude session limits, the persisted Mesh tick schedule derived from the exact current vendor reset minute and IANA timezone is the sole timing authority for coordinators and workers. Never calculate, shorten, or replace `not_before` from prose, transcript timestamps, activity age, or another provider's behavior.",
-            "- Reaching `not_before` authorizes only one guarded recapture-and-wake attempt after the configured grace; it does not prove Claude is available or that work resumed. Require fresh screen evidence afterward.",
+            "- Reaching `not_before` authorizes a guarded recapture-and-wake attempt after the configured grace; it does not prove Claude is available or that work resumed. An empty composer remains one-shot. Only an unchanged pending coordinator composer with an unverified delivery may receive up to three Enter-only attempts total, at least ten minutes apart; every retry requires the same pane, Claude process, banner, timezone, and composer fingerprint. Require fresh screen evidence afterward.",
             "- Codex and Antigravity have no supported automatic reset schedule. On `provider_rate_limit`, report the exact provider/session blocker and either wait or explicitly declare a substitution using another authorized worker. Never guess a wake time, send blind Enter, resend the task, or rotate the limited session.",
             "- On every tick, reconcile each idle worker with the current objective and delegation ledger: delegate the next dependency-ready task, verify a just-finished task, or report TICK_IDLE when no work exists.",
             "- Treat `activity_age` as supporting evidence only. Age alone never authorizes closing or replacing a session.",
