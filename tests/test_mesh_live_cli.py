@@ -1231,6 +1231,94 @@ def test_remote_send_rejects_replaced_process_with_same_command(monkeypatch) -> 
     assert len(commands) == 1
 
 
+def test_remote_send_revalidates_pid_immediately_before_input(monkeypatch) -> None:
+    module = _load_module()
+    display_calls = 0
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal display_calls
+        commands.append(args)
+        if "display-message" in args:
+            display_calls += 1
+            pid = "100" if display_calls == 1 else "200"
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(
+                    ["claude-worker", "claude", pid]
+                )
+                + "\n",
+            )
+        raise AssertionError("send-keys must not run after PID replacement")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module._send_target(
+        {
+            "owner": "sam",
+            "name": "claude-worker",
+            "pane_id": "%2",
+            "pane_pid": 100,
+        },
+        "",
+        enter=True,
+        expected_commands=("claude", "claude-code"),
+    )
+
+    assert result["error"] == "send target process identity changed"
+    assert display_calls == 2
+    assert not any("send-keys" in command for command in commands)
+
+
+def test_remote_send_revalidates_coordinator_child_pid_before_input(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    ps_calls = 0
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal ps_calls
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(
+                    ["claude-coordinator", "bash", "100"]
+                )
+                + "\n",
+            )
+        if "show-environment" in args:
+            return _completed(args, stdout="MESH_LIVE_COORDINATOR=1\n")
+        if args[:3] == ["ps", "-axo", "pid=,ppid=,comm="]:
+            ps_calls += 1
+            child_pid = "200" if ps_calls == 1 else "201"
+            return _completed(args, stdout=f"{child_pid} 100 claude\n")
+        raise AssertionError("send-keys must not run after child PID replacement")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module._send_target(
+        {
+            "owner": "sam",
+            "name": "claude-coordinator",
+            "pane_id": "%2",
+            "pane_pid": 100,
+            "pane_child_pid": 200,
+        },
+        "",
+        enter=True,
+        expected_commands=("claude", "claude-code"),
+        allow_coordinator_wrapper=True,
+    )
+
+    assert result["error"] == "send target child process identity changed"
+    assert ps_calls == 2
+    assert not any("send-keys" in command for command in commands)
+
+
 def test_remote_send_redacts_text_from_timeout_error(monkeypatch) -> None:
     module = _load_module()
     secret = "OPENAI_API_KEY=must-not-leak-from-timeout"
@@ -1284,6 +1372,40 @@ def test_live_client_send_uses_discovered_owner_and_pane() -> None:
         "text": "status?",
         "enter": False,
     }
+
+
+def test_tick_capture_rejects_process_identity_changed_by_reader() -> None:
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-worker",
+        pane_id="%2",
+        pane_command="claude",
+        pane_pid=100,
+    )
+
+    def fake_request(endpoint, payload):
+        assert payload["targets"][0]["pane_pid"] == 100
+        return {
+            "captures": [
+                {
+                    "owner": "sam",
+                    "name": "claude-worker",
+                    "output": _claude_session_limit_screen(),
+                    "error": "",
+                    "pane_command": "claude",
+                    "pane_pid": 200,
+                }
+            ]
+        }
+
+    client = module.LiveClient(
+        module.LiveEndpoint(host="localhost", local=True, users=("sam",)),
+        request_fn=fake_request,
+    )
+
+    with pytest.raises(module.LiveReadError, match="pane process changed"):
+        module._capture_one_for_tick(client, session, 40)
 
 
 def test_live_client_send_passes_expected_process_guard() -> None:

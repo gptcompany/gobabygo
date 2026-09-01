@@ -65,6 +65,7 @@ class LiveSession:
     pane_command: str = ""
     pane_child_command: str = ""
     pane_pid: int = 0
+    pane_child_pid: int = 0
     pane_dead: bool = False
     role: str = ""
     repo_name: str = ""
@@ -89,6 +90,7 @@ class LiveSession:
             pane_command=str(raw.get("pane_command") or ""),
             pane_child_command=str(raw.get("pane_child_command") or ""),
             pane_pid=_as_int(raw.get("pane_pid")),
+            pane_child_pid=_as_int(raw.get("pane_child_pid")),
             pane_dead=_as_bool(raw.get("pane_dead")),
             role=str(raw.get("role") or ""),
             repo_name=str(raw.get("repo_name") or ""),
@@ -189,14 +191,18 @@ class LiveClient:
         bounded_lines = validate_capture_lines(lines, allow_zero=True)
         if not sessions or bounded_lines == 0:
             return list(sessions), []
-        targets = [
-            {
+        targets = []
+        for item in sessions:
+            target = {
                 "owner": item.owner,
                 "name": item.name,
                 "pane_id": item.pane_id,
             }
-            for item in sessions
-        ]
+            if item.pane_pid > 0:
+                target["pane_pid"] = item.pane_pid
+            if item.pane_child_pid > 0:
+                target["pane_child_pid"] = item.pane_child_pid
+            targets.append(target)
         response = self._request_fn(
             self.endpoint,
             {"op": "capture", "targets": targets, "lines": bounded_lines},
@@ -209,11 +215,25 @@ class LiveClient:
         enriched: list[LiveSession] = []
         for session in sessions:
             capture = captures.get(session.key, {})
+            metadata: dict[str, Any] = {}
+            for field in (
+                "pane_command",
+                "pane_child_command",
+                "pane_pid",
+                "pane_child_pid",
+            ):
+                if field in capture:
+                    metadata[field] = (
+                        _as_int(capture[field])
+                        if field.endswith("_pid")
+                        else str(capture[field] or "")
+                    )
             enriched.append(
                 replace(
                     session,
                     output=redact_capture(str(capture.get("output") or "")),
                     capture_error=redact_capture(str(capture.get("error") or "")),
+                    **metadata,
                 )
             )
         warnings = [str(item) for item in response.get("warnings", []) if str(item).strip()]
@@ -241,6 +261,8 @@ class LiveClient:
         }
         if session.pane_pid > 0:
             payload["target"]["pane_pid"] = session.pane_pid
+        if session.pane_child_pid > 0:
+            payload["target"]["pane_child_pid"] = session.pane_child_pid
         if expected_commands:
             payload["expected_commands"] = list(expected_commands)
         if allow_coordinator_wrapper:
@@ -372,21 +394,21 @@ def _tmux_environment(prefix: list[str], session_name: str, variable: str) -> st
     return value[len(marker) :] if value.startswith(marker) else ""
 
 
-def _pane_direct_child_command(prefix: Sequence[str], pane_pid: str) -> str:
+def _pane_direct_child_identity(prefix: Sequence[str], pane_pid: str) -> tuple[str, str]:
     if not str(pane_pid or "").isdigit():
-        return ""
+        return "", ""
     try:
         proc = _run_command([*prefix, "ps", "-axo", "pid=,ppid=,comm="])
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return "", ""
     if proc.returncode != 0:
-        return ""
-    commands: list[str] = []
+        return "", ""
+    children: list[tuple[str, str]] = []
     for line in proc.stdout.splitlines():
         parts = line.strip().split(None, 2)
         if len(parts) == 3 and parts[1] == pane_pid:
-            commands.append(Path(parts[2]).name.lower())
-    return commands[0] if len(commands) == 1 else ""
+            children.append((parts[0], Path(parts[2]).name.lower()))
+    return children[0] if len(children) == 1 else ("", "")
 
 
 def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
@@ -432,6 +454,7 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
             continue
         name, created_at, activity_at, windows, attached = parts
         pane_id = pane_path = pane_command = pane_child_command = pane_dead = pane_pid = ""
+        pane_child_pid = ""
         try:
             pane_proc = _run_command(
                 [*prefix, "tmux", "display-message", "-p", "-t", name, pane_format]
@@ -451,7 +474,9 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
                     "sh",
                     "fish",
                 }:
-                    pane_child_command = _pane_direct_child_command(prefix, pane_pid)
+                    pane_child_pid, pane_child_command = _pane_direct_child_identity(
+                        prefix, pane_pid
+                    )
             elif len(pane_parts) == 4:
                 pane_id, pane_path, pane_command, pane_dead = pane_parts
 
@@ -476,11 +501,13 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
         }
         if _as_int(pane_pid) > 0:
             session_record["pane_pid"] = _as_int(pane_pid)
+        if _as_int(pane_child_pid) > 0:
+            session_record["pane_child_pid"] = _as_int(pane_child_pid)
         sessions.append(session_record)
     return sessions, []
 
 
-def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, str], list[str]]:
+def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, Any], list[str]]:
     owner = str(target.get("owner") or "")
     name = str(target.get("name") or "")
     pane_id = str(target.get("pane_id") or "")
@@ -504,6 +531,28 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, str],
     else:
         captured_lines = proc.stdout.rstrip("\n").splitlines()
         result["output"] = redact_capture("\n".join(captured_lines[-lines:]))
+        if not target.get("pane_pid"):
+            return result, []
+        identity_format = _FIELD_SEPARATOR.join(
+            ["#{session_name}", "#{pane_current_command}", "#{pane_pid}"]
+        )
+        identity = _run_command(
+            [*prefix, "tmux", "display-message", "-p", "-t", tmux_target, identity_format]
+        )
+        parts = identity.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 2)
+        if identity.returncode != 0 or len(parts) != 3 or parts[0] != name:
+            result["error"] = "capture target identity changed"
+            result["output"] = ""
+            return result, []
+        result["pane_command"] = Path(parts[1]).name.lower()
+        result["pane_pid"] = _as_int(parts[2])
+        if (
+            result["pane_command"] in {"bash", "zsh", "sh", "fish"}
+            and _tmux_environment(prefix, name, "MESH_LIVE_COORDINATOR") == "1"
+        ):
+            child_pid, child_command = _pane_direct_child_identity(prefix, parts[2])
+            result["pane_child_pid"] = _as_int(child_pid)
+            result["pane_child_command"] = child_command
     return result, []
 
 
@@ -520,6 +569,7 @@ def _send_target(
     name = str(target.get("name") or "")
     pane_id = str(target.get("pane_id") or "")
     expected_pane_pid = str(target.get("pane_pid") or "")
+    expected_child_pid = str(target.get("pane_child_pid") or "")
     prefix = _tmux_prefix(owner)
     if prefix is None:
         return {"error": "tmux owner is unavailable"}
@@ -550,16 +600,19 @@ def _send_target(
     expected = {Path(str(item)).name.lower() for item in expected_commands if str(item).strip()}
     effective_command = current_command
     coordinator_child = ""
+    coordinator_child_pid = ""
     if (
         (allow_coordinator_wrapper or not expected)
         and current_command in {"bash", "zsh", "sh", "fish"}
         and _tmux_environment(prefix, name, "MESH_LIVE_COORDINATOR") == "1"
     ):
-        coordinator_child = _pane_direct_child_command(
+        coordinator_child_pid, coordinator_child = _pane_direct_child_identity(
             prefix, target_parts[2] if len(target_parts) == 3 else ""
         )
         if allow_coordinator_wrapper and expected and coordinator_child in expected:
             effective_command = coordinator_child
+    if expected_child_pid and coordinator_child_pid != expected_child_pid:
+        return {"error": "send target child process identity changed"}
     if expected and effective_command not in expected:
         return {
             "error": (
@@ -574,9 +627,42 @@ def _send_target(
         "pane_id": pane_id,
         "command": effective_command,
     }
+    if expected_pane_pid:
+        validated_target["pane_pid"] = expected_pane_pid
+    if expected_child_pid:
+        validated_target["pane_child_pid"] = expected_child_pid
+
+    def revalidate_identity() -> str:
+        if not expected_pane_pid:
+            return ""
+        try:
+            proc = _run_command(
+                [*prefix, "tmux", "display-message", "-p", "-t", tmux_target, target_format]
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return redact_capture(str(exc))
+        if proc.returncode != 0:
+            return redact_capture(
+                (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+            )
+        parts = proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 2)
+        if len(parts) != 3 or parts[0] != name or parts[2] != expected_pane_pid:
+            return "send target process identity changed"
+        current = Path(parts[1]).name.lower()
+        effective = current
+        if expected_child_pid:
+            child_pid, child_command = _pane_direct_child_identity(prefix, parts[2])
+            if child_pid != expected_child_pid:
+                return "send target child process identity changed"
+            effective = child_command
+        if expected and effective not in expected:
+            return "send target process changed during delivery"
+        return ""
 
     def deliver() -> dict[str, Any]:
         if text:
+            if identity_error := revalidate_identity():
+                return {"error": identity_error}
             try:
                 proc = _run_command(
                     [*prefix, "tmux", "send-keys", "-t", tmux_target, "-l", "--", text]
@@ -591,6 +677,17 @@ def _send_target(
             settle_command = coordinator_child or effective_command
             if text and settle_command in {"claude", "claude-code"}:
                 time.sleep(CLAUDE_PASTE_SETTLE_SECONDS)
+            if identity_error := revalidate_identity():
+                if text:
+                    return {
+                        "owner": owner,
+                        "name": name,
+                        "pane_id": pane_id,
+                        "text_sent": True,
+                        "enter_sent": False,
+                        "delivery_error": identity_error,
+                    }
+                return {"error": identity_error}
             try:
                 proc = _run_command([*prefix, "tmux", "send-keys", "-t", tmux_target, "Enter"])
             except (OSError, subprocess.SubprocessError) as exc:
@@ -2457,6 +2554,8 @@ def _tick_session_limit_fingerprint(
     ]
     if session.pane_pid > 0:
         components.append(f"pid={session.pane_pid}")
+    if session.pane_child_pid > 0:
+        components.append(f"childpid={session.pane_child_pid}")
     if pending_composer_fingerprint:
         components.append(pending_composer_fingerprint)
     seed = ":".join(components)
@@ -2527,6 +2626,14 @@ def _capture_one_for_tick(
         raise LiveReadError(
             f"tick pane process changed for {session.owner}/{session.name}: "
             f"{session.pane_pid} -> {result.pane_pid}"
+        )
+    if (
+        session.pane_child_pid > 0
+        and result.pane_child_pid != session.pane_child_pid
+    ):
+        raise LiveReadError(
+            f"tick pane child process changed for {session.owner}/{session.name}: "
+            f"{session.pane_child_pid} -> {result.pane_child_pid}"
         )
     return result
 
