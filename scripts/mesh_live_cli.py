@@ -2008,6 +2008,30 @@ def _persisted_session_limit_not_before(saved: dict[str, Any]) -> float:
     return not_before
 
 
+def _persisted_session_limit_attempt(saved: dict[str, Any]) -> tuple[float, int]:
+    raw_attempted_at = saved.get("session_limit_attempted_at")
+    raw_attempt_count = saved.get("session_limit_attempt_count")
+    if raw_attempted_at is None and raw_attempt_count is None:
+        return 0.0, 0
+    if isinstance(raw_attempted_at, bool):
+        raise LiveReadError("invalid persisted session-limit attempt timestamp")
+    try:
+        attempted_at = float(raw_attempted_at)
+    except (TypeError, ValueError) as exc:
+        raise LiveReadError(
+            "invalid persisted session-limit attempt timestamp"
+        ) from exc
+    if not math.isfinite(attempted_at) or attempted_at <= 0:
+        raise LiveReadError("invalid persisted session-limit attempt timestamp")
+    if raw_attempt_count is None:
+        return attempted_at, 1
+    if isinstance(raw_attempt_count, bool) or not isinstance(raw_attempt_count, int):
+        raise LiveReadError("invalid persisted session-limit attempt count")
+    if not 1 <= raw_attempt_count <= SESSION_LIMIT_PENDING_MAX_ATTEMPTS:
+        raise LiveReadError("invalid persisted session-limit attempt count")
+    return attempted_at, raw_attempt_count
+
+
 def render_live_tick_plan(observations: Sequence[TickObservation]) -> str:
     lines = ["mesh live tick: dry-run"]
     for item in observations:
@@ -2917,18 +2941,21 @@ def execute_live_tick_actions(
                         )
                     )
                     continue
-                attempted_at = float(saved.get("session_limit_attempted_at") or 0)
-                try:
-                    attempt_count = int(
-                        saved.get("session_limit_attempt_count")
-                        or (1 if attempted_at else 0)
+                attempted_at, attempt_count = _persisted_session_limit_attempt(saved)
+                if attempt_count >= SESSION_LIMIT_PENDING_MAX_ATTEMPTS:
+                    results.append(
+                        TickActionResult(
+                            owner=session.owner,
+                            name=session.name,
+                            pane_id=session.pane_id,
+                            action="wake_after_reset",
+                            status="throttled",
+                            reason="pending composer retry limit reached for this reset",
+                            verified=False,
+                            not_before=not_before,
+                        )
                     )
-                except (TypeError, ValueError) as exc:
-                    raise LiveReadError(
-                        "invalid persisted session-limit attempt count"
-                    ) from exc
-                if attempt_count < 0:
-                    raise LiveReadError("invalid persisted session-limit attempt count")
+                    continue
                 if attempted_at:
                     retry_blocker = ""
                     if saved.get("session_limit_verified") is True:
@@ -2936,10 +2963,6 @@ def execute_live_tick_actions(
                     elif not pending_composer_fingerprint:
                         retry_blocker = (
                             "session-limit wake was already attempted for an empty composer"
-                        )
-                    elif attempt_count >= SESSION_LIMIT_PENDING_MAX_ATTEMPTS:
-                        retry_blocker = (
-                            "pending composer retry limit reached for this reset"
                         )
                     elif now - attempted_at < SESSION_LIMIT_PENDING_RETRY_SECONDS:
                         retry_blocker = (

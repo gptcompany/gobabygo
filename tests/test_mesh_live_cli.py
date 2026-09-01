@@ -4121,7 +4121,9 @@ def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
     assert repeated.sends == []
 
 
-def test_live_tick_retries_unchanged_unverified_pending_composer_with_bounds() -> None:
+def test_live_tick_retries_unchanged_unverified_pending_composer_with_bounds(
+    tmp_path: Path,
+) -> None:
     module = _load_module()
     now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
     screen = _claude_session_limit_with_pending_prompt("DEC-11: keep scope local")
@@ -4204,6 +4206,10 @@ def test_live_tick_retries_unchanged_unverified_pending_composer_with_bounds() -
     assert results[0].status == "applied"
     assert results[0].verified is False
 
+    state_path = tmp_path / "tick.json"
+    module.save_live_tick_state(str(state_path), state)
+    state = module.load_live_tick_state(str(state_path))
+
     early = RetryClient(2, outputs=1)
     results, changed = run(early, now + 300)
     assert changed is False
@@ -4225,6 +4231,64 @@ def test_live_tick_retries_unchanged_unverified_pending_composer_with_bounds() -
     assert changed is False
     assert exhausted.sends == []
     assert "retry limit reached" in results[0].reason
+
+
+@pytest.mark.parametrize(
+    "saved,error",
+    [
+        ({"session_limit_attempt_count": 3}, "timestamp"),
+        (
+            {
+                "session_limit_attempted_at": float("nan"),
+                "session_limit_attempt_count": 1,
+            },
+            "timestamp",
+        ),
+        (
+            {
+                "session_limit_attempted_at": float("-inf"),
+                "session_limit_attempt_count": 1,
+            },
+            "timestamp",
+        ),
+        (
+            {
+                "session_limit_attempted_at": True,
+                "session_limit_attempt_count": 1,
+            },
+            "timestamp",
+        ),
+        (
+            {
+                "session_limit_attempted_at": 100.0,
+                "session_limit_attempt_count": "3",
+            },
+            "count",
+        ),
+        (
+            {
+                "session_limit_attempted_at": 100.0,
+                "session_limit_attempt_count": 4,
+            },
+            "count",
+        ),
+    ],
+)
+def test_persisted_session_limit_attempt_rejects_malformed_state(
+    saved, error
+) -> None:
+    module = _load_module()
+
+    with pytest.raises(module.LiveReadError, match=error):
+        module._persisted_session_limit_attempt(saved)
+
+
+def test_persisted_session_limit_attempt_migrates_legacy_timestamp() -> None:
+    module = _load_module()
+
+    assert module._persisted_session_limit_attempt(
+        {"session_limit_attempted_at": 100.0}
+    ) == (100.0, 1)
 
 
 def test_live_tick_pending_session_limit_fails_closed_on_scope_or_prompt_change() -> None:
