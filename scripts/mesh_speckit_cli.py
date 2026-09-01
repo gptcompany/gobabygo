@@ -86,9 +86,11 @@ _TASK_HEADER = re.compile(
 )
 _DECISION_SUFFIX = re.compile(r"^\s*\[D\]\s+(?P<title>\S(?:.*\S)?)\s*$")
 _BLOCKED_BY = re.compile(
-    r"(?im)^\s*\*{0,2}(?:Bloccato da|Blocked by)\*{0,2}\s*:\s*(?P<value>[^\n]+)$"
+    r"(?i)\*{1,2}(?:Bloccato da|Blocked by)\*{1,2}\s*:\s*(?P<value>[^\n]+)"
 )
-_DECISION_REFERENCE = re.compile(r"(?<![A-Za-z0-9._-])DEC-[A-Za-z0-9._-]+")
+_DECISION_REFERENCE = re.compile(
+    r"(?<![A-Za-z0-9._-])DEC-[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
+)
 
 
 class SpeckitRuntimeError(RuntimeError):
@@ -590,7 +592,7 @@ def _manual_actions_from_tasks(path: Path) -> list[dict[str, Any]]:
         if task_id.startswith("DEC-"):
             continue
         end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
-        block = text[header.end() : end]
+        block = text[header.start() : end]
         for blocked in _BLOCKED_BY.finditer(block):
             for decision_id in _DECISION_REFERENCE.findall(blocked.group("value")):
                 action = decisions.get(decision_id)

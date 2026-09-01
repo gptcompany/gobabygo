@@ -87,6 +87,7 @@ def test_manual_actions_reports_only_open_decisions_and_blocked_tasks(tmp_path) 
   *Bloccato da*: DEC-9, DEC-8
 - [ ] **T042** Testare il verifier
   **Blocked by**: DEC-9
+- [ ] **T042b** Pubblicare il verifier. TDD_MODE: required. *Bloccato da*: DEC-9.
 - [x] **T043** Task chiuso
   *Bloccato da*: DEC-9
 """,
@@ -103,7 +104,7 @@ def test_manual_actions_reports_only_open_decisions_and_blocked_tasks(tmp_path) 
             "title": "Provenienza eventi money path",
             "line": 3,
             "feature_dir": str(feature),
-            "blocked_tasks": ["T041", "T042"],
+            "blocked_tasks": ["T041", "T042", "T042b"],
         }
     ]
 
