@@ -346,12 +346,15 @@ Legacy repositories are reported as `project.state=legacy` when old
 `.specify/`, Speckit commands, or complete spec artifact sets exist without the
 current integration manifest. Migrate them one clean repository at a time with
 `mesh speckit project migrate`; the plan is read-only for the target repository
-and installs the Claude, Codex, and AGY skill integrations together only after
+and installs the Claude coordinator skill integration only after
 explicit `--apply`. Existing specifications and constitution remain local and
 are preserved. A pre-`.specify` `memory/constitution.md` is copied into the
 current path only when that path is absent; if both exist, neither is overwritten
 and the historical path is reported as unmigrated. Retained legacy Claude
 commands require a later manual decision rather than automatic deletion.
+Codex and AGY remain Mesh worker providers and receive the bounded context below;
+they are not simultaneous project-local Spec Kit integrations because upstream
+maps both providers to incompatible files under `.agents/skills`.
 
 Before a Spec Kit task is delegated, the coordinator generates one compact,
 provider-neutral envelope from the target repository:

@@ -28,13 +28,14 @@ def _lock(path: Path, *, integrations=None) -> Path:
         "version": "0.16.5",
         "tag": "v0.16.5",
         "source": "https://github.com/github/spec-kit",
-        "integrations": integrations or ["claude", "codex", "agy"],
+        "integrations": integrations or ["claude"],
+        "worker_providers": ["codex", "agy"],
     }
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
-def _project(path: Path, integrations=("claude", "codex", "agy")) -> Path:
+def _project(path: Path, integrations=("claude",)) -> Path:
     (path / ".specify").mkdir(parents=True)
     (path / ".specify" / "integration.json").write_text(
         json.dumps(
@@ -71,7 +72,8 @@ def test_committed_lock_is_exact_and_active_providers_only() -> None:
     lock = module.load_lock()
 
     assert lock["version"] == "1.0.3"
-    assert lock["integrations"] == ["claude", "codex", "agy"]
+    assert lock["integrations"] == ["claude"]
+    assert lock["worker_providers"] == ["codex", "agy"]
 
 
 def test_manual_actions_reports_only_open_decisions_and_blocked_tasks(tmp_path) -> None:
@@ -153,7 +155,7 @@ def test_lock_rejects_gemini(tmp_path) -> None:
     module = _load_module()
     path = _lock(tmp_path / "lock.json", integrations=["claude", "codex", "gemini"])
 
-    with pytest.raises(module.SpeckitRuntimeError, match="exactly claude, codex, agy"):
+    with pytest.raises(module.SpeckitRuntimeError, match="exactly claude"):
         module.load_lock(path)
 
 
@@ -329,7 +331,7 @@ def test_inspect_project_contains_unreadable_legacy_commands(
 
 def test_project_capabilities_are_intersection_of_installed_skills(tmp_path) -> None:
     module = _load_module()
-    repo = _project(tmp_path / "repo")
+    repo = _project(tmp_path / "repo", integrations=("claude", "codex", "agy"))
     extra = repo / ".claude" / "skills" / "speckit-claude-only"
     extra.mkdir()
     (extra / "SKILL.md").write_text("# extra\n", encoding="utf-8")
@@ -835,7 +837,7 @@ def test_install_apply_stops_on_first_failure(monkeypatch) -> None:
     assert calls == [["uv", "install"]]
 
 
-def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(
+def test_project_init_plan_requires_clean_exact_git_root(
     monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
@@ -865,21 +867,12 @@ def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(
         },
     )
 
-    with pytest.raises(module.SpeckitRuntimeError, match="allow-multi-install-force"):
-        module.build_project_plan("init", repo, lock)
-
-    plan = module.build_project_plan(
-        "init", repo, lock, allow_multi_install_force=True
-    )
+    plan = module.build_project_plan("init", repo, lock)
     assert Path(plan["commands"][0][0]).name == "specify"
     assert plan["commands"][0][1:4] == ["init", "--here", "--force"]
-    assert Path(plan["commands"][2][0]).name == "specify"
-    assert plan["commands"][2][1:] == [
-        "integration",
-        "install",
-        "agy",
-        "--force",
-    ]
+    assert len(plan["commands"]) == 1
+    assert plan["integrations"] == ["claude"]
+    assert plan["worker_providers"] == ["codex", "agy"]
     assert plan["ready_to_apply"] is True
     assert plan["migration"]["additions"] == [".specify/integration.json"]
     subdir = repo / "src"
@@ -1836,16 +1829,21 @@ def test_project_plan_refuses_dirty_repo_before_commands(tmp_path) -> None:
         )
 
 
-def test_project_upgrade_rejects_missing_or_unsupported_integrations(tmp_path) -> None:
+def test_project_upgrade_reconciles_workers_and_rejects_unknown_integrations(tmp_path) -> None:
     module = _load_module()
     lock = module.load_lock(_lock(tmp_path / "lock.json"))
     repo = _git_repo(tmp_path / "repo")
-    _project(repo, integrations=("claude", "codex"))
+    _project(repo, integrations=("claude", "codex", "agy"))
     subprocess.run(["git", "-C", str(repo), "add", ".specify", ".claude", ".agents"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "speckit"], check=True)
 
-    with pytest.raises(module.SpeckitRuntimeError, match="missing required integrations: agy"):
-        module.build_project_plan("upgrade", repo, lock)
+    plan = module.build_project_plan("upgrade", repo, lock)
+    assert [command[1:] for command in plan["commands"]] == [
+        ["integration", "uninstall", "agy"],
+        ["integration", "uninstall", "codex"],
+        ["integration", "upgrade", "claude"],
+    ]
+    assert all("--force" not in command for command in plan["commands"])
 
     manifest = repo / ".specify" / "integration.json"
     payload = json.loads(manifest.read_text(encoding="utf-8"))

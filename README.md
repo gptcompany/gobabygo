@@ -112,7 +112,7 @@ Current expectation:
 ### Spec Kit runtime
 
 Gobabygo pins the official Spec Kit CLI and discovers project capabilities from
-the installed Claude, Codex, and AGY skills. Update discovery is automatic and
+the installed Claude coordinator skills. Update discovery is automatic and
 read-only; CLI installation and project changes always require explicit
 `--apply`.
 
@@ -121,15 +121,14 @@ mesh speckit status /data/sata/1TB/rektslug
 mesh speckit capabilities /data/sata/1TB/rektslug --json
 mesh speckit update-check --json
 mesh speckit install 1.0.3                  # plan only
-mesh speckit project migrate /data/sata/1TB/rektslug \
-  --allow-multi-install-force                         # legacy plan only
+mesh speckit project migrate /data/sata/1TB/rektslug  # legacy plan only
 mesh speckit project upgrade /data/sata/1TB/rektslug  # plan only
 ```
 
 `status` reports pre-manifest projects as `legacy`, not `missing`. Migrate one
 clean repository at a time: inspect the plan first, then add
 `--accept-generated-updates --apply` only after reviewing generated template
-replacements. Migration installs Claude, Codex, and AGY together, preserves
+replacements. Migration installs Claude as the Spec Kit workflow owner, preserves
 existing `specs/` and `.specify/memory/constitution.md`, and blocks collisions
 with custom skills. A historical `memory/constitution.md` is copied byte-for-byte
 only when the current constitution is absent; if both exist, the historical path
@@ -145,7 +144,10 @@ version boundary, so each extension update requires its own explicit review.
 envelope used for worker delegation. Intra-repo specs remain in that repo;
 multi-repo specs, decisions, tasks, and handoffs live in the exact Git root
 `/data/sata/1TB/coordination`. Mesh Live still owns tmux delivery and review;
-Spec Kit does not launch nested CLI workers. See [MESH_LIVE.md](MESH_LIVE.md).
+Spec Kit does not launch nested CLI workers. Codex and AGY remain Mesh
+writer/reviewer providers and consume this bounded context; they are not
+installed together into the conflicting `.agents/skills` Spec Kit path. See
+[MESH_LIVE.md](MESH_LIVE.md).
 
 `mesh speckit manual-actions <feature-dir>` lists unresolved `DEC-* [D]`
 operator decisions and their blocked tasks directly from authoritative

@@ -35,6 +35,8 @@ DEFAULT_STATE_FILE = Path(
 ).expanduser()
 RELEASE_API = "https://api.github.com/repos/github/spec-kit/releases/latest"
 ALLOWED_INTEGRATIONS = ("claude", "codex", "agy")
+SPEC_KIT_INTEGRATIONS = ("claude",)
+MESH_WORKER_PROVIDERS = ("codex", "agy")
 ORCHESTRATION_RUNTIME_REPOSITORY = "gptcompany/gobabygo"
 INTEGRATION_SKILL_ROOTS = {
     "claude": Path(".claude/skills"),
@@ -197,18 +199,24 @@ def load_lock(path: Path = DEFAULT_LOCK_FILE) -> dict[str, Any]:
     version = _version_from_text(str(payload.get("version", "")))
     tag_version = _version_from_text(str(payload.get("tag", "")))
     integrations = payload.get("integrations")
+    worker_providers = payload.get("worker_providers")
     if payload.get("schema") != 1 or version is None or tag_version != version:
         raise SpeckitRuntimeError("invalid Spec Kit lock schema, version, or tag")
-    if integrations != list(ALLOWED_INTEGRATIONS):
+    if integrations != list(SPEC_KIT_INTEGRATIONS):
         raise SpeckitRuntimeError(
-            "Spec Kit lock integrations must be exactly claude, codex, agy"
+            "Spec Kit lock integration must be exactly claude"
+        )
+    if worker_providers != list(MESH_WORKER_PROVIDERS):
+        raise SpeckitRuntimeError(
+            "Spec Kit lock worker providers must be exactly codex, agy"
         )
     return {
         "schema": 1,
         "version": version,
         "tag": f"v{version}",
         "source": str(payload.get("source", "")),
-        "integrations": list(ALLOWED_INTEGRATIONS),
+        "integrations": list(SPEC_KIT_INTEGRATIONS),
+        "worker_providers": list(MESH_WORKER_PROVIDERS),
     }
 
 
@@ -512,7 +520,7 @@ def inspect_project(
     version_aligned = required_version is None or manifest_version == required_version
     required = list(required_integrations)
     missing = [item for item in required if item not in installed]
-    unsupported = [item for item in installed if item not in ALLOWED_INTEGRATIONS]
+    unsupported = [item for item in installed if item not in required]
     capabilities: dict[str, list[str]] = {}
     try:
         for integration in required:
@@ -1093,9 +1101,6 @@ def _project_init_commands() -> list[list[str]]:
             "sh",
             "--ignore-agent-tools",
         ],
-        [specify, "integration", "install", "codex"],
-        [specify, "integration", "install", "agy", "--force"],
-        [specify, "integration", "use", "claude"],
     ]
 
 
@@ -1343,11 +1348,6 @@ def build_project_plan(
             raise SpeckitRuntimeError("project is already initialized; use project upgrade")
         if project["state"] == "legacy":
             raise SpeckitRuntimeError("legacy project requires project migrate")
-        if not allow_multi_install_force:
-            raise SpeckitRuntimeError(
-                "AGY multi-install requires explicit "
-                "--allow-multi-install-force"
-            )
         commands = _project_init_commands()
         _require_pinned_runtime(lock["version"])
         migration = _migration_inventory(root, commands)
@@ -1356,21 +1356,26 @@ def build_project_plan(
             raise SpeckitRuntimeError("project is already initialized; use project upgrade")
         if project["state"] != "legacy":
             raise SpeckitRuntimeError("project migrate requires legacy Spec Kit evidence")
-        if not allow_multi_install_force:
-            raise SpeckitRuntimeError(
-                "AGY multi-install requires explicit "
-                "--allow-multi-install-force"
-            )
         _require_pinned_runtime(lock["version"])
         commands = _project_init_commands()
         migration = _migration_inventory(root, commands)
     elif action == "upgrade":
         if not manifest_exists:
             raise SpeckitRuntimeError("project is not initialized; use project init")
-        if project["unsupported_integrations"]:
+        retired_integrations = [
+            integration
+            for integration in ("agy", "codex")
+            if integration in project["unsupported_integrations"]
+        ]
+        unknown_integrations = [
+            integration
+            for integration in project["unsupported_integrations"]
+            if integration not in MESH_WORKER_PROVIDERS
+        ]
+        if unknown_integrations:
             raise SpeckitRuntimeError(
                 "project has unsupported active integrations: "
-                + ",".join(project["unsupported_integrations"])
+                + ",".join(unknown_integrations)
             )
         if project["missing_integrations"]:
             raise SpeckitRuntimeError(
@@ -1379,6 +1384,9 @@ def build_project_plan(
             )
         specify = _specify_executable() or "specify"
         commands = [
+            [specify, "integration", "uninstall", integration]
+            for integration in retired_integrations
+        ] + [
             [specify, "integration", "upgrade", integration]
             for integration in lock["integrations"]
         ]
@@ -1392,6 +1400,7 @@ def build_project_plan(
         "repo": str(root),
         "required_version": lock["version"],
         "integrations": lock["integrations"],
+        "worker_providers": lock["worker_providers"],
         "commands": commands,
         "extensions": extensions,
         "extension_updates": [],
@@ -1645,7 +1654,9 @@ def _apply_migration_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, 
                         relative,
                     )
                 project = inspect_project(
-                    root, ALLOWED_INTEGRATIONS, plan["required_version"]
+                    root,
+                    plan.get("integrations", ALLOWED_INTEGRATIONS),
+                    plan["required_version"],
                 )
                 manifest = _load_json_object(
                     root / ".specify" / "integration.json",

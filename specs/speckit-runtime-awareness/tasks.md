@@ -433,22 +433,45 @@ Done when:
 - absent or unapproved extensions do not introduce a network or mutation step
 - old manifest versions are reported as partial until upgraded
 
-### T015. Validate 1.0.3 in an isolated fixture
+### T014a. Remove the unsafe Codex/AGY integration collision
 
-Status: pending
+Status: done
 
 Depends on: T014
 
 Scope:
 
+- keep Claude as the single project-local Spec Kit integration and workflow owner
+- keep Codex and AGY as Mesh worker providers consuming bounded delegation context
+- reconcile historical multi-install manifests through non-forced official uninstall commands
+- reject unknown integrations and never overwrite locally modified managed files
+- document the upstream `.agents/skills` collision discovered by the isolated canary
+
+Done when:
+
+- `specify integration status` is `OK` with Claude as the only installed integration
+- Codex and AGY remain selectable as Mesh writer/reviewer providers
+- upgrade plans remove only known historical worker integrations before upgrading Claude
+- no plan contains an upstream `--force` or claims simultaneous Codex/AGY skills
+
+### T015. Validate 1.0.3 in an isolated fixture
+
+Status: pending
+
+Depends on: T014a
+
+Scope:
+
 - install the pinned CLI in an isolated tool environment before changing either workstation runtime
-- initialize a disposable Git fixture with Claude, Codex, and AGY
+- initialize a disposable historical fixture with Claude, Codex, and AGY, then
+  reconcile it to the single Claude workflow integration
 - exercise status, capabilities, project upgrade, extension handling, and idempotent replay
 - compare generated paths with the 0.16.5 fixture and retain bounded evidence
 
 Done when:
 
-- all three integrations expose the required common skills
+- Claude exposes the required workflow skills; Codex and AGY receive the same
+  bounded artifact identity through Mesh context without project-local skill collisions
 - specs, plans, tasks, constitution, source, and Git history remain unchanged during upgrade
 - a second upgrade produces no unexpected managed-file changes
 - rollback removes only the disposable fixture and isolated tool environment
@@ -590,6 +613,17 @@ Independent review evidence: round one found four medium issues covering
 extension trust, per-repository rollback, the review bound, and moving `latest`
 metadata. The corrected second round returned `PASS` with no unresolved high or
 medium finding.
+
+### R011. Codex and AGY cannot coexist as project-local integrations
+
+Severity: high
+
+The isolated 1.0.3 canary proved that Codex and AGY both own
+`.agents/skills/speckit-*` with provider-specific command syntax. Upstream marks
+AGY as not multi-install-safe and reports the historical three-integration state
+as `ERROR`. T014a makes Claude the sole workflow integration. Mesh continues to
+delegate bounded Spec Kit artifacts to Codex and AGY, so worker routing remains
+multi-provider without corrupting project-local skills.
 
 ## Plan Review
 

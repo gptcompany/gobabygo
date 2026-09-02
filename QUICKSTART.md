@@ -399,21 +399,19 @@ artifacts and integrations. Use `status` to choose exactly one lifecycle path:
 mesh speckit status /data/sata/1TB/rektslug
 
 # state=missing: new project
-mesh speckit project init /data/sata/1TB/rektslug \
-  --allow-multi-install-force
+mesh speckit project init /data/sata/1TB/rektslug
 
 # state=legacy: inspect first, then explicitly accept generated template updates
+mesh speckit project migrate /data/sata/1TB/rektslug
 mesh speckit project migrate /data/sata/1TB/rektslug \
-  --allow-multi-install-force
-mesh speckit project migrate /data/sata/1TB/rektslug \
-  --allow-multi-install-force --accept-generated-updates --apply
+  --accept-generated-updates --apply
 
 # state=aligned: future pinned release
 mesh speckit project upgrade /data/sata/1TB/rektslug --apply
 ```
 
 Every mutation requires the exact clean Git root. Legacy migration generates
-Claude, Codex, and AGY integrations in a temporary sandbox, preserves existing
+the Claude coordinator integration in a temporary sandbox, preserves existing
 `specs/` and `.specify/memory/constitution.md`, copies an older
 `memory/constitution.md` into the current location, and refuses custom skill or
 ignored-output collisions. Existing legacy `.claude/commands` are listed but
@@ -423,6 +421,10 @@ is reported as unmigrated. New-project `init` uses the same sandbox, lock, and r
 and commit the resulting diff before migrating the next repository.
 `~/.local/bin/specify` is discovered explicitly for non-interactive SSH
 sessions; no shell startup file is required.
+
+Codex and AGY remain available as Mesh workers. They receive provider-neutral
+Spec Kit artifact context from the coordinator; do not install both as local
+Spec Kit integrations because both own `.agents/skills` with different syntax.
 
 ### Spec Kit development ledger
 
