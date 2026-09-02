@@ -2607,6 +2607,10 @@ def _tick_session_limit_wake_message(token: str, speckit_update_notice: str = ""
     )
 
 
+def _screen_contains_session_limit_wake(screen: str, token: str) -> bool:
+    return bool(token) and f"MESH_LIVE_RESET_WAKE id={token}:" in str(screen or "")
+
+
 def _tick_session_limit_fingerprint(
     session: LiveSession,
     reset_label: str,
@@ -3242,20 +3246,21 @@ def execute_live_tick_actions(
                 changed = True
                 if persist_state is not None:
                     persist_state(state)
+                wake_message = (
+                    ""
+                    if pending_composer_fingerprint
+                    else _tick_session_limit_wake_message(
+                        token,
+                        (
+                            pending_update.message
+                            if observation.coordinator and pending_update
+                            else ""
+                        ),
+                    )
+                )
                 client.send(
                     fresh,
-                    (
-                        ""
-                        if pending_composer_fingerprint
-                        else _tick_session_limit_wake_message(
-                            token,
-                            (
-                                pending_update.message
-                                if observation.coordinator and pending_update
-                                else ""
-                            ),
-                        )
-                    ),
+                    wake_message,
                     enter=True,
                     expected_commands=("claude", "claude-code"),
                     allow_coordinator_wrapper=observation.coordinator,
@@ -3277,7 +3282,10 @@ def execute_live_tick_actions(
                 post_state = classify_screen(
                     "claude", _claude_screen_without_suggestion(post)
                 )
-                verified = post_state == LiveScreenState.busy
+                verified = post_state == LiveScreenState.busy and (
+                    bool(pending_composer_fingerprint)
+                    or _screen_contains_session_limit_wake(post.output, token)
+                )
                 saved["session_limit_verified"] = verified
                 results.append(
                     TickActionResult(

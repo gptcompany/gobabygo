@@ -4318,6 +4318,9 @@ def test_live_tick_replaces_dim_claude_suggestion_with_fixed_reset_wake() -> Non
             assert enter is True
             assert expected_claude_composer == "empty"
             self.sends.append(text)
+            self.outputs[0] = module.replace(
+                self.outputs[0], output=f"{text}\n✻ Working\n❯ "
+            )
             return {}
 
     client = GhostClient()
@@ -4341,6 +4344,20 @@ def test_live_tick_replaces_dim_claude_suggestion_with_fixed_reset_wake() -> Non
     assert state["sessions"]["sam/claude-coordinator"][
         "session_limit_pending_composer"
     ] is False
+
+
+def test_session_limit_wake_verification_requires_its_exact_token() -> None:
+    module = _load_module()
+
+    assert not module._screen_contains_session_limit_wake(
+        "✻ Unrelated work is running\n❯ ", "expected-token"
+    )
+    assert not module._screen_contains_session_limit_wake(
+        "MESH_LIVE_RESET_WAKE id=other-token:", "expected-token"
+    )
+    assert module._screen_contains_session_limit_wake(
+        "❯ MESH_LIVE_RESET_WAKE id=expected-token: resume", "expected-token"
+    )
 
 
 def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
@@ -4941,6 +4958,7 @@ def test_live_tick_resumes_empty_claude_worker_from_persisted_vendor_schedule() 
             assert expected_claude_composer == "empty"
             assert expected_commands == ("claude", "claude-code")
             self.sends.append((text, enter, allow_coordinator_wrapper))
+            self.outputs[0] = f"{text}\n✻ Working\n❯ "
             return {}
 
     state = {"version": 1, "sessions": {}}
@@ -5013,6 +5031,7 @@ def test_session_limit_replaces_legacy_persisted_schedule() -> None:
         ):
             assert expected_claude_composer == "empty"
             self.sends.append(text)
+            self.outputs[0] = f"{text}\n✻ Working\n❯ "
             return {}
 
     state = {
@@ -5159,6 +5178,7 @@ def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
             self.sends.append(text)
             if self.fail_send:
                 raise module.LiveReadError("connection closed after request")
+            self.outputs[0] = f"{text}\n✻ Working\n❯ "
             return {}
 
     state = {"version": 1, "sessions": {}}
