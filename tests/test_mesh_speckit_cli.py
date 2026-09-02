@@ -70,7 +70,7 @@ def test_committed_lock_is_exact_and_active_providers_only() -> None:
     module = _load_module()
     lock = module.load_lock()
 
-    assert lock["version"] == "0.16.5"
+    assert lock["version"] == "1.0.3"
     assert lock["integrations"] == ["claude", "codex", "agy"]
 
 
@@ -888,6 +888,74 @@ def test_project_init_plan_requires_clean_exact_git_root_and_force_consent(
         module.build_project_plan(
             "init", subdir, lock, allow_multi_install_force=True
         )
+
+
+def test_project_upgrade_inventories_extensions_without_updating_them(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    _project(repo)
+    extensions = repo / ".specify" / "extensions"
+    extensions.mkdir()
+    (repo / ".specify" / "extensions.yml").write_text(
+        "installed:\n  - git\n",
+        encoding="utf-8",
+    )
+    (extensions / ".registry").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "extensions": {
+                    "git": {
+                        "version": "1.2.3",
+                        "source": "catalog",
+                        "enabled": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "speckit"], check=True)
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+
+    plan = module.build_project_plan("upgrade", repo, lock)
+
+    assert plan["extensions"] == [
+        {
+            "id": "git",
+            "version": "1.2.3",
+            "source": "catalog",
+            "enabled": True,
+            "configured": True,
+        }
+    ]
+    assert plan["extension_updates"] == []
+    assert plan["extension_update_policy"] == "separate-explicit-review"
+    assert all(command[1:3] != ["extension", "update"] for command in plan["commands"])
+
+
+def test_project_upgrade_rejects_malformed_extension_registry(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    _project(repo)
+    extensions = repo / ".specify" / "extensions"
+    extensions.mkdir()
+    (repo / ".specify" / "extensions.yml").write_text(
+        "installed:\n  - git\n",
+        encoding="utf-8",
+    )
+    (extensions / ".registry").write_text("{", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "speckit"], check=True)
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+
+    with pytest.raises(module.SpeckitRuntimeError, match="extension registry"):
+        module.build_project_plan("upgrade", repo, lock)
 
 
 def test_project_init_redirects_legacy_repo_to_migrate(tmp_path) -> None:

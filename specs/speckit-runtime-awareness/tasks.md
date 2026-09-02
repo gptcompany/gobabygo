@@ -413,7 +413,7 @@ Done when:
 
 ### T014. Adapt the Mesh lifecycle to the pinned 1.0.3 contract
 
-Status: pending
+Status: done
 
 Depends on: T013
 

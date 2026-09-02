@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "version": "0.16.5",
-  "tag": "v0.16.5",
+  "version": "1.0.3",
+  "tag": "v1.0.3",
   "source": "https://github.com/github/spec-kit",
   "integrations": [
     "claude",

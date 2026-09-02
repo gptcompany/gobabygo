@@ -22,6 +22,8 @@ from typing import Any, Callable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOCK_FILE = ROOT / "config" / "speckit.lock.json"
@@ -42,6 +44,7 @@ INTEGRATION_SKILL_ROOTS = {
 _VERSION = re.compile(r"(?<![0-9])v?(0|[1-9][0-9]*)\.(0|[0-9]+)\.(0|[0-9]+)(?![0-9])")
 _SAFE_INTEGRATION = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _SAFE_CAPABILITY = re.compile(r"^[a-z][a-z0-9.-]{0,79}$")
+_SAFE_EXTENSION = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _ISO_TIMESTAMP = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
@@ -56,6 +59,8 @@ _MAX_TASKS_FILE_BYTES = 2 * 1024 * 1024
 _MAX_MIGRATION_FILES = 512
 _MAX_MIGRATION_FILE_BYTES = 8 * 1024 * 1024
 _MAX_MIGRATION_TOTAL_BYTES = 32 * 1024 * 1024
+_MAX_EXTENSION_METADATA_BYTES = 64 * 1024
+_MAX_EXTENSIONS = 64
 _GENERATED_UPDATE_PREFIXES = (
     ".specify/templates/",
     ".specify/scripts/",
@@ -205,6 +210,120 @@ def load_lock(path: Path = DEFAULT_LOCK_FILE) -> dict[str, Any]:
         "source": str(payload.get("source", "")),
         "integrations": list(ALLOWED_INTEGRATIONS),
     }
+
+
+def _read_bounded_metadata(path: Path, *, label: str) -> str:
+    try:
+        if path.is_symlink():
+            raise SpeckitRuntimeError(f"{label} must not be a symlink: {path}")
+        metadata = path.stat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SpeckitRuntimeError(f"{label} must be a regular file: {path}")
+        if metadata.st_size > _MAX_EXTENSION_METADATA_BYTES:
+            raise SpeckitRuntimeError(f"{label} exceeds size limit: {path}")
+        return path.read_text(encoding="utf-8")
+    except SpeckitRuntimeError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        raise SpeckitRuntimeError(f"cannot read {label} {path}: {exc}") from exc
+
+
+def _extension_inventory(root: Path) -> list[dict[str, Any]]:
+    config_path = root / ".specify" / "extensions.yml"
+    registry_path = root / ".specify" / "extensions" / ".registry"
+    configured: list[str] = []
+    registry: dict[str, Any] = {}
+
+    if config_path.exists() or config_path.is_symlink():
+        try:
+            config = yaml.safe_load(
+                _read_bounded_metadata(config_path, label="extension configuration")
+            )
+        except yaml.YAMLError as exc:
+            raise SpeckitRuntimeError(
+                f"invalid extension configuration {config_path}: {exc}"
+            ) from exc
+        if config is None:
+            config = {}
+        if not isinstance(config, dict) or not isinstance(config.get("installed", []), list):
+            raise SpeckitRuntimeError(
+                f"extension configuration must contain an installed list: {config_path}"
+            )
+        configured = config.get("installed", [])
+        invalid_ids = any(
+            not isinstance(item, str) or not _SAFE_EXTENSION.fullmatch(item)
+            for item in configured
+        )
+        if (
+            len(configured) > _MAX_EXTENSIONS
+            or invalid_ids
+            or len(set(configured)) != len(configured)
+        ):
+            raise SpeckitRuntimeError(
+                f"extension configuration contains invalid installed IDs: {config_path}"
+            )
+
+    if registry_path.exists() or registry_path.is_symlink():
+        try:
+            payload = json.loads(
+                _read_bounded_metadata(registry_path, label="extension registry")
+            )
+        except json.JSONDecodeError as exc:
+            raise SpeckitRuntimeError(
+                f"invalid extension registry {registry_path}: {exc}"
+            ) from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("extensions"), dict):
+            raise SpeckitRuntimeError(
+                f"extension registry must contain an extensions object: {registry_path}"
+            )
+        registry = payload["extensions"]
+        if len(registry) > _MAX_EXTENSIONS or any(
+            not isinstance(key, str) or not _SAFE_EXTENSION.fullmatch(key)
+            for key in registry
+        ):
+            raise SpeckitRuntimeError(
+                f"extension registry contains invalid extension IDs: {registry_path}"
+            )
+
+    inventory: list[dict[str, Any]] = []
+    for extension_id in sorted(set(configured) | set(registry)):
+        metadata = registry.get(extension_id, {})
+        if not isinstance(metadata, dict):
+            raise SpeckitRuntimeError(
+                f"extension registry metadata must be an object: {extension_id}"
+            )
+        version = metadata.get("version")
+        source = metadata.get("source")
+        enabled = metadata.get("enabled")
+        if version is not None and (
+            not isinstance(version, str) or _version_from_text(version) != version
+        ):
+            raise SpeckitRuntimeError(
+                f"extension registry has invalid version for {extension_id}"
+            )
+        if source is not None and (
+            not isinstance(source, str)
+            or not source
+            or len(source) > 512
+            or any(character in source for character in "\r\n\x00")
+        ):
+            raise SpeckitRuntimeError(
+                f"extension registry has invalid source for {extension_id}"
+            )
+        if enabled is not None and not isinstance(enabled, bool):
+            raise SpeckitRuntimeError(
+                f"extension registry has invalid enabled state for {extension_id}"
+            )
+        inventory.append(
+            {
+                "id": extension_id,
+                "version": version,
+                "source": source,
+                "enabled": enabled,
+                "configured": extension_id in configured,
+            }
+        )
+    return inventory
 
 
 def installed_version(
@@ -1218,6 +1337,7 @@ def build_project_plan(
         )
     project = inspect_project(root, lock["integrations"], lock["version"])
     manifest_exists = Path(project["manifest"]).is_file()
+    extensions: list[dict[str, Any]] = []
     if action == "init":
         if manifest_exists:
             raise SpeckitRuntimeError("project is already initialized; use project upgrade")
@@ -1225,7 +1345,7 @@ def build_project_plan(
             raise SpeckitRuntimeError("legacy project requires project migrate")
         if not allow_multi_install_force:
             raise SpeckitRuntimeError(
-                "AGY multi-install in Spec Kit v0.16.5 requires explicit "
+                "AGY multi-install requires explicit "
                 "--allow-multi-install-force"
             )
         commands = _project_init_commands()
@@ -1238,7 +1358,7 @@ def build_project_plan(
             raise SpeckitRuntimeError("project migrate requires legacy Spec Kit evidence")
         if not allow_multi_install_force:
             raise SpeckitRuntimeError(
-                "AGY multi-install in Spec Kit v0.16.5 requires explicit "
+                "AGY multi-install requires explicit "
                 "--allow-multi-install-force"
             )
         _require_pinned_runtime(lock["version"])
@@ -1262,6 +1382,7 @@ def build_project_plan(
             [specify, "integration", "upgrade", integration]
             for integration in lock["integrations"]
         ]
+        extensions = _extension_inventory(root)
         migration = None
     else:
         raise SpeckitRuntimeError(f"unsupported project action: {action}")
@@ -1272,6 +1393,9 @@ def build_project_plan(
         "required_version": lock["version"],
         "integrations": lock["integrations"],
         "commands": commands,
+        "extensions": extensions,
+        "extension_updates": [],
+        "extension_update_policy": "separate-explicit-review",
         "apply_required": True,
         "base_head": _git_head(root),
     }

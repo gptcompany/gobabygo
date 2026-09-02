@@ -120,7 +120,7 @@ read-only; CLI installation and project changes always require explicit
 mesh speckit status /data/sata/1TB/rektslug
 mesh speckit capabilities /data/sata/1TB/rektslug --json
 mesh speckit update-check --json
-mesh speckit install 0.16.5                 # plan only
+mesh speckit install 1.0.3                  # plan only
 mesh speckit project migrate /data/sata/1TB/rektslug \
   --allow-multi-install-force                         # legacy plan only
 mesh speckit project upgrade /data/sata/1TB/rektslug  # plan only
@@ -136,6 +136,10 @@ only when the current constitution is absent; if both exist, the historical path
 is reported as unmigrated and neither file is overwritten. Legacy
 `.claude/commands` are retained and reported for manual review; migration never
 deletes them. Later releases use `project upgrade`.
+
+Project upgrade plans inventory installed extensions but never run
+`specify extension update` implicitly. Extension code has a separate trust and
+version boundary, so each extension update requires its own explicit review.
 
 `mesh speckit context` creates the bounded, provider-neutral phase/artifact
 envelope used for worker delegation. Intra-repo specs remain in that repo;
