@@ -660,6 +660,45 @@ def test_enter_only_and_codex_send_do_not_use_claude_paste_settle(monkeypatch) -
     assert sleeps == []
 
 
+def test_send_refuses_changed_claude_composer_before_first_input(monkeypatch) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(
+                    ["claude-coordinator", "claude", "123"]
+                )
+                + "\n",
+            )
+        if "capture-pane" in args:
+            return _completed(args, stdout="❯ operator started typing\n")
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    target = {
+        "owner": "sam",
+        "name": "claude-coordinator",
+        "pane_id": "%2",
+        "pane_pid": 123,
+    }
+
+    result = module._send_target(
+        target,
+        "MESH_LIVE_RESET_WAKE id=guarded",
+        enter=True,
+        expected_commands=("claude", "claude-code"),
+        expected_claude_composer="empty",
+    )
+
+    assert result["error"] == "send target Claude composer changed"
+    assert not any("send-keys" in command for command in commands)
+
+
 def test_codex_preflight_capture_preserves_terminal_style(monkeypatch) -> None:
     module = _load_module()
     commands: list[list[str]] = []
@@ -4272,10 +4311,12 @@ def test_live_tick_replaces_dim_claude_suggestion_with_fixed_reset_wake() -> Non
             enter,
             expected_commands=(),
             allow_coordinator_wrapper=False,
+            expected_claude_composer="",
         ):
             assert "DEC-11" not in text
             assert text.startswith("MESH_LIVE_RESET_WAKE id=")
             assert enter is True
+            assert expected_claude_composer == "empty"
             self.sends.append(text)
             return {}
 
@@ -4335,9 +4376,11 @@ def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
             enter,
             expected_commands=(),
             allow_coordinator_wrapper=False,
+            expected_claude_composer="",
         ):
             assert expected_commands == ("claude", "claude-code")
             assert allow_coordinator_wrapper is True
+            assert expected_claude_composer.startswith("sha256:")
             self.sends.append((text, enter))
             return {}
 
@@ -4462,11 +4505,13 @@ def test_live_tick_retries_unchanged_unverified_pending_composer_with_bounds(
             enter,
             expected_commands=(),
             allow_coordinator_wrapper=False,
+            expected_claude_composer="",
         ):
             saved = state["sessions"]["sam/claude-coordinator"]
             assert saved["session_limit_attempt_count"] == self.expected_count
             assert text == ""
             assert enter is True
+            assert expected_claude_composer.startswith("sha256:")
             self.sends.append((text, enter))
             return {}
 
@@ -4891,7 +4936,9 @@ def test_live_tick_resumes_empty_claude_worker_from_persisted_vendor_schedule() 
             enter,
             expected_commands=(),
             allow_coordinator_wrapper=False,
+            expected_claude_composer="",
         ):
+            assert expected_claude_composer == "empty"
             assert expected_commands == ("claude", "claude-code")
             self.sends.append((text, enter, allow_coordinator_wrapper))
             return {}
@@ -4962,7 +5009,9 @@ def test_session_limit_replaces_legacy_persisted_schedule() -> None:
             enter,
             expected_commands=(),
             allow_coordinator_wrapper=False,
+            expected_claude_composer="",
         ):
+            assert expected_claude_composer == "empty"
             self.sends.append(text)
             return {}
 
@@ -5101,10 +5150,12 @@ def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
             enter,
             expected_commands=(),
             allow_coordinator_wrapper=False,
+            expected_claude_composer="",
         ):
             assert enter is True
             assert expected_commands == ("claude", "claude-code")
             assert allow_coordinator_wrapper is True
+            assert expected_claude_composer == "empty"
             self.sends.append(text)
             if self.fail_send:
                 raise module.LiveReadError("connection closed after request")

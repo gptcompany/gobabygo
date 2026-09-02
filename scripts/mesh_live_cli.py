@@ -255,6 +255,7 @@ class LiveClient:
         expected_commands: Sequence[str] = (),
         allow_coordinator_wrapper: bool = False,
         delegation_id: str = "",
+        expected_claude_composer: str = "",
     ) -> dict[str, Any]:
         payload = {
             "op": "send",
@@ -276,6 +277,8 @@ class LiveClient:
             payload["allow_coordinator_wrapper"] = True
         if delegation_id:
             payload["delegation_id"] = delegation_id
+        if expected_claude_composer:
+            payload["expected_claude_composer"] = expected_claude_composer
         response = self._request_fn(self.endpoint, payload)
         if response.get("error"):
             raise LiveReadError(redact_capture(str(response["error"])))
@@ -583,6 +586,7 @@ def _send_target(
     enter: bool,
     expected_commands: Sequence[str] = (),
     allow_coordinator_wrapper: bool = False,
+    expected_claude_composer: str = "",
     transaction: SendTransactionFn | None = None,
 ) -> dict[str, Any]:
     owner = str(target.get("owner") or "")
@@ -679,7 +683,27 @@ def _send_target(
             return "send target process changed during delivery"
         return ""
 
+    def revalidate_claude_composer() -> str:
+        if not expected_claude_composer:
+            return ""
+        try:
+            proc = _run_command(
+                [*prefix, "tmux", "capture-pane", "-p", "-e", "-t", tmux_target]
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return redact_capture(str(exc))
+        if proc.returncode != 0:
+            return redact_capture(
+                (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+            )
+        current = _claude_composer_guard_from_screen(proc.stdout.rstrip("\n"))
+        if current != expected_claude_composer:
+            return "send target Claude composer changed"
+        return ""
+
     def deliver() -> dict[str, Any]:
+        if composer_error := revalidate_claude_composer():
+            return {"error": composer_error}
         if text:
             if identity_error := revalidate_identity():
                 return {"error": identity_error}
@@ -1320,6 +1344,13 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         expected_commands = tuple(str(item or "").strip() for item in raw_expected)
         allow_coordinator_wrapper = bool(payload.get("allow_coordinator_wrapper"))
         raw_delegation_id = str(payload.get("delegation_id") or "").strip()
+        expected_claude_composer = str(
+            payload.get("expected_claude_composer") or ""
+        ).strip()
+        if expected_claude_composer and not re.fullmatch(
+            r"(?:empty|sha256:[0-9a-f]{64})", expected_claude_composer
+        ):
+            raise ValueError("invalid expected Claude composer guard")
         delegation_id = ""
         if raw_delegation_id:
             delegation_id = validate_delegation_id(raw_delegation_id)
@@ -1402,6 +1433,7 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
                 enter=enter,
                 expected_commands=expected_commands,
                 allow_coordinator_wrapper=allow_coordinator_wrapper,
+                expected_claude_composer=expected_claude_composer,
                 transaction=tracked_send_transaction,
             )
         except LiveReadError as exc:
@@ -2625,6 +2657,33 @@ def _session_pending_composer_fingerprint(session: LiveSession) -> str:
     return _claude_pending_composer_fingerprint(session.output)
 
 
+def _claude_composer_guard_from_screen(
+    screen: str, *, prompt_suggestion: bool | None = None
+) -> str:
+    visible = str(screen or "")
+    suggestion = (
+        _claude_prompt_is_dim_suggestion(visible)
+        if prompt_suggestion is None
+        else prompt_suggestion
+    )
+    if suggestion:
+        return "empty"
+    normalized = redact_capture(visible)
+    if not any(
+        line.replace("\xa0", " ").lstrip().startswith("❯")
+        for line in normalized.splitlines()
+    ):
+        return ""
+    fingerprint = _claude_pending_composer_fingerprint(normalized)
+    return f"sha256:{fingerprint}" if fingerprint else "empty"
+
+
+def _session_claude_composer_guard(session: LiveSession) -> str:
+    return _claude_composer_guard_from_screen(
+        session.output, prompt_suggestion=session.prompt_suggestion
+    )
+
+
 def _claude_screen_without_suggestion(session: LiveSession) -> str:
     if not session.prompt_suggestion:
         return session.output
@@ -3200,6 +3259,7 @@ def execute_live_tick_actions(
                     enter=True,
                     expected_commands=("claude", "claude-code"),
                     allow_coordinator_wrapper=observation.coordinator,
+                    expected_claude_composer=_session_claude_composer_guard(fresh),
                 )
                 if (
                     observation.coordinator
