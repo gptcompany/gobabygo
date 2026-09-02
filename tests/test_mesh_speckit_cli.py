@@ -819,6 +819,8 @@ def test_install_plan_requires_exact_locked_version(monkeypatch, tmp_path) -> No
 
     plan = module.build_install_plan("v0.16.5", lock)
     assert plan["commands"][0][-1].endswith("@v0.16.5")
+    assert Path(plan["commands"][1][0]).is_absolute()
+    assert Path(plan["commands"][1][0]).name == "specify"
 
 
 def test_install_apply_stops_on_first_failure(monkeypatch) -> None:

@@ -1051,6 +1051,7 @@ def build_install_plan(version: str, lock: dict[str, Any]) -> dict[str, Any]:
     uv = shutil.which("uv") or str(Path("~/.local/bin/uv").expanduser())
     if not Path(uv).is_file() and shutil.which("uv") is None:
         raise SpeckitRuntimeError("uv is required to install the pinned Spec Kit CLI")
+    specify = _specify_executable() or str(Path("~/.local/bin/specify").expanduser())
     return {
         "schema": "mesh.speckit.install-plan.v1",
         "version": requested,
@@ -1064,7 +1065,7 @@ def build_install_plan(version: str, lock: dict[str, Any]) -> dict[str, Any]:
                 "--from",
                 f"git+https://github.com/github/spec-kit.git@v{requested}",
             ],
-            ["specify", "check"],
+            [specify, "check"],
         ],
     }
 
