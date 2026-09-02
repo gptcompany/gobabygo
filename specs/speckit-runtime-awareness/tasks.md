@@ -478,7 +478,7 @@ Done when:
 
 ### T016. Upgrade Gobabygo and the Dell runtime canary
 
-Status: pending
+Status: done
 
 Depends on: T015
 
