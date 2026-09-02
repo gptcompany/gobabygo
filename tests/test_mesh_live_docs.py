@@ -39,7 +39,7 @@ def test_speckit_103_canary_records_a_non_destructive_rollback_boundary() -> Non
     ).read_text(encoding="utf-8")
 
     assert "ba6994df079cf59db4aaa67381dac7d046f2d0bd" in evidence
-    assert "3b15830f71864995bf362925b116f3ef46b380a5" in evidence
+    assert "3b158309b5c679e1096cb95ff9d878faaf113d97" in evidence
     assert "github/spec-kit.git@v0.16.5" in evidence
     assert "Do not use `git reset --hard`" in evidence
 

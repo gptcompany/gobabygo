@@ -29,7 +29,7 @@ was mutated during this canary.
 
 - Last pre-rollout Gobabygo runtime revision: `ba6994df079cf59db4aaa67381dac7d046f2d0bd`.
 - Last revision before generated project integration changes:
-  `3b15830f71864995bf362925b116f3ef46b380a5`.
+  `3b158309b5c679e1096cb95ff9d878faaf113d97`.
 - Exact CLI downgrade, if the runtime is first redeployed from the reviewed
   pre-rollout revision:
 
