@@ -2059,6 +2059,54 @@ def test_project_upgrade_rejects_zero_exit_with_partial_postcondition(
         module.apply_project_plan(plan)
 
 
+def test_project_upgrade_verifies_filesystem_postcondition(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    _project(repo, version="1.0.2")
+    subprocess.run(
+        ["git", "-C", str(repo), "add", ".specify", ".claude", ".agents"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "speckit"], check=True)
+    plan = {
+        "action": "upgrade",
+        "repo": str(repo),
+        "required_version": "1.0.3",
+        "integrations": ["claude"],
+        "base_head": module._git_head(repo),
+        "commands": [["specify", "integration", "upgrade", "claude"]],
+    }
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {
+            "available": True,
+            "executable": "/bin/specify",
+            "version": "1.0.3",
+            "error": None,
+        },
+    )
+    real_run = module._run_command
+
+    def apply_upgrade(args, **kwargs):
+        if args[0] == "git":
+            return real_run(args, **kwargs)
+        manifest = repo / ".specify" / "integration.json"
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        payload["version"] = "1.0.3"
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", apply_upgrade)
+
+    result = module.apply_project_plan(plan)
+
+    assert result["applied"] is True
+    assert result["changed_paths"] == [" M .specify/integration.json"]
+
+
 def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
