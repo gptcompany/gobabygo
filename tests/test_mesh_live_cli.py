@@ -1883,6 +1883,36 @@ def test_redact_capture_removes_credentials_private_keys_and_terminal_sequences(
     assert "\x1b" not in redacted
 
 
+def test_redact_capture_preserves_text_between_separate_osc_hyperlinks() -> None:
+    module = _load_module()
+    session_limit = _claude_session_limit_screen("1:40am")
+    raw = (
+        "PR "
+        "\x1b]8;id=pr;https://github.com/example/repo/pull/1\x1b\\"
+        "#1\x1b]8;;\x1b\\\n"
+        + session_limit
+        + "footer "
+        "\x1b]8;id=rc;https://claude.example/session\x1b\\"
+        "/rc\x1b]8;;\x1b\\\n"
+    )
+
+    redacted = module.redact_capture(raw)
+
+    assert redacted.count("[redacted terminal metadata]") == 4
+    assert "#1" in redacted
+    assert "/rc" in redacted
+    assert "You've hit your session limit" in redacted
+    assert module.session_screen_state(
+        module.LiveSession(
+            owner="sam",
+            name="claude-coordinator",
+            pane_command="bash",
+            pane_child_command="claude",
+            output=redacted,
+        )
+    ) == "session_limit"
+
+
 def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
     module = _load_module()
     raw = "\n".join(

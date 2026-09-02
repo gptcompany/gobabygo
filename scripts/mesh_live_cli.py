@@ -828,6 +828,9 @@ _CODEX_ACTIVITY = re.compile(
 )
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _ANSI_SGR = re.compile(r"\x1b\[([0-9;]*)m")
+_OSC_SEQUENCE = re.compile(
+    r"(?:\x1b\]|\x9d).*?(?:\x07|\x1b\\|\x9c|$)", re.DOTALL
+)
 
 
 def _ansi_suffix_is_fully_dimmed(suffix: str) -> bool:
@@ -3642,7 +3645,7 @@ def _redact_uri_userinfo(value: str) -> str:
 
 def redact_capture(text: str) -> str:
     value = str(text or "")
-    value = re.sub(r"\x1b\][^\x07]*(?:\x07|\x1b\\)", "[redacted terminal metadata]", value)
+    value = _OSC_SEQUENCE.sub("[redacted terminal metadata]", value)
     value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
     value = re.sub(
         r"(?i)\b(authorization\s*:\s*bearer)\s+\S+",
