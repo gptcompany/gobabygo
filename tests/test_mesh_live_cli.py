@@ -4427,15 +4427,19 @@ def test_live_tick_replaces_dim_claude_suggestion_with_fixed_reset_wake() -> Non
 
 def test_session_limit_wake_verification_requires_its_exact_token() -> None:
     module = _load_module()
+    token = "0123456789abcdef"
 
-    assert not module._screen_contains_session_limit_wake(
-        "✻ Unrelated work is running\n❯ ", "expected-token"
+    assert not module._screen_contains_submitted_session_limit_wake(
+        "✻ Unrelated work is running\n❯ ", token
     )
-    assert not module._screen_contains_session_limit_wake(
-        "MESH_LIVE_RESET_WAKE id=other-token:", "expected-token"
+    assert not module._screen_contains_submitted_session_limit_wake(
+        "MESH_LIVE_RESET_WAKE id=fedcba9876543210:", token
     )
-    assert module._screen_contains_session_limit_wake(
-        "❯ MESH_LIVE_RESET_WAKE id=expected-token: resume", "expected-token"
+    assert not module._screen_contains_submitted_session_limit_wake(
+        f"❯ MESH_LIVE_RESET_WAKE id={token}: resume", token
+    )
+    assert module._screen_contains_submitted_session_limit_wake(
+        f"MESH_LIVE_RESET_WAKE id={token}: resume\n● Running checks", token
     )
 
 

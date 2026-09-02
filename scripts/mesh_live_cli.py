@@ -2642,8 +2642,15 @@ def _tick_session_limit_wake_message(token: str, speckit_update_notice: str = ""
     )
 
 
-def _screen_contains_session_limit_wake(screen: str, token: str) -> bool:
-    return bool(token) and f"MESH_LIVE_RESET_WAKE id={token}:" in str(screen or "")
+def _screen_contains_submitted_session_limit_wake(screen: str, token: str) -> bool:
+    if not re.fullmatch(r"[a-f0-9]{16}", str(token or "")):
+        return False
+    marker = f"MESH_LIVE_RESET_WAKE id={token}:"
+    return any(
+        marker in line
+        and not line.replace("\xa0", " ").lstrip().startswith("❯")
+        for line in str(screen or "").splitlines()
+    )
 
 
 def _tick_session_limit_fingerprint(
@@ -3319,7 +3326,9 @@ def execute_live_tick_actions(
                 )
                 verified = post_state == LiveScreenState.busy and (
                     bool(pending_composer_fingerprint)
-                    or _screen_contains_session_limit_wake(post.output, token)
+                    or _screen_contains_submitted_session_limit_wake(
+                        post.output, token
+                    )
                 )
                 saved["session_limit_verified"] = verified
                 results.append(
