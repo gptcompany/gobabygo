@@ -1505,6 +1505,23 @@ def _apply_upgrade_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, An
         ) == _normalized_generated_digest(backup[0], relative):
             _restore_migration_file(path, backup)
     changed = _git_status(root)
+    expected_integrations = list(plan.get("integrations", SPEC_KIT_INTEGRATIONS))
+    project = inspect_project(
+        root,
+        expected_integrations,
+        str(plan.get("required_version", "")),
+    )
+    if (
+        project["state"] != "aligned"
+        or project["installed_integrations"] != expected_integrations
+        or project["default_integration"] != expected_integrations[0]
+    ):
+        raise SpeckitRuntimeError(
+            "Spec Kit upgrade postcondition failed; "
+            f"state={project['state']} default={project['default_integration'] or '-'} "
+            f"integrations={','.join(project['installed_integrations']) or '-'}; "
+            f"partial changed paths: {', '.join(changed) or '-'}"
+        )
     return {**plan, "applied": True, "results": results, "changed_paths": changed}
 
 

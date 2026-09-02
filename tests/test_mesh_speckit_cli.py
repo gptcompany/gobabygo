@@ -1995,11 +1995,68 @@ def test_project_upgrade_restores_timestamp_only_manifest_churn(
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(
+        module,
+        "inspect_project",
+        lambda *_args, **_kwargs: {
+            "state": "aligned",
+            "installed_integrations": ["claude"],
+            "default_integration": "claude",
+        },
+    )
 
     result = module.apply_project_plan(plan)
 
     assert result["changed_paths"] == []
     assert json.loads(manifest.read_text(encoding="utf-8")) == original
+
+
+def test_project_upgrade_rejects_zero_exit_with_partial_postcondition(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    plan = {
+        "action": "upgrade",
+        "repo": str(repo),
+        "required_version": "1.0.3",
+        "integrations": ["claude"],
+        "base_head": module._git_head(repo),
+        "commands": [["specify", "integration", "upgrade", "claude"]],
+    }
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {
+            "available": True,
+            "executable": "/bin/specify",
+            "version": "1.0.3",
+            "error": None,
+        },
+    )
+    real_run = module._run_command
+
+    def zero_exit(args, **kwargs):
+        if args[0] == "git":
+            return real_run(args, **kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", zero_exit)
+    monkeypatch.setattr(
+        module,
+        "inspect_project",
+        lambda *_args, **_kwargs: {
+            "state": "unsupported",
+            "installed_integrations": ["claude", "codex"],
+            "default_integration": "claude",
+        },
+    )
+
+    with pytest.raises(
+        module.SpeckitRuntimeError,
+        match=r"postcondition failed.*integrations=claude,codex",
+    ):
+        module.apply_project_plan(plan)
 
 
 def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_path) -> None:
