@@ -699,6 +699,58 @@ def test_send_refuses_changed_claude_composer_before_first_input(monkeypatch) ->
     assert not any("send-keys" in command for command in commands)
 
 
+def test_remote_send_accepts_unchanged_dim_claude_suggestion(monkeypatch) -> None:
+    module = _load_module()
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(
+                    ["claude-coordinator", "claude", "123"]
+                )
+                + "\n",
+            )
+        if "capture-pane" in args:
+            return _completed(
+                args,
+                stdout="❯\xa0\x1b[2mDEC-11: generated suggestion\x1b[0m\n",
+            )
+        return _completed(args)
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    result = module.handle_remote_request(
+        {
+            "op": "send",
+            "target": {
+                "owner": "sam",
+                "name": "claude-coordinator",
+                "pane_id": "%2",
+                "pane_pid": 123,
+            },
+            "text": "MESH_LIVE_RESET_WAKE id=guarded",
+            "enter": True,
+            "expected_commands": ["claude", "claude-code"],
+            "expected_claude_composer": "empty",
+        }
+    )
+
+    assert result["text_sent"] is True
+    assert result["enter_sent"] is True
+    capture_index = next(
+        index for index, command in enumerate(commands) if "capture-pane" in command
+    )
+    send_indexes = [
+        index for index, command in enumerate(commands) if "send-keys" in command
+    ]
+    assert send_indexes and capture_index < min(send_indexes)
+
+
 def test_codex_preflight_capture_preserves_terminal_style(monkeypatch) -> None:
     module = _load_module()
     commands: list[list[str]] = []
