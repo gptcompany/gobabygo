@@ -456,7 +456,7 @@ Done when:
 
 ### T015. Validate 1.0.3 in an isolated fixture
 
-Status: pending
+Status: done
 
 Depends on: T014a
 
