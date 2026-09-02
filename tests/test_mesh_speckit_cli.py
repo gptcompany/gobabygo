@@ -22,11 +22,11 @@ def _load_module():
     return module
 
 
-def _lock(path: Path, *, integrations=None) -> Path:
+def _lock(path: Path, *, integrations=None, version: str = "1.0.3") -> Path:
     payload = {
         "schema": 1,
-        "version": "0.16.5",
-        "tag": "v0.16.5",
+        "version": version,
+        "tag": f"v{version}",
         "source": "https://github.com/github/spec-kit",
         "integrations": integrations or ["claude"],
         "worker_providers": ["codex", "agy"],
@@ -35,12 +35,12 @@ def _lock(path: Path, *, integrations=None) -> Path:
     return path
 
 
-def _project(path: Path, integrations=("claude",)) -> Path:
+def _project(path: Path, integrations=("claude",), *, version: str = "1.0.3") -> Path:
     (path / ".specify").mkdir(parents=True)
     (path / ".specify" / "integration.json").write_text(
         json.dumps(
             {
-                "version": "0.16.5",
+                "version": version,
                 "default_integration": "claude",
                 "installed_integrations": list(integrations),
             }
@@ -348,20 +348,20 @@ def test_status_rejects_outdated_project_manifest(monkeypatch, tmp_path) -> None
     repo = _project(tmp_path / "repo")
     manifest = repo / ".specify" / "integration.json"
     payload = json.loads(manifest.read_text(encoding="utf-8"))
-    payload["version"] = "0.16.4"
+    payload["version"] = "1.0.2"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
     lock = _lock(tmp_path / "lock.json")
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     result = module.build_status(repo, lock_file=lock, state_file=tmp_path / "none")
 
     assert result["runtime_aligned"] is True
     assert result["project"]["state"] == "partial"
-    assert result["project"]["manifest_version"] == "0.16.4"
+    assert result["project"]["manifest_version"] == "1.0.2"
     assert result["project"]["version_aligned"] is False
     assert result["aligned"] is False
 
@@ -394,19 +394,19 @@ def test_status_uses_cached_release_without_network(monkeypatch, tmp_path) -> No
     lock = _lock(tmp_path / "lock.json")
     state = tmp_path / "state.json"
     state.write_text(
-        json.dumps({"version": "0.16.6", "tag": "v0.16.6"}), encoding="utf-8"
+        json.dumps({"version": "1.0.4", "tag": "v1.0.4"}), encoding="utf-8"
     )
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
     monkeypatch.setattr(module, "_fetch_latest_release", lambda: pytest.fail("network used"))
 
     result = module.build_status(repo, lock_file=lock, state_file=state)
 
     assert result["aligned"] is True
-    assert result["latest_known_version"] == "0.16.6"
+    assert result["latest_known_version"] == "1.0.4"
     assert result["update_available"] is True
 
 
@@ -421,7 +421,7 @@ def test_status_does_not_treat_older_cache_as_update(monkeypatch, tmp_path) -> N
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     result = module.build_status(repo, lock_file=lock, state_file=state)
@@ -532,7 +532,7 @@ def test_delegation_context_is_provider_neutral_and_repository_bounded(
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     writer = module.build_delegation_context(
@@ -555,7 +555,7 @@ def test_delegation_context_is_provider_neutral_and_repository_bounded(
 
     assert writer == {
         "schema": "mesh.speckit.context.v1",
-        "version": "0.16.5",
+        "version": "1.0.3",
         "phase": "plan",
         "feature_dir": "specs/001-runtime",
         "allowed_artifacts": ["specs/001-runtime/spec.md", "specs/001-runtime/tasks.md"],
@@ -583,7 +583,7 @@ def test_delegation_context_rejects_unsupported_phase_paths_and_mutable_review_s
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
     base = {
         "repo": repo,
@@ -637,7 +637,7 @@ def test_delegation_context_accepts_immutable_decision_artifact(
         lambda: {
             "available": True,
             "executable": "/bin/specify",
-            "version": "0.16.5",
+            "version": "1.0.3",
             "error": None,
         },
     )
@@ -688,10 +688,10 @@ def test_update_check_persists_allowlisted_metadata_only(monkeypatch, tmp_path) 
         module,
         "_fetch_latest_release",
         lambda: {
-            "version": "0.16.6",
-            "tag": "v0.16.6",
+            "version": "1.0.4",
+            "tag": "v1.0.4",
             "published_at": "2026-08-20T00:00:00Z",
-            "html_url": "https://github.com/github/spec-kit/releases/tag/v0.16.6",
+            "html_url": "https://github.com/github/spec-kit/releases/tag/v1.0.4",
         },
     )
 
@@ -713,10 +713,10 @@ def test_update_check_refuses_symlink_state(monkeypatch, tmp_path) -> None:
         module,
         "_fetch_latest_release",
         lambda: {
-            "version": "0.16.6",
-            "tag": "v0.16.6",
+            "version": "1.0.4",
+            "tag": "v1.0.4",
             "published_at": "",
-            "html_url": "https://github.com/github/spec-kit/releases/tag/v0.16.6",
+            "html_url": "https://github.com/github/spec-kit/releases/tag/v1.0.4",
         },
     )
 
@@ -813,12 +813,12 @@ def test_install_plan_requires_exact_locked_version(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(module, "_uv_tool_bin", lambda _uv: tool_bin)
 
     with pytest.raises(module.SpeckitRuntimeError, match="does not match lock"):
-        module.build_install_plan("0.16.6", lock)
+        module.build_install_plan("1.0.4", lock)
     with pytest.raises(module.SpeckitRuntimeError, match="exact semantic version"):
         module.build_install_plan("latest", lock)
 
-    plan = module.build_install_plan("v0.16.5", lock)
-    assert plan["commands"][0][-1].endswith("@v0.16.5")
+    plan = module.build_install_plan("v1.0.3", lock)
+    assert plan["commands"][0][-1].endswith("@v1.0.3")
     assert plan["commands"][1][0] == str(tool_bin / "specify")
 
 
@@ -836,7 +836,7 @@ def test_install_plan_ignores_stale_specify_on_path(monkeypatch, tmp_path) -> No
     )
     monkeypatch.setattr(module, "_uv_tool_bin", lambda _uv: tool_bin)
 
-    plan = module.build_install_plan("0.16.5", lock)
+    plan = module.build_install_plan("1.0.3", lock)
 
     assert plan["commands"][1] == [str(tool_bin / "specify"), "check"]
 
@@ -859,7 +859,7 @@ def test_uv_tool_bin_rejects_invalid_output(monkeypatch, output) -> None:
 def test_install_apply_stops_on_first_failure(monkeypatch) -> None:
     module = _load_module()
     calls: list[list[str]] = []
-    plan = {"version": "0.16.5", "commands": [["uv", "install"], ["specify", "check"]]}
+    plan = {"version": "1.0.3", "commands": [["uv", "install"], ["specify", "check"]]}
 
     def fake_run(args, **_kwargs):
         calls.append(list(args))
@@ -914,7 +914,7 @@ def test_project_init_plan_requires_clean_exact_git_root(
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
     monkeypatch.setattr(
         module,
@@ -1059,7 +1059,7 @@ def test_migration_plan_reports_updates_preservation_and_additions(
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
     real_run = module._run_command
 
@@ -1131,7 +1131,7 @@ def test_migration_plan_fails_closed_on_agent_skill_collision(monkeypatch, tmp_p
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
     real_run = module._run_command
 
@@ -1244,10 +1244,10 @@ def test_migration_inventory_reports_generated_paths_ignored_by_git(tmp_path) ->
 def test_generated_metadata_digest_ignores_only_allowlisted_timestamps() -> None:
     module = _load_module()
     relative = ".specify/integrations/claude.manifest.json"
-    first = b'{"integration":"claude","version":"0.16.5","installed_at":"2026-08-20T10:24:14.1+00:00"}'
-    later = b'{"installed_at":"2026-08-20T10:25:00Z","version":"0.16.5","integration":"claude"}'
-    changed = b'{"integration":"claude","version":"0.16.6","installed_at":"2026-08-20T10:25:00Z"}'
-    missing = b'{"integration":"claude","version":"0.16.5"}'
+    first = b'{"integration":"claude","version":"1.0.3","installed_at":"2026-08-20T10:24:14.1+00:00"}'
+    later = b'{"installed_at":"2026-08-20T10:25:00Z","version":"1.0.3","integration":"claude"}'
+    changed = b'{"integration":"claude","version":"1.0.4","installed_at":"2026-08-20T10:25:00Z"}'
+    missing = b'{"integration":"claude","version":"1.0.3"}'
 
     assert module._normalized_generated_digest(
         first, relative
@@ -1270,7 +1270,7 @@ def test_generated_metadata_digest_ignores_only_allowlisted_timestamps() -> None
         )
     with pytest.raises(module.SpeckitRuntimeError, match="invalid generated metadata"):
         module._normalized_generated_digest(
-            b'{"integration":"claude","version":"0.16.5","version":"0.16.6"}',
+            b'{"integration":"claude","version":"1.0.3","version":"1.0.4"}',
             relative,
         )
 
@@ -1287,10 +1287,10 @@ def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.4", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.2", "error": None},
     )
 
-    with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 0.16.5"):
+    with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 1.0.3"):
         module.build_project_plan("migrate", repo, lock)
 
 
@@ -1319,7 +1319,7 @@ def test_migration_apply_installs_all_providers_and_preserves_constitution(
         manifest.write_text(
             json.dumps(
                 {
-                    "version": "0.16.5",
+                    "version": "1.0.3",
                     "default_integration": "claude",
                     "installed_integrations": ["claude", "codex", "agy"],
                 }
@@ -1345,7 +1345,7 @@ def test_migration_apply_installs_all_providers_and_preserves_constitution(
         "schema": "mesh.speckit.project-plan.v1",
         "action": "migrate",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "commands": [["specify", "init"]],
         "base_head": head,
         "migration": inventory,
@@ -1356,7 +1356,7 @@ def test_migration_apply_installs_all_providers_and_preserves_constitution(
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     result = module.apply_migration_plan(plan)
@@ -1395,7 +1395,7 @@ def test_migration_apply_moves_historical_constitution_to_current_path(
         manifest.write_text(
             json.dumps(
                 {
-                    "version": "0.16.5",
+                    "version": "1.0.3",
                     "default_integration": "claude",
                     "installed_integrations": ["claude", "codex", "agy"],
                 }
@@ -1419,7 +1419,7 @@ def test_migration_apply_moves_historical_constitution_to_current_path(
     plan = {
         "action": "migrate",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "commands": [["specify", "init"]],
         "base_head": head,
         "migration": inventory,
@@ -1430,7 +1430,7 @@ def test_migration_apply_moves_historical_constitution_to_current_path(
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     result = module.apply_migration_plan(plan)
@@ -1509,7 +1509,7 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
     plan = {
         "action": "migrate",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "commands": [["specify", "init"]],
         "base_head": head,
         "migration": inventory,
@@ -1520,7 +1520,7 @@ def test_migration_apply_rolls_back_only_its_own_partial_writes(
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     def partial_write(_source, target, _expected_digest, _relative):
@@ -1708,7 +1708,7 @@ def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> N
         manifest.write_text(
             json.dumps(
                 {
-                    "version": "0.16.5",
+                    "version": "1.0.3",
                     "default_integration": "claude",
                     "installed_integrations": ["claude"],
                 }
@@ -1729,7 +1729,7 @@ def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> N
     plan = {
         "action": "migrate",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "commands": [["specify", "init"]],
         "base_head": head,
         "migration": inventory,
@@ -1740,7 +1740,7 @@ def test_migration_apply_rolls_back_failed_alignment(monkeypatch, tmp_path) -> N
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     with pytest.raises(module.SpeckitRuntimeError, match="not aligned"):
@@ -1817,7 +1817,7 @@ def test_migration_apply_refuses_repo_change_during_sandbox_generation(
     plan = {
         "action": "migrate",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "commands": [["specify", "init"]],
         "base_head": head,
         "migration": {
@@ -1838,7 +1838,7 @@ def test_migration_apply_refuses_repo_change_during_sandbox_generation(
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     with pytest.raises(module.SpeckitRuntimeError, match="changed while preparing"):
@@ -1862,7 +1862,7 @@ def test_migration_apply_refuses_changed_generated_content(monkeypatch, tmp_path
     plan = {
         "action": "init",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "commands": [["specify", "init"]],
         "base_head": module._git_head(repo),
         "migration": inventory,
@@ -1877,7 +1877,7 @@ def test_migration_apply_refuses_changed_generated_content(monkeypatch, tmp_path
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     with pytest.raises(module.SpeckitRuntimeError, match="inventory changed"):
@@ -1929,7 +1929,7 @@ def test_project_apply_reports_partial_changed_paths(monkeypatch, tmp_path) -> N
     plan = {
         "action": "upgrade",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "base_head": module._git_head(repo),
         "commands": [["specify", "first"], ["specify", "second"]],
     }
@@ -1938,7 +1938,7 @@ def test_project_apply_reports_partial_changed_paths(monkeypatch, tmp_path) -> N
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
 
     def fake_run(args, **kwargs):
@@ -2065,14 +2065,14 @@ def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_pa
     plan = {
         "action": "upgrade",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "base_head": module._git_head(repo),
         "commands": [["specify", "integration", "upgrade", "claude"]],
     }
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.6", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.4", "error": None},
     )
     real_run = module._run_command
 
@@ -2083,7 +2083,7 @@ def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_pa
 
     monkeypatch.setattr(module, "_run_command", refuse_project_command)
 
-    with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 0.16.5"):
+    with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 1.0.3"):
         module.apply_project_plan(plan)
 
 
@@ -2095,14 +2095,14 @@ def test_project_upgrade_apply_rejects_drift_and_parallel_apply(
     plan = {
         "action": "upgrade",
         "repo": str(repo),
-        "required_version": "0.16.5",
+        "required_version": "1.0.3",
         "base_head": module._git_head(repo),
         "commands": [["specify", "integration", "upgrade", "claude"]],
     }
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
     real_run = module._run_command
 
@@ -2136,7 +2136,7 @@ def test_cli_install_without_apply_only_prints_plan(monkeypatch, tmp_path, capsy
         lambda _plan: pytest.fail("install executor called without --apply"),
     )
 
-    rc = module.main(["--lock-file", str(lock), "install", "0.16.5", "--json"])
+    rc = module.main(["--lock-file", str(lock), "install", "1.0.3", "--json"])
     payload = json.loads(capsys.readouterr().out)
 
     assert rc == 0
@@ -2155,7 +2155,7 @@ def test_cli_project_without_apply_only_prints_plan(monkeypatch, tmp_path, capsy
     monkeypatch.setattr(
         module,
         "installed_version",
-        lambda: {"available": True, "executable": "/bin/specify", "version": "0.16.5", "error": None},
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
     )
     monkeypatch.setattr(
         module,
