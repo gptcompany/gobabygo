@@ -1350,7 +1350,6 @@ def build_project_plan(
     repo: Path,
     lock: dict[str, Any],
     *,
-    allow_multi_install_force: bool = False,
     accept_generated_updates: bool = False,
 ) -> dict[str, Any]:
     root = _git_root(repo)
@@ -1822,7 +1821,6 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         project_action.add_argument("repo", type=Path)
         project_action.add_argument("--apply", action="store_true")
         project_action.add_argument("--json", action="store_true")
-        project_action.add_argument("--allow-multi-install-force", action="store_true")
         if action == "migrate":
             project_action.add_argument("--accept-generated-updates", action="store_true")
         else:
@@ -1868,7 +1866,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.project_action,
                 args.repo,
                 load_lock(args.lock_file),
-                allow_multi_install_force=args.allow_multi_install_force,
                 accept_generated_updates=args.accept_generated_updates,
             )
             output = apply_project_plan(plan) if args.apply else {**plan, "applied": False}

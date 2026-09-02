@@ -767,7 +767,6 @@ def test_cli_normalizes_subprocess_failures(
             "project",
             "init",
             str(repo),
-            "--allow-multi-install-force",
         ]
     )
     captured = capsys.readouterr()
@@ -794,7 +793,6 @@ def test_cli_normalizes_residual_filesystem_failures(monkeypatch, tmp_path, caps
             "project",
             "init",
             str(tmp_path),
-            "--allow-multi-install-force",
         ]
     )
     captured = capsys.readouterr()
@@ -915,9 +913,18 @@ def test_project_init_plan_requires_clean_exact_git_root(
     subdir = repo / "src"
     subdir.mkdir()
     with pytest.raises(module.SpeckitRuntimeError, match="exact Git repository root"):
-        module.build_project_plan(
-            "init", subdir, lock, allow_multi_install_force=True
+        module.build_project_plan("init", subdir, lock)
+
+
+def test_project_cli_rejects_retired_multi_install_flag(tmp_path) -> None:
+    module = _load_module()
+
+    with pytest.raises(SystemExit) as exc:
+        module._parse_args(
+            ["project", "init", str(tmp_path), "--allow-multi-install-force"]
         )
+
+    assert exc.value.code == 2
 
 
 def test_project_upgrade_inventories_extensions_without_updating_them(
@@ -998,9 +1005,7 @@ def test_project_init_redirects_legacy_repo_to_migrate(tmp_path) -> None:
     lock = module.load_lock(_lock(tmp_path / "lock.json"))
 
     with pytest.raises(module.SpeckitRuntimeError, match="requires project migrate"):
-        module.build_project_plan(
-            "init", repo, lock, allow_multi_install_force=True
-        )
+        module.build_project_plan("init", repo, lock)
 
 
 def test_migration_plan_reports_updates_preservation_and_additions(
@@ -1040,14 +1045,11 @@ def test_migration_plan_reports_updates_preservation_and_additions(
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_run_command", fake_run)
-    plan = module.build_project_plan(
-        "migrate", repo, lock, allow_multi_install_force=True
-    )
+    plan = module.build_project_plan("migrate", repo, lock)
     accepted = module.build_project_plan(
         "migrate",
         repo,
         lock,
-        allow_multi_install_force=True,
         accept_generated_updates=True,
     )
 
@@ -1113,7 +1115,6 @@ def test_migration_plan_fails_closed_on_agent_skill_collision(monkeypatch, tmp_p
         "migrate",
         repo,
         lock,
-        allow_multi_install_force=True,
         accept_generated_updates=True,
     )
 
@@ -1257,9 +1258,7 @@ def test_migration_plan_requires_pinned_runtime(monkeypatch, tmp_path) -> None:
     )
 
     with pytest.raises(module.SpeckitRuntimeError, match="requires pinned Spec Kit 0.16.5"):
-        module.build_project_plan(
-            "migrate", repo, lock, allow_multi_install_force=True
-        )
+        module.build_project_plan("migrate", repo, lock)
 
 
 def test_migration_apply_installs_all_providers_and_preserves_constitution(
@@ -1861,9 +1860,7 @@ def test_project_plan_refuses_dirty_repo_before_commands(tmp_path) -> None:
     (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
 
     with pytest.raises(module.SpeckitRuntimeError, match="worktree must be clean"):
-        module.build_project_plan(
-            "init", repo, lock, allow_multi_install_force=True
-        )
+        module.build_project_plan("init", repo, lock)
 
 
 def test_project_upgrade_reconciles_workers_and_rejects_unknown_integrations(tmp_path) -> None:
@@ -2093,7 +2090,6 @@ def test_cli_project_without_apply_only_prints_plan(monkeypatch, tmp_path, capsy
             "project",
             "init",
             str(repo),
-            "--allow-multi-install-force",
             "--json",
         ]
     )
