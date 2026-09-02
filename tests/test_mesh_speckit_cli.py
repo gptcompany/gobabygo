@@ -811,6 +811,8 @@ def test_install_plan_requires_exact_locked_version(monkeypatch, tmp_path) -> No
     uv = tmp_path / "uv"
     uv.write_text("", encoding="utf-8")
     monkeypatch.setattr(module.shutil, "which", lambda name: str(uv) if name == "uv" else None)
+    tool_bin = tmp_path / "tool-bin"
+    monkeypatch.setattr(module, "_uv_tool_bin", lambda _uv: tool_bin)
 
     with pytest.raises(module.SpeckitRuntimeError, match="does not match lock"):
         module.build_install_plan("0.16.6", lock)
@@ -819,8 +821,41 @@ def test_install_plan_requires_exact_locked_version(monkeypatch, tmp_path) -> No
 
     plan = module.build_install_plan("v0.16.5", lock)
     assert plan["commands"][0][-1].endswith("@v0.16.5")
-    assert Path(plan["commands"][1][0]).is_absolute()
-    assert Path(plan["commands"][1][0]).name == "specify"
+    assert plan["commands"][1][0] == str(tool_bin / "specify")
+
+
+def test_install_plan_ignores_stale_specify_on_path(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    lock = module.load_lock(_lock(tmp_path / "lock.json"))
+    uv = tmp_path / "uv"
+    uv.write_text("", encoding="utf-8")
+    stale = tmp_path / "stale" / "specify"
+    tool_bin = tmp_path / "uv-tools"
+    monkeypatch.setattr(
+        module.shutil,
+        "which",
+        lambda name: str(uv) if name == "uv" else str(stale),
+    )
+    monkeypatch.setattr(module, "_uv_tool_bin", lambda _uv: tool_bin)
+
+    plan = module.build_install_plan("0.16.5", lock)
+
+    assert plan["commands"][1] == [str(tool_bin / "specify"), "check"]
+
+
+@pytest.mark.parametrize("output", ["", "relative/bin\n", "/one\n/two\n"])
+def test_uv_tool_bin_rejects_invalid_output(monkeypatch, output) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module,
+        "_run_command",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["uv", "tool", "dir", "--bin"], 0, stdout=output, stderr=""
+        ),
+    )
+
+    with pytest.raises(module.SpeckitRuntimeError, match="tool bin directory"):
+        module._uv_tool_bin("/usr/bin/uv")
 
 
 def test_install_apply_stops_on_first_failure(monkeypatch) -> None:
@@ -2007,6 +2042,7 @@ def test_cli_install_without_apply_only_prints_plan(monkeypatch, tmp_path, capsy
     uv = tmp_path / "uv"
     uv.write_text("", encoding="utf-8")
     monkeypatch.setattr(module.shutil, "which", lambda name: str(uv) if name == "uv" else None)
+    monkeypatch.setattr(module, "_uv_tool_bin", lambda _uv: tmp_path / "tool-bin")
     monkeypatch.setattr(
         module,
         "apply_install_plan",

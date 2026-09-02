@@ -168,6 +168,24 @@ def _specify_executable() -> str | None:
     return None
 
 
+def _uv_tool_bin(uv: str) -> Path:
+    proc = _run_command([uv, "tool", "dir", "--bin"], timeout=30)
+    value = proc.stdout.strip()
+    if (
+        proc.returncode != 0
+        or not value
+        or len(value) > 4096
+        or "\n" in value
+        or "\r" in value
+        or "\x00" in value
+    ):
+        raise SpeckitRuntimeError("uv did not report a valid tool bin directory")
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise SpeckitRuntimeError("uv tool bin directory must be absolute")
+    return path
+
+
 def _version_from_text(value: str) -> str | None:
     match = _VERSION.search(str(value or ""))
     if match is None:
@@ -1051,7 +1069,7 @@ def build_install_plan(version: str, lock: dict[str, Any]) -> dict[str, Any]:
     uv = shutil.which("uv") or str(Path("~/.local/bin/uv").expanduser())
     if not Path(uv).is_file() and shutil.which("uv") is None:
         raise SpeckitRuntimeError("uv is required to install the pinned Spec Kit CLI")
-    specify = _specify_executable() or str(Path("~/.local/bin/specify").expanduser())
+    specify = str(_uv_tool_bin(uv) / "specify")
     return {
         "schema": "mesh.speckit.install-plan.v1",
         "version": requested,
