@@ -751,6 +751,21 @@ def test_remote_send_accepts_unchanged_dim_claude_suggestion(monkeypatch) -> Non
     assert send_indexes and capture_index < min(send_indexes)
 
 
+@pytest.mark.parametrize("field", ["enter", "allow_coordinator_wrapper"])
+def test_remote_send_rejects_string_boolean_fields(field: str) -> None:
+    module = _load_module()
+    payload = {
+        "op": "send",
+        "target": {"owner": "sam", "name": "worker", "pane_id": "%2"},
+        "text": "review",
+        "enter": True,
+        field: "false",
+    }
+
+    with pytest.raises(ValueError, match=rf"{field} must be a boolean"):
+        module.handle_remote_request(payload)
+
+
 def test_codex_preflight_capture_preserves_terminal_style(monkeypatch) -> None:
     module = _load_module()
     commands: list[list[str]] = []

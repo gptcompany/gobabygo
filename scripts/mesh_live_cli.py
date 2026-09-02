@@ -339,6 +339,13 @@ def validate_send_text(text: str, *, enter: bool) -> str:
     return value
 
 
+def _payload_bool(payload: dict[str, Any], field: str) -> bool:
+    value = payload.get(field, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a boolean")
+    return value
+
+
 def validate_delegation_id(value: str) -> str:
     delegation_id = str(value or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}", delegation_id):
@@ -1362,13 +1369,15 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         target = payload.get("target")
         if not isinstance(target, dict):
             raise ValueError("send target must be an object")
-        enter = bool(payload.get("enter"))
+        enter = _payload_bool(payload, "enter")
         text = validate_send_text(str(payload.get("text") or ""), enter=enter)
         raw_expected = payload.get("expected_commands", [])
         if not isinstance(raw_expected, list) or len(raw_expected) > 8:
             raise ValueError("expected_commands must be a bounded list")
         expected_commands = tuple(str(item or "").strip() for item in raw_expected)
-        allow_coordinator_wrapper = bool(payload.get("allow_coordinator_wrapper"))
+        allow_coordinator_wrapper = _payload_bool(
+            payload, "allow_coordinator_wrapper"
+        )
         raw_delegation_id = str(payload.get("delegation_id") or "").strip()
         expected_claude_composer = str(
             payload.get("expected_claude_composer") or ""
