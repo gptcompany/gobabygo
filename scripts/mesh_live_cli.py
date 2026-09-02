@@ -2642,17 +2642,6 @@ def _tick_session_limit_wake_message(token: str, speckit_update_notice: str = ""
     )
 
 
-def _screen_contains_submitted_session_limit_wake(screen: str, token: str) -> bool:
-    if not re.fullmatch(r"[a-f0-9]{16}", str(token or "")):
-        return False
-    marker = f"MESH_LIVE_RESET_WAKE id={token}:"
-    return any(
-        marker in line
-        and not line.replace("\xa0", " ").lstrip().startswith("❯")
-        for line in str(screen or "").splitlines()
-    )
-
-
 def _tick_session_limit_fingerprint(
     session: LiveSession,
     reset_label: str,
@@ -3321,16 +3310,7 @@ def execute_live_tick_actions(
                 if verify_delay > 0:
                     sleep_fn(verify_delay)
                 post = _capture_one_for_tick(client, fresh, lines)
-                post_state = classify_screen(
-                    "claude", _claude_screen_without_suggestion(post)
-                )
-                verified = post_state == LiveScreenState.busy and (
-                    bool(pending_composer_fingerprint)
-                    or _screen_contains_submitted_session_limit_wake(
-                        post.output, token
-                    )
-                )
-                saved["session_limit_verified"] = verified
+                saved["session_limit_verified"] = False
                 results.append(
                     TickActionResult(
                         owner=session.owner,
@@ -3339,11 +3319,9 @@ def execute_live_tick_actions(
                         action="wake_after_reset",
                         status="applied",
                         reason=(
-                            "post-reset wake delivered"
-                            if verified
-                            else "post-reset wake sent; delivery unverified"
+                            "post-reset wake sent; delivery requires a subsequent observation"
                         ),
-                        verified=verified,
+                        verified=False,
                         not_before=not_before,
                     )
                 )

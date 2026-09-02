@@ -4419,28 +4419,10 @@ def test_live_tick_replaces_dim_claude_suggestion_with_fixed_reset_wake() -> Non
     assert changed is True
     assert len(client.sends) == 1
     assert results[0].status == "applied"
-    assert results[0].verified is True
+    assert results[0].verified is False
     assert state["sessions"]["sam/claude-coordinator"][
         "session_limit_pending_composer"
     ] is False
-
-
-def test_session_limit_wake_verification_requires_its_exact_token() -> None:
-    module = _load_module()
-    token = "0123456789abcdef"
-
-    assert not module._screen_contains_submitted_session_limit_wake(
-        "✻ Unrelated work is running\n❯ ", token
-    )
-    assert not module._screen_contains_submitted_session_limit_wake(
-        "MESH_LIVE_RESET_WAKE id=fedcba9876543210:", token
-    )
-    assert not module._screen_contains_submitted_session_limit_wake(
-        f"❯ MESH_LIVE_RESET_WAKE id={token}: resume", token
-    )
-    assert module._screen_contains_submitted_session_limit_wake(
-        f"MESH_LIVE_RESET_WAKE id={token}: resume\n● Running checks", token
-    )
 
 
 def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
@@ -4528,7 +4510,7 @@ def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
     assert changed is True
     assert second.sends == [("", True)]
     assert results[0].status == "applied"
-    assert results[0].verified is True
+    assert results[0].verified is False
     assert "speckit_update_reported_version" not in state
 
     repeated = PendingClient([screen])
@@ -4538,7 +4520,7 @@ def test_live_tick_resumes_stable_pending_coordinator_prompt_once() -> None:
         {session.key},
         state=state,
         lines=160,
-        now=now + 600,
+        now=now + 301,
         min_wake_minutes=25,
         wait_retry_minutes=60,
         verify_delay=0,
@@ -5074,7 +5056,7 @@ def test_live_tick_resumes_empty_claude_worker_from_persisted_vendor_schedule() 
         verify_delay=0,
     )
     assert results[0].status == "applied"
-    assert results[0].verified is True
+    assert results[0].verified is False
     assert wake.sends[0][0].startswith("MESH_LIVE_RESET_WAKE id=")
     assert wake.sends[0][1:] == (True, False)
 
@@ -5294,14 +5276,14 @@ def test_live_tick_wakes_once_after_persisted_session_limit_reset() -> None:
 
     assert changed is True
     assert results[0].status == "applied"
-    assert results[0].verified is True
+    assert results[0].verified is False
     assert wake_client.sends[0].startswith("MESH_LIVE_RESET_WAKE id=")
     assert "Resume the interrupted request" in wake_client.sends[0]
     assert "completion requires the exact current marker and screen=idle" in wake_client.sends[0]
     assert "activity_age alone never authorizes rotation" in wake_client.sends[0]
     saved = state["sessions"]["sam/claude-coordinator"]
     assert saved["session_limit_attempted_at"] == due
-    assert saved["session_limit_verified"] is True
+    assert saved["session_limit_verified"] is False
 
     busy_session = module.replace(session, output="✻ Working\n❯ ")
     results, changed = module.execute_live_tick_actions(
