@@ -824,8 +824,11 @@ receive at most three Enter-only attempts in total, at least four minutes apart,
 so scheduler jitter cannot defer an eligible retry by an extra cron interval,
 only while every pane, process, banner, timezone, and composer fingerprint guard
 still matches and the previous delivery remains unverified. Each attempt is
-recorded before keyboard I/O. The tombstone is retained until a later tick
-observes that the pane is no longer on the exact session-limit screen,
+recorded before keyboard I/O. An immediate post-send capture is diagnostic
+only: terminal wrapping and redraw timing cannot prove submission. Delivery is
+therefore confirmed only when a later tick observes that the pane is no longer
+on the exact session-limit screen. The tombstone is retained until that later
+observation,
 preventing stale scrollback or changed input from triggering a duplicate.
 
 Install the opt-in 5-minute user cron from the clean Dell runtime, not from the
