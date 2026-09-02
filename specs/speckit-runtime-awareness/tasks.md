@@ -390,6 +390,207 @@ Done when:
 - a real historical Dell canary reaches aligned state without content loss
 - final reviewer checkout and control checkout remain clean
 
+### T013. Freeze and review the Spec Kit 1.0.3 upgrade backlog
+
+Status: done
+
+Depends on: T012
+
+Scope:
+
+- verify the latest stable release and upgrade contract from official sources
+- inventory the Mac and Dell CLI installations and every intended repository
+- separate CLI installation, manifest-aware integration upgrade, and legacy migration
+- define per-task rollback boundaries and a finite review stop condition
+- make no CLI, project, worker, tmux, or repository mutation during discovery
+
+Done when:
+
+- the target is the exact official tag `v1.0.3`, never a moving `latest` reference
+- the backlog reuses `specify integration upgrade` and existing Mesh migration guards
+- dirty and active repositories are explicitly excluded from automatic rollout
+- one independent plan review finds no unresolved high or medium issue
+
+### T014. Adapt the Mesh lifecycle to the pinned 1.0.3 contract
+
+Status: pending
+
+Depends on: T013
+
+Scope:
+
+- update the committed lock to `v1.0.3`
+- remove behavior and messages that are specific to the old `v0.16.5` multi-install path
+- inventory installed extensions without updating them; include an update only for
+  explicitly approved extension IDs, sources, and target versions
+- preserve plan-first execution, exact-version installation, clean-tree checks, locks, and stable-HEAD checks
+- update focused unit, wrapper, help, and documentation contract tests
+
+Done when:
+
+- dry-run output contains only exact, official, reviewable commands
+- installation and project mutation still require explicit `--apply`
+- absent or unapproved extensions do not introduce a network or mutation step
+- old manifest versions are reported as partial until upgraded
+
+### T015. Validate 1.0.3 in an isolated fixture
+
+Status: pending
+
+Depends on: T014
+
+Scope:
+
+- install the pinned CLI in an isolated tool environment before changing either workstation runtime
+- initialize a disposable Git fixture with Claude, Codex, and AGY
+- exercise status, capabilities, project upgrade, extension handling, and idempotent replay
+- compare generated paths with the 0.16.5 fixture and retain bounded evidence
+
+Done when:
+
+- all three integrations expose the required common skills
+- specs, plans, tasks, constitution, source, and Git history remain unchanged during upgrade
+- a second upgrade produces no unexpected managed-file changes
+- rollback removes only the disposable fixture and isolated tool environment
+
+### T016. Upgrade Gobabygo and the Dell runtime canary
+
+Status: pending
+
+Depends on: T015
+
+Scope:
+
+- upgrade the Mac CLI explicitly to the reviewed pin
+- upgrade Gobabygo's own integrations through the manifest-aware path
+- commit generated project changes separately from lifecycle implementation
+- fast-forward a clean Dell runtime and explicitly upgrade its CLI and project integrations
+- verify new and resumed coordinator contracts report required=installed=1.0.3
+
+Done when:
+
+- Mac and Dell report the same pinned CLI and Gobabygo capability set
+- both Gobabygo checkouts are clean at the reviewed revisions
+- downgrade commands and the previous Git revisions are recorded before rollout
+- no existing coordinator or worker pane is mutated by the upgrade tests
+
+### T017. Run a real development-orchestration E2E
+
+Status: pending
+
+Depends on: T016
+
+Scope:
+
+- create one disposable, non-production micro-feature through specify, plan, and tasks
+- have Claude coordinate, AGY implement one bounded change, and Codex review an immutable range
+- reconcile the authoritative task state to the existing GitHub Issue ledger
+- verify CI, issue closure, replay idempotence, resume, and capability injection
+
+Done when:
+
+- the workflow completes without direct worker ownership of task or issue state
+- evidence includes exact commits, task identity, review verdict, CI run, and ledger replay
+- no mocks or direct operator edits substitute for provider dispatch in the real E2E
+- all disposable remote and local artifacts have an explicit retention or cleanup decision
+
+### T018. Roll out one operational repository at a time
+
+Status: pending
+
+Depends on: T017
+
+Scope:
+
+- process `coordination`, `rektslug`, `UTXOracle`, `ccxt-data-pipeline`, `nautilus_dev`, `monitoring-stack`, and `progressive-deploy` independently
+- require a clean worktree, named branch, stable HEAD, reviewed dry-run, and repository-specific tests
+- use manifest-aware upgrade for initialized projects and existing guarded migration for legacy or missing projects
+- record the pre-upgrade revision and restoration command before each apply; on failure,
+  restore only files changed by that operation or stop with an explicit partial-state report
+- never batch repositories or resolve unrelated active work as part of this task
+
+Done when:
+
+- every migrated repository reports required=installed=manifest=1.0.3
+- each repository has its own reviewed diff and commit or a documented blocker
+- existing specs, constitutions, hooks, source, and custom skills are preserved
+- a failure in one repository does not block or partially mutate another
+
+### T019. Review, document, and close the 1.0.3 rollout
+
+Status: pending
+
+Depends on: T018
+
+Scope:
+
+- perform one exact-range independent review of lifecycle code and one review of generated rollout diffs
+- fix every high or medium finding with a separate commit and focused regression test
+- run focused suites, the full suite, Mac/Dell smoke tests, and the real E2E replay
+- align concise operator docs, push reviewed commits, and fast-forward clean runtimes
+
+Done when:
+
+- no high or medium finding remains after at most two review rounds total; otherwise
+  stop the rollout as blocked and record follow-up work
+- CI and the GitHub ledger are green and the documented commands match actual behavior
+- `required`, `installed`, and project manifests report `1.0.3`; `latest` remains
+  truthful read-only metadata and may report a newer release
+- future releases remain read-only notifications until another explicit reviewed upgrade
+
+## 1.0.3 Upgrade Plan Review
+
+Verdict: approved for incremental implementation with the constraints encoded in T013-T019.
+
+### R006. A major-version pin change is not a project upgrade
+
+Severity: high
+
+Changing only `config/speckit.lock.json` would make every existing project partial
+and could leave installed skills at 0.16.5. T014-T016 therefore treat CLI,
+Gobabygo project files, and downstream repository files as separate transitions.
+
+### R007. Operational repositories contain active work
+
+Severity: high
+
+The Dell inventory found dirty worktrees in `coordination`, `UTXOracle`,
+`ccxt-data-pipeline`, `nautilus_dev`, `monitoring-stack`, and
+`progressive-deploy`. T018 prohibits batching or touching any such repository
+until its own active work is resolved and its dry-run is reviewed.
+
+### R008. Upstream now provides a safer routine upgrade path
+
+Severity: medium
+
+Spec Kit 1.0.3 documents `specify integration upgrade <key>` as the default and
+`init --here --force` only as a fallback. Existing Mesh code already uses the
+manifest-aware command for initialized projects; T014 preserves it and limits
+the custom transactional copier to legacy adoption.
+
+### R009. Extension updates have a distinct trust boundary
+
+Severity: medium
+
+The official upgrade guide recommends updating installed extensions, but
+community extensions are independently maintained code. T014 inventories them
+without mutation and may update only explicitly approved IDs, sources, and
+target versions. It must never install a new extension, catalog, preset, bundle,
+or workflow during this version rollout.
+
+### R010. Review loops need a finite stop condition
+
+Severity: medium
+
+The rollout allows at most two review rounds total. If a high or medium finding
+remains after the second round, rollout stops as blocked and records follow-up
+work; low residual risks are recorded instead of extending review indefinitely.
+
+Independent review evidence: round one found four medium issues covering
+extension trust, per-repository rollback, the review bound, and moving `latest`
+metadata. The corrected second round returned `PASS` with no unresolved high or
+medium finding.
+
 ## Plan Review
 
 Verdict: approved for incremental implementation after the following corrections.
