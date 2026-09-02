@@ -820,6 +820,35 @@ _CODEX_ACTIVITY = re.compile(
     r"(?im)(?:working\s*\(|esc to interrupt|ctrl\+c to stop)"
 )
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_ANSI_SGR = re.compile(r"\x1b\[([0-9;]*)m")
+
+
+def _ansi_suffix_is_fully_dimmed(suffix: str) -> bool:
+    dimmed = False
+    saw_dimmed_text = False
+    cursor = 0
+    for match in _ANSI_SGR.finditer(suffix):
+        segment = suffix[cursor : match.start()]
+        if segment.strip(" \t\xa0"):
+            if not dimmed:
+                return False
+            saw_dimmed_text = True
+        raw_parameters = match.group(1)
+        parameters = [int(item or "0") for item in raw_parameters.split(";")]
+        for parameter in parameters:
+            if parameter == 0:
+                dimmed = False
+            elif parameter == 2:
+                dimmed = True
+            elif parameter == 22:
+                dimmed = False
+        cursor = match.end()
+    trailing = suffix[cursor:]
+    if trailing.strip(" \t\xa0"):
+        if not dimmed:
+            return False
+        saw_dimmed_text = True
+    return saw_dimmed_text and not dimmed
 
 
 def _claude_prompt_is_dim_suggestion(visible_screen: str) -> bool:
@@ -828,10 +857,7 @@ def _claude_prompt_is_dim_suggestion(visible_screen: str) -> bool:
             continue
         marker = line.rfind("❯")
         suffix = line[marker + 1 :]
-        return (
-            re.fullmatch(r"[ \xa0]*\x1b\[2m[^\r\n]+\x1b\[0m[ \t]*", suffix)
-            is not None
-        )
+        return _ansi_suffix_is_fully_dimmed(suffix)
     return False
 _CODEX_DIM_PLACEHOLDER = re.compile(r"\x1b\[2m[^\x1b\n]+\x1b\[0m\s*$")
 _CODEX_UNSAFE_INPUT = re.compile(

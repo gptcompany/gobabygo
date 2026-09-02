@@ -4312,6 +4312,18 @@ def test_claude_dim_prompt_suggestion_is_not_pending_operator_input() -> None:
     assert module._claude_prompt_is_dim_suggestion(
         "❯ DEC-11: operator input"
     ) is False
+    assert module._claude_prompt_is_dim_suggestion(
+        "❯\xa0\x1b[0;2mcombined suggestion\x1b[22m"
+    ) is True
+    assert module._claude_prompt_is_dim_suggestion(
+        "❯\xa0\x1b[2;37msuggestion\x1b[22;39m"
+    ) is True
+    assert module._claude_prompt_is_dim_suggestion(
+        "❯ operator \x1b[2msuggestion\x1b[0m"
+    ) is False
+    assert module._claude_prompt_is_dim_suggestion(
+        "❯\xa0\x1b[2munterminated suggestion"
+    ) is False
     session = module.LiveSession(
         owner="sam",
         name="claude-coordinator",
