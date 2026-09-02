@@ -872,6 +872,39 @@ def test_install_apply_stops_on_first_failure(monkeypatch) -> None:
     assert calls == [["uv", "install"]]
 
 
+def test_install_apply_verifies_the_planned_uv_tool_binary(monkeypatch) -> None:
+    module = _load_module()
+    exact = "/home/sam/.local/bin/specify"
+    plan = {
+        "version": "1.0.3",
+        "commands": [["uv", "install"], [exact, "check"]],
+    }
+    verified = []
+    monkeypatch.setattr(
+        module,
+        "_run_command",
+        lambda args, **_kwargs: subprocess.CompletedProcess(
+            args, 0, stdout="", stderr=""
+        ),
+    )
+
+    def version(*, executable=None):
+        verified.append(executable)
+        return {
+            "available": True,
+            "executable": executable,
+            "version": "1.0.3",
+            "error": None,
+        }
+
+    monkeypatch.setattr(module, "installed_version", version)
+
+    result = module.apply_install_plan(plan)
+
+    assert result["applied"] is True
+    assert verified == [exact]
+
+
 def test_project_init_plan_requires_clean_exact_git_root(
     monkeypatch, tmp_path
 ) -> None:

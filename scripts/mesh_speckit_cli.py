@@ -354,8 +354,10 @@ def _extension_inventory(root: Path) -> list[dict[str, Any]]:
 
 def installed_version(
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    *,
+    executable: str | None = None,
 ) -> dict[str, Any]:
-    executable = _specify_executable()
+    executable = executable or _specify_executable()
     if executable is None:
         return {"available": False, "executable": None, "version": None, "error": None}
     try:
@@ -1097,7 +1099,11 @@ def apply_install_plan(plan: dict[str, Any]) -> dict[str, Any]:
             raise SpeckitRuntimeError(
                 f"Spec Kit install command failed ({proc.returncode}): {' '.join(command)}"
             )
-    installed = installed_version()
+    try:
+        verify_executable = str(plan["commands"][1][0])
+    except (IndexError, KeyError, TypeError) as exc:
+        raise SpeckitRuntimeError("invalid Spec Kit install verification command") from exc
+    installed = installed_version(executable=verify_executable)
     if installed["version"] != plan["version"]:
         raise SpeckitRuntimeError(
             f"installed Spec Kit version {installed['version'] or 'unknown'} "
