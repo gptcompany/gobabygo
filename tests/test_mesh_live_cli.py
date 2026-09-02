@@ -4228,13 +4228,24 @@ def test_claude_dim_prompt_suggestion_is_not_pending_operator_input() -> None:
         prompt_suggestion=True,
     )
     assert module._session_pending_composer_fingerprint(session) == ""
+    assert module._claude_screen_without_suggestion(session) == "❯ "
+
+    operator_session = module.replace(session, prompt_suggestion=False)
+    assert (
+        module._claude_screen_without_suggestion(operator_session)
+        == operator_session.output
+    )
 
 
 def test_live_tick_replaces_dim_claude_suggestion_with_fixed_reset_wake() -> None:
     module = _load_module()
     now = datetime(2026, 8, 14, 5, 0, tzinfo=ZoneInfo("Asia/Bangkok")).timestamp()
-    screen = _claude_session_limit_with_pending_prompt(
-        "DEC-11: generated suggestion"
+    screen = (
+        "● Prior completed work\n"
+        "✻ Worked for 7m 14s · 1 shell still running\n\n"
+        + _claude_session_limit_with_pending_prompt(
+            "DEC-11: generated suggestion"
+        )
     )
     session = module.LiveSession(
         owner="sam",

@@ -2020,7 +2020,8 @@ def build_live_tick_plan(
             )
             continue
 
-        state = classify_screen("claude", session.output)
+        claude_screen = _claude_screen_without_suggestion(session)
+        state = classify_screen("claude", claude_screen)
         context_usage = claude_context_usage_percent(session.output) if is_coordinator else None
         compacting = is_coordinator and claude_compaction_in_progress(session.output)
         if session.capture_error:
@@ -2040,7 +2041,7 @@ def build_live_tick_plan(
                 action = "manual_rate_limit"
                 reason = "rate limit detected but WAIT selection is ambiguous"
         elif state == LiveScreenState.session_limit:
-            reset = session_limit_reset(session.output, allow_pending_prompt=True)
+            reset = session_limit_reset(claude_screen, allow_pending_prompt=True)
             if reset is None:
                 action = "none"
                 reason = "session-limit reset metadata is ambiguous"
@@ -2117,7 +2118,9 @@ def project_persisted_session_limit_schedules(
         if session is None or not isinstance(saved, dict):
             projected.append(observation)
             continue
-        reset = session_limit_reset(session.output, allow_pending_prompt=True)
+        reset = session_limit_reset(
+            _claude_screen_without_suggestion(session), allow_pending_prompt=True
+        )
         if reset is None:
             projected.append(observation)
             continue
@@ -2622,6 +2625,18 @@ def _session_pending_composer_fingerprint(session: LiveSession) -> str:
     return _claude_pending_composer_fingerprint(session.output)
 
 
+def _claude_screen_without_suggestion(session: LiveSession) -> str:
+    if not session.prompt_suggestion:
+        return session.output
+    lines = session.output.splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].replace("\xa0", " ").lstrip().startswith("❯"):
+            indentation = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+            lines[index] = f"{indentation}❯ "
+            break
+    return "\n".join(lines)
+
+
 def _clear_session_limit_state(saved: dict[str, Any]) -> bool:
     keys = (
         "session_limit_fingerprint",
@@ -2849,7 +2864,9 @@ def execute_live_tick_actions(
                 )
                 continue
 
-            fresh_state = classify_screen("claude", fresh.output)
+            fresh_state = classify_screen(
+                "claude", _claude_screen_without_suggestion(fresh)
+            )
             if observation.proposed_action == "recover_coordinator_wake":
                 wake_token = str(saved.get("last_wake_token") or "")
                 if (
@@ -2892,7 +2909,12 @@ def execute_live_tick_actions(
                 if verify_delay > 0:
                     sleep_fn(verify_delay)
                 post = _capture_one_for_tick(client, fresh, lines)
-                verified = classify_screen("claude", post.output) == LiveScreenState.busy
+                verified = (
+                    classify_screen(
+                        "claude", _claude_screen_without_suggestion(post)
+                    )
+                    == LiveScreenState.busy
+                )
                 saved["wake_recovery_verified"] = verified
                 results.append(
                     TickActionResult(
@@ -3032,7 +3054,8 @@ def execute_live_tick_actions(
                         "pane current command is not Claude before scheduled wake"
                     )
                 reset = session_limit_reset(
-                    fresh.output, allow_pending_prompt=observation.coordinator
+                    _claude_screen_without_suggestion(fresh),
+                    allow_pending_prompt=observation.coordinator,
                 )
                 if fresh_state != LiveScreenState.session_limit or reset is None:
                     raise LiveReadError("session-limit screen changed before scheduled wake")
@@ -3191,7 +3214,9 @@ def execute_live_tick_actions(
                 if verify_delay > 0:
                     sleep_fn(verify_delay)
                 post = _capture_one_for_tick(client, fresh, lines)
-                post_state = classify_screen("claude", post.output)
+                post_state = classify_screen(
+                    "claude", _claude_screen_without_suggestion(post)
+                )
                 verified = post_state == LiveScreenState.busy
                 saved["session_limit_verified"] = verified
                 results.append(
@@ -3267,7 +3292,9 @@ def execute_live_tick_actions(
             if verify_delay > 0:
                 sleep_fn(verify_delay)
             post = _capture_one_for_tick(client, fresh, lines)
-            post_state = classify_screen("claude", post.output)
+            post_state = classify_screen(
+                "claude", _claude_screen_without_suggestion(post)
+            )
             verified = post_state == LiveScreenState.busy
             saved["last_wake_verified"] = verified
             results.append(
