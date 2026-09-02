@@ -24,3 +24,23 @@ Date: 2026-09-02
 
 No operational worker session, coordination repository, or downstream project
 was mutated during this canary.
+
+## Rollback Boundary
+
+- Last pre-rollout Gobabygo runtime revision: `ba6994df079cf59db4aaa67381dac7d046f2d0bd`.
+- Last revision before generated project integration changes:
+  `3b15830f71864995bf362925b116f3ef46b380a5`.
+- Exact CLI downgrade, if the runtime is first redeployed from the reviewed
+  pre-rollout revision:
+
+  ```bash
+  uv tool install --force specify-cli \
+    --from git+https://github.com/github/spec-kit.git@v0.16.5
+  ~/.local/bin/specify check
+  ```
+
+Rollback is a separate reviewed deployment: create or select a clean checkout
+at the immutable pre-rollout revision, run its pinned install plan, verify
+`required=installed=manifest=0.16.5`, and then switch the runtime entry point.
+Do not use `git reset --hard`, downgrade only the CLI under 1.0.3 code, or apply
+this procedure inside an operational or dirty repository.

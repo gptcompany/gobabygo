@@ -33,6 +33,17 @@ def test_speckit_migration_docs_include_single_owner_and_legacy_policy() -> None
         assert "Codex and AGY remain" in normalized
 
 
+def test_speckit_103_canary_records_a_non_destructive_rollback_boundary() -> None:
+    evidence = (
+        ROOT / "specs" / "speckit-runtime-awareness" / "deployment-1.0.3.md"
+    ).read_text(encoding="utf-8")
+
+    assert "ba6994df079cf59db4aaa67381dac7d046f2d0bd" in evidence
+    assert "3b15830f71864995bf362925b116f3ef46b380a5" in evidence
+    assert "github/spec-kit.git@v0.16.5" in evidence
+    assert "Do not use `git reset --hard`" in evidence
+
+
 def test_mesh_live_runbook_covers_operator_contract() -> None:
     runbook = (ROOT / "MESH_LIVE.md").read_text(encoding="utf-8")
     normalized = " ".join(runbook.split())
