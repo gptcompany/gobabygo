@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -715,9 +716,18 @@ def parse_github_remote(remote: str) -> str:
 
 
 def _default_run(args: tuple[str, ...], input_text: str | None = None) -> CommandResult:
+    command = args
+    if args and args[0] == "gh":
+        user_gh = Path("~/.local/bin/gh").expanduser()
+        executable = (
+            str(user_gh)
+            if user_gh.is_file() and os.access(user_gh, os.X_OK)
+            else shutil.which("gh") or "gh"
+        )
+        command = (executable, *args[1:])
     try:
         result = subprocess.run(
-            list(args),
+            list(command),
             input=input_text,
             text=True,
             capture_output=True,

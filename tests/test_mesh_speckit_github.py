@@ -504,6 +504,29 @@ def test_gh_client_checks_version_and_parses_paginated_issues(module) -> None:
     assert len(calls) == 2
 
 
+def test_default_run_prefers_user_local_gh_for_noninteractive_shells(
+    module, monkeypatch, tmp_path
+) -> None:
+    home = tmp_path / "home"
+    user_gh = home / ".local" / "bin" / "gh"
+    user_gh.parent.mkdir(parents=True)
+    user_gh.write_text("", encoding="utf-8")
+    user_gh.chmod(0o700)
+    calls = []
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda args, **_kwargs: calls.append(args)
+        or subprocess.CompletedProcess(args, 0, stdout="gh version 2.99.0\n", stderr=""),
+    )
+
+    result = module._default_run(("gh", "version"))
+
+    assert result.returncode == 0
+    assert calls == [[str(user_gh), "version"]]
+
+
 def test_gh_client_rejects_old_version_and_malformed_or_oversized_output(module) -> None:
     old = module.GhClient(
         "owner/repo",
