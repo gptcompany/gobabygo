@@ -1441,6 +1441,20 @@ def _apply_upgrade_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, An
     if _git_head(root) != plan.get("base_head"):
         raise SpeckitRuntimeError("project HEAD changed after upgrade planning")
     _require_pinned_runtime(str(plan.get("required_version", "")))
+    volatile_backups: dict[Path, tuple[bytes, int]] = {}
+    volatile_paths = [root / _VOLATILE_WORKFLOW_REGISTRY]
+    volatile_paths.extend(
+        sorted((root / ".specify" / "integrations").glob("*.manifest.json"))
+    )
+    for path in volatile_paths:
+        if not path.exists():
+            continue
+        if path.is_symlink() or not path.is_file():
+            raise SpeckitRuntimeError(f"invalid volatile metadata path: {path}")
+        data = path.read_bytes()
+        if len(data) > _MAX_MIGRATION_FILE_BYTES:
+            raise SpeckitRuntimeError(f"volatile metadata exceeds size limit: {path}")
+        volatile_backups[path] = (data, path.stat().st_mode & 0o777)
     results: list[dict[str, Any]] = []
     for command in plan["commands"]:
         if _git_head(root) != plan.get("base_head"):
@@ -1457,6 +1471,15 @@ def _apply_upgrade_plan_locked(plan: dict[str, Any], root: Path) -> dict[str, An
                 f"Spec Kit project command failed ({proc.returncode}); "
                 f"partial changed paths: {', '.join(changed) or '-'}"
             )
+    for path, backup in volatile_backups.items():
+        if not path.is_file() or path.is_symlink():
+            continue
+        current = path.read_bytes()
+        relative = path.relative_to(root).as_posix()
+        if current != backup[0] and _normalized_generated_digest(
+            current, relative
+        ) == _normalized_generated_digest(backup[0], relative):
+            _restore_migration_file(path, backup)
     changed = _git_status(root)
     return {**plan, "applied": True, "results": results, "changed_paths": changed}
 

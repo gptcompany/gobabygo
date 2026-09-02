@@ -1890,6 +1890,51 @@ def test_project_apply_reports_partial_changed_paths(monkeypatch, tmp_path) -> N
         module.apply_project_plan(plan)
 
 
+def test_project_upgrade_restores_timestamp_only_manifest_churn(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "repo")
+    manifest = repo / ".specify" / "integrations" / "claude.manifest.json"
+    manifest.parent.mkdir(parents=True)
+    original = {
+        "integration": "claude",
+        "version": "1.0.3",
+        "installed_at": "2026-09-02T10:00:00+00:00",
+        "files": {},
+    }
+    manifest.write_text(json.dumps(original), encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", ".specify"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "manifest"], check=True)
+    plan = {
+        "action": "upgrade",
+        "repo": str(repo),
+        "required_version": "1.0.3",
+        "base_head": module._git_head(repo),
+        "commands": [["specify", "integration", "upgrade", "claude"]],
+    }
+    monkeypatch.setattr(
+        module,
+        "installed_version",
+        lambda: {"available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None},
+    )
+    real_run = module._run_command
+
+    def fake_run(args, **kwargs):
+        if args[0] == "git":
+            return real_run(args, **kwargs)
+        changed = {**original, "installed_at": "2026-09-02T11:00:00+00:00"}
+        manifest.write_text(json.dumps(changed), encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    result = module.apply_project_plan(plan)
+
+    assert result["changed_paths"] == []
+    assert json.loads(manifest.read_text(encoding="utf-8")) == original
+
+
 def test_project_apply_refuses_runtime_drift_before_commands(monkeypatch, tmp_path) -> None:
     module = _load_module()
     repo = _git_repo(tmp_path / "repo")
