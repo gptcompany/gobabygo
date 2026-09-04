@@ -469,6 +469,7 @@ $tmux_create
 $tmux_history
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
+  tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_ROOT \"\$TARGET_DIR\"
   if [[ -n \"\$RESUME_ID\" ]]; then
     tmux set-environment -t \"\$SESSION\" MESH_LIVE_CLAUDE_RESUME_ID \"\$RESUME_ID\"
   fi
@@ -721,6 +722,7 @@ $tmux_create
 $tmux_history
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
+  tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_ROOT \"\$TARGET_DIR\"
   if [[ -n \"\$RESUME_ID\" ]]; then
     tmux set-environment -t \"\$SESSION\" MESH_LIVE_CLAUDE_RESUME_ID \"\$RESUME_ID\"
   fi

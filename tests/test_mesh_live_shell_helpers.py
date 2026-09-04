@@ -1185,6 +1185,7 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
     command = capture.read_text(encoding="utf-8")
     assert "MESH_LIVE_COORDINATOR=1" in command
     assert "MESH_LIVE_CLAUDE_RESUME_ID" in command
+    assert "MESH_LIVE_COORDINATOR_ROOT" in command
     assert "flock -n 9" in command
     assert "eval $startup_q" in command
     assert "bash -lc $startup_q" not in command

@@ -713,6 +713,25 @@ records the same transitions under the same lock before evaluating its existing
 guarded actions, so the installed cron does not need a second entry, daemon,
 database, router, or iTerm2 dependency.
 
+For a marked coordinator whose Claude process has exited, the supervisor reports
+`coordinator_not_running_recoverable` only when the tmux session contains an
+exact resume UUID, its recorded absolute Git root equals the current pane path,
+and `MESH_LIVE_COORDINATOR_RECOVERY_HOLD` is not `1`. The normal two-observation
+debounce applies. This is report-only: tick never starts Claude, injects its
+contract again, or replaces the tmux session. Missing or malformed metadata,
+root drift, and an operator hold all fail closed as
+`coordinator_not_running`. On the workstation, an operator can set or clear
+the hold without changing pane content:
+
+```bash
+tmux set-environment -t claude-coordinator MESH_LIVE_COORDINATOR_RECOVERY_HOLD 1
+tmux set-environment -u -t claude-coordinator MESH_LIVE_COORDINATOR_RECOVERY_HOLD
+```
+
+Coordinator sessions created by the helpers record their root. Deterministic
+recovery additionally requires an explicit `mcoordinator --resume <UUID>`;
+legacy and `--continue` sessions without an exact UUID remain manual.
+
 Tick and supervisor JSON expose `provider`, `schedule_source`, and `not_before`
 without requiring prose parsing. `not_before` is an epoch timestamp; concise
 terminal output renders it as UTC ISO-8601 so Mac, Dell, and CI agree. Current

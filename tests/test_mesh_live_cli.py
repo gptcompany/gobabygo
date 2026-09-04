@@ -107,6 +107,20 @@ def test_reader_recognizes_single_claude_child_only_for_marked_coordinator(
             )
         if args[-1] == "MESH_LIVE_COORDINATOR":
             return _completed(args, stdout="MESH_LIVE_COORDINATOR=1\n" if marked else "\n")
+        if args[-1] == "MESH_LIVE_CLAUDE_RESUME_ID":
+            return _completed(
+                args,
+                stdout=(
+                    "MESH_LIVE_CLAUDE_RESUME_ID="
+                    "8e34759f-4706-4573-8dff-353749499ffe\n"
+                ),
+            )
+        if args[-1] == "MESH_LIVE_COORDINATOR_ROOT":
+            return _completed(
+                args, stdout="MESH_LIVE_COORDINATOR_ROOT=/data/sata/1TB\n"
+            )
+        if args[-1] == "MESH_LIVE_COORDINATOR_RECOVERY_HOLD":
+            return _completed(args)
         if args[-1] in {"MESH_UI_ROLE", "MESH_UI_REPO_NAME"}:
             return _completed(args)
         if args[:3] == ["ps", "-axo", "pid=,ppid=,comm="]:
@@ -120,6 +134,11 @@ def test_reader_recognizes_single_claude_child_only_for_marked_coordinator(
         module.handle_remote_request({"op": "discover", "users": ["sam"]})["sessions"][0]
     )
     assert marked_session.pane_child_command == "claude"
+    assert (
+        marked_session.coordinator_resume_id
+        == "8e34759f-4706-4573-8dff-353749499ffe"
+    )
+    assert marked_session.coordinator_root == "/data/sata/1TB"
     assert module._is_running_claude(marked_session) is True
 
     marked = False
@@ -4097,6 +4116,115 @@ def test_supervisor_marks_coordinator_awaiting_input_as_warning() -> None:
 
     assert signal.state == "coordinator_awaiting_input"
     assert signal.severity == "warning"
+
+
+def test_supervisor_confirms_recoverable_stopped_coordinator_without_acting() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_path="/data/sata/1TB/coordination",
+        pane_command="bash",
+        coordinator_resume_id="8e34759f-4706-4573-8dff-353749499ffe",
+        coordinator_root="/data/sata/1TB/coordination",
+        output="$ ",
+    )
+    observations = module.build_live_tick_plan(
+        [coordinator], {coordinator.key}, now=100
+    )
+    state = {"version": 1, "sessions": {}}
+
+    first, _ = module.observe_live_supervisor(
+        observations,
+        [coordinator],
+        {coordinator.key},
+        state,
+        now=100,
+        confirmations=2,
+    )
+    second, _ = module.observe_live_supervisor(
+        observations,
+        [coordinator],
+        {coordinator.key},
+        state,
+        now=130,
+        confirmations=2,
+    )
+
+    signal = next(item for item in second.signals if item.key.endswith("claude-coordinator"))
+    assert signal.state == "coordinator_not_running_recoverable"
+    assert "report-only" in signal.reason
+    assert first.events == ()
+    coordinator_events = [
+        item for item in second.events if item["key"].endswith("claude-coordinator")
+    ]
+    assert [(item["state"], item["severity"]) for item in coordinator_events] == [
+        ("coordinator_not_running_recoverable", "critical")
+    ]
+
+
+def test_live_session_parses_coordinator_recovery_metadata() -> None:
+    module = _load_module()
+
+    session = module.LiveSession.from_dict(
+        {
+            "owner": "sam",
+            "name": "claude-coordinator",
+            "coordinator_resume_id": "8e34759f-4706-4573-8dff-353749499ffe",
+            "coordinator_root": "/data/sata/1TB/coordination",
+            "coordinator_recovery_hold": True,
+        }
+    )
+
+    assert session.coordinator_resume_id == "8e34759f-4706-4573-8dff-353749499ffe"
+    assert session.coordinator_root == "/data/sata/1TB/coordination"
+    assert session.coordinator_recovery_hold is True
+
+
+@pytest.mark.parametrize(
+    ("resume_id", "root", "hold", "reason"),
+    [
+        ("not-a-uuid", "/data/sata/1TB/coordination", False, "invalid resume UUID"),
+        (
+            "8e34759f-4706-4573-8dff-353749499ffe",
+            "/data/sata/1TB/other",
+            False,
+            "root mismatch",
+        ),
+        (
+            "8e34759f-4706-4573-8dff-353749499ffe",
+            "/data/sata/1TB/coordination",
+            True,
+            "held by operator",
+        ),
+    ],
+)
+def test_supervisor_recovery_metadata_fails_closed(
+    resume_id: str, root: str, hold: bool, reason: str
+) -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_path="/data/sata/1TB/coordination",
+        pane_command="bash",
+        coordinator_resume_id=resume_id,
+        coordinator_root=root,
+        coordinator_recovery_hold=hold,
+        output="$ ",
+    )
+    observations = module.build_live_tick_plan(
+        [coordinator], {coordinator.key}, now=100
+    )
+    signals = module.build_live_supervisor_signals(
+        observations, [coordinator], {coordinator.key}
+    )
+    signal = next(item for item in signals if item.key.endswith("claude-coordinator"))
+
+    assert signal.state == "coordinator_not_running"
+    assert reason in signal.reason
 
 
 def test_supervisor_reports_current_claude_overload_without_waking() -> None:

@@ -52,6 +52,10 @@ MAX_CAPTURE_LINES = 2000
 MAX_SEND_CHARS = 8192
 _FIELD_SEPARATOR = "\x1f"
 _SAFE_USER = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*[$]?$")
+_CLAUDE_SESSION_ID = re.compile(
+    r"^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-"
+    r"[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$"
+)
 _REMOTE_PAYLOAD = globals().get("_MESH_LIVE_REMOTE_PAYLOAD")
 
 
@@ -73,6 +77,9 @@ class LiveSession:
     pane_dead: bool = False
     role: str = ""
     repo_name: str = ""
+    coordinator_resume_id: str = ""
+    coordinator_root: str = ""
+    coordinator_recovery_hold: bool = False
     output: str = ""
     capture_error: str = ""
 
@@ -99,6 +106,9 @@ class LiveSession:
             pane_dead=_as_bool(raw.get("pane_dead")),
             role=str(raw.get("role") or ""),
             repo_name=str(raw.get("repo_name") or ""),
+            coordinator_resume_id=str(raw.get("coordinator_resume_id") or ""),
+            coordinator_root=str(raw.get("coordinator_root") or ""),
+            coordinator_recovery_hold=_as_bool(raw.get("coordinator_recovery_hold")),
             output=str(raw.get("output") or ""),
             capture_error=str(raw.get("capture_error") or ""),
         )
@@ -475,6 +485,7 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
         name, created_at, activity_at, windows, attached = parts
         pane_id = pane_path = pane_command = pane_child_command = pane_dead = pane_pid = ""
         pane_child_pid = ""
+        wrapped_coordinator = False
         try:
             pane_proc = _run_command(
                 [*prefix, "tmux", "display-message", "-p", "-t", name, pane_format]
@@ -502,6 +513,22 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
 
         role = _tmux_environment(prefix, name, "MESH_UI_ROLE")
         repo_name = _tmux_environment(prefix, name, "MESH_UI_REPO_NAME")
+        coordinator_resume_id = ""
+        coordinator_root = ""
+        coordinator_recovery_hold = False
+        if wrapped_coordinator:
+            coordinator_resume_id = _tmux_environment(
+                prefix, name, "MESH_LIVE_CLAUDE_RESUME_ID"
+            )
+            coordinator_root = _tmux_environment(
+                prefix, name, "MESH_LIVE_COORDINATOR_ROOT"
+            )
+            coordinator_recovery_hold = (
+                _tmux_environment(
+                    prefix, name, "MESH_LIVE_COORDINATOR_RECOVERY_HOLD"
+                )
+                == "1"
+            )
         if not repo_name and pane_path:
             repo_name = Path(pane_path).name
         session_record = {
@@ -519,6 +546,12 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
             "role": role,
             "repo_name": repo_name,
         }
+        if coordinator_resume_id:
+            session_record["coordinator_resume_id"] = coordinator_resume_id
+        if coordinator_root:
+            session_record["coordinator_root"] = coordinator_root
+        if coordinator_recovery_hold:
+            session_record["coordinator_recovery_hold"] = True
         if _as_int(pane_pid) > 0:
             session_record["pane_pid"] = _as_int(pane_pid)
         if _as_int(pane_child_pid) > 0:
@@ -2416,6 +2449,24 @@ def _load_supervisor_api() -> tuple[Any, Callable[..., Any]]:
     return SupervisorSignal, record_transitions
 
 
+def _coordinator_recovery_assessment(session: LiveSession | None) -> tuple[bool, str]:
+    if session is None:
+        return False, "recovery unavailable: coordinator session metadata is missing"
+    if session.coordinator_recovery_hold:
+        return False, "recovery held by operator"
+    if not _CLAUDE_SESSION_ID.fullmatch(session.coordinator_resume_id):
+        return False, "recovery unavailable: missing or invalid resume UUID"
+    root = os.path.normpath(session.coordinator_root)
+    pane_path = os.path.normpath(session.pane_path)
+    if not os.path.isabs(root) or not os.path.isabs(pane_path) or root != pane_path:
+        return False, "recovery unavailable: coordinator root mismatch"
+    return (
+        True,
+        "report-only restart recommendation after confirmed incident; "
+        "no process or tmux input was changed",
+    )
+
+
 def build_live_supervisor_signals(
     observations: Sequence[TickObservation],
     all_sessions: Sequence[LiveSession],
@@ -2460,8 +2511,19 @@ def build_live_supervisor_signals(
         if item.reason == "capture_error":
             state, severity = "capture_error", "warning"
         elif item.reason == "pane current command is not Claude":
-            state = "coordinator_not_running" if item.coordinator else "provider_not_running"
+            recoverable, recovery_reason = _coordinator_recovery_assessment(
+                observed_session
+            )
+            state = (
+                "coordinator_not_running_recoverable"
+                if item.coordinator and recoverable
+                else "coordinator_not_running"
+                if item.coordinator
+                else "provider_not_running"
+            )
             severity = "critical" if item.coordinator else "warning"
+            if item.coordinator:
+                signal_reason = recovery_reason
         elif item.proposed_action == "manual_rate_limit":
             state, severity = "manual_rate_limit", "warning"
         elif "retry budget exhausted" in item.reason:
