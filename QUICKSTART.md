@@ -366,7 +366,9 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - an untracked, stale, mismatched, active, or ambiguous composer requires manual
   inspection; mesh live does not auto-clear it or send a naked Enter
 - on the Dell runtime, `mesh live tick` is read-only and `tick --apply` only
-  handles an exact selected Claude WAIT menu or wakes an exactly idle coordinator
+  performs its documented guarded provider/coordinator actions; a stopped
+  coordinator is recovered only with the additional `--recover-coordinator`
+  opt-in and complete recorded resume metadata
 - Claude reset timing comes only from an exact vendor minute/timezone persisted
   as `not_before`; Codex and AGY rate limits report `schedule_source=unsupported`
   and are never assigned guessed wake times. Passing `not_before` permits one
@@ -387,6 +389,8 @@ The concise, canonical operator path is [MESH_LIVE.md](MESH_LIVE.md). In short:
 - install optional 30-minute polling with
   `./scripts/install-mesh-live-cron.sh --mesh-script "$PWD/scripts/mesh"`; it
   defaults to the current tmux owner and must not target router-managed owners
+- add `--recover-coordinator` to that installer only when automatic recovery of
+  one detached, confirmed stopped coordinator is desired
 - tick state contains metadata only; use `install-mesh-live-cron.sh --remove`
   to remove its marked crontab block without touching unrelated entries
 

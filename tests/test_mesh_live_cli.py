@@ -4330,6 +4330,7 @@ def test_coordinator_recovery_plan_is_read_only(tmp_path: Path, monkeypatch) -> 
         ({"attached": 1}, "attached"),
         ({"windows": 2}, "exactly one tmux window"),
         ({"pane_child_pid": 99, "pane_child_command": "sleep"}, "active child"),
+        ({"capture_error": "tmux unavailable"}, "pane capture failed"),
     ],
 )
 def test_coordinator_recovery_refuses_unsafe_pane(
@@ -4525,6 +4526,81 @@ def test_coordinator_recovery_attempt_clears_only_after_stable_health(
     assert "coordinator_recovery_fingerprint" not in state["sessions"][key]
     assert "coordinator_recovery_attempted_at" not in state["sessions"][key]
     assert "coordinator_recovery_verified" not in state["sessions"][key]
+
+
+def test_automatic_coordinator_recovery_applies_one_confirmed_candidate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_module()
+    session = _recoverable_coordinator(module, tmp_path)
+    state = _confirmed_recovery_state(session)
+    calls: list[tuple[object, bool, float]] = []
+
+    def fake_recover(candidate, recovery_state, *, apply, now, **kwargs):
+        assert recovery_state is state
+        calls.append((candidate, apply, now))
+        return module.TickActionResult(
+            owner=candidate.owner,
+            name=candidate.name,
+            pane_id=candidate.pane_id,
+            action="recover_coordinator",
+            status="applied",
+            reason="verified",
+            verified=True,
+        )
+
+    monkeypatch.setattr(module, "recover_coordinator_session", fake_recover)
+
+    results = module.execute_confirmed_coordinator_recovery(
+        [session],
+        {session.key},
+        state,
+        state_file=str(tmp_path / "tick.json"),
+        persist_state=lambda _value: None,
+        now=123,
+    )
+
+    assert calls == [(session, True, 123)]
+    assert [(item.status, item.verified) for item in results] == [("applied", True)]
+
+
+def test_automatic_coordinator_recovery_refuses_ambiguous_candidates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_module()
+    first = _recoverable_coordinator(module, tmp_path)
+    second = module.replace(first, name="claude-other-coordinator", pane_id="%10")
+    state = _confirmed_recovery_state(first)
+    state["supervisor"]["signals"][f"session/{second.owner}/{second.name}"] = {
+        "stable_state": "coordinator_not_running_recoverable"
+    }
+    monkeypatch.setattr(
+        module,
+        "recover_coordinator_session",
+        lambda *args, **kwargs: pytest.fail("ambiguous recovery must not mutate tmux"),
+    )
+
+    results = module.execute_confirmed_coordinator_recovery(
+        [first, second],
+        {first.key, second.key},
+        state,
+        state_file=str(tmp_path / "tick.json"),
+        persist_state=lambda _value: None,
+        now=123,
+    )
+
+    assert len(results) == 2
+    assert all(item.status == "failed" for item in results)
+    assert all("multiple coordinators" in item.reason for item in results)
+
+
+def test_tick_auto_recovery_requires_apply() -> None:
+    module = _load_module()
+
+    with pytest.raises(SystemExit) as exc_info:
+        module._parse_args(["--local", "tick", "--recover-coordinator"])
+
+    assert exc_info.value.code == 2
 
 
 def test_coordinator_recovery_revalidates_pane_before_respawn(

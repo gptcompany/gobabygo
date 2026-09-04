@@ -639,7 +639,7 @@ def _capture_target(target: dict[str, Any], lines: int) -> tuple[dict[str, Any],
         identity = _run_command(
             [*prefix, "tmux", "display-message", "-p", "-t", tmux_target, identity_format]
         )
-        parts = identity.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 2)
+        parts = _split_tmux_fields(identity.stdout)
         if identity.returncode != 0 or len(parts) != 3 or parts[0] != name:
             result["error"] = "capture target identity changed"
             result["output"] = ""
@@ -690,7 +690,7 @@ def _send_target(
     if target_proc.returncode != 0:
         detail = (target_proc.stderr or target_proc.stdout or f"exit {target_proc.returncode}").strip()
         return {"error": detail}
-    target_parts = target_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 2)
+    target_parts = _split_tmux_fields(target_proc.stdout)
     if len(target_parts) not in {2, 3} or target_parts[0] != name:
         return {"error": "send target pane no longer belongs to the discovered session"}
     current_command = Path(target_parts[1]).name.lower()
@@ -746,7 +746,7 @@ def _send_target(
             return redact_capture(
                 (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
             )
-        parts = proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 2)
+        parts = _split_tmux_fields(proc.stdout)
         if len(parts) != 3 or parts[0] != name or parts[2] != expected_pane_pid:
             return "send target process identity changed"
         current = Path(parts[1]).name.lower()
@@ -867,7 +867,7 @@ def _capture_visible_target(
     if target_proc.returncode != 0:
         detail = (target_proc.stderr or target_proc.stdout or f"exit {target_proc.returncode}").strip()
         raise LiveReadError(detail)
-    target_parts = target_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR, 1)
+    target_parts = _split_tmux_fields(target_proc.stdout)
     if len(target_parts) != 2 or target_parts[0] != name:
         raise LiveReadError("recovery target pane no longer belongs to the discovered session")
 
@@ -2520,6 +2520,8 @@ def coordinator_recovery_refusal(
         or saved_signal.get("stable_state") != "coordinator_not_running_recoverable"
     ):
         return "recovery refused: coordinator exit is not a confirmed stable incident"
+    if session.capture_error:
+        return "recovery refused: current coordinator pane capture failed"
     if session.attached:
         return "recovery refused: coordinator tmux session is attached"
     if session.windows != 1:
@@ -2823,6 +2825,62 @@ def recover_coordinator_session(
         ),
         verified=verified,
     )
+
+
+def execute_confirmed_coordinator_recovery(
+    sessions: Sequence[LiveSession],
+    coordinator_keys: set[tuple[str, str]],
+    state: dict[str, Any],
+    *,
+    state_file: str,
+    persist_state: Callable[[dict[str, Any]], None],
+    now: float,
+) -> list[TickActionResult]:
+    candidates = [
+        session
+        for session in sessions
+        if session.key in coordinator_keys
+        and not coordinator_recovery_refusal(session, state)
+    ]
+    if not candidates:
+        return []
+    if len(candidates) > 1:
+        return [
+            TickActionResult(
+                owner=session.owner,
+                name=session.name,
+                pane_id=session.pane_id,
+                action="recover_coordinator",
+                status="failed",
+                reason="automatic recovery refused: multiple coordinators are eligible",
+                verified=False,
+            )
+            for session in candidates
+        ]
+    session = candidates[0]
+    try:
+        return [
+            recover_coordinator_session(
+                session,
+                state,
+                apply=True,
+                state_file=state_file,
+                now=now,
+                persist_state=persist_state,
+            )
+        ]
+    except (LiveReadError, OSError, subprocess.SubprocessError) as exc:
+        return [
+            TickActionResult(
+                owner=session.owner,
+                name=session.name,
+                pane_id=session.pane_id,
+                action="recover_coordinator",
+                status="failed",
+                reason=redact_capture(str(exc)),
+                verified=False,
+            )
+        ]
 
 
 def build_live_supervisor_signals(
@@ -5298,7 +5356,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=2,
         help="Consecutive identical observations required for a supervisor transition.",
     )
+    tick.add_argument(
+        "--recover-coordinator",
+        action="store_true",
+        help="With --apply, resume at most one confirmed stopped coordinator.",
+    )
     args = parser.parse_args(argv)
+    if args.cmd == "tick" and args.recover_coordinator and not args.apply:
+        parser.error("tick --recover-coordinator requires --apply")
     if args.cmd == "tick" and not args.users:
         args.users = _current_username()
     return args
@@ -5566,6 +5631,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     persist_state=lambda value: save_live_tick_state(args.state_file, value),
                     speckit_update_notice=speckit_update_notice,
                 )
+                if args.recover_coordinator:
+                    results.extend(
+                        execute_confirmed_coordinator_recovery(
+                            captured,
+                            coordinator_keys,
+                            state,
+                            state_file=args.state_file,
+                            persist_state=lambda value: save_live_tick_state(
+                                args.state_file, value
+                            ),
+                            now=observed_at,
+                        )
+                    )
                 snapshot = project_action_result_schedules(snapshot, results)
                 if changed or supervisor_changed or backoff_changed:
                     save_live_tick_state(args.state_file, state)

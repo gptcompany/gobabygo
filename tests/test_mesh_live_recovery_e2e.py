@@ -28,7 +28,10 @@ def _load_module():
     not all(shutil.which(command) for command in ("tmux", "git", "clang")),
     reason="tmux, git, and clang are required",
 )
-def test_real_tmux_coordinator_recovery(tmp_path: Path, monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("entrypoint", ["manual", "tick"])
+def test_real_tmux_coordinator_recovery(
+    tmp_path: Path, monkeypatch, capsys, entrypoint: str
+) -> None:
     module = _load_module()
     tmux_tmp = Path(tempfile.mkdtemp(prefix="mesh-tmux-", dir="/tmp"))
     tmux_tmp.chmod(0o700)
@@ -155,8 +158,8 @@ int main(int argc, char **argv) {
     args_file.unlink(missing_ok=True)
 
     try:
-        result = module.main(
-            [
+        if entrypoint == "manual":
+            argv = [
                 "--local",
                 "--users",
                 getpass.getuser(),
@@ -167,12 +170,37 @@ int main(int argc, char **argv) {
                 str(state_file),
                 "--json",
             ]
-        )
+        else:
+            argv = [
+                "--local",
+                "--users",
+                getpass.getuser(),
+                "tick",
+                "--apply",
+                "--recover-coordinator",
+                "--coordinator",
+                session_name,
+                "--verify-delay",
+                "0",
+                "--state-file",
+                str(state_file),
+                "--json",
+            ]
+        result = module.main(argv)
 
         assert result == 0
         payload = json.loads(capsys.readouterr().out)
-        assert payload["status"] == "applied"
-        assert payload["verified"] is True
+        recovery = (
+            payload
+            if entrypoint == "manual"
+            else next(
+                item
+                for item in payload["results"]
+                if item["action"] == "recover_coordinator"
+            )
+        )
+        assert recovery["status"] == "applied"
+        assert recovery["verified"] is True
         for _attempt in range(20):
             if args_file.exists() and args_file.stat().st_size:
                 break

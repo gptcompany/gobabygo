@@ -122,6 +122,21 @@ def test_cron_installer_dry_run_does_not_modify_crontab(tmp_path: Path) -> None:
     assert store.read_text(encoding="utf-8") == original
 
 
+def test_cron_installer_enables_coordinator_recovery_only_when_requested(
+    tmp_path: Path,
+) -> None:
+    env, store = _fake_crontab(tmp_path)
+
+    default = _run_installer(env, "--mesh-script", str(MESH), "--dry-run")
+    assert default.returncode == 0, default.stderr
+    assert "tick --apply --recover-coordinator" not in default.stdout
+
+    enabled = _run_installer(env, "--mesh-script", str(MESH), "--recover-coordinator")
+    assert enabled.returncode == 0, enabled.stderr
+    assert "tick --apply --recover-coordinator" in store.read_text(encoding="utf-8")
+    assert "Coordinator recovery: enabled" in enabled.stdout
+
+
 def test_cron_installer_rejects_unsafe_or_invalid_values(tmp_path: Path) -> None:
     env, _store = _fake_crontab(tmp_path)
 

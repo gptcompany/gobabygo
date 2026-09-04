@@ -546,7 +546,7 @@ Examples:
   ./scripts/mesh live coordinator-prompt --repo rektslug --session claude-rektslug-coordinator --worker codex-rektslug
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --observe --json
-  MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply [--recover-coordinator]
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
   ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
@@ -635,6 +635,8 @@ Behavior:
   recover-coordinator is local-only and plans by default. --apply requires a confirmed
   stopped, detached coordinator with exact resume/root/scope/workflow metadata, then
   revalidates and replaces only its idle shell pane. Set the tmux recovery hold to refuse it.
+  tick --apply --recover-coordinator applies the same guards to at most one coordinator;
+  the flag is opt-in and never inferred from an existing cron installation.
   attach uses mosh only for a reachable direct VPN/LAN host; SSH is the fallback.
   brief builds a best-effort redacted read-only prompt; review it before pasting.
   workflow show reads the canonical pipeline template without tmux or router access.

@@ -702,6 +702,7 @@ or uncertain.
 MESH_LIVE_LOCAL=1 mesh live tick --json
 MESH_LIVE_LOCAL=1 mesh live tick --observe --json
 MESH_LIVE_LOCAL=1 mesh live tick --apply
+MESH_LIVE_LOCAL=1 mesh live tick --apply --recover-coordinator
 ```
 
 `--observe` is the shadow supervisor path. It classifies only controlled tmux
@@ -719,11 +720,12 @@ For a marked coordinator whose Claude process has exited, the supervisor reports
 exact resume UUID, its recorded absolute Git root equals the current pane path,
 its scope and workflow metadata are valid, and
 `MESH_LIVE_COORDINATOR_RECOVERY_HOLD` is not `1`. The normal two-observation
-debounce applies. This is report-only: tick never starts Claude, injects its
-contract again, or replaces the tmux session. Missing or malformed metadata,
-root drift, and an operator hold all fail closed as
-`coordinator_not_running`. On the workstation, an operator can set or clear
-the hold without changing pane content:
+debounce applies. Tick remains report-only for coordinator exits unless
+`--apply --recover-coordinator` is explicitly enabled. Missing or malformed
+metadata, root drift, and an operator hold all fail closed as
+`coordinator_not_running`. This is report-only in every default and existing
+cron installation. On the workstation, an operator can set or clear the hold
+without changing pane content:
 
 ```bash
 tmux set-environment -t claude-coordinator MESH_LIVE_COORDINATOR_RECOVERY_HOLD 1
@@ -749,8 +751,9 @@ recorded contract. It revalidates tmux identity and markers immediately before
 the replacement shell, and verifies a running Claude child. A lock race returns
 the pane to an interactive shell. Unknown verification is not retried for the
 same incident. Two subsequent healthy supervisor observations close that
-incident so a later, distinct coordinator exit can be recovered. This command
-does not run automatically from cron.
+incident so a later, distinct coordinator exit can be recovered. The standalone
+command does not schedule itself; cron recovery requires explicit installer
+opt-in.
 
 Tick and supervisor JSON expose `provider`, `schedule_source`, and `not_before`
 without requiring prose parsing. `not_before` is an epoch timestamp; concise
@@ -775,7 +778,7 @@ When an idle coordinator's current visible output contains the exact standalone
 `manual_action_required` as a warning and does not wake it again. Similar prose
 and stale markers outside the bounded visible tail do not match.
 
-Apply mode has seven actions:
+Apply mode has eight actions; the eighth remains separately opt-in:
 
 1. It sends Enter only when the exact Claude rate-limit menu is present and
    `Stop and wait for limit to reset` is already the selected option.
@@ -829,6 +832,9 @@ Apply mode has seven actions:
    and 40 minute backoff; after four attempts the supervisor reports a critical
    manual action instead of sending again. Historical `529` text and plain
    `429` errors outside Claude's exact WAIT menu do not activate this policy.
+8. With `--recover-coordinator`, it applies the same recovery guards described
+   above to at most one confirmed coordinator. Multiple eligible coordinators
+   fail closed, and the recovery attempt is persisted before `respawn-pane`.
 
 New coordinator sessions disable terminal XON/XOFF with `stty -ixon` before
 launching Claude. This prevents an accidental `Ctrl+S` from freezing pane
@@ -888,6 +894,13 @@ cd /data/sata/1TB/gobabygo-runtime
 ./scripts/install-mesh-live-cron.sh --mesh-script "$PWD/scripts/mesh"
 crontab -l
 tail -f ~/.local/state/gobabygo/mesh-live-tick.log
+```
+
+Coordinator restart remains disabled in that default installation. Enable it
+deliberately only after creating the coordinator with an explicit resume UUID:
+
+```bash
+./scripts/install-mesh-live-cron.sh --mesh-script "$PWD/scripts/mesh" --recover-coordinator
 ```
 
 Preview or remove the managed crontab block without touching unrelated entries:

@@ -11,17 +11,20 @@ SPECKIT_STATE_FILE="${MESH_SPECKIT_UPDATE_STATE:-$HOME/.local/state/gobabygo/spe
 LOG_FILE="${MESH_LIVE_TICK_LOG:-$HOME/.local/state/gobabygo/mesh-live-tick.log}"
 DRY_RUN=0
 REMOVE=0
+RECOVER_COORDINATOR=0
 
 usage() {
   cat <<'EOF'
 Usage:
   install-mesh-live-cron.sh [--interval MINUTES] [--mesh-script PATH]
                             [--state-file PATH] [--speckit-state-file PATH]
-                            [--log-file PATH] [--dry-run]
+                            [--log-file PATH] [--recover-coordinator] [--dry-run]
   install-mesh-live-cron.sh --remove [--dry-run]
 
 Installs one idempotent user-crontab entry for `mesh live tick --apply`, including
 exact WAIT selection and one wake after an explicitly declared session reset.
+`--recover-coordinator` explicitly enables guarded recovery of at most one
+confirmed stopped coordinator; it is disabled by default.
 The same managed block runs one daily metadata-only Spec Kit update check.
 No daemon, router, database, iTerm2, or root access is required.
 EOF
@@ -67,6 +70,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || fail "--log-file requires a value"
       LOG_FILE="$2"
       shift 2
+      ;;
+    --recover-coordinator)
+      RECOVER_COORDINATOR=1
+      shift
       ;;
     --dry-run)
       DRY_RUN=1
@@ -132,9 +139,13 @@ awk -v begin="$BEGIN_MARKER" -v end="$END_MARKER" '
     quoted_state="$(quote_cron_arg "$STATE_FILE")"
     quoted_speckit_state="$(quote_cron_arg "$SPECKIT_STATE_FILE")"
     quoted_log="$(quote_cron_arg "$LOG_FILE")"
+    recovery_arg=""
+    if (( RECOVER_COORDINATOR )); then
+      recovery_arg=" --recover-coordinator"
+    fi
     printf '%s\n' "$BEGIN_MARKER"
-    printf '*/%s * * * * MESH_LIVE_LOCAL=1 %s live tick --apply --state-file %s >>%s 2>&1\n' \
-      "$INTERVAL" "$quoted_mesh" "$quoted_state" "$quoted_log"
+    printf '*/%s * * * * MESH_LIVE_LOCAL=1 %s live tick --apply%s --state-file %s >>%s 2>&1\n' \
+      "$INTERVAL" "$quoted_mesh" "$recovery_arg" "$quoted_state" "$quoted_log"
     printf '17 3 * * * MESH_SPECKIT_UPDATE_STATE=%s %s speckit update-check --json >>%s 2>&1\n' \
       "$quoted_speckit_state" "$quoted_mesh" "$quoted_log"
     printf '%s\n' "$END_MARKER"
@@ -157,6 +168,11 @@ if (( REMOVE )); then
   echo "Removed mesh live tick from the user crontab."
 else
   echo "Installed mesh live tick every ${INTERVAL} minutes."
+  if (( RECOVER_COORDINATOR )); then
+    echo "Coordinator recovery: enabled"
+  else
+    echo "Coordinator recovery: disabled"
+  fi
   echo "State: $STATE_FILE"
   echo "Spec Kit state: $SPECKIT_STATE_FILE"
   echo "Log:  $LOG_FILE"
