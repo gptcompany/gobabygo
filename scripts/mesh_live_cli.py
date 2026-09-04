@@ -79,6 +79,8 @@ class LiveSession:
     repo_name: str = ""
     coordinator_resume_id: str = ""
     coordinator_root: str = ""
+    coordinator_scope: str = ""
+    coordinator_workflow: str = ""
     coordinator_recovery_hold: bool = False
     output: str = ""
     capture_error: str = ""
@@ -108,6 +110,8 @@ class LiveSession:
             repo_name=str(raw.get("repo_name") or ""),
             coordinator_resume_id=str(raw.get("coordinator_resume_id") or ""),
             coordinator_root=str(raw.get("coordinator_root") or ""),
+            coordinator_scope=str(raw.get("coordinator_scope") or ""),
+            coordinator_workflow=str(raw.get("coordinator_workflow") or ""),
             coordinator_recovery_hold=_as_bool(raw.get("coordinator_recovery_hold")),
             output=str(raw.get("output") or ""),
             capture_error=str(raw.get("capture_error") or ""),
@@ -515,6 +519,8 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
         repo_name = _tmux_environment(prefix, name, "MESH_UI_REPO_NAME")
         coordinator_resume_id = ""
         coordinator_root = ""
+        coordinator_scope = ""
+        coordinator_workflow = ""
         coordinator_recovery_hold = False
         if wrapped_coordinator:
             coordinator_resume_id = _tmux_environment(
@@ -522,6 +528,12 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
             )
             coordinator_root = _tmux_environment(
                 prefix, name, "MESH_LIVE_COORDINATOR_ROOT"
+            )
+            coordinator_scope = _tmux_environment(
+                prefix, name, "MESH_LIVE_COORDINATOR_SCOPE"
+            )
+            coordinator_workflow = _tmux_environment(
+                prefix, name, "MESH_LIVE_COORDINATOR_WORKFLOW"
             )
             coordinator_recovery_hold = (
                 _tmux_environment(
@@ -550,6 +562,10 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
             session_record["coordinator_resume_id"] = coordinator_resume_id
         if coordinator_root:
             session_record["coordinator_root"] = coordinator_root
+        if coordinator_scope:
+            session_record["coordinator_scope"] = coordinator_scope
+        if coordinator_workflow:
+            session_record["coordinator_workflow"] = coordinator_workflow
         if coordinator_recovery_hold:
             session_record["coordinator_recovery_hold"] = True
         if _as_int(pane_pid) > 0:
@@ -2460,6 +2476,10 @@ def _coordinator_recovery_assessment(session: LiveSession | None) -> tuple[bool,
     pane_path = os.path.normpath(session.pane_path)
     if not os.path.isabs(root) or not os.path.isabs(pane_path) or root != pane_path:
         return False, "recovery unavailable: coordinator root mismatch"
+    if session.coordinator_scope not in {"all", "repository"}:
+        return False, "recovery unavailable: missing or invalid coordinator scope"
+    if session.coordinator_workflow not in {"direct", "speckit", "adaptive"}:
+        return False, "recovery unavailable: missing or invalid coordinator workflow"
     return (
         True,
         "report-only restart recommendation after confirmed incident; "

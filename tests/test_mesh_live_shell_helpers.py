@@ -565,7 +565,7 @@ def test_mcoordinator_resumes_with_fresh_gobabygo_contract(shell: str) -> None:
         f"""
 source {helper}
 _mesh_live_run() {{ printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'FRESH GOBABYGO CONTRACT'; }}
-_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nresume=%s\nkind=%s\n' "$1" "$2" "$3" "$4" "$5"; }}
+_ws_mosh_attach_or_start() {{ printf 'session=%s\ndir=%s\nstartup=%s\nresume=%s\nkind=%s\nscope=%s\nworkflow=%s\n' "$1" "$2" "$3" "$4" "$5" "$MESH_COORDINATOR_SCOPE" "$MESH_COORDINATOR_EFFECTIVE_WORKFLOW"; }}
 MESH_WS_REPO_BASE=/data/sata/1TB
 MESH_COORDINATOR_CLAUDE_CMD=claude
 mcoordinator --all --resume {resume_id}
@@ -586,6 +586,8 @@ mcoordinator --all --resume {resume_id}
     assert "FRESH" in lines[2]
     assert lines[3] == f"resume={resume_id}"
     assert lines[4] == "kind=coordinator"
+    assert lines[5] == "scope=all"
+    assert lines[6] == "workflow=adaptive"
 
 
 @pytest.mark.parametrize("shell", _shells())
@@ -1175,6 +1177,8 @@ source {helper}
 export CAPTURE_FILE={shlex.quote(str(capture))}
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 _ws_control_host() {{ printf '%s' 'dell-vpn'; }}
+export MESH_COORDINATOR_SCOPE=repository
+export MESH_COORDINATOR_EFFECTIVE_WORKFLOW=speckit
 _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
   'claude --resume b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c' \
   b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c coordinator
@@ -1186,6 +1190,8 @@ _ws_ssh_attach_or_start_once claude-coordinator /data/sata/1TB \
     assert "MESH_LIVE_COORDINATOR=1" in command
     assert "MESH_LIVE_CLAUDE_RESUME_ID" in command
     assert "MESH_LIVE_COORDINATOR_ROOT" in command
+    assert "MESH_LIVE_COORDINATOR_SCOPE" in command
+    assert "MESH_LIVE_COORDINATOR_WORKFLOW" in command
     assert "flock -n 9" in command
     assert "eval $startup_q" in command
     assert "bash -lc $startup_q" not in command

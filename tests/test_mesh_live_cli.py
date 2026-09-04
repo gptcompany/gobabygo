@@ -119,6 +119,10 @@ def test_reader_recognizes_single_claude_child_only_for_marked_coordinator(
             return _completed(
                 args, stdout="MESH_LIVE_COORDINATOR_ROOT=/data/sata/1TB\n"
             )
+        if args[-1] == "MESH_LIVE_COORDINATOR_SCOPE":
+            return _completed(args, stdout="MESH_LIVE_COORDINATOR_SCOPE=all\n")
+        if args[-1] == "MESH_LIVE_COORDINATOR_WORKFLOW":
+            return _completed(args, stdout="MESH_LIVE_COORDINATOR_WORKFLOW=speckit\n")
         if args[-1] == "MESH_LIVE_COORDINATOR_RECOVERY_HOLD":
             return _completed(args)
         if args[-1] in {"MESH_UI_ROLE", "MESH_UI_REPO_NAME"}:
@@ -139,6 +143,8 @@ def test_reader_recognizes_single_claude_child_only_for_marked_coordinator(
         == "8e34759f-4706-4573-8dff-353749499ffe"
     )
     assert marked_session.coordinator_root == "/data/sata/1TB"
+    assert marked_session.coordinator_scope == "all"
+    assert marked_session.coordinator_workflow == "speckit"
     assert module._is_running_claude(marked_session) is True
 
     marked = False
@@ -4128,6 +4134,8 @@ def test_supervisor_confirms_recoverable_stopped_coordinator_without_acting() ->
         pane_command="bash",
         coordinator_resume_id="8e34759f-4706-4573-8dff-353749499ffe",
         coordinator_root="/data/sata/1TB/coordination",
+        coordinator_scope="all",
+        coordinator_workflow="speckit",
         output="$ ",
     )
     observations = module.build_live_tick_plan(
@@ -4173,12 +4181,16 @@ def test_live_session_parses_coordinator_recovery_metadata() -> None:
             "name": "claude-coordinator",
             "coordinator_resume_id": "8e34759f-4706-4573-8dff-353749499ffe",
             "coordinator_root": "/data/sata/1TB/coordination",
+            "coordinator_scope": "all",
+            "coordinator_workflow": "speckit",
             "coordinator_recovery_hold": True,
         }
     )
 
     assert session.coordinator_resume_id == "8e34759f-4706-4573-8dff-353749499ffe"
     assert session.coordinator_root == "/data/sata/1TB/coordination"
+    assert session.coordinator_scope == "all"
+    assert session.coordinator_workflow == "speckit"
     assert session.coordinator_recovery_hold is True
 
 
@@ -4212,6 +4224,8 @@ def test_supervisor_recovery_metadata_fails_closed(
         pane_command="bash",
         coordinator_resume_id=resume_id,
         coordinator_root=root,
+        coordinator_scope="all",
+        coordinator_workflow="speckit",
         coordinator_recovery_hold=hold,
         output="$ ",
     )
@@ -4225,6 +4239,33 @@ def test_supervisor_recovery_metadata_fails_closed(
 
     assert signal.state == "coordinator_not_running"
     assert reason in signal.reason
+
+
+@pytest.mark.parametrize(
+    ("scope", "workflow", "reason"),
+    [
+        ("", "speckit", "coordinator scope"),
+        ("all", "unknown", "coordinator workflow"),
+    ],
+)
+def test_supervisor_recovery_requires_complete_contract_metadata(
+    scope: str, workflow: str, reason: str
+) -> None:
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_path="/data/sata/1TB/coordination",
+        coordinator_resume_id="8e34759f-4706-4573-8dff-353749499ffe",
+        coordinator_root="/data/sata/1TB/coordination",
+        coordinator_scope=scope,
+        coordinator_workflow=workflow,
+    )
+
+    recoverable, detail = module._coordinator_recovery_assessment(session)
+
+    assert recoverable is False
+    assert reason in detail
 
 
 def test_supervisor_reports_current_claude_overload_without_waking() -> None:

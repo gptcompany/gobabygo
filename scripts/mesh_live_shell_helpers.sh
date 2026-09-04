@@ -388,13 +388,15 @@ MESH_REMOTE_TMUX_HISTORY
 }
 
 _ws_ssh_attach_or_start_once() {
-  local session target_dir startup resume_id session_kind ws_host resume_guard locked_startup git_guard tmux_create tmux_history
+  local session target_dir startup resume_id session_kind coordinator_scope coordinator_workflow ws_host resume_guard locked_startup git_guard tmux_create tmux_history
   local -a ssh_opts=()
   session="$1"
   target_dir="$2"
   startup="$3"
   resume_id="${4:-}"
   session_kind="${5:-}"
+  coordinator_scope="${MESH_COORDINATOR_SCOPE:-}"
+  coordinator_workflow="${MESH_COORDINATOR_EFFECTIVE_WORKFLOW:-}"
   resume_guard="$(_ws_remote_resume_guard)"
   locked_startup="$(_ws_remote_locked_startup)"
   git_guard="$(_ws_remote_coordinator_git_guard)"
@@ -408,7 +410,7 @@ _ws_ssh_attach_or_start_once() {
     done < <(_mesh_collect_ssh_opts)
   fi
   command ssh "${ssh_opts[@]}" -t "$ws_host" \
-    "SESSION=$(printf '%q' "$session") TARGET_DIR=$(printf '%q' "$target_dir") STARTUP=$(printf '%q' "$startup") RESUME_ID=$(printf '%q' "$resume_id") SESSION_KIND=$(printf '%q' "$session_kind") bash -lc '
+    "SESSION=$(printf '%q' "$session") TARGET_DIR=$(printf '%q' "$target_dir") STARTUP=$(printf '%q' "$startup") RESUME_ID=$(printf '%q' "$resume_id") SESSION_KIND=$(printf '%q' "$session_kind") COORDINATOR_SCOPE=$(printf '%q' "$coordinator_scope") COORDINATOR_WORKFLOW=$(printf '%q' "$coordinator_workflow") bash -lc '
 set -e
 if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
@@ -470,6 +472,12 @@ $tmux_history
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_ROOT \"\$TARGET_DIR\"
+  case \"\$COORDINATOR_SCOPE\" in
+    all|repository) tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_SCOPE \"\$COORDINATOR_SCOPE\" ;;
+  esac
+  case \"\$COORDINATOR_WORKFLOW\" in
+    direct|speckit|adaptive) tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_WORKFLOW \"\$COORDINATOR_WORKFLOW\" ;;
+  esac
   if [[ -n \"\$RESUME_ID\" ]]; then
     tmux set-environment -t \"\$SESSION\" MESH_LIVE_CLAUDE_RESUME_ID \"\$RESUME_ID\"
   fi
@@ -628,13 +636,15 @@ _ws_remove_staged_mosh_command() {
 }
 
 _ws_mosh_attach_or_start() {
-  local session target_dir startup resume_id session_kind direct_host remote_command remote_script rc
+  local session target_dir startup resume_id session_kind coordinator_scope coordinator_workflow direct_host remote_command remote_script rc
   local resume_guard locked_startup git_guard tmux_create tmux_history
   session="$1"
   target_dir="$2"
   startup="${3:-}"
   resume_id="${4:-}"
   session_kind="${5:-}"
+  coordinator_scope="${MESH_COORDINATOR_SCOPE:-}"
+  coordinator_workflow="${MESH_COORDINATOR_EFFECTIVE_WORKFLOW:-}"
   resume_guard="$(_ws_remote_resume_guard)"
   locked_startup="$(_ws_remote_locked_startup)"
   git_guard="$(_ws_remote_coordinator_git_guard)"
@@ -662,6 +672,8 @@ TARGET_DIR=$(printf '%q' "$target_dir")
 STARTUP=$(printf '%q' "$startup")
 RESUME_ID=$(printf '%q' "$resume_id")
 SESSION_KIND=$(printf '%q' "$session_kind")
+COORDINATOR_SCOPE=$(printf '%q' "$coordinator_scope")
+COORDINATOR_WORKFLOW=$(printf '%q' "$coordinator_workflow")
 set -e
 if [[ ! -d \"\$TARGET_DIR\" ]]; then
   echo \"[tmux] missing repo dir: \$TARGET_DIR\" >&2
@@ -723,6 +735,12 @@ $tmux_history
 if [[ \"\$SESSION_KIND\" == \"coordinator\" ]]; then
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR 1
   tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_ROOT \"\$TARGET_DIR\"
+  case \"\$COORDINATOR_SCOPE\" in
+    all|repository) tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_SCOPE \"\$COORDINATOR_SCOPE\" ;;
+  esac
+  case \"\$COORDINATOR_WORKFLOW\" in
+    direct|speckit|adaptive) tmux set-environment -t \"\$SESSION\" MESH_LIVE_COORDINATOR_WORKFLOW \"\$COORDINATOR_WORKFLOW\" ;;
+  esac
   if [[ -n \"\$RESUME_ID\" ]]; then
     tmux set-environment -t \"\$SESSION\" MESH_LIVE_CLAUDE_RESUME_ID \"\$RESUME_ID\"
   fi
@@ -836,7 +854,7 @@ raise SystemExit(result.returncode)
 }
 
 mcoordinator() {
-  local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh state_repo
+  local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh state_repo scope
   local prompt claude_cmd startup usage speckit_status_json contract_marker review_capability
   local -a prompt_args=()
   usage="Usage: mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
@@ -923,10 +941,12 @@ mcoordinator() {
   repo_base="${MESH_WS_REPO_BASE:-/media/sam/1TB}"
   remote_mesh="${MESH_COORDINATOR_MESH_SCRIPT:-${repo_base}/gobabygo/scripts/mesh}"
   if [[ -n "$repo" ]]; then
+    scope="repository"
     session="${session_override:-$(_ws_tmux_session_name claude "${repo##*/}-coordinator")}"
     target_dir="$(_ws_tmux_target_dir "$repo")"
     prompt_args=(live coordinator-prompt --repo "$repo" --repo-root "$target_dir" --session "$session" --mesh-script "$remote_mesh" --workflow "$workflow")
   else
+    scope="all"
     session="${session_override:-claude-coordinator}"
     state_repo="${MESH_COORDINATOR_STATE_REPO:-${repo_base}/coordination}"
     case "$state_repo" in
@@ -968,5 +988,6 @@ mcoordinator() {
   fi
   startup="${startup} --name $(printf '%q' "$session") --append-system-prompt $(printf '%q' "$prompt")"
   startup="CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 ${startup}"
-  _ws_mosh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" coordinator
+  MESH_COORDINATOR_SCOPE="$scope" MESH_COORDINATOR_EFFECTIVE_WORKFLOW="$workflow" \
+    _ws_mosh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" coordinator
 }

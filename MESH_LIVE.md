@@ -716,7 +716,8 @@ database, router, or iTerm2 dependency.
 For a marked coordinator whose Claude process has exited, the supervisor reports
 `coordinator_not_running_recoverable` only when the tmux session contains an
 exact resume UUID, its recorded absolute Git root equals the current pane path,
-and `MESH_LIVE_COORDINATOR_RECOVERY_HOLD` is not `1`. The normal two-observation
+its scope and workflow metadata are valid, and
+`MESH_LIVE_COORDINATOR_RECOVERY_HOLD` is not `1`. The normal two-observation
 debounce applies. This is report-only: tick never starts Claude, injects its
 contract again, or replaces the tmux session. Missing or malformed metadata,
 root drift, and an operator hold all fail closed as
