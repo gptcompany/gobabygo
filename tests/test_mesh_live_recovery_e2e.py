@@ -25,8 +25,9 @@ def _load_module():
 
 
 @pytest.mark.skipif(
-    not all(shutil.which(command) for command in ("tmux", "git", "clang")),
-    reason="tmux, git, and clang are required",
+    not all(shutil.which(command) for command in ("tmux", "git"))
+    or not (shutil.which("cc") or shutil.which("clang")),
+    reason="tmux, git, and a C compiler are required",
 )
 @pytest.mark.parametrize("entrypoint", ["manual", "tick"])
 def test_real_tmux_coordinator_recovery(
@@ -68,8 +69,10 @@ int main(int argc, char **argv) {
 """.lstrip(),
         encoding="utf-8",
     )
+    compiler = shutil.which("cc") or shutil.which("clang")
+    assert compiler is not None
     subprocess.run(
-        ["clang", "-O0", "-o", str(fake_bin / "claude"), str(source)], check=True
+        [compiler, "-O0", "-o", str(fake_bin / "claude"), str(source)], check=True
     )
     idle_bin = tmp_path / "idle"
     idle_bin.mkdir()
