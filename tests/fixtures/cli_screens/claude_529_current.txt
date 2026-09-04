@@ -1,0 +1,8 @@
+● API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+  Retrying in 8 seconds... (attempt 10/10)
+  ⎿  Server overloaded
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  bypass permissions on

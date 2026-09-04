@@ -33,6 +33,10 @@ _CLAUDE_ACTIVE_TURN = re.compile(
 _CLAUDE_INTERRUPTED_TURN = re.compile(
     r"(?im)^[ \t]*(?:⎿[ \t]*)?Interrupted[ \t]*·[^\n]*$"
 )
+_CLAUDE_TRANSIENT_FAILURE = re.compile(
+    r"(?im)^[ \t]*(?:[●⎿][ \t]*)?API Error:[ \t]*529\b[^\n]*"
+    r"(?:\n[ \t]*(?:Retrying\b[^\n]*|(?:[⎿][ \t]*)?Server overloaded[ \t]*))*$"
+)
 _CLAUDE_SEPARATOR = re.compile(r"^[ \t]*[─━-]{20,}.*$")
 _ANTIGRAVITY_AWAITING_INPUT_MARKERS = (
     "requesting permission for:",
@@ -56,6 +60,7 @@ class LiveScreenState(str, Enum):
     awaiting_input = "awaiting_input"
     rate_limit = "rate_limit"
     session_limit = "session_limit"
+    transient_failure = "transient_failure"
     unknown = "unknown"
 
 
@@ -146,6 +151,34 @@ def claude_current_region(captured: str) -> str:
     return "\n".join(lines[start:])
 
 
+def claude_terminal_outcome(captured: str) -> str:
+    """Return a terminal provider failure immediately above the empty composer."""
+    body = str(captured or "").replace("\xa0", " ")
+    lines = body.splitlines()
+    prompt_indexes = [
+        index for index, line in enumerate(lines) if line.lstrip().startswith("❯")
+    ]
+    if not prompt_indexes:
+        return ""
+    prompt_index = prompt_indexes[-1]
+    if lines[prompt_index].lstrip()[1:].strip():
+        return ""
+    separators = [
+        index
+        for index, line in enumerate(lines[:prompt_index])
+        if _CLAUDE_SEPARATOR.match(line)
+    ]
+    end = separators[-1] if separators else prompt_index
+    previous_separator = max(
+        (index for index in separators[:-1] if index < end), default=-1
+    )
+    candidate = "\n".join(lines[max(previous_separator + 1, end - 8) : end]).strip()
+    match = _CLAUDE_TRANSIENT_FAILURE.search(candidate)
+    if match is None:
+        return ""
+    return match.group(0) if not candidate[match.end() :].strip() else ""
+
+
 def claude_screen_state(captured: str) -> LiveScreenState:
     """Classify Claude from its current composer/status region, not transcript words."""
     body = str(captured or "")
@@ -153,6 +186,8 @@ def claude_screen_state(captured: str) -> LiveScreenState:
         return LiveScreenState.session_limit
     if detect_interactive_failure_screen("claude", body):
         return LiveScreenState.rate_limit
+    if claude_terminal_outcome(body):
+        return LiveScreenState.transient_failure
     current = claude_current_region(body)
     if _CLAUDE_ACTIVE_TURN.search(current):
         return LiveScreenState.busy

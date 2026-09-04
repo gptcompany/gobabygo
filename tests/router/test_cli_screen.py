@@ -1,12 +1,18 @@
+from pathlib import Path
+
 from src.router.cli_screen import (
     LiveScreenState,
     antigravity_screen_state,
     claude_screen_state,
+    claude_terminal_outcome,
     claude_session_limit_reset,
     claude_wait_option_selected,
     classify_live_screen,
     detect_interactive_failure_screen,
 )
+
+
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "cli_screens"
 
 
 ANTIGRAVITY_IDLE = """Antigravity CLI 1.1.13
@@ -98,6 +104,24 @@ def test_claude_state_ignores_monitor_transcript_before_current_status_bar() -> 
 
     assert claude_screen_state(idle_with_historical_monitor) == LiveScreenState.idle
     assert claude_screen_state(active_main_turn) == LiveScreenState.busy
+
+
+def test_claude_current_529_is_transient_but_historical_529_is_idle() -> None:
+    current = (FIXTURES / "claude_529_current.txt").read_text(encoding="utf-8")
+    historical = (FIXTURES / "claude_529_history.txt").read_text(encoding="utf-8")
+
+    assert claude_terminal_outcome(current)
+    assert claude_screen_state(current) == LiveScreenState.transient_failure
+    assert claude_terminal_outcome(historical) == ""
+    assert claude_screen_state(historical) == LiveScreenState.idle
+
+
+def test_claude_transient_failure_requires_empty_composer_and_anchored_api_error() -> None:
+    current = (FIXTURES / "claude_529_current.txt").read_text(encoding="utf-8")
+
+    assert claude_screen_state(current.replace("❯\n", "❯ retry now\n")) == LiveScreenState.awaiting_input
+    assert claude_screen_state(current.replace("API Error: 529", "logs mention HTTP 529")) == LiveScreenState.idle
+    assert claude_screen_state("API Error: 429\n" + "─" * 80 + "\n❯\n") == LiveScreenState.idle
 
 
 def test_claude_dynamic_active_turn_above_composer_is_busy() -> None:
