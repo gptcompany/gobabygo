@@ -181,6 +181,8 @@ def test_mesh_live_runbook_covers_operator_contract() -> None:
         "coordinator_not_running_recoverable",
         "MESH_LIVE_COORDINATOR_RECOVERY_HOLD",
         "This is report-only",
+        "mesh live recover-coordinator claude-coordinator --apply",
+        "This command does not run automatically from cron",
         "iTerm2 local state",
         "Treat `send` as remote keyboard access",
         "mesh live tick --apply",

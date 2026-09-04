@@ -41,6 +41,13 @@ def _ready_codex_capture(target: dict[str, str]) -> dict[str, str]:
     }
 
 
+def test_tmux_field_parser_accepts_literal_and_tmux_escaped_separator() -> None:
+    module = _load_module()
+
+    assert module._split_tmux_fields("one\x1ftwo\n") == ["one", "two"]
+    assert module._split_tmux_fields(r"one\037two" + "\n") == ["one", "two"]
+
+
 def test_reader_discovers_current_users_tmux_session(monkeypatch) -> None:
     module = _load_module()
     sep = module._FIELD_SEPARATOR
@@ -4266,6 +4273,305 @@ def test_supervisor_recovery_requires_complete_contract_metadata(
 
     assert recoverable is False
     assert reason in detail
+
+
+def _recoverable_coordinator(module, root: Path):
+    return module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        windows=1,
+        attached=0,
+        pane_id="%9",
+        pane_path=str(root),
+        pane_command="bash",
+        pane_pid=4321,
+        repo_name="coordination",
+        coordinator_resume_id="8e34759f-4706-4573-8dff-353749499ffe",
+        coordinator_root=str(root),
+        coordinator_scope="all",
+        coordinator_workflow="speckit",
+    )
+
+
+def _confirmed_recovery_state(session) -> dict:
+    key = f"{session.owner}/{session.name}"
+    return {
+        "version": 1,
+        "sessions": {},
+        "supervisor": {
+            "signals": {
+                f"session/{key}": {
+                    "stable_state": "coordinator_not_running_recoverable"
+                }
+            },
+            "events": [],
+        },
+    }
+
+
+def test_coordinator_recovery_plan_is_read_only(tmp_path: Path, monkeypatch) -> None:
+    module = _load_module()
+    session = _recoverable_coordinator(module, tmp_path)
+    state = _confirmed_recovery_state(session)
+    commands: list[list[str]] = []
+    monkeypatch.setattr(module, "_run_command", lambda args, **kwargs: commands.append(args))
+
+    result = module.recover_coordinator_session(session, state, apply=False)
+
+    assert result.status == "planned"
+    assert result.verified is False
+    assert commands == []
+    assert state["sessions"] == {}
+
+
+@pytest.mark.parametrize(
+    ("updates", "reason"),
+    [
+        ({"attached": 1}, "attached"),
+        ({"windows": 2}, "exactly one tmux window"),
+        ({"pane_child_pid": 99, "pane_child_command": "sleep"}, "active child"),
+    ],
+)
+def test_coordinator_recovery_refuses_unsafe_pane(
+    tmp_path: Path, updates: dict, reason: str
+) -> None:
+    module = _load_module()
+    session = module.replace(_recoverable_coordinator(module, tmp_path), **updates)
+    state = _confirmed_recovery_state(session)
+
+    with pytest.raises(module.LiveReadError, match=reason):
+        module.recover_coordinator_session(session, state, apply=False)
+
+
+def test_coordinator_recovery_persists_before_respawn_and_verifies(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_module()
+    root = tmp_path / "coordination"
+    root.mkdir()
+    state_file = tmp_path / "state" / "tick.json"
+    state_file.parent.mkdir(mode=0o755)
+    state_file.parent.chmod(0o755)
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(mode=0o755)
+    runtime_dir.chmod(0o755)
+    session = _recoverable_coordinator(module, root)
+    state = _confirmed_recovery_state(session)
+    config = tmp_path / "claude"
+    encoded = str(root).replace("/", "-")
+    history = config / "projects" / encoded / f"{session.coordinator_resume_id}.jsonl"
+    history.parent.mkdir(parents=True)
+    history.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(
+        module.shutil,
+        "which",
+        lambda name: f"/usr/bin/{name}"
+        if name in {"claude", "flock", "bash"}
+        else None,
+    )
+    persisted: list[dict] = []
+    respawns: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs):
+        if args[:3] == ["git", "-C", str(root)]:
+            return _completed(args, stdout=f"{root}\n")
+        if args[:3] == ["tmux", "display-message", "-p"]:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(
+                    [session.name, "4321", str(root), "bash", "0", "1"]
+                )
+                + "\n",
+            )
+        if args[:2] == ["tmux", "show-environment"]:
+            values = {
+                "MESH_LIVE_COORDINATOR": "1",
+                "MESH_LIVE_CLAUDE_RESUME_ID": session.coordinator_resume_id,
+                "MESH_LIVE_COORDINATOR_ROOT": str(root),
+                "MESH_LIVE_COORDINATOR_SCOPE": "all",
+                "MESH_LIVE_COORDINATOR_WORKFLOW": "speckit",
+            }
+            variable = args[-1]
+            value = values.get(variable, "")
+            return _completed(
+                args, stdout=f"{variable}={value}\n" if value else ""
+            )
+        if args[:3] == ["ps", "-axo", "pid=,ppid=,comm="]:
+            return _completed(args)
+        if args[:2] == ["tmux", "respawn-pane"]:
+            assert persisted
+            respawns.append(args)
+            return _completed(args)
+        raise AssertionError(args)
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(
+        module,
+        "_discover_owner",
+        lambda owner: (
+            [
+                {
+                    "owner": owner,
+                    "name": session.name,
+                    "pane_command": "bash",
+                    "pane_child_command": "claude",
+                }
+            ],
+            [],
+        ),
+    )
+
+    result = module.recover_coordinator_session(
+        session,
+        state,
+        apply=True,
+        state_file=str(state_file),
+        persist_state=lambda value: persisted.append(json.loads(json.dumps(value))),
+        sleep_fn=lambda _seconds: None,
+    )
+
+    assert result.status == "applied"
+    assert result.verified is True
+    assert state_file.parent.stat().st_mode & 0o777 == 0o755
+    assert runtime_dir.stat().st_mode & 0o777 == 0o755
+    assert (state_file.parent / "mesh-live-session-start").stat().st_mode & 0o777 == 0o700
+    assert (runtime_dir / "mesh-live-resume-locks").stat().st_mode & 0o777 == 0o700
+    assert len(respawns) == 1
+    assert "-k" in respawns[0]
+    saved = state["sessions"]["sam/claude-coordinator"]
+    assert saved["coordinator_recovery_verified"] is True
+    assert persisted[0]["sessions"]["sam/claude-coordinator"][
+        "coordinator_recovery_verified"
+    ] is False
+    startup_argv = module.shlex.split(respawns[0][-1])
+    assert Path(startup_argv[0]).name == "bash"
+    startup_file = Path(startup_argv[1])
+    startup = startup_file.read_text(encoding="utf-8")
+    assert "--resume 8e34759f-4706-4573-8dff-353749499ffe" in startup
+    assert "MESH_COORDINATOR_CONTRACT" in startup
+    assert "flock -n 9" in startup
+    startup_file.unlink()
+
+    with pytest.raises(module.LiveReadError, match="already has an attempt"):
+        module.recover_coordinator_session(session, state, apply=False)
+
+    replaced_pane = module.replace(session, pane_pid=session.pane_pid + 100)
+    with pytest.raises(module.LiveReadError, match="already has an attempt"):
+        module.recover_coordinator_session(replaced_pane, state, apply=False)
+
+
+def test_coordinator_recovery_attempt_clears_only_after_stable_health(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    stopped = _recoverable_coordinator(module, tmp_path)
+    running = module.replace(
+        stopped,
+        pane_command="bash",
+        pane_child_pid=5000,
+        pane_child_command="claude",
+        output="ready\n❯ ",
+    )
+    key = f"{running.owner}/{running.name}"
+    state = {
+        "version": 1,
+        "sessions": {
+            key: {
+                "coordinator_recovery_fingerprint": "pane-specific",
+                "coordinator_recovery_identity": module.coordinator_recovery_identity(
+                    stopped
+                ),
+                "coordinator_recovery_attempted_at": 90,
+                "coordinator_recovery_verified": True,
+            }
+        },
+        "supervisor": {
+            "signals": {
+                f"session/{key}": {
+                    "stable_state": "coordinator_not_running_recoverable",
+                    "candidate_state": "coordinator_not_running_recoverable",
+                    "candidate_count": 2,
+                }
+            },
+            "events": [],
+        },
+    }
+    observations = module.build_live_tick_plan(
+        [running], {running.key}, now=100
+    )
+
+    module.observe_live_supervisor(
+        observations,
+        [running],
+        {running.key},
+        state,
+        now=100,
+        confirmations=2,
+    )
+    assert "coordinator_recovery_identity" in state["sessions"][key]
+
+    module.observe_live_supervisor(
+        observations,
+        [running],
+        {running.key},
+        state,
+        now=130,
+        confirmations=2,
+    )
+    assert "coordinator_recovery_identity" not in state["sessions"][key]
+    assert "coordinator_recovery_fingerprint" not in state["sessions"][key]
+    assert "coordinator_recovery_attempted_at" not in state["sessions"][key]
+    assert "coordinator_recovery_verified" not in state["sessions"][key]
+
+
+def test_coordinator_recovery_revalidates_pane_before_respawn(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_module()
+    root = tmp_path / "coordination"
+    root.mkdir()
+    session = _recoverable_coordinator(module, root)
+    state = _confirmed_recovery_state(session)
+    config = tmp_path / "claude"
+    history = (
+        config
+        / "projects"
+        / str(root).replace("/", "-")
+        / f"{session.coordinator_resume_id}.jsonl"
+    )
+    history.parent.mkdir(parents=True)
+    history.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs):
+        commands.append(args)
+        if args[0] == "git":
+            return _completed(args, stdout=f"{root}\n")
+        if args[:3] == ["tmux", "display-message", "-p"]:
+            return _completed(
+                args,
+                stdout=module._FIELD_SEPARATOR.join(
+                    [session.name, "9999", str(root), "bash", "0", "1"]
+                )
+                + "\n",
+            )
+        raise AssertionError(args)
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+
+    with pytest.raises(module.LiveReadError, match="changed before respawn"):
+        module.recover_coordinator_session(
+            session, state, apply=True, state_file=str(tmp_path / "tick.json")
+        )
+
+    assert not any(args[:2] == ["tmux", "respawn-pane"] for args in commands)
+    assert state["sessions"] == {}
 
 
 def test_supervisor_reports_current_claude_overload_without_waking() -> None:

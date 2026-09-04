@@ -230,6 +230,7 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | - | `mesh live send <codex-session> <text> --delegation-id <id> --enter` | Deliver and record a metadata-only recovery receipt |
 | - | `mesh live send <antigravity-session> <text> --delegation-id <id> --enter` | Require idle Antigravity composer and verify one submission; no recovery Enter |
 | - | `mesh live recover-codex-submit <session> <id>` | Guarded, stateful single-Enter recovery for one exact Codex delegation |
+| - | `mesh live recover-coordinator <session> [--apply]` | Plan by default; explicitly resume one confirmed stopped local coordinator |
 | `wsattach <session>` | `mesh live attach <session>` | Attach to an existing session; never creates or kills one |
 
 Use `--owner <user>` when the same session name exists under multiple tmux
@@ -732,6 +733,24 @@ tmux set-environment -u -t claude-coordinator MESH_LIVE_COORDINATOR_RECOVERY_HOL
 Coordinator sessions created by the helpers record their root. Deterministic
 recovery additionally requires an explicit `mcoordinator --resume <UUID>`;
 legacy and `--continue` sessions without an exact UUID remain manual.
+
+On the workstation, inspect the planned recovery first and apply it explicitly:
+
+```bash
+MESH_LIVE_LOCAL=1 mesh live recover-coordinator claude-coordinator
+MESH_LIVE_LOCAL=1 mesh live recover-coordinator claude-coordinator --apply
+```
+
+Apply requires the debounced supervisor incident already stored by
+`mesh live tick --observe` or `--apply`, a detached single-window shell with no
+child process, the exact Claude history file, an exact Git root, and the complete
+recorded contract. It revalidates tmux identity and markers immediately before
+`respawn-pane`, records one attempt before mutation, reacquires the UUID lock in
+the replacement shell, and verifies a running Claude child. A lock race returns
+the pane to an interactive shell. Unknown verification is not retried for the
+same incident. Two subsequent healthy supervisor observations close that
+incident so a later, distinct coordinator exit can be recovered. This command
+does not run automatically from cron.
 
 Tick and supervisor JSON expose `provider`, `schedule_source`, and `not_before`
 without requiring prose parsing. `not_before` is an epoch timestamp; concise

@@ -43,6 +43,8 @@ SESSION_LIMIT_PENDING_MAX_ATTEMPTS = 3
 TRANSIENT_FAILURE_BACKOFF_SECONDS = 5 * 60
 TRANSIENT_FAILURE_MAX_BACKOFF_SECONDS = 60 * 60
 TRANSIENT_FAILURE_MAX_ATTEMPTS = 4
+COORDINATOR_RECOVERY_VERIFY_ATTEMPTS = 20
+COORDINATOR_RECOVERY_VERIFY_INTERVAL = 0.25
 CLAUDE_PASTE_SETTLE_SECONDS = 1.0
 CLAUDE_CONTEXT_COMPACT_THRESHOLD = 90
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
@@ -57,6 +59,13 @@ _CLAUDE_SESSION_ID = re.compile(
     r"[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$"
 )
 _REMOTE_PAYLOAD = globals().get("_MESH_LIVE_REMOTE_PAYLOAD")
+
+
+def _split_tmux_fields(row: str) -> list[str]:
+    value = str(row or "").rstrip("\n")
+    if _FIELD_SEPARATOR in value:
+        return value.split(_FIELD_SEPARATOR)
+    return value.split(r"\037")
 
 
 @dataclass(frozen=True)
@@ -428,20 +437,29 @@ def _tmux_environment(prefix: list[str], session_name: str, variable: str) -> st
     return value[len(marker) :] if value.startswith(marker) else ""
 
 
-def _pane_direct_child_identity(prefix: Sequence[str], pane_pid: str) -> tuple[str, str]:
+def _pane_direct_children(
+    prefix: Sequence[str], pane_pid: str
+) -> list[tuple[str, str]] | None:
     if not str(pane_pid or "").isdigit():
-        return "", ""
+        return None
     try:
         proc = _run_command([*prefix, "ps", "-axo", "pid=,ppid=,comm="])
     except (OSError, subprocess.SubprocessError):
-        return "", ""
+        return None
     if proc.returncode != 0:
-        return "", ""
+        return None
     children: list[tuple[str, str]] = []
     for line in proc.stdout.splitlines():
         parts = line.strip().split(None, 2)
         if len(parts) == 3 and parts[1] == pane_pid:
             children.append((parts[0], Path(parts[2]).name.lower()))
+    return children
+
+
+def _pane_direct_child_identity(prefix: Sequence[str], pane_pid: str) -> tuple[str, str]:
+    children = _pane_direct_children(prefix, pane_pid)
+    if children is None:
+        return "", ""
     return children[0] if len(children) == 1 else ("", "")
 
 
@@ -483,7 +501,7 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
         ]
     )
     for row in proc.stdout.splitlines():
-        parts = row.split(_FIELD_SEPARATOR)
+        parts = _split_tmux_fields(row)
         if len(parts) != 5 or not parts[0]:
             continue
         name, created_at, activity_at, windows, attached = parts
@@ -497,7 +515,7 @@ def _discover_owner(owner: str) -> tuple[list[dict[str, Any]], list[str]]:
         except (OSError, subprocess.SubprocessError):
             pane_proc = None
         if pane_proc is not None and pane_proc.returncode == 0:
-            pane_parts = pane_proc.stdout.rstrip("\n").split(_FIELD_SEPARATOR)
+            pane_parts = _split_tmux_fields(pane_proc.stdout)
             if len(pane_parts) == 5:
                 pane_id, pane_path, pane_command, pane_dead, pane_pid = pane_parts
                 wrapped_coordinator = (
@@ -2487,6 +2505,326 @@ def _coordinator_recovery_assessment(session: LiveSession | None) -> tuple[bool,
     )
 
 
+def coordinator_recovery_refusal(
+    session: LiveSession, state: dict[str, Any]
+) -> str:
+    recoverable, reason = _coordinator_recovery_assessment(session)
+    if not recoverable:
+        return reason
+    signal_key = f"session/{_tick_state_key(session.owner, session.name)}"
+    supervisor = state.get("supervisor")
+    signals = supervisor.get("signals") if isinstance(supervisor, dict) else None
+    saved_signal = signals.get(signal_key) if isinstance(signals, dict) else None
+    if (
+        not isinstance(saved_signal, dict)
+        or saved_signal.get("stable_state") != "coordinator_not_running_recoverable"
+    ):
+        return "recovery refused: coordinator exit is not a confirmed stable incident"
+    if session.attached:
+        return "recovery refused: coordinator tmux session is attached"
+    if session.windows != 1:
+        return "recovery refused: coordinator must have exactly one tmux window"
+    if session.pane_pid <= 0 or not session.pane_id:
+        return "recovery refused: coordinator pane identity is incomplete"
+    if Path(session.pane_command).name.lower() not in {"bash", "zsh", "sh", "fish"}:
+        return "recovery refused: stopped coordinator pane is not an idle shell"
+    if session.pane_child_pid > 0 or session.pane_child_command:
+        return "recovery refused: stopped coordinator shell has an active child"
+    saved_sessions = state.get("sessions")
+    saved = (
+        saved_sessions.get(_tick_state_key(session.owner, session.name))
+        if isinstance(saved_sessions, dict)
+        else None
+    )
+    identity = coordinator_recovery_identity(session)
+    if (
+        isinstance(saved, dict)
+        and saved.get("coordinator_recovery_identity") == identity
+    ):
+        return "recovery refused: this coordinator incident already has an attempt"
+    return ""
+
+
+def coordinator_recovery_fingerprint(session: LiveSession) -> str:
+    fields = (
+        session.owner,
+        session.name,
+        session.pane_id,
+        str(session.pane_pid),
+        session.coordinator_resume_id,
+        session.coordinator_root,
+        session.coordinator_scope,
+        session.coordinator_workflow,
+    )
+    return hashlib.sha256("\x1f".join(fields).encode("utf-8")).hexdigest()
+
+
+def coordinator_recovery_identity(session: LiveSession) -> str:
+    fields = (
+        session.owner,
+        session.name,
+        session.coordinator_resume_id,
+        session.coordinator_root,
+        session.coordinator_scope,
+        session.coordinator_workflow,
+    )
+    return hashlib.sha256("\x1f".join(fields).encode("utf-8")).hexdigest()
+
+
+def _coordinator_resume_file(session: LiveSession) -> Path:
+    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")).expanduser()
+    encoded_root = session.coordinator_root.replace("/", "-")
+    return (
+        config_dir
+        / "projects"
+        / encoded_root
+        / f"{session.coordinator_resume_id}.jsonl"
+    )
+
+
+def _coordinator_recovery_prompt(session: LiveSession) -> str:
+    repository_scope = session.coordinator_scope == "repository"
+    return build_live_coordinator_system_prompt(
+        repo=Path(session.coordinator_root).name if repository_scope else "",
+        repo_root=session.coordinator_root if repository_scope else "",
+        coordinator_session=session.name,
+        worker_session="",
+        mesh_script=str(Path(__file__).with_name("mesh")),
+        workflow=session.coordinator_workflow,
+        speckit_status_json="",
+    )
+
+
+def _revalidate_coordinator_recovery_target(session: LiveSession) -> None:
+    target_format = _FIELD_SEPARATOR.join(
+        [
+            "#{session_name}",
+            "#{pane_pid}",
+            "#{pane_current_path}",
+            "#{pane_current_command}",
+            "#{session_attached}",
+            "#{session_windows}",
+        ]
+    )
+    proc = _run_command(
+        ["tmux", "display-message", "-p", "-t", session.pane_id, target_format]
+    )
+    if proc.returncode != 0:
+        raise LiveReadError("coordinator recovery target disappeared")
+    parts = _split_tmux_fields(proc.stdout)
+    expected = [
+        session.name,
+        str(session.pane_pid),
+        session.coordinator_root,
+        Path(session.pane_command).name,
+        "0",
+        "1",
+    ]
+    if len(parts) != len(expected) or [
+        parts[0],
+        parts[1],
+        parts[2],
+        Path(parts[3]).name,
+        parts[4],
+        parts[5],
+    ] != expected:
+        raise LiveReadError("coordinator recovery target changed before respawn")
+    expected_markers = {
+        "MESH_LIVE_COORDINATOR": "1",
+        "MESH_LIVE_CLAUDE_RESUME_ID": session.coordinator_resume_id,
+        "MESH_LIVE_COORDINATOR_ROOT": session.coordinator_root,
+        "MESH_LIVE_COORDINATOR_SCOPE": session.coordinator_scope,
+        "MESH_LIVE_COORDINATOR_WORKFLOW": session.coordinator_workflow,
+        "MESH_LIVE_COORDINATOR_RECOVERY_HOLD": "",
+    }
+    for variable, expected_value in expected_markers.items():
+        if _tmux_environment([], session.name, variable) != expected_value:
+            raise LiveReadError(
+                "coordinator recovery metadata changed before respawn"
+            )
+
+
+def recover_coordinator_session(
+    session: LiveSession,
+    state: dict[str, Any],
+    *,
+    apply: bool,
+    state_file: str = DEFAULT_TICK_STATE_FILE,
+    now: float | None = None,
+    persist_state: Callable[[dict[str, Any]], None] | None = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+) -> TickActionResult:
+    refusal = coordinator_recovery_refusal(session, state)
+    if refusal:
+        raise LiveReadError(refusal)
+    if not apply:
+        return TickActionResult(
+            owner=session.owner,
+            name=session.name,
+            pane_id=session.pane_id,
+            action="recover_coordinator",
+            status="planned",
+            reason="all metadata and stable-incident guards passed; no process changed",
+            verified=False,
+        )
+    if session.owner != _current_username():
+        raise LiveReadError("coordinator recovery is limited to the invoking tmux owner")
+    root = Path(session.coordinator_root)
+    if not root.is_dir() or root.is_symlink():
+        raise LiveReadError("coordinator recovery root is missing or symlinked")
+    git_proc = _run_command(["git", "-C", str(root), "rev-parse", "--show-toplevel"])
+    if git_proc.returncode != 0:
+        raise LiveReadError("coordinator recovery root is not a Git repository")
+    git_root = Path(git_proc.stdout.strip())
+    if not git_root.is_absolute() or git_root.resolve() != root.resolve():
+        raise LiveReadError("coordinator recovery root is not the exact Git root")
+    resume_file = _coordinator_resume_file(session)
+    if not resume_file.is_file() or resume_file.is_symlink():
+        raise LiveReadError("Claude resume history is missing from the recorded root")
+    claude = shutil.which("claude")
+    flock = shutil.which("flock")
+    bash = shutil.which("bash")
+    if not claude or not flock or not bash:
+        raise LiveReadError(
+            "coordinator recovery requires claude, flock, and bash on the workstation"
+        )
+    _revalidate_coordinator_recovery_target(session)
+    children = _pane_direct_children([], str(session.pane_pid))
+    if children is None or children:
+        raise LiveReadError("coordinator recovery refused: pane acquired an active child")
+
+    state_dir = Path(state_file).expanduser().parent
+    state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if state_dir.is_symlink():
+        raise LiveReadError("coordinator recovery state directory must not be a symlink")
+    startup_dir = state_dir / "mesh-live-session-start"
+    startup_dir.mkdir(mode=0o700, exist_ok=True)
+    if startup_dir.is_symlink():
+        raise LiveReadError("coordinator recovery startup directory must not be a symlink")
+    startup_dir.chmod(0o700)
+    runtime_base = Path(
+        os.environ.get("XDG_RUNTIME_DIR") or "~/.local/state/gobabygo"
+    ).expanduser()
+    runtime_base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if runtime_base.is_symlink():
+        raise LiveReadError("coordinator recovery runtime directory must not be a symlink")
+    lock_dir = runtime_base / "mesh-live-resume-locks"
+    lock_dir.mkdir(mode=0o700, exist_ok=True)
+    if lock_dir.is_symlink():
+        raise LiveReadError("coordinator recovery lock directory must not be a symlink")
+    lock_dir.chmod(0o700)
+    lock_file = lock_dir / f"{session.coordinator_resume_id}.lock"
+    lock_flags = os.O_WRONLY | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        lock_flags |= os.O_NOFOLLOW
+    try:
+        lock_fd = os.open(lock_file, lock_flags, 0o600)
+    except OSError as exc:
+        raise LiveReadError("unable to create coordinator recovery resume lock") from exc
+    os.close(lock_fd)
+    lock_file.chmod(0o600)
+
+    prompt = _coordinator_recovery_prompt(session)
+    claude_command = shlex.join(
+        [
+            claude,
+            "--resume",
+            session.coordinator_resume_id,
+            "--name",
+            session.name,
+            "--append-system-prompt",
+            prompt,
+        ]
+    )
+    shell = os.environ.get("SHELL") or "/bin/bash"
+    fd, startup_name = tempfile.mkstemp(
+        prefix="recover.", suffix=".sh", dir=startup_dir
+    )
+    startup_file = Path(startup_name)
+    try:
+        startup = (
+            "#!/usr/bin/env bash\n"
+            f"rm -f -- {shlex.quote(str(startup_file))}\n"
+            "stty -ixon 2>/dev/null || true\n"
+            f"exec 9>>{shlex.quote(str(lock_file))}\n"
+            f"if ! {shlex.quote(flock)} -n 9; then "
+            "echo '[mesh live] coordinator recovery lock is held'; "
+            f"exec {shlex.quote(shell)} -l; fi\n"
+            f"CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 {claude_command}\n"
+            f"{shlex.quote(flock)} -u 9\n"
+            f"exec {shlex.quote(shell)} -l\n"
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(startup)
+            handle.flush()
+            os.fsync(handle.fileno())
+        startup_file.chmod(0o600)
+
+        sessions_state = state.setdefault("sessions", {})
+        saved = sessions_state.setdefault(_tick_state_key(session.owner, session.name), {})
+        attempted_at = time.time() if now is None else now
+        saved.update(
+            {
+                "coordinator_recovery_fingerprint": coordinator_recovery_fingerprint(
+                    session
+                ),
+                "coordinator_recovery_identity": coordinator_recovery_identity(session),
+                "coordinator_recovery_attempted_at": attempted_at,
+                "coordinator_recovery_verified": False,
+            }
+        )
+        if persist_state is not None:
+            persist_state(state)
+        proc = _run_command(
+            [
+                "tmux",
+                "respawn-pane",
+                "-k",
+                "-t",
+                session.pane_id,
+                "-c",
+                session.coordinator_root,
+                shlex.join([bash, str(startup_file)]),
+            ]
+        )
+        if proc.returncode != 0:
+            startup_file.unlink(missing_ok=True)
+            raise LiveReadError(
+                "tmux refused coordinator recovery: "
+                + redact_capture((proc.stderr or proc.stdout or "unknown error").strip())
+            )
+    except Exception:
+        startup_file.unlink(missing_ok=True)
+        raise
+
+    verified = False
+    for _attempt in range(COORDINATOR_RECOVERY_VERIFY_ATTEMPTS):
+        sleep_fn(COORDINATOR_RECOVERY_VERIFY_INTERVAL)
+        discovered, _warnings = _discover_owner(session.owner)
+        current = next((item for item in discovered if item.get("name") == session.name), None)
+        if current is not None and Path(
+            str(current.get("pane_child_command") or current.get("pane_command") or "")
+        ).name.lower() in {"claude", "claude-code"}:
+            verified = True
+            break
+    saved["coordinator_recovery_verified"] = verified
+    if persist_state is not None:
+        persist_state(state)
+    return TickActionResult(
+        owner=session.owner,
+        name=session.name,
+        pane_id=session.pane_id,
+        action="recover_coordinator",
+        status="applied" if verified else "unknown",
+        reason=(
+            "Claude resumed with the recorded contract"
+            if verified
+            else "respawn requested but Claude process was not verified"
+        ),
+        verified=verified,
+    )
+
+
 def build_live_supervisor_signals(
     observations: Sequence[TickObservation],
     all_sessions: Sequence[LiveSession],
@@ -2638,6 +2976,35 @@ def observe_live_supervisor(
         confirmations=confirmations,
         max_events=100,
     )
+    saved_sessions = state.get("sessions")
+    saved_signals = state.get("supervisor", {}).get("signals")
+    if isinstance(saved_sessions, dict) and isinstance(saved_signals, dict):
+        sessions_by_key = {item.key: item for item in all_sessions}
+        for owner, name in coordinator_keys:
+            signal = saved_signals.get(f"session/{owner}/{name}")
+            saved = saved_sessions.get(_tick_state_key(owner, name))
+            current = sessions_by_key.get((owner, name))
+            current_command = ""
+            if current is not None:
+                current_command = Path(
+                    current.pane_child_command or current.pane_command
+                ).name.lower()
+            if (
+                isinstance(signal, dict)
+                and signal.get("stable_state")
+                != "coordinator_not_running_recoverable"
+                and current_command in {"claude", "claude-code"}
+                and isinstance(saved, dict)
+            ):
+                for field in (
+                    "coordinator_recovery_fingerprint",
+                    "coordinator_recovery_identity",
+                    "coordinator_recovery_attempted_at",
+                    "coordinator_recovery_verified",
+                ):
+                    if field in saved:
+                        del saved[field]
+                        changed = True
     return LiveSupervisorSnapshot(
         signals=tuple(signals),
         events=tuple(asdict(item) for item in events),
@@ -4749,6 +5116,30 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--owner", default="", help="Disambiguate sessions owned by different users."
     )
 
+    recover_coordinator = sub.add_parser(
+        "recover-coordinator",
+        help="Plan or explicitly apply one guarded local resume of a stopped coordinator.",
+    )
+    recover_coordinator.add_argument(
+        "session", help="Exact stopped coordinator session name."
+    )
+    recover_coordinator.add_argument(
+        "--owner", default="", help="Disambiguate sessions owned by different users."
+    )
+    recover_coordinator.add_argument(
+        "--apply",
+        action="store_true",
+        help="Replace the confirmed detached shell pane with the recorded Claude resume.",
+    )
+    recover_coordinator.add_argument(
+        "--state-file",
+        default=os.environ.get("MESH_LIVE_TICK_STATE", DEFAULT_TICK_STATE_FILE),
+        help="Supervisor confirmation and idempotency state path.",
+    )
+    recover_coordinator.add_argument(
+        "--json", action="store_true", help="Emit structured JSON."
+    )
+
     ensure_codex = sub.add_parser(
         "ensure-codex",
         help="Create or reuse one deterministic local Codex worker for a Git repository.",
@@ -5030,6 +5421,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             lines = 0
         client, sessions, warnings = _discover_with_fallback(args)
         _print_warnings(warnings)
+
+        if args.cmd == "recover-coordinator":
+            if not client.endpoint.local:
+                raise ValueError(
+                    "recover-coordinator must run on the tmux workstation with --local"
+                )
+            target = resolve_session(sessions, args.session, owner=args.owner)
+            if target.name != args.session:
+                raise ValueError("recover-coordinator requires an exact session name")
+            with live_tick_state_lock(args.state_file):
+                state = load_live_tick_state(args.state_file)
+                result = recover_coordinator_session(
+                    target,
+                    state,
+                    apply=args.apply,
+                    state_file=args.state_file,
+                    persist_state=(
+                        (lambda value: save_live_tick_state(args.state_file, value))
+                        if args.apply
+                        else None
+                    ),
+                )
+            if args.json:
+                print(json.dumps(asdict(result), indent=2))
+            else:
+                print(render_live_tick_results([result]))
+            return 0 if result.status in {"planned", "applied"} else 1
 
         if args.cmd == "tick":
             if not client.endpoint.local:
