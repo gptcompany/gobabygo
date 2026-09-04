@@ -52,6 +52,9 @@ _ANTIGRAVITY_BUSY_MARKERS = (
 _ANTIGRAVITY_IDLE_FOOTER = re.compile(
     r"(?m)^>[ \t]*\r?\n[^\n]*\r?\n\?[ \t]+for shortcuts[^\n]*\Z"
 )
+_ANTIGRAVITY_ACTIVE_TASK_FOOTER = re.compile(
+    r"(?m)^[^\n]*·[ \t]*[1-9][0-9]*[ \t]+task\(s\)[ \t]*·[ \t]*/tasks[ \t]*\Z"
+)
 
 
 class LiveScreenState(str, Enum):
@@ -233,6 +236,8 @@ def antigravity_screen_state(captured: str) -> LiveScreenState:
     if not body.strip():
         return LiveScreenState.awaiting_input
     lowered = body.lower()
+    if _ANTIGRAVITY_ACTIVE_TASK_FOOTER.search(body.rstrip()):
+        return LiveScreenState.busy
     if _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip()):
         return LiveScreenState.idle
     if any(marker in lowered for marker in _ANTIGRAVITY_AWAITING_INPUT_MARKERS):

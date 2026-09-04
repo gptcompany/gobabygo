@@ -1,0 +1,10 @@
+● Bash(.venv/bin/python -m pytest -v tests/scripts/portfolio_gate.py)
+
+  Waiting for the bounded test to complete.
+
+────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────
+  ● [03:01:42] .venv/bin/python -m pytest -v tests/scripts/portfolio/... running
+────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                     Gemini 3.8 Flash · high · 1 task(s) · /tasks

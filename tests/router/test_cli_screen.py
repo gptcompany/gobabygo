@@ -160,6 +160,20 @@ def test_classifies_observed_antigravity_tui_states() -> None:
         classify_live_screen("antigravity", ANTIGRAVITY_APPROVAL)
         == LiveScreenState.awaiting_input
     )
+
+
+def test_antigravity_current_task_footer_is_busy_not_unknown() -> None:
+    current = (FIXTURES / "antigravity_task_running.txt").read_text(encoding="utf-8")
+    historical = (
+        "old transcript says 1 task(s) · /tasks\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        ">\n"
+        "────────────────────────────────────────────────────────────────────────────────\n"
+        "? for shortcuts · high"
+    )
+
+    assert antigravity_screen_state(current) == LiveScreenState.busy
+    assert antigravity_screen_state(historical) == LiveScreenState.idle
     assert classify_live_screen("antigravity", "booting") == LiveScreenState.unknown
 
 
