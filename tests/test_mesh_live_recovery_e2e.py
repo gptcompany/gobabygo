@@ -74,9 +74,10 @@ int main(int argc, char **argv) {
     idle_bin = tmp_path / "idle"
     idle_bin.mkdir()
     shutil.copy2(fake_bin / "claude", idle_bin / "bash")
-    flock = fake_bin / "flock"
-    flock.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    flock.chmod(0o755)
+    if shutil.which("flock") is None:
+        flock = fake_bin / "flock"
+        flock.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        flock.chmod(0o755)
 
     resume_id = "8e34759f-4706-4573-8dff-353749499ffe"
     config = tmp_path / "claude-config"
