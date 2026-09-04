@@ -736,7 +736,7 @@ When an idle coordinator's current visible output contains the exact standalone
 `manual_action_required` as a warning and does not wake it again. Similar prose
 and stale markers outside the bounded visible tail do not match.
 
-Apply mode has six actions:
+Apply mode has seven actions:
 
 1. It sends Enter only when the exact Claude rate-limit menu is present and
    `Stop and wait for limit to reset` is already the selected option.
@@ -777,12 +777,19 @@ Apply mode has six actions:
    kills/replaces the coordinator automatically.
 6. It recovers one lost Enter only when the current Claude coordinator composer
    contains the exact `MESH_LIVE_TICK` token already persisted by that same
-   tick state. Token text in history is ignored. The
-   recovery tombstone is written before one Enter and every repeat is refused.
+   tick state. Token text in history is ignored. The recovery tombstone is
+   written before one Enter and every repeat is refused.
    A wake is verified only after Claude becomes `busy`; seeing its token in the
    composer is explicitly not proof of submission. Human text, delegations,
    unknown composer content, menus, and uncorrelated tokens never receive this
    recovery.
+7. It treats an exact current Claude `API Error: 529` immediately above an
+   empty composer as a transient provider failure, never as coordinator idle.
+   Mesh stores only its redacted screen fingerprint, attempt count, and next
+   eligible time in the existing tick state. Retries use bounded 5, 10, 20,
+   and 40 minute backoff; after four attempts the supervisor reports a critical
+   manual action instead of sending again. Historical `529` text and plain
+   `429` errors outside Claude's exact WAIT menu do not activate this policy.
 
 New coordinator sessions disable terminal XON/XOFF with `stty -ixon` before
 launching Claude. This prevents an accidental `Ctrl+S` from freezing pane

@@ -4099,6 +4099,160 @@ def test_supervisor_marks_coordinator_awaiting_input_as_warning() -> None:
     assert signal.severity == "warning"
 
 
+def test_supervisor_reports_current_claude_overload_without_waking() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output=(
+            '● API Error: 529 {"error":{"type":"overloaded_error"}}\n'
+            "  Retrying in 8 seconds... (attempt 10/10)\n"
+            "  ⎿  Server overloaded\n"
+            "────────────────────────────────────────────────────────────────────────────────\n"
+            "❯\n"
+        ),
+    )
+
+    observations = module.build_live_tick_plan(
+        [coordinator], {coordinator.key}, now=100
+    )
+    signals = module.build_live_supervisor_signals(
+        observations, [coordinator], {coordinator.key}
+    )
+
+    assert observations[0].screen_state == "transient_failure"
+    assert observations[0].proposed_action == "none"
+    assert observations[0].reason == "current Claude provider overload"
+    signal = next(item for item in signals if item.key.endswith("claude-coordinator"))
+    assert signal.state == "provider_transient_failure"
+    assert signal.severity == "warning"
+
+
+def test_transient_failure_backoff_is_persisted_and_bounded() -> None:
+    module = _load_module()
+    overloaded = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_pid=10,
+        pane_child_pid=11,
+        pane_command="claude",
+        output=(
+            "● API Error: 529 overloaded_error\n  ⎿  Server overloaded\n"
+            + "─" * 80
+            + "\n❯\n"
+        ),
+    )
+    state = {"version": 1, "sessions": {}}
+    plan = module.build_live_tick_plan([overloaded], {overloaded.key}, now=100)
+
+    projected, changed = module.project_transient_failure_backoff(
+        plan, [overloaded], state, now=100
+    )
+    assert changed is True
+    assert projected[0].proposed_action == "none"
+    assert projected[0].not_before == 400
+
+    idle = module.replace(overloaded, output="ready\n❯ ")
+    idle_plan = module.build_live_tick_plan([idle], {idle.key}, now=399)
+    blocked, _ = module.project_transient_failure_backoff(
+        idle_plan, [idle], state, now=399
+    )
+    assert blocked[0].proposed_action == "none"
+    assert blocked[0].not_before == 400
+    blocked_signal = next(
+        item
+        for item in module.build_live_supervisor_signals(
+            blocked, [idle], {idle.key}
+        )
+        if item.key.endswith("claude-coordinator")
+    )
+    assert blocked_signal.state == "provider_transient_backoff"
+
+    retry_plan = module.build_live_tick_plan([idle], {idle.key}, now=400)
+    retry, _ = module.project_transient_failure_backoff(
+        retry_plan, [idle], state, now=400
+    )
+    assert retry[0].proposed_action == "retry_transient_failure"
+
+    saved = state["sessions"]["sam/claude-coordinator"]
+    saved["transient_failure_attempt_count"] = module.TRANSIENT_FAILURE_MAX_ATTEMPTS
+    exhausted, _ = module.project_transient_failure_backoff(
+        plan, [overloaded], state, now=400
+    )
+    assert exhausted[0].proposed_action == "none"
+    assert "budget exhausted" in exhausted[0].reason
+    exhausted_signal = next(
+        item
+        for item in module.build_live_supervisor_signals(
+            exhausted, [overloaded], {overloaded.key}
+        )
+        if item.key.endswith("claude-coordinator")
+    )
+    assert exhausted_signal.state == "provider_transient_failure_exhausted"
+    assert exhausted_signal.severity == "critical"
+
+
+def test_transient_failure_retry_persists_before_one_guarded_send() -> None:
+    module = _load_module()
+    idle = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_pid=10,
+        pane_child_pid=11,
+        pane_command="claude",
+        output="ready\n❯ ",
+    )
+    state = {
+        "version": 1,
+        "sessions": {
+            "sam/claude-coordinator": {
+                "transient_failure_fingerprint": "observed",
+                "transient_failure_attempt_count": 0,
+                "transient_failure_not_before": 400,
+            }
+        },
+    }
+    persisted: list[dict] = []
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.sends = 0
+            self.outputs = ["ready\n❯ ", "✻ Working… esc to interrupt"]
+
+        def capture(self, targets, lines):
+            return [module.replace(targets[0], output=self.outputs.pop(0))], []
+
+        def send(self, session, text, *, enter, expected_commands=(), allow_coordinator_wrapper=False):
+            assert state["sessions"]["sam/claude-coordinator"]["transient_failure_attempt_count"] == 1
+            assert text.startswith("MESH_LIVE_TICK id=")
+            self.sends += 1
+            return {}
+
+    client = FakeClient()
+    results, changed = module.execute_live_tick_actions(
+        client,
+        [idle],
+        {idle.key},
+        state=state,
+        lines=160,
+        now=400,
+        min_wake_minutes=25,
+        wait_retry_minutes=60,
+        verify_delay=0,
+        persist_state=lambda value: persisted.append(json.loads(json.dumps(value))),
+    )
+
+    assert changed is True
+    assert client.sends == 1
+    assert results[0].action == "retry_transient_failure"
+    assert results[0].verified is True
+    assert persisted
+
+
 def test_supervisor_reports_codex_and_antigravity_limits_without_wake() -> None:
     module = _load_module()
     codex = module.LiveSession(

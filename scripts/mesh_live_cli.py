@@ -40,6 +40,9 @@ SESSION_LIMIT_RESET_GRACE_SECONDS = 90
 SESSION_LIMIT_SCHEDULE_VERSION = 4
 SESSION_LIMIT_PENDING_RETRY_SECONDS = 4 * 60
 SESSION_LIMIT_PENDING_MAX_ATTEMPTS = 3
+TRANSIENT_FAILURE_BACKOFF_SECONDS = 5 * 60
+TRANSIENT_FAILURE_MAX_BACKOFF_SECONDS = 60 * 60
+TRANSIENT_FAILURE_MAX_ATTEMPTS = 4
 CLAUDE_PASTE_SETTLE_SECONDS = 1.0
 CLAUDE_CONTEXT_COMPACT_THRESHOLD = 90
 CODEX_RECOVERY_VERIFY_ATTEMPTS = 16
@@ -2130,6 +2133,9 @@ def build_live_tick_plan(
                 else:
                     action = "wake_after_reset"
                     reason = "exact Claude session-limit banner; wait for declared reset"
+        elif state == LiveScreenState.transient_failure:
+            action = "none"
+            reason = "current Claude provider overload"
         elif (
             is_coordinator
             and state == LiveScreenState.idle
@@ -2206,6 +2212,115 @@ def project_persisted_session_limit_schedules(
         not_before = _persisted_session_limit_not_before(saved)
         projected.append(replace(observation, not_before=not_before))
     return projected
+
+
+def _transient_backoff_seconds(attempt_count: int) -> int:
+    return min(
+        TRANSIENT_FAILURE_BACKOFF_SECONDS * (2 ** max(0, attempt_count)),
+        TRANSIENT_FAILURE_MAX_BACKOFF_SECONDS,
+    )
+
+
+def _clear_transient_failure_state(saved: dict[str, Any]) -> bool:
+    keys = (
+        "transient_failure_fingerprint",
+        "transient_failure_attempt_count",
+        "transient_failure_not_before",
+    )
+    changed = any(key in saved for key in keys)
+    for key in keys:
+        saved.pop(key, None)
+    return changed
+
+
+def project_transient_failure_backoff(
+    observations: Sequence[TickObservation],
+    sessions: Sequence[LiveSession],
+    state: dict[str, Any],
+    *,
+    now: float,
+) -> tuple[list[TickObservation], bool]:
+    by_key = {item.key: item for item in sessions}
+    session_state = state.setdefault("sessions", {})
+    if not isinstance(session_state, dict):
+        raise LiveReadError("tick state sessions must be an object")
+    projected: list[TickObservation] = []
+    changed = False
+    for observation in observations:
+        key = _tick_state_key(observation.owner, observation.name)
+        saved = session_state.setdefault(key, {})
+        if not isinstance(saved, dict):
+            saved = {}
+            session_state[key] = saved
+            changed = True
+        session = by_key.get((observation.owner, observation.name))
+        is_transient = observation.screen_state == "transient_failure"
+        has_incident = "transient_failure_not_before" in saved
+        if not is_transient and not has_incident:
+            projected.append(observation)
+            continue
+        if not is_transient and observation.screen_state not in {"idle"}:
+            changed = _clear_transient_failure_state(saved) or changed
+            projected.append(observation)
+            continue
+
+        fingerprint = _tick_screen_fingerprint(session.output) if is_transient and session else ""
+        previous_fingerprint = str(saved.get("transient_failure_fingerprint") or "")
+        raw_attempts = saved.get("transient_failure_attempt_count", 0)
+        attempts = (
+            raw_attempts
+            if isinstance(raw_attempts, int) and not isinstance(raw_attempts, bool)
+            else 0
+        )
+        raw_not_before = saved.get("transient_failure_not_before", 0)
+        not_before = (
+            float(raw_not_before)
+            if isinstance(raw_not_before, (int, float))
+            and not isinstance(raw_not_before, bool)
+            else 0.0
+        )
+        if is_transient and fingerprint != previous_fingerprint:
+            attempts = 0
+            not_before = now + _transient_backoff_seconds(attempts)
+            saved.update(
+                {
+                    "transient_failure_fingerprint": fingerprint,
+                    "transient_failure_attempt_count": attempts,
+                    "transient_failure_not_before": not_before,
+                }
+            )
+            changed = True
+        if attempts >= TRANSIENT_FAILURE_MAX_ATTEMPTS:
+            projected.append(
+                replace(
+                    observation,
+                    proposed_action="none",
+                    reason="Claude provider overload retry budget exhausted; manual action required",
+                    not_before=0.0,
+                    schedule_source="bounded_backoff",
+                )
+            )
+        elif now < not_before:
+            projected.append(
+                replace(
+                    observation,
+                    proposed_action="none",
+                    reason="Claude provider overload backoff is active",
+                    not_before=not_before,
+                    schedule_source="bounded_backoff",
+                )
+            )
+        else:
+            projected.append(
+                replace(
+                    observation,
+                    proposed_action="retry_transient_failure",
+                    reason="Claude provider overload backoff elapsed",
+                    not_before=not_before,
+                    schedule_source="bounded_backoff",
+                )
+            )
+    return projected, changed
 
 
 def _persisted_session_limit_not_before(saved: dict[str, Any]) -> float:
@@ -2349,6 +2464,12 @@ def build_live_supervisor_signals(
             severity = "critical" if item.coordinator else "warning"
         elif item.proposed_action == "manual_rate_limit":
             state, severity = "manual_rate_limit", "warning"
+        elif "retry budget exhausted" in item.reason:
+            state, severity = "provider_transient_failure_exhausted", "critical"
+        elif item.schedule_source == "bounded_backoff":
+            state, severity = "provider_transient_backoff", "warning"
+        elif item.screen_state == "transient_failure":
+            state, severity = "provider_transient_failure", "warning"
         elif item.proposed_action == "wake_after_reset":
             state, severity = "session_limit", "info"
         elif item.coordinator and item.proposed_action == "compact_coordinator":
@@ -2806,11 +2927,13 @@ def execute_live_tick_actions(
 ) -> tuple[list[TickActionResult], bool]:
     LiveScreenState, wait_selected, session_limit_reset, classify_screen = _load_cli_screen_api()
     observations = build_live_tick_plan(sessions, coordinator_keys, now=now)
+    observations, changed = project_transient_failure_backoff(
+        observations, sessions, state, now=now
+    )
     by_key = {item.key: item for item in sessions}
     session_state = state.setdefault("sessions", {})
     if not isinstance(session_state, dict):
         raise LiveReadError("tick state sessions must be an object")
-    changed = False
     results: list[TickActionResult] = []
     pending_update = speckit_update_notice
     if (
@@ -2842,6 +2965,7 @@ def execute_live_tick_actions(
         "dismiss_antigravity_survey": 0,
         "select_wait": 1,
         "wake_after_reset": 2,
+        "retry_transient_failure": 3,
         "compact_coordinator": 3,
         "recover_coordinator_wake": 4,
         "wake_coordinator": 5,
@@ -2880,6 +3004,7 @@ def execute_live_tick_actions(
             "dismiss_antigravity_survey",
             "select_wait",
             "wake_after_reset",
+            "retry_transient_failure",
             "compact_coordinator",
             "recover_coordinator_wake",
             "wake_coordinator",
@@ -2964,6 +3089,58 @@ def execute_live_tick_actions(
             fresh_state = classify_screen(
                 "claude", _claude_screen_without_suggestion(fresh)
             )
+            if observation.proposed_action == "retry_transient_failure":
+                if fresh_state not in {LiveScreenState.idle, LiveScreenState.transient_failure}:
+                    raise LiveReadError(
+                        f"coordinator changed to {fresh_state.value} before overload retry"
+                    )
+                attempts = int(saved.get("transient_failure_attempt_count") or 0)
+                not_before = float(saved.get("transient_failure_not_before") or 0)
+                if attempts >= TRANSIENT_FAILURE_MAX_ATTEMPTS or now < not_before:
+                    raise LiveReadError("Claude overload retry is not currently eligible")
+                attempts += 1
+                next_not_before = now + _transient_backoff_seconds(attempts)
+                saved.update(
+                    {
+                        "pane_id": fresh.pane_id,
+                        "transient_failure_attempt_count": attempts,
+                        "transient_failure_not_before": next_not_before,
+                    }
+                )
+                changed = True
+                if persist_state is not None:
+                    persist_state(state)
+                token = _tick_token(now, fresh)
+                client.send(
+                    fresh,
+                    _tick_wake_message(token),
+                    enter=True,
+                    expected_commands=("claude", "claude-code"),
+                    allow_coordinator_wrapper=True,
+                )
+                if verify_delay > 0:
+                    sleep_fn(verify_delay)
+                post = _capture_one_for_tick(client, fresh, lines)
+                verified = classify_screen(
+                    "claude", _claude_screen_without_suggestion(post)
+                ) == LiveScreenState.busy
+                results.append(
+                    TickActionResult(
+                        owner=session.owner,
+                        name=session.name,
+                        pane_id=session.pane_id,
+                        action="retry_transient_failure",
+                        status="applied",
+                        reason=(
+                            "Claude overload retry resumed work"
+                            if verified
+                            else "Claude overload retry sent; resumption unverified"
+                        ),
+                        verified=verified,
+                        not_before=next_not_before,
+                    )
+                )
+                continue
             if observation.proposed_action == "recover_coordinator_wake":
                 wake_token = str(saved.get("last_wake_token") or "")
                 if (
@@ -4798,18 +4975,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.observe:
                 with live_tick_state_lock(args.state_file):
                     state = load_live_tick_state(args.state_file)
+                    observed_at = time.time()
                     observations = project_persisted_session_limit_schedules(
                         observations, captured, state
+                    )
+                    observations, backoff_changed = project_transient_failure_backoff(
+                        observations, captured, state, now=observed_at
                     )
                     snapshot, changed = observe_live_supervisor(
                         observations,
                         supervisor_sessions,
                         coordinator_keys,
                         state,
-                        now=time.time(),
+                        now=observed_at,
                         confirmations=args.confirm_observations,
                     )
-                    if changed:
+                    if changed or backoff_changed:
                         save_live_tick_state(args.state_file, state)
                 if args.json:
                     print(
@@ -4829,6 +5010,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state = load_live_tick_state(args.state_file)
                 observations = project_persisted_session_limit_schedules(
                     observations, captured, state
+                )
+                observations, _ = project_transient_failure_backoff(
+                    observations, captured, state, now=time.time()
                 )
                 if args.json:
                     print(
@@ -4853,6 +5037,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 observed_at = time.time()
                 observations = project_persisted_session_limit_schedules(
                     observations, captured, state
+                )
+                observations, backoff_changed = project_transient_failure_backoff(
+                    observations, captured, state, now=observed_at
                 )
                 snapshot, supervisor_changed = observe_live_supervisor(
                     observations,
@@ -4880,7 +5067,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     speckit_update_notice=speckit_update_notice,
                 )
                 snapshot = project_action_result_schedules(snapshot, results)
-                if changed or supervisor_changed:
+                if changed or supervisor_changed or backoff_changed:
                     save_live_tick_state(args.state_file, state)
             if args.json:
                 print(
