@@ -177,6 +177,16 @@ def test_antigravity_current_task_footer_is_busy_not_unknown() -> None:
     assert classify_live_screen("antigravity", "booting") == LiveScreenState.unknown
 
 
+def test_antigravity_current_permission_prompt_overrides_active_task_footer() -> None:
+    capture = (
+        ANTIGRAVITY_APPROVAL
+        + "\n────────────────────────────────────────────────────────────────────────────────\n"
+        + "Gemini 3.8 Flash · high · 1 task(s) · /tasks"
+    )
+
+    assert antigravity_screen_state(capture) == LiveScreenState.awaiting_input
+
+
 def test_antigravity_history_does_not_make_idle_screen_busy() -> None:
     capture = "● Bash(sleep 8) (ctrl+o to expand)\ncompleted\n" + ANTIGRAVITY_IDLE
     assert classify_live_screen("antigravity", capture) == LiveScreenState.idle

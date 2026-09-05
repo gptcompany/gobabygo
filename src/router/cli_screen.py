@@ -237,6 +237,10 @@ def antigravity_screen_state(captured: str) -> LiveScreenState:
         return LiveScreenState.awaiting_input
     lowered = body.lower()
     if _ANTIGRAVITY_ACTIVE_TASK_FOOTER.search(body.rstrip()):
+        if any(
+            marker in lowered for marker in _ANTIGRAVITY_AWAITING_INPUT_MARKERS
+        ):
+            return LiveScreenState.awaiting_input
         return LiveScreenState.busy
     if _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip()):
         return LiveScreenState.idle
