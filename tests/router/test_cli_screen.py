@@ -187,6 +187,15 @@ def test_antigravity_current_permission_prompt_overrides_active_task_footer() ->
     assert antigravity_screen_state(capture) == LiveScreenState.awaiting_input
 
 
+def test_antigravity_permission_without_activity_line_overrides_task_footer() -> None:
+    capture = (
+        "Requesting permission for:\nrm temporary.txt\nDo you want to proceed?\n"
+        + "Gemini 3.8 Flash · high · 1 task(s) · /tasks"
+    )
+
+    assert antigravity_screen_state(capture) == LiveScreenState.awaiting_input
+
+
 def test_antigravity_historical_permission_does_not_override_active_task() -> None:
     capture = (
         ANTIGRAVITY_APPROVAL

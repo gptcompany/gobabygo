@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_repo_probity_keeps_enough_history_for_red_green_evidence() -> None:
     config = (ROOT / "probity.config.mjs").read_text(encoding="utf-8")
 
-    assert "enforceTdd({ maxEvents: 30 })" in config
+    assert re.search(r"enforceTdd\(\{\s*maxEvents:\s*30\s*\}\)", config)
 
 
 def test_readme_documents_probity_as_repo_opt_in() -> None:
