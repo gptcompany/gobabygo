@@ -4,6 +4,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_repo_probity_keeps_enough_history_for_red_green_evidence() -> None:
+    config = (ROOT / "probity.config.mjs").read_text(encoding="utf-8")
+
+    assert "enforceTdd({ maxEvents: 30 })" in config
+
+
 def test_readme_documents_probity_as_repo_opt_in() -> None:
     text = (ROOT / "README.md").read_text(encoding="utf-8")
 

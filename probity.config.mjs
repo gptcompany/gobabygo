@@ -4,7 +4,7 @@ export default defineConfig({
   rules: [
     {
       files: ['src/**/*.py'],
-      rules: [enforceTdd()],
+      rules: [enforceTdd({ maxEvents: 30 })],
     },
   ],
 })
