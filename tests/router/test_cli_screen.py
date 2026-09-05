@@ -187,6 +187,19 @@ def test_antigravity_current_permission_prompt_overrides_active_task_footer() ->
     assert antigravity_screen_state(capture) == LiveScreenState.awaiting_input
 
 
+def test_antigravity_historical_permission_does_not_override_active_task() -> None:
+    capture = (
+        ANTIGRAVITY_APPROVAL
+        + "\nApproved.\n"
+        + "● Bash(sleep 8) (ctrl+o to expand)\n"
+        + "Running the bounded command.\n"
+        + "────────────────────────────────────────────────────────────────────────────────\n"
+        + "Gemini 3.8 Flash · high · 1 task(s) · /tasks"
+    )
+
+    assert antigravity_screen_state(capture) == LiveScreenState.busy
+
+
 def test_antigravity_history_does_not_make_idle_screen_busy() -> None:
     capture = "● Bash(sleep 8) (ctrl+o to expand)\ncompleted\n" + ANTIGRAVITY_IDLE
     assert classify_live_screen("antigravity", capture) == LiveScreenState.idle
