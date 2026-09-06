@@ -2616,43 +2616,52 @@ def test_coordinator_system_prompt_keeps_forced_speckit_at_coordinator_scope() -
 
 
 @pytest.mark.parametrize(
-    ("screen", "expected"),
+    ("screen", "delegation_id", "expected"),
     [
         (
             "Codex\n› Implement fix DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo",
+            "delegation-1234",
             True,
         ),
         (
             "› old DELEGATION_ID=delegation-1234\n• Working (2s)\n› ",
+            "delegation-1234",
             False,
         ),
         (
             "› old DELEGATION_ID=delegation-1234\n› 1. Yes, continue\n  2. No",
+            "delegation-1234",
             False,
         ),
         (
             "› old DELEGATION_ID=delegation-1234\nPress Enter to confirm",
+            "delegation-1234",
             False,
         ),
         (
             "› old DELEGATION_ID=delegation-1234\n$ ",
+            "delegation-1234",
             False,
         ),
         (
             "› Implement fix DELEGATION_ID=another-delegation\n  gpt-5.4 · /repo",
+            "delegation-1234",
             False,
         ),
         (
             "› Implement fix DELEGATION_ID=delegation-1234-extra\n  gpt-5.4 · /repo",
+            "delegation-1234",
             False,
         ),
         (
             "› old DELEGATION_ID=delegation-1234\nsam@host repo % ",
+            "delegation-1234",
             False,
         ),
         (
             "• Ran git status\n  └ clean\n────────────────────\n"
             "› Implement fix DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo",
+            "delegation-1234",
             True,
         ),
         (
@@ -2661,19 +2670,149 @@ def test_coordinator_system_prompt_keeps_forced_speckit_at_coordinator_scope() -
             "› DELEGATION_ID: delegation-1234 — read /repo/brief.md\n"
             "  and complete the review\n\n"
             "  gpt-5.6-sol xhigh · /repo · Context 36%",
+            "delegation-1234",
             True,
+        ),
+        (
+            "• Ran prior check\n  └ clean\n"
+            "─ Worked for 15m 24s ─────────────────────\n\n"
+            "› Leggi ed esegui il brief /repo/.review-briefs/DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z.md e chiudi con la riga WORKER_DONE DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            True,
+        ),
+        (
+            "WORKER_DONE DLG-T003X6HREV-CODEX-20260905T0543Z\n"
+            "─ Worked for 15m 24s ─────────────────────\n\n"
+            "› Leggi ed esegui il brief /repo/.review-briefs/DLG-\n"
+            "  OTHER-CODEX-20260905T0543Z.md\n\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "WORKER_DONE DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n"
+            "─ Worked for 15m 24s ─────────────────────\n\n"
+            "› Leggi ed esegui il brief /repo/.review-briefs/DLG-\n"
+            "  OTHER-CODEX-20260905T0543Z.md\n\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› Old task DLG-T003X6HREV-CODEX-20260905T0543Z\n"
+            "  gpt-5.6-sol medium · /repo\n"
+            "› New task DLG-\n"
+            "  OTHER-CODEX-20260905T0543Z\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix DLG-\n"
+            "  T003X6HREV-\n"
+            "  CODEX-20260905T0543Z\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            True,
+        ),
+        (
+            "› prefix DLG\n"
+            "  -T003X6HREV-CODEX-20260905T0543Z\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            True,
+        ),
+        (
+            "› prefix DLG-T003X6HREV-CODEX-20260905T0543Z\n"
+            "  e poi chiudi con WORKER_DONE\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            True,
+        ),
+        (
+            "› prefix RETRY-\n"
+            "  DLG-T003X6HREV-CODEX-20260905T0543Z\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix RETRY-DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix DLG-\n"
+            "  gpt-5.6-sol medium · /repo\n"
+            "  T003X6HREV-CODEX-20260905T0543Z",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z-extra\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n"
+            "  -extra\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "• Working (2s)\n"
+            "› prefix DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n"
+            "  gpt-5.6-sol medium · /repo",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n"
+            "› 1. Yes, continue\n"
+            "  2. No",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n"
+            "Press Enter to confirm",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
+        ),
+        (
+            "› prefix DLG-\n"
+            "  T003X6HREV-CODEX-20260905T0543Z\n"
+            "$ ",
+            "DLG-T003X6HREV-CODEX-20260905T0543Z",
+            False,
         ),
         (
             "• Ran old command\n────────────────────\n• Working (2s)\n"
             "› Implement fix DELEGATION_ID=delegation-1234\n  gpt-5.4 · /repo",
+            "delegation-1234",
             False,
         ),
     ],
 )
-def test_codex_recovery_requires_exact_bottom_safe_composer(screen: str, expected: bool) -> None:
+def test_codex_recovery_requires_exact_bottom_safe_composer(
+    screen: str, delegation_id: str, expected: bool
+) -> None:
     module = _load_module()
 
-    assert module.codex_composer_has_delegation(screen, "delegation-1234") is expected
+    assert module.codex_composer_has_delegation(screen, delegation_id) is expected
 
 
 @pytest.mark.parametrize(
@@ -3259,6 +3398,105 @@ def test_codex_recovery_sends_enter_once_and_persists_before_io(monkeypatch, tmp
     encoded_state = state_path.read_text(encoding="utf-8")
     assert "Task DELEGATION_ID" not in encoded_state
     assert not (tmp_path / "caller-controlled.json").exists()
+
+
+def test_codex_recovery_accepts_wrapped_bottom_delegation_once(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    sep = module._FIELD_SEPARATOR
+    delegation_id = "DLG-T003X6HREV-CODEX-20260905T0543Z"
+    commands: list[list[str]] = []
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(args, stdout=sep.join(["codex-worker", "codex"]) + "\n")
+        if "capture-pane" in args:
+            return _completed(
+                args,
+                stdout=(
+                    "WORKER_DONE old-delegation\n"
+                    "─ Worked for 15m 24s ─────────────────────\n\n"
+                    "› Leggi ed esegui il brief /repo/.review-briefs/DLG-\n"
+                    "  T003X6HREV-CODEX-20260905T0543Z.md e chiudi con la riga WORKER_DONE DLG-\n"
+                    "  T003X6HREV-CODEX-20260905T0543Z\n\n"
+                    "  gpt-5.6-sol medium · /repo\n"
+                ),
+            )
+        if "send-keys" in args:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            assert len(state["attempts"]) == 1
+            return _completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 2)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    payload = {
+        "op": "recover_codex_submit",
+        "target": {"owner": "sam", "name": "codex-worker", "pane_id": "%7"},
+        "delegation_id": delegation_id,
+    }
+
+    first = module.handle_remote_request(payload)
+    with pytest.raises(module.LiveReadError, match="already attempted"):
+        module.handle_remote_request(payload)
+
+    assert first["evidence"] == "exact-delegation"
+    assert first["text_sent"] is False
+    assert first["enter_sent"] is True
+    assert first["submission"] == "unknown"
+    assert sum(command[-1] == "Enter" for command in commands if command) == 1
+
+
+def test_codex_recovery_allows_next_delegation_on_same_pane(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 0)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    sep = module._FIELD_SEPARATOR
+    commands: list[list[str]] = []
+    send_count = 0
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal send_count
+        commands.append(args)
+        if "display-message" in args:
+            return _completed(args, stdout=sep.join(["codex-worker", "codex"]) + "\n")
+        if "capture-pane" in args:
+            delegation_id = "delegation-first" if send_count == 0 else "delegation-second"
+            return _completed(
+                args,
+                stdout=f"› Task DELEGATION_ID={delegation_id}\n  gpt-5.4 · /repo\n",
+            )
+        if "send-keys" in args:
+            send_count += 1
+            return _completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_current_username", lambda: "sam")
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    target = {"owner": "sam", "name": "codex-worker", "pane_id": "%7"}
+
+    first = module.handle_remote_request(
+        {"op": "recover_codex_submit", "target": target, "delegation_id": "delegation-first"}
+    )
+    second = module.handle_remote_request(
+        {"op": "recover_codex_submit", "target": target, "delegation_id": "delegation-second"}
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert first["enter_sent"] is True
+    assert second["enter_sent"] is True
+    assert len(state["attempts"]) == 2
+    assert sum(command[-1] == "Enter" for command in commands if command) == 2
 
 
 def test_codex_recovery_polls_until_tui_redraw_confirms_submission(

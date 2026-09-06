@@ -1019,11 +1019,34 @@ def _codex_composer_is_dim_placeholder(visible_screen: str) -> bool:
 
 
 def _codex_composer_contains_delegation(composer: str, delegation_id: str) -> bool:
+    """Search an exact delegation in a bottom-anchored Codex composer region."""
     token_chars = r"A-Za-z0-9_.:-"
-    exact_id = re.compile(
-        rf"(?<![{token_chars}]){re.escape(delegation_id)}(?![{token_chars}])"
+    flexible_id = re.compile(
+        rf"(?<![{token_chars}])"
+        + r"(?:\n[ \t]+)?".join(re.escape(char) for char in delegation_id)
+        + rf"(?![{token_chars}])"
     )
-    return exact_id.search(composer) is not None
+    token_char = re.compile(rf"[{token_chars}]")
+    input_lines: list[str] = []
+    for line in str(composer or "").splitlines():
+        if _CODEX_FOOTER.search(line):
+            break
+        input_lines.append(line)
+    input_text = "\n".join(input_lines)
+    for match in flexible_id.finditer(input_text):
+        prefix = input_text[: match.start()]
+        if prefix.endswith((" ", "\t")):
+            previous_line = prefix.rstrip(" \t")
+            if previous_line.endswith("\n"):
+                before_wrap = previous_line[:-1].rstrip()
+                if before_wrap and token_char.fullmatch(before_wrap[-1]):
+                    continue
+        # A continuation starting with token punctuation is probably a wrapped
+        # suffix, while natural-language follow-up text after a full ID is valid.
+        if re.match(r"\n[ \t]+[-_.:]", input_text[match.end() :]):
+            continue
+        return True
+    return False
 
 
 def antigravity_screen_is_ready_for_delegation(visible_screen: str) -> bool:
