@@ -553,7 +553,7 @@ def initialize_task(
                 raise ReviewLedgerError("replan artifact changed during transaction")
             try:
                 plan = json.loads(raw)
-            except (ValueError, UnicodeError) as exc:
+            except ValueError as exc:
                 raise ReviewLedgerError("replan artifact must be valid JSON") from exc
             fields = {
                 "task_key", "previous_cycle", "failure_evidence", "approach_change",
@@ -563,17 +563,17 @@ def initialize_task(
                 raise ReviewLedgerError("replan artifact has invalid fields")
             if plan["task_key"] != key:
                 raise ReviewLedgerError("replan artifact task key mismatch")
-            if (
-                type(plan["previous_cycle"]) is not int
-                or plan["previous_cycle"] != existing["cycle"]
-            ):
+            if type(plan["previous_cycle"]) is not int:
+                raise ReviewLedgerError("replan artifact previous cycle must be an integer")
+            if plan["previous_cycle"] != existing["cycle"]:
                 raise ReviewLedgerError("replan artifact previous cycle mismatch")
             for field in sorted(fields - {"task_key", "previous_cycle"}):
                 if not isinstance(plan[field], str):
                     raise ReviewLedgerError(f"replan artifact {field} must be text")
                 if len(plan[field]) > 4096:
                     raise ReviewLedgerError(f"replan artifact {field} exceeds 4096 characters")
-                _bounded_text(plan[field], f"replan artifact {field}", maximum=4096)
+                if not plan[field].strip():
+                    raise ReviewLedgerError(f"replan artifact {field} must not be empty")
             replan = {
                 **evidence, "plan": plan, "carried_findings": existing["last_findings"],
             }

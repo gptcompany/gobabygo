@@ -4,8 +4,8 @@
 
 The existing ledger already limits each task cycle to two corrections, uses
 atomic writes and revision checks, and prohibits backlog decisions for blocking
-findings. Reinitialization after REPLAN currently accepts an unchanged scope
-without evidence and clears current findings. Mesh live's obligation to consult
+findings. Before R1, reinitialization after REPLAN accepted an unchanged scope
+without evidence and cleared current findings. Mesh live's obligation to consult
 this ledger before correction dispatch is currently coordinator prompt policy.
 The parser accepts canonical Tnnn IDs, not legacy subtask names such as T003x6-L1d.
 
@@ -53,9 +53,13 @@ wiring, stale revision retries and artifact reuse after another REPLAN.
 Existing duplicate-review checks remain intact even when initialization retains
 the same source scope. No remote session was mutated or production ledger imported.
 
-Independent Claude review was attempted locally with tools disabled and explicit
-diff/module context; it timed out after 180 seconds with no verdict. It remains
-pending. CLI integration tests are not a real-worker E2E and do not complete R5.
+Independent Claude review initially timed out after 180 seconds. A later local
+read-only review of commit 808b0f1 completed. Its conditional medium finding does
+not apply: initialize_task already rejects all existing states except
+REPLAN_REQUIRED before requiring the artifact. Low findings on duplicate length
+validation, redundant UnicodeError and ambiguous cycle type diagnostics were
+cleaned up. Artifact text is intentionally preserved verbatim to match its digest.
+CLI integration tests are not a real-worker E2E and do not complete R5.
 
 Integration follow-up: the observed 096 directory also lacks github-ledger.json,
 which load_feature requires. The legacy task file must be reconciled with the
