@@ -169,6 +169,63 @@ def test_alias_cannot_move_to_another_task(tmp_path: Path) -> None:
     assert review.resolve_task(repo, feature, "T003x6-J")["task"] == "T001"
 
 
+def test_dispatch_is_reserved_before_delivery_and_never_replayed(tmp_path: Path, monkeypatch) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=3)
+    calls = []
+
+    def deliver(message, delegation):
+        state = json.loads((feature / "review-ledger.json").read_text())
+        assert state["tasks"]["T001"]["events"][-1]["type"] == "correction_dispatch_attempted"
+        with pytest.raises(review.ReviewLedgerError, match="transaction is active"):
+            review.open_review(repo, feature, "T001", level="DELTA", scope=DELTA_1,
+                               reviewer_session="codex-project", delegation_id="review-new",
+                               invariant="", expected_revision=5)
+        calls.append((message, delegation))
+        raise TimeoutError("response lost after delivery")
+
+    monkeypatch.setattr(review, "_prepare_local_delivery", lambda *_: (
+        {"owner": "test", "name": "agy-project", "pane_id": "%9", "pane_pid": 42}, deliver))
+    args = dict(delegation_id="fix-1", message="fix-1 example/project:review-ledger-001:T001 fix it",
+                worker_repo=repo, expected_revision=4)
+    result = review.dispatch_correction(repo, feature, "T001", **args)
+    assert result["submission"] == "unknown"
+    assert result["revision"] == 6
+    with pytest.raises(review.ReviewLedgerError, match="already attempted"):
+        review.dispatch_correction(repo, feature, "T001", **{**args, "expected_revision": 6})
+    assert len(calls) == 1
+    with pytest.raises(review.ReviewLedgerError, match="delegation"):
+        review.dispatch_correction(repo, feature, "T001", **{
+            **args, "delegation_id": "other", "expected_revision": 6})
+
+
+def test_completion_requires_exact_release_and_intact_evidence(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    before = (feature / "tasks.md").read_bytes()
+    with pytest.raises(review.ReviewLedgerError, match="RELEASE_PASSED"):
+        review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=1)
+    assert (feature / "tasks.md").read_bytes() == before
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    _record(repo, feature, 2, "PASS")
+    with pytest.raises(review.ReviewLedgerError, match="scope"):
+        review.complete_task(repo, feature, "T001", scope=SCOPE_B, expected_revision=3)
+    evidence = feature / "review-2.md"
+    content = evidence.read_text()
+    evidence.write_text("tampered report")
+    with pytest.raises(review.ReviewLedgerError, match="evidence"):
+        review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)
+    evidence.write_text(content)
+    result = review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)
+    assert result["completed"] is True
+    assert (feature / "tasks.md").read_text().startswith("- [x] T001")
+    assert "- [ ] T002" in (feature / "tasks.md").read_text()
+    assert review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)["completed"] is True
+
+
 def test_pass_rejects_blocking_findings_without_mutation(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)

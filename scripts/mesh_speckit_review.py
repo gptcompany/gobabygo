@@ -7,6 +7,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import fcntl
+import getpass
 import hashlib
 import json
 import os
@@ -1136,6 +1137,151 @@ def review_check(
     }
 
 
+def _prepare_local_delivery(writer: str, worker_repo: Path) -> tuple[dict[str, Any], Callable]:
+    from scripts.mesh_live_cli import LiveClient, LiveEndpoint, LiveReadError
+
+    root = worker_repo.expanduser().resolve(strict=True)
+    if not (root / ".git").exists():
+        raise ReviewLedgerError("worker repo must be an exact Git checkout")
+    client = LiveClient(LiveEndpoint(host="", local=True, users=(getpass.getuser(),)))
+    try:
+        sessions, _warnings = client.discover()
+    except LiveReadError as exc:
+        raise ReviewLedgerError("cannot discover the local writer; inspect mesh live board") from exc
+    matches = [session for session in sessions if session.name == writer]
+    if len(matches) != 1:
+        raise ReviewLedgerError("canonical writer session is missing or ambiguous on this host")
+    session = matches[0]
+    if Path(session.pane_path).resolve() != root or session.pane_pid <= 0:
+        raise ReviewLedgerError("writer pane repository or process identity does not match")
+    target = {"owner": session.owner, "name": session.name,
+              "pane_id": session.pane_id, "pane_pid": session.pane_pid}
+    return target, lambda message, delegation: client.send(
+        session, message, enter=True, delegation_id=delegation,
+    )
+
+
+def dispatch_correction(
+    repo: Path, feature_dir: Path, task_id: str, *, delegation_id: str,
+    message: str, worker_repo: Path, expected_revision: int,
+) -> dict[str, Any]:
+    from scripts.mesh_live_cli import validate_send_text, LiveReadError
+
+    feature, _task, key = _load_bound_task(repo, feature_dir, task_id)
+    task = _normalize_task_id(task_id)
+    delegation = _normalize_delegation(delegation_id)
+    text = validate_send_text(message, enter=True)
+    for value, label in ((delegation, "delegation"), (key, "canonical task key")):
+        if not re.search(r"(?<![A-Za-z0-9_.:-])" + re.escape(value) + r"(?![A-Za-z0-9_.:-])", text):
+            raise ReviewLedgerError(f"dispatch text must contain the exact {label}")
+    with _ledger_lock(feature):
+        ledger, digest = _load_ledger(feature)
+        _require_revision(ledger, expected_revision)
+        record = ledger["tasks"].get(task)
+        if record is None or record["status"] != "CORRECTION_OPEN":
+            raise ReviewLedgerError("managed correction dispatch requires CORRECTION_OPEN")
+        opened = next((event for event in reversed(record["events"])
+                       if event["type"] == "correction_opened"), None)
+        if opened is None or opened["data"].get("delegation_id") != delegation:
+            raise ReviewLedgerError("dispatch delegation does not match the open correction")
+        if any(event["type"] == "correction_dispatch_attempted"
+               and event["data"].get("delegation_id") == delegation
+               for entry in ledger["tasks"].values() for event in entry["events"]):
+            raise ReviewLedgerError("dispatch was already attempted; inspect receipt/pane, never resend")
+        if len(record["events"]) > MAX_EVENTS_PER_TASK - 2:
+            raise ReviewLedgerError("insufficient event capacity for dispatch and receipt")
+        target, deliver = _prepare_local_delivery(record["writer_session"], worker_repo)
+        revision = ledger["revision"] + 1
+        data = {"delegation_id": delegation, "target": target,
+                "worker_repo": str(worker_repo.expanduser().resolve()),
+                "message_sha256": hashlib.sha256(text.encode()).hexdigest(),
+                "cycle": record["cycle"], "round": record["correction_round"]}
+        _append_event(record, revision, "correction_dispatch_attempted", data)
+        ledger["revision"] = revision
+        # Commit intent before input. A crash or lost response must never authorize replay.
+        _atomic_write(feature, ledger, digest)
+        persisted = _read_bytes(_ledger_path(feature))
+        digest = hashlib.sha256(persisted).hexdigest()
+        try:
+            sent = deliver(text, delegation)
+            receipt = {
+                "submission": "verified" if sent.get("submission") == "verified" else "unknown",
+                "text_sent": sent.get("text_sent") is True,
+                "enter_sent": sent.get("enter_sent") is True,
+            }
+        except (OSError, subprocess.SubprocessError, LiveReadError, ValueError):
+            receipt = {"submission": "unknown", "text_sent": None, "enter_sent": None}
+        revision += 1
+        _append_event(record, revision, "correction_dispatch_result",
+                      {"delegation_id": delegation, **receipt})
+        ledger["revision"] = revision
+        _atomic_write(feature, ledger, digest)
+        return {"task": task, "task_key": key, "revision": revision,
+                "status": record["status"], "delegation_id": delegation, **receipt}
+
+
+def complete_task(
+    repo: Path, feature_dir: Path, task_id: str, *, scope: str, expected_revision: int,
+) -> dict[str, Any]:
+    feature = load_feature(repo, feature_dir)
+    task = _normalize_task_id(task_id)
+    expected_scope = normalize_immutable_review_scope(scope)
+    with _ledger_lock(feature):
+        ledger, _digest = _load_ledger(feature)
+        _require_revision(ledger, expected_revision)
+        record = ledger["tasks"].get(task)
+        if record is None or record["status"] != "RELEASE_PASSED":
+            raise ReviewLedgerError("task completion requires RELEASE_PASSED")
+        if record["frozen_scope"] != expected_scope:
+            raise ReviewLedgerError("completion scope differs from the reviewed candidate")
+        passed = next((event for event in reversed(record["events"])
+                       if event["type"] == "review_recorded"
+                       and event["data"].get("level") == "RELEASE"
+                       and event["data"].get("verdict") == "PASS"
+                       and event["data"].get("scope") == expected_scope), None)
+        if passed is None:
+            raise ReviewLedgerError("release evidence is missing")
+        evidence = passed["data"]["evidence"]
+        if _evidence_record(feature, Path(evidence["path"])) != evidence:
+            raise ReviewLedgerError("release evidence changed since review")
+        current = load_feature(repo, feature_dir)
+        if current.binding != feature.binding:
+            raise ReviewLedgerError("feature binding changed during completion")
+        selected = next((item for item in current.tasks if item.task_id == task), None)
+        if selected is None:
+            raise ReviewLedgerError("canonical task is absent from tasks.md")
+        if not selected.completed:
+            path = current.tasks_file
+            original = path.read_bytes()
+            lines = original.decode("utf-8").splitlines(keepends=True)
+            index = selected.line_number - 1
+            pattern = r"^(\s*-\s*\[) (\]\s*" + re.escape(task) + r"(?=\s|$))"
+            replacement, count = re.subn(pattern, r"\g<1>x\g<2>", lines[index], count=1)
+            if count != 1:
+                raise ReviewLedgerError("task line changed during completion")
+            lines[index] = replacement
+            descriptor, temporary_name = tempfile.mkstemp(prefix=".mesh-tasks-", dir=path.parent)
+            temporary = Path(temporary_name)
+            try:
+                os.fchmod(descriptor, path.stat().st_mode & 0o777)
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write("".join(lines).encode("utf-8"))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                if path.is_symlink() or path.read_bytes() != original:
+                    raise ReviewLedgerError("tasks.md changed during completion")
+                os.replace(temporary, path)
+                directory = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return {"task": task, "status": record["status"], "revision": ledger["revision"],
+                "completed": True, "task_key": record["task_key"]}
+
+
 def _common(command: argparse.ArgumentParser, *, revision: bool = True) -> None:
     command.add_argument("repo", type=Path)
     command.add_argument("feature_dir", type=Path)
@@ -1148,6 +1294,14 @@ def _common(command: argparse.ArgumentParser, *, revision: bool = True) -> None:
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    dispatch = sub.add_parser("dispatch")
+    _common(dispatch)
+    dispatch.add_argument("--delegation-id", required=True)
+    dispatch.add_argument("--message", required=True)
+    dispatch.add_argument("--worker-repo", type=Path, required=True)
+    complete = sub.add_parser("complete")
+    _common(complete)
+    complete.add_argument("--scope", required=True)
     mapped = sub.add_parser("map")
     _common(mapped)
     mapped.add_argument("--alias", required=True)
@@ -1221,7 +1375,16 @@ def _render(output: dict[str, Any]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
-        if args.command == "map":
+        if args.command == "dispatch":
+            output = dispatch_correction(
+                args.repo, args.feature_dir, args.task, delegation_id=args.delegation_id,
+                message=args.message, worker_repo=args.worker_repo,
+                expected_revision=args.expect_revision,
+            )
+        elif args.command == "complete":
+            output = complete_task(args.repo, args.feature_dir, args.task,
+                                   scope=args.scope, expected_revision=args.expect_revision)
+        elif args.command == "map":
             output = register_alias(
                 args.repo, args.feature_dir, args.task, alias=args.alias,
                 evidence_file=args.evidence_file, expected_revision=args.expect_revision,
@@ -1320,6 +1483,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     print(json.dumps(output, indent=2, sort_keys=True) if args.json else _render(output))
     if args.command == "check" and not output["release_passed"]:
+        return 1
+    if args.command == "dispatch" and output["submission"] != "verified":
         return 1
     return 0
 

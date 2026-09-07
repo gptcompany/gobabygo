@@ -20,10 +20,14 @@ The parser accepts canonical Tnnn IDs, not legacy subtask names such as T003x6-L
   tasks or invent review results. Keep parent lineage across split tasks.
   Implemented as append-only aliases sharing the canonical parent cycle, not
   separate budgets. Actual 096 mapping/import remains R4.
-- [ ] R3 Bind planned correction dispatch and completion to ledger checks in
+- [x] R3 Bind planned correction dispatch and completion to ledger checks in
   the managed execution path. Specify retry semantics and test concurrent
   revisions, duplicate dispatch and interrupted delivery. Raw CLI access remains
   outside this guarantee.
+  `review dispatch` runs on the host holding the ledger and tmux, persists intent
+  before tracked input, and refuses replay. `review complete` checks the exact
+  RELEASE report digest and updates only the canonical task checkbox atomically.
+  Transport uncertainty stays unknown; it is not interpreted as failure to send.
 - [ ] R4 Reconcile the 096 ledger after active delegations finish. Record
   imported evidence and uncertainty explicitly, and verify coordinator resume
   consumes its actual state. No automatic conversion of checkboxes into PASS.

@@ -544,6 +544,33 @@ Multiple aliases share the parent's cycle, budget and findings. Mappings are
 case-normalized, feature-local, append-only and cannot move between parents.
 Do not map independent parallel tasks to the same cycle. The canonical task must
 exist in tasks.md and the feature must have a valid github-ledger.json binding.
+
+For planned corrections, run on the host holding the ledger and worker tmux:
+
+```bash
+mesh speckit review dispatch <repo> <feature> T001 \
+  --worker-repo <worker-repo> --delegation-id <open-correction-id> \
+  --message '<canonical-task-key> <open-correction-id> Read the bounded brief.' \
+  --expect-revision N --json
+```
+
+This resolves the exact recorded writer locally, checks its repository and pane
+identity, and reuses tracked live send. A durable attempt precedes input; the
+ledger lock covers delivery. A crash, timeout or lost response never allows replay
+of that delegation. `submission=unknown` exits 1 and requires inspection, not
+resubmission. Transport exceptions leave delivery fields null (unknown), not false.
+The attempt event records target identity and message hash, not message content.
+Do not create a new correction ID to retry an uncertain delivery. Existing guarded
+Codex submit recovery remains available when its own checks pass. Direct sends
+outside this managed command remain outside the ledger guarantee.
+
+`mesh speckit review complete <repo> <feature> T001 --scope <immutable-scope> --expect-revision N`
+requires RELEASE_PASSED, matching scope and an unchanged release report, then
+atomically marks only that canonical checkbox. Repeating successful completion
+is harmless at the same ledger revision. It does not commit, push, publish issues
+or authorize deployment. The existing GitHub Action remains the issue reconciler.
+Repository edits made outside this command do not take its ledger lock; its
+content check reduces races but is not a filesystem sandbox.
 This records a decision, not proof of its quality. Related legacy subtasks still
 need an explicit canonical Tnnn mapping; raw session sends are not ledger gates.
 
