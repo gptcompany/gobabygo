@@ -168,8 +168,10 @@ untrusted runtime state fail closed. See
 `mesh speckit review` adds a local transactional review gate for each bound
 Spec Kit task. It records immutable scopes, CAS revisions, at most two
 correction rounds, evidence-file digests, mutation budgets, and RELEASE PASS in
-`specs/<feature>/review-ledger.json`. It has no router, tmux, GitHub, commit,
-push, or deploy side effects. See
+`specs/<feature>/review-ledger.json`. Legacy aliases share their canonical task's
+cycle. Replans require a bound report; `dispatch` delivers a correction once via
+local tmux, and `complete` checks release evidence before marking the task done.
+Neither commits, pushes, contacts GitHub/router, nor deploys. See
 [QUICKSTART.md](QUICKSTART.md#transactional-spec-kit-review).
 
 ### Optional Claude and Codex TDD gate

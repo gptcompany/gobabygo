@@ -528,11 +528,11 @@ mesh speckit review open /path/to/repo specs/001-feature T001 \
 
 # Save the exact reviewer output as a non-secret feature report, then record it.
 mesh speckit review record /path/to/repo specs/001-feature T001 \
-  --verdict PASS --evidence-file specs/001-feature/review-T001.md \
+  --verdict PASS --evidence-file review-T001.md \
   --mutations-run 1 --expect-revision <revision>
 ```
 
-Every mutation performs a global revision compare-and-swap under a Git-internal
+Every ledger mutation performs a global revision compare-and-swap under a Git-internal
 `flock`, validates the closed FSM, fsyncs a same-directory temporary file, and
 atomically replaces `review-ledger.json`. A stale revision, self-review,
 mutable scope, duplicate review, invented invariant, mutation-budget overflow,
@@ -554,14 +554,43 @@ completion and from merge, push, deploy, or money-path authorization. The
 ledger/report files use the repository's normal authorized Git flow; the CLI
 does not perform those operations.
 
+After `REPLAN`, restarting a cycle requires `init --replan-file replan.json`.
+The feature-relative JSON binds `task_key` and integer `previous_cycle`, with
+`failure_evidence`, `approach_change`, `acceptance_criteria` and
+`finding_disposition`. Findings and cumulative rounds survive the restart.
+`map`/`resolve` bind historical subtask names to one canonical task without
+renaming history or creating new correction budgets.
+
+On the host holding both the review ledger and worker tmux, use `dispatch`
+instead of a direct send for an opened correction:
+
+```bash
+mesh speckit review dispatch /path/to/repo specs/001-feature T001 \
+  --worker-repo /path/to/worker-repo --delegation-id <correction-id> \
+  --message '<canonical-task-key> <correction-id> Read the correction brief.' \
+  --expect-revision <revision> --json
+```
+
+The attempt is persisted before input. Unknown delivery exits 1 and requires
+inspection; a retry never pastes the task again. Task status includes the last
+attempt/receipt, including an unknown result after process death.
+
 ```bash
 mesh speckit review check /path/to/repo specs/001-feature T001 \
   --scope commit:<current-writer-sha>
+mesh speckit review complete /path/to/repo specs/001-feature T001 \
+  --scope commit:<current-writer-sha> --expect-revision <revision>
 ```
 
 `check` exits `0` only when the supplied immutable scope is the frozen
 `RELEASE_PASSED` candidate, `1` for its valid unsatisfied gate, and `2` when the
 ledger, task, scope, or command is invalid or stale.
+`complete` additionally verifies the release report digest and atomically marks
+the checkbox in tasks.md. Completion stays authoritative there, so it does not
+advance the review ledger revision. Run check before completion; check rejects
+tasks already marked complete. Normal Git flow and the existing Action publish
+the subsequent issue update. See [the runbook](MESH_LIVE.md) for alias mapping,
+replan schema and the boundary with edits made outside Mesh.
 
 ### Git hook chaining
 

@@ -592,8 +592,9 @@ stale input.
 
 The ledger and referenced reports are normal non-secret feature artifacts.
 Include them only through the repository's normal authorized Git flow. The
-ledger CLI itself does not commit, push, touch source, send tmux input, use the
-router, or contact GitHub.
+ledger CLI does not commit, push, edit implementation source, use the router, or
+contact GitHub. Its explicit `dispatch` command sends tracked tmux input;
+`complete` updates the canonical task checkbox after verifying release evidence.
 
 The router/database remains optional for durable managed orchestration. Loading
 the live projection never creates a router thread and never takes ownership of

@@ -790,7 +790,9 @@ Runtime management:
   immutable Gobabygo commit and is plan-only unless --apply is explicit.
   review maintains a feature-local transactional FSM with CAS revision, Git-internal
   flock, immutable scopes, bounded correction rounds, and evidence-file digests.
-  It never parses reviewer prose or performs Git, GitHub, router, tmux, or deploy I/O.
+  dispatch delivers one recorded correction through local tracked tmux input.
+  complete marks the canonical task checkbox after exact RELEASE PASS evidence.
+  It never parses reviewer prose, commits, pushes, contacts GitHub/router, or deploys.
 
 Legacy iTerm2 run options:
   --auto                         Use KISS local defaults: --write, auto-approve known prompts, max-turns=1.
