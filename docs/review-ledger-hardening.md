@@ -146,3 +146,35 @@ the tested runtime and load its current coordinator contract. Attaching to an
 existing tmux process does not replace its system prompt; a fresh bootstrap or
 resume appends the newly generated contract. Verify the new dispatch/complete
 instructions before claiming production adoption.
+
+## Worker lifecycle follow-up
+
+Verified on Dell: codex-gobabygo-speckit-103-canary still holds
+DLG-T003X6HREV2-CODEX-20260905T0907Z in its bottom composer. The 096 tasks.md
+already records it as an obsolete duplicate at line 13483 and says not to wake
+it. Thus absence from active work is not proof that no record exists; the missing
+operation is reconciliation of that decision with the live session.
+
+- [x] W1 Expose visible pending Codex delegations in board and the existing
+  debounced supervisor. Require reconciliation before TICK_IDLE, reuse or new
+  scoped workers. This is an inspection signal, not proof of obsolescence.
+- [ ] W2 Add guarded retirement using existing state/identity helpers: a durable
+  cancellation/supersession record and preserved brief/handoff first; exact pane
+  and process identity, detached state, no active work or background tools,
+  accounted Git changes, and a fresh unchanged capture before termination.
+  Never submit obsolete text. Unknown delivery requires reconciliation, not age
+  based deletion. Test against isolated tmux sessions before production cleanup.
+- [ ] W3 Enforce reuse and duplicate-worker prevention in ensure paths using
+  verified canonical repository/provider identity; explicitly exempt bounded
+  independent review roles. Report why a new worker is needed. Do not infer
+  ownership or terminate sessions from names alone.
+- [ ] W4 Reconcile and retire the obsolete canary through the guarded path;
+  validate lifecycle behavior end-to-end and deploy the updated tick contract.
+
+W1 does not itself close workers or solve accumulation. W2-W4 remain required;
+no production session was closed or submitted while investigating this report.
+W1 validation: 286 live/supervisor/docs tests passed. Independent Claude review
+found no confirmed regression: its conditional split concern does not apply
+because _CODEX_FOOTER is a compiled regex. A DLG reference quoted in the current
+composer can still produce an inspection warning; it never authorizes an action.
+The follow-up live board request timed out, so live rollout is not claimed.

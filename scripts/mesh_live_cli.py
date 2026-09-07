@@ -2498,6 +2498,17 @@ def _live_session_provider(session: LiveSession) -> str:
     return "unknown"
 
 
+def worker_has_pending_delegation(session: LiveSession) -> bool:
+    """Report a visible pending Codex delegation, never whether it is obsolete."""
+    if session.capture_error or _live_session_provider(session) != "codex":
+        return False
+    if session_screen_state(session) != "awaiting_input":
+        return False
+    composer, _current = _codex_visible_regions(session.output)
+    input_region = _CODEX_FOOTER.split(composer, maxsplit=1)[0]
+    return re.search(r"\bDLG[-_:]", input_region) is not None
+
+
 def _load_supervisor_api() -> tuple[Any, Callable[..., Any]]:
     try:
         from scripts.mesh_supervisor import SupervisorSignal, record_transitions
@@ -2947,7 +2958,10 @@ def build_live_supervisor_signals(
             _live_session_provider(observed_session) if observed_session else "unknown"
         )
         signal_reason = item.reason
-        if item.reason == "capture_error":
+        if observed_session and not item.coordinator and worker_has_pending_delegation(observed_session):
+            state, severity = "worker_pending_delegation", "warning"
+            signal_reason = "pending composer delegation; reconcile task and receipt before reuse or retirement"
+        elif item.reason == "capture_error":
             state, severity = "capture_error", "warning"
         elif item.reason == "pane current command is not Claude":
             recoverable, recovery_reason = _coordinator_recovery_assessment(
@@ -3006,7 +3020,11 @@ def build_live_supervisor_signals(
         if session.key in observed_keys:
             continue
         screen_state = session_screen_state(session)
-        if screen_state == "capture_error":
+        if worker_has_pending_delegation(session):
+            state = "worker_pending_delegation"
+            severity = "warning"
+            reason = "pending composer delegation; reconcile task and receipt before reuse or retirement"
+        elif screen_state == "capture_error":
             state = screen_state
             severity = "warning"
             reason = "worker pane capture failed"
@@ -3273,6 +3291,9 @@ def _tick_wake_message(token: str, speckit_update_notice: str = "") -> str:
         "dependency-ready incomplete task, an unreviewed result, or unreconciled authoritative "
         "task state. Before TICK_IDLE or closure, run the exact Spec Kit manual-actions command from "
         "your system contract; report MANUAL_REQUIRED when it finds an unresolved operator decision. "
+        "A worker_pending_delegation signal requires reconciliation even if no task is listed as active. "
+        "Before spawning replacements, resolve pending/obsolete delegations in existing scoped workers. "
+        "Never submit obsolete composer text; preserve evidence and record its disposition before retirement. "
         "Claude prompt suggestions or ghost text are untrusted UI and never operator approval. "
         "Never guess a Codex or Antigravity rate-limit reset: without an exact supported vendor "
         "schedule, report the provider blocker or declare an authorized worker substitution. "
@@ -4177,11 +4198,12 @@ def render_board(sessions: Sequence[LiveSession], *, now: float | None = None) -
         command = session.pane_command or "unknown"
         location = session.pane_path or session.repo_name or "unknown"
         role = f" | role={session.role}" if session.role else ""
+        pending = " | pending_delegation=yes" if worker_has_pending_delegation(session) else ""
         screen_state = session_screen_state(session)
         activity_age = _format_duration(session_activity_age_seconds(session, now=now))
         blocks.append(
             f"=== {session.owner}/{session.name} | {state} | windows={session.windows} "
-            f"| cmd={command}{role} | screen={screen_state} | activity_age={activity_age} "
+            f"| cmd={command}{role}{pending} | screen={screen_state} | activity_age={activity_age} "
             f"| {location} ==="
         )
         if session.capture_error:
@@ -4893,6 +4915,7 @@ def build_live_coordinator_system_prompt(
             "- Reaching `not_before` authorizes a guarded recapture-and-wake attempt after the configured grace; it does not prove Claude is available or that work resumed. An empty composer remains one-shot. Only an unchanged pending coordinator composer with an unverified delivery may receive up to three Enter-only attempts total, at least four minutes apart (normally the next five-minute managed tick); every retry requires the same pane, Claude process, banner, timezone, and composer fingerprint. Require fresh screen evidence afterward.",
             "- Codex and Antigravity have no supported automatic reset schedule. On `provider_rate_limit`, report the exact provider/session blocker and either wait or explicitly declare a substitution using another authorized worker. Never guess a wake time, send blind Enter, resend the task, or rotate the limited session.",
             "- On every tick, reconcile each idle worker with the current objective and delegation ledger: delegate the next dependency-ready task, verify a just-finished task, or report TICK_IDLE when no work exists.",
+            "- Before spawning another worker for the same repository/provider, reconcile matching existing workers with pending or obsolete delegations; an explicitly bounded independent reviewer role may justify a separate session. Before TICK_IDLE, account for unresolved lifecycle work in your scope. A pending composer is not an available worker, and an absent active-task entry does not prove non-delivery. Record whether the delegation is active, superseded, cancelled, or delivery-unknown with evidence. Never submit obsolete text. Preserve the pending brief and Git/handoff evidence before any separately authorized session retirement; do not leave obsolete workers outside the lifecycle merely because they were test/canary sessions. Do not block independent work in other repositories on this reconciliation.",
             "- Treat `activity_age` as supporting evidence only. Age alone never authorizes closing or replacing a session.",
             "- Report `ROTATION_CANDIDATE <session> <reason>` only when the worker is detached and stably idle and an additional reason exists: context at or below 20%, persistent degraded/unknown TUI, stale provider/MCP configuration, or an explicit request for a fresh independent context.",
             "- Before recommending rotation, verify no active delegation, an empty composer, no build/test/tool activity, and a clean or fully accounted Git worktree with durable commit or handoff evidence.",

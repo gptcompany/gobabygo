@@ -560,6 +560,11 @@ ledger lock covers delivery. A crash, timeout or lost response never allows repl
 of that delegation. `submission=unknown` exits 1 and requires inspection, not
 resubmission. Transport exceptions leave delivery fields null (unknown), not false.
 The attempt event records target identity and message hash, not message content.
+Board marks a visible pending Codex delegation with `pending_delegation=yes`;
+the existing supervisor reports `worker_pending_delegation`. This inspects only
+the bottom composer, not historical WORKER_DONE text. It is a reconciliation
+warning, not proof of non-delivery or obsolescence, and never authorizes Enter
+or session termination. Reconcile it even when the active task list is empty.
 Task `status --json` projects `last_dispatch`, including an unknown attempt without
 a final receipt after process death. An ordinary internal transport error records
 an unknown receipt too; neither case authorizes replay.

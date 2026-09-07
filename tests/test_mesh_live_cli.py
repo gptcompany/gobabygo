@@ -7537,3 +7537,36 @@ def test_mesh_live_dispatch_branch_has_no_router_or_iterm_initialization() -> No
     assert "ensure_router_env" not in branch
     assert "ensure_mac_router_tunnel" not in branch
     assert "run_iterm_control" not in branch
+
+
+@pytest.mark.parametrize("current,expected", [
+    ("Leggi il brief DLG-\n  OLD-REVIEW e attendi", True),
+    ("Ask Codex to do anything", False),
+    ("", False),
+])
+def test_pending_delegation_uses_current_composer_not_old_report(current, expected):
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam", name="codex-canary", pane_command="codex", pane_id="%9",
+        output=("WORKER_DONE DLG-OLD-REVIEW\n\n"
+                f"\u203a {current}\n\n  gpt-5.6 medium \u00b7 repo\n"),
+    )
+    assert module.worker_has_pending_delegation(session) is expected
+    board = module.render_board([session])
+    assert ("pending_delegation=yes" in board) is expected
+    signals = module.build_live_supervisor_signals([], [session], set())
+    signal = next(item for item in signals if item.key == "session/sam/codex-canary")
+    assert (signal.state == "worker_pending_delegation") is expected
+    if expected:
+        assert signal.severity == "warning"
+
+
+def test_pending_delegation_never_infers_retirement_from_age():
+    module = _load_module()
+    session = module.LiveSession(
+        owner="sam", name="codex-canary", pane_command="codex", pane_id="%9",
+        activity_at=1, capture_error="network unavailable",
+        output="\u203a DLG-OLD\n\n  gpt-5.6 medium \u00b7 repo\n",
+    )
+    assert not module.worker_has_pending_delegation(session)
+    assert "pending_delegation=yes" not in module.render_board([session], now=999999)
