@@ -560,6 +560,9 @@ ledger lock covers delivery. A crash, timeout or lost response never allows repl
 of that delegation. `submission=unknown` exits 1 and requires inspection, not
 resubmission. Transport exceptions leave delivery fields null (unknown), not false.
 The attempt event records target identity and message hash, not message content.
+Task `status --json` projects `last_dispatch`, including an unknown attempt without
+a final receipt after process death. An ordinary internal transport error records
+an unknown receipt too; neither case authorizes replay.
 Do not create a new correction ID to retry an uncertain delivery. Existing guarded
 Codex submit recovery remains available when its own checks pass. Direct sends
 outside this managed command remain outside the ledger guarantee.
@@ -569,6 +572,8 @@ requires RELEASE_PASSED, matching scope and an unchanged release report, then
 atomically marks only that canonical checkbox. Repeating successful completion
 is harmless at the same ledger revision. It does not commit, push, publish issues
 or authorize deployment. The existing GitHub Action remains the issue reconciler.
+The review ledger revision tracks review events, not checkbox edits; task status
+projects `completed` directly from the authoritative tasks.md.
 Repository edits made outside this command do not take its ledger lock; its
 content check reduces races but is not a filesystem sandbox.
 This records a decision, not proof of its quality. Related legacy subtasks still

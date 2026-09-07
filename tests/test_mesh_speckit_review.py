@@ -150,6 +150,8 @@ def test_legacy_aliases_share_one_canonical_review_cycle(tmp_path: Path) -> None
                               evidence_file=report, expected_revision=3)
     with pytest.raises(review.ReviewLedgerError, match="not mapped"):
         review.resolve_task(repo, feature, "T003x6-unknown")
+    with pytest.raises(review.ReviewLedgerError, match="128"):
+        review.resolve_task(repo, feature, "T" + "1" * 200 + "J")
     assert review.review_status(repo, feature, "T001")["revision"] == 3
 
 
@@ -224,6 +226,52 @@ def test_completion_requires_exact_release_and_intact_evidence(tmp_path: Path) -
     assert (feature / "tasks.md").read_text().startswith("- [x] T001")
     assert "- [ ] T002" in (feature / "tasks.md").read_text()
     assert review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)["completed"] is True
+    assert review.review_status(repo, feature, "T001")["completed"] is True
+
+
+@pytest.mark.parametrize("failure", ["persist", "crash", "unexpected", "success"])
+def test_dispatch_failure_boundaries(tmp_path: Path, monkeypatch, failure: str) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=3)
+    calls = []
+
+    def deliver(*_):
+        calls.append(1)
+        if failure == "crash":
+            raise SystemExit("simulated process death after reservation")
+        if failure == "unexpected":
+            raise TypeError("internal transport error after input")
+        return {"text_sent": True, "enter_sent": True, "submission": "verified"}
+
+    monkeypatch.setattr(review, "_prepare_local_delivery", lambda *_: (
+        {"owner": "test", "name": "agy-project", "pane_id": "%9", "pane_pid": 42}, deliver))
+    args = dict(delegation_id="fix-1", message="fix-1 example/project:review-ledger-001:T001 fix it",
+                worker_repo=repo, expected_revision=4)
+    if failure == "persist":
+        def fail(*_):
+            raise OSError("disk full")
+        monkeypatch.setattr(review, "_atomic_write", fail)
+        with pytest.raises(OSError):
+            review.dispatch_correction(repo, feature, "T001", **args)
+        assert calls == []
+        assert review.review_status(repo, feature, "T001")["revision"] == 4
+    else:
+        if failure == "crash":
+            with pytest.raises(SystemExit):
+                review.dispatch_correction(repo, feature, "T001", **args)
+        else:
+            result = review.dispatch_correction(repo, feature, "T001", **args)
+            assert result["submission"] == ("unknown" if failure == "unexpected" else "verified")
+        state = review.review_status(repo, feature, "T001")
+        assert state["last_dispatch"]["receipt_recorded"] is (failure != "crash")
+        assert state["last_dispatch"]["submission"] == ("verified" if failure == "success" else "unknown")
+        with pytest.raises(review.ReviewLedgerError, match="already attempted"):
+            review.dispatch_correction(repo, feature, "T001", **{
+                **args, "expected_revision": state["revision"]})
+        assert calls == [1]
 
 
 def test_pass_rejects_blocking_findings_without_mutation(tmp_path: Path) -> None:

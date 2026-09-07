@@ -1031,6 +1031,8 @@ def review_status(
         "ledger_file": str(_ledger_path(feature)),
         "task": normalized_task,
         **record,
+        "completed": next((task.completed for task in feature.tasks
+                           if task.task_id == normalized_task), None),
         "aliases": sorted(
             event["data"]["alias"] for event in record["events"]
             if event["type"] == "alias_registered"
@@ -1039,6 +1041,18 @@ def review_status(
             event["type"] == "correction_opened" for event in record["events"]
         ),
     }
+    attempted = next((event for event in reversed(record["events"])
+                      if event["type"] == "correction_dispatch_attempted"), None)
+    if attempted is not None:
+        result = next((event for event in reversed(record["events"])
+                       if event["type"] == "correction_dispatch_result"
+                       and event["revision"] > attempted["revision"]
+                       and event["data"].get("delegation_id") == attempted["data"]["delegation_id"]), None)
+        output["last_dispatch"] = {
+            **attempted["data"], "attempted_at": attempted["at"],
+            "submission": "unknown", "receipt_recorded": result is not None,
+            **(result["data"] if result else {}),
+        }
     if record["status"] == "REVIEW_OPEN":
         opened_at, deadline_at, fallback_attempt = _active_review_timing(record)
         output.update(
@@ -1053,6 +1067,8 @@ def review_status(
 
 def _normalize_alias(value: str) -> str:
     alias = str(value or "").strip().upper()
+    if len(alias) > 128:
+        raise ReviewLedgerError("legacy alias exceeds 128 characters")
     if _SAFE_TASK.fullmatch(alias):
         raise ReviewLedgerError("a canonical task ID cannot be used as an alias")
     if not re.fullmatch(r"T[0-9]{3,}[A-Z0-9_.:-]{1,96}", alias):
@@ -1165,7 +1181,7 @@ def dispatch_correction(
     repo: Path, feature_dir: Path, task_id: str, *, delegation_id: str,
     message: str, worker_repo: Path, expected_revision: int,
 ) -> dict[str, Any]:
-    from scripts.mesh_live_cli import validate_send_text, LiveReadError
+    from scripts.mesh_live_cli import validate_send_text
 
     feature, _task, key = _load_bound_task(repo, feature_dir, task_id)
     task = _normalize_task_id(task_id)
@@ -1209,7 +1225,9 @@ def dispatch_correction(
                 "text_sent": sent.get("text_sent") is True,
                 "enter_sent": sent.get("enter_sent") is True,
             }
-        except (OSError, subprocess.SubprocessError, LiveReadError, ValueError):
+        except Exception:
+            # Input may already have happened, including when transport code itself fails.
+            # Signals/process death still leave the durable attempt visible as unknown.
             receipt = {"submission": "unknown", "text_sent": None, "enter_sent": None}
         revision += 1
         _append_event(record, revision, "correction_dispatch_result",
@@ -1366,7 +1384,7 @@ def _render(output: dict[str, Any]) -> str:
         f"task={output.get('task', '-')}",
         f"status={output.get('status', '-')}",
     ]
-    for key in ("level", "round", "verdict", "decision", "scope"):
+    for key in ("level", "round", "verdict", "decision", "scope", "completed", "submission"):
         if key in output:
             fields.append(f"{key}={output[key]}")
     return "Review ledger " + " ".join(fields)
