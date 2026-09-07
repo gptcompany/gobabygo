@@ -523,6 +523,21 @@ one fallback using a different reviewer session for the same immutable scope;
 a second timeout moves the task to `ESCALATED`. Timeout is never consent or a
 review verdict. Tick only wakes the coordinator; it does not infer or write the
 review transition from pane output.
+A restarted cycle after `decide --decision REPLAN` requires
+`init --replan-file <feature-relative-json>`. Its JSON contains `task_key`,
+`previous_cycle` (integer), and nonempty text fields `failure_evidence`,
+`approach_change`, `acceptance_criteria`, and `finding_disposition` (at most
+4096 characters each). The report must be inside the feature directory.
+Its digest, contents, and carried findings are stored in the initialization
+event. Missing or stale cycle bindings fail without changing the ledger.
+The source scope may remain unchanged: the plan can precede implementation.
+This does not authorize repeating an already recorded review of the same level,
+scope and invariant; the existing duplicate-review check still applies.
+Task `status --json` exposes `total_correction_rounds` across all its cycles.
+Existing ledgers remain readable; restarting an old REPLAN requires this artifact.
+This records a decision, not proof of its quality. Related legacy subtasks still
+need an explicit canonical Tnnn mapping; raw session sends are not ledger gates.
+
 A failed review permits an immediate `decide`, or at most two `correction`
 transactions. Each correction must receive a DELTA review. DELTA PASS produces
 `CANDIDATE_UPDATE_REQUIRED`; use `candidate --scope <new-immutable-scope>`

@@ -452,6 +452,15 @@ def test_replan_starts_new_cycle_without_losing_event_history(tmp_path: Path) ->
     )
     before = review.review_status(repo, feature, "T001")
 
+    plan = feature / "replan.json"
+    plan.write_text(json.dumps({
+        "task_key": before["task_key"], "previous_cycle": 1,
+        "failure_evidence": "review-8.md: blocking medium remains",
+        "approach_change": "Replace static inference with runtime observation",
+        "acceptance_criteria": "Same-run evidence required",
+        "finding_disposition": "Carry the blocking medium into cycle 2",
+    }))
+
     restarted = review.initialize_task(
         repo,
         feature,
@@ -461,6 +470,7 @@ def test_replan_starts_new_cycle_without_losing_event_history(tmp_path: Path) ->
         invariants=["new bounded invariant"],
         mutation_budget=1,
         expected_revision=10,
+        replan_file=plan,
     )
 
     after = review.review_status(repo, feature, "T001")
@@ -468,6 +478,66 @@ def test_replan_starts_new_cycle_without_losing_event_history(tmp_path: Path) ->
     assert after["cycle"] == 2
     assert after["correction_round"] == 0
     assert len(after["events"]) == len(before["events"]) + 1
+    assert after["last_findings"] == before["last_findings"]
+    assert after["total_correction_rounds"] == 2
+
+
+def test_replan_requires_bound_evidence_without_mutating_on_failure(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    review.decide_exhausted(repo, feature, "T001", decision="REPLAN",
+                          reason="runtime observation needed", expected_revision=3)
+    before = (feature / "review-ledger.json").read_bytes()
+    kwargs = dict(scope=SCOPE_A, writer_session="agy-project", invariants=[],
+                  mutation_budget=1, expected_revision=4)
+    with pytest.raises(review.ReviewLedgerError, match="replan artifact"):
+        review.initialize_task(repo, feature, "T001", **kwargs)
+    assert (feature / "review-ledger.json").read_bytes() == before
+    plan = feature / "replan.json"
+    payload = {
+        "task_key": review.review_status(repo, feature, "T001")["task_key"],
+        "previous_cycle": 0, "failure_evidence": "review-2.md",
+        "approach_change": "Observe runtime execution",
+        "acceptance_criteria": "Require matching run IDs",
+        "finding_disposition": "Keep the medium open until independently reviewed",
+    }
+    plan.write_text(json.dumps(payload))
+    with pytest.raises(review.ReviewLedgerError, match="previous cycle"):
+        review.initialize_task(repo, feature, "T001", replan_file=plan, **kwargs)
+    assert (feature / "review-ledger.json").read_bytes() == before
+    payload["previous_cycle"] = 1
+    for field, value in [("task_key", "other/repo:feature:T001"),
+                         ("previous_cycle", True), ("approach_change", "  "),
+                         ("finding_disposition", []), ("acceptance_criteria", "x" * 4097)]:
+        plan.write_text(json.dumps({**payload, field: value}))
+        with pytest.raises(review.ReviewLedgerError):
+            review.initialize_task(repo, feature, "T001", replan_file=plan, **kwargs)
+        assert (feature / "review-ledger.json").read_bytes() == before
+    plan.write_text(json.dumps(payload))
+    proc = subprocess.run(
+        [str(MESH), "speckit", "review", "init", str(repo), str(feature), "T001",
+         "--scope", SCOPE_A, "--writer-session", "agy-project",
+         "--invariant", "runtime evidence",
+         "--replan-file", "replan.json", "--expect-revision", "4", "--json"],
+        env={**os.environ, "MESH_SPECKIT_PYTHON": sys.executable},
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    state = review.review_status(repo, feature, "T001")
+    assert state["frozen_scope"] == SCOPE_A
+    assert state["last_findings"]["blocking_medium"] == 1
+    assert state["events"][-1]["data"]["replan"]["plan"] == payload
+    with pytest.raises(review.ReviewLedgerError, match="revision mismatch"):
+        review.initialize_task(repo, feature, "T001", replan_file=plan, **kwargs)
+    _open(repo, feature, 5, level="INVARIANT", scope=SCOPE_A, invariant="runtime evidence")
+    _record(repo, feature, 6, "CHANGES_REQUIRED", medium=1)
+    review.decide_exhausted(repo, feature, "T001", decision="REPLAN",
+                          reason="new evidence requires another decision", expected_revision=7)
+    with pytest.raises(review.ReviewLedgerError, match="previous cycle"):
+        review.initialize_task(repo, feature, "T001", replan_file=plan,
+                               **{**kwargs, "expected_revision": 8})
 
 
 def test_replan_can_stop_after_initial_failed_review(tmp_path: Path) -> None:

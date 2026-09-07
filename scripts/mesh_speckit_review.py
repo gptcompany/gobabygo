@@ -508,6 +508,7 @@ def initialize_task(
     invariants: Sequence[str],
     mutation_budget: int,
     expected_revision: int,
+    replan_file: Path | None = None,
 ) -> dict[str, Any]:
     feature, _task, key = _load_bound_task(repo, feature_dir, task_id)
     normalized_task = _normalize_task_id(task_id)
@@ -529,6 +530,44 @@ def initialize_task(
             raise ReviewLedgerError(
                 f"task review cycle already exists with status {existing['status']}"
             )
+        replan = None
+        if existing is not None:
+            if replan_file is None:
+                raise ReviewLedgerError(
+                    "restarting a cycle requires a replan artifact (--replan-file)"
+                )
+            evidence = _evidence_record(feature, replan_file)
+            raw = (feature.feature_dir / evidence["path"]).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != evidence["sha256"]:
+                raise ReviewLedgerError("replan artifact changed during transaction")
+            try:
+                plan = json.loads(raw)
+            except (ValueError, UnicodeError) as exc:
+                raise ReviewLedgerError("replan artifact must be valid JSON") from exc
+            fields = {
+                "task_key", "previous_cycle", "failure_evidence", "approach_change",
+                "acceptance_criteria", "finding_disposition",
+            }
+            if not isinstance(plan, dict) or set(plan) != fields:
+                raise ReviewLedgerError("replan artifact has invalid fields")
+            if plan["task_key"] != key:
+                raise ReviewLedgerError("replan artifact task key mismatch")
+            if (
+                type(plan["previous_cycle"]) is not int
+                or plan["previous_cycle"] != existing["cycle"]
+            ):
+                raise ReviewLedgerError("replan artifact previous cycle mismatch")
+            for field in sorted(fields - {"task_key", "previous_cycle"}):
+                if not isinstance(plan[field], str):
+                    raise ReviewLedgerError(f"replan artifact {field} must be text")
+                if len(plan[field]) > 4096:
+                    raise ReviewLedgerError(f"replan artifact {field} exceeds 4096 characters")
+                _bounded_text(plan[field], f"replan artifact {field}", maximum=4096)
+            replan = {
+                **evidence, "plan": plan, "carried_findings": existing["last_findings"],
+            }
+        elif replan_file is not None:
+            raise ReviewLedgerError("replan artifact requires an existing cycle")
         cycle = 1 if existing is None else existing["cycle"] + 1
         events = [] if existing is None else list(existing["events"])
         record = {
@@ -541,7 +580,7 @@ def initialize_task(
             "status": "READY_FOR_REVIEW",
             "correction_round": 0,
             "active_review": None,
-            "last_findings": None,
+            "last_findings": None if existing is None else existing["last_findings"],
             "events": events,
         }
         _append_event(
@@ -554,6 +593,7 @@ def initialize_task(
                 "writer_session": writer,
                 "mutation_budget": mutation_budget,
                 "invariants": normalized_invariants,
+                **({"replan": replan} if replan is not None else {}),
             },
         )
         ledger["tasks"][normalized_task] = record
@@ -979,6 +1019,9 @@ def review_status(
         "ledger_file": str(_ledger_path(feature)),
         "task": normalized_task,
         **record,
+        "total_correction_rounds": sum(
+            event["type"] == "correction_opened" for event in record["events"]
+        ),
     }
     if record["status"] == "REVIEW_OPEN":
         opened_at, deadline_at, fallback_attempt = _active_review_timing(record)
@@ -1046,6 +1089,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     init.add_argument("--writer-session", required=True)
     init.add_argument("--invariant", action="append", default=[])
     init.add_argument("--mutation-budget", type=int, default=1)
+    init.add_argument("--replan-file", type=Path)
     opened = sub.add_parser("open")
     _common(opened)
     opened.add_argument("--level", required=True)
@@ -1111,6 +1155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 invariants=args.invariant,
                 mutation_budget=args.mutation_budget,
                 expected_revision=args.expect_revision,
+                replan_file=args.replan_file,
             )
         elif args.command == "open":
             output = open_review(
