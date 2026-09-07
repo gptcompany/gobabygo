@@ -128,6 +128,47 @@ def test_release_pass_is_terminal_and_durable(tmp_path: Path) -> None:
     assert review.review_check(repo, feature, "T001", scope=SCOPE_A)["release_passed"] is True
 
 
+def test_legacy_aliases_share_one_canonical_review_cycle(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    report = feature / "mapping.md"
+    report.write_text("T003x6-J and T003x6-L1d belong to T001; history is evidence only.\n")
+    for revision, alias in enumerate(("T003x6-J", "T003x6-L1d"), 1):
+        review.register_alias(repo, feature, "T001", alias=alias,
+                              evidence_file=report, expected_revision=revision)
+    for alias in ("T001", "T003x6-J", "t003X6-l1D"):
+        assert review.resolve_task(repo, feature, alias)["task"] == "T001"
+    state = review.review_status(repo, feature, "T001")
+    assert state["cycle"] == 1
+    assert state["aliases"] == ["T003X6-J", "T003X6-L1D"]
+    assert state["total_correction_rounds"] == 0
+    with pytest.raises(review.ReviewLedgerError, match="already mapped"):
+        review.register_alias(repo, feature, "T001", alias="t003x6-j",
+                              evidence_file=report, expected_revision=3)
+    with pytest.raises(review.ReviewLedgerError, match="canonical"):
+        review.register_alias(repo, feature, "T001", alias="T002",
+                              evidence_file=report, expected_revision=3)
+    with pytest.raises(review.ReviewLedgerError, match="not mapped"):
+        review.resolve_task(repo, feature, "T003x6-unknown")
+    assert review.review_status(repo, feature, "T001")["revision"] == 3
+
+
+def test_alias_cannot_move_to_another_task(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    report = feature / "mapping.md"
+    report.write_text("Legacy task belongs to T001.\n")
+    review.register_alias(repo, feature, "T001", alias="T003x6-J",
+                          evidence_file=report, expected_revision=1)
+    review.initialize_task(repo, feature, "T002", scope=SCOPE_B,
+                           writer_session="agy-project", invariants=[],
+                           mutation_budget=1, expected_revision=2)
+    with pytest.raises(review.ReviewLedgerError, match="already mapped"):
+        review.register_alias(repo, feature, "T002", alias="T003x6-J",
+                              evidence_file=report, expected_revision=3)
+    assert review.resolve_task(repo, feature, "T003x6-J")["task"] == "T001"
+
+
 def test_pass_rejects_blocking_findings_without_mutation(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)

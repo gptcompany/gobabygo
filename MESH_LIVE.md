@@ -535,6 +535,15 @@ This does not authorize repeating an already recorded review of the same level,
 scope and invariant; the existing duplicate-review check still applies.
 Task `status --json` exposes `total_correction_rounds` across all its cycles.
 Existing ledgers remain readable; restarting an old REPLAN requires this artifact.
+Legacy subtask names can be mapped after initializing their canonical parent:
+`mesh speckit review map <repo> <feature> T001 --alias T003x6-L1d --evidence-file mapping.md --expect-revision N`.
+The report documents the reconciliation; it does not import historical PASS results.
+`mesh speckit review resolve <repo> <feature> T003x6-L1d --json` returns the
+canonical task and current revision. All mutations still take the canonical ID.
+Multiple aliases share the parent's cycle, budget and findings. Mappings are
+case-normalized, feature-local, append-only and cannot move between parents.
+Do not map independent parallel tasks to the same cycle. The canonical task must
+exist in tasks.md and the feature must have a valid github-ledger.json binding.
 This records a decision, not proof of its quality. Related legacy subtasks still
 need an explicit canonical Tnnn mapping; raw session sends are not ledger gates.
 

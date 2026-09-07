@@ -361,6 +361,17 @@ def _validate_task_record(
     if not isinstance(events, list) or len(events) > MAX_EVENTS_PER_TASK:
         raise ReviewLedgerError(f"invalid events in task {task_id}")
     revisions = [_validate_event(event, task_id, ledger_revision) for event in events]
+    aliases: set[str] = set()
+    for event in events:
+        if event["type"] != "alias_registered":
+            continue
+        data = event["data"]
+        if set(data) != {"alias", "task_key", "evidence"}:
+            raise ReviewLedgerError("invalid alias event fields")
+        alias = _normalize_alias(data["alias"])
+        if alias != data["alias"] or alias in aliases or data["task_key"] != record["task_key"]:
+            raise ReviewLedgerError("invalid alias identity or duplicate mapping")
+        aliases.add(alias)
     if revisions != sorted(revisions) or len(set(revisions)) != len(revisions):
         raise ReviewLedgerError(f"non-monotonic event revisions in task {task_id}")
 
@@ -1019,6 +1030,10 @@ def review_status(
         "ledger_file": str(_ledger_path(feature)),
         "task": normalized_task,
         **record,
+        "aliases": sorted(
+            event["data"]["alias"] for event in record["events"]
+            if event["type"] == "alias_registered"
+        ),
         "total_correction_rounds": sum(
             event["type"] == "correction_opened" for event in record["events"]
         ),
@@ -1033,6 +1048,67 @@ def review_status(
             }
         )
     return output
+
+
+def _normalize_alias(value: str) -> str:
+    alias = str(value or "").strip().upper()
+    if _SAFE_TASK.fullmatch(alias):
+        raise ReviewLedgerError("a canonical task ID cannot be used as an alias")
+    if not re.fullmatch(r"T[0-9]{3,}[A-Z0-9_.:-]{1,96}", alias):
+        raise ReviewLedgerError("legacy alias must start with Tnnn and have a bounded suffix")
+    return alias
+
+
+def _alias_owner(ledger: dict[str, Any], alias: str) -> str | None:
+    owners = {
+        task for task, record in ledger["tasks"].items()
+        for event in record["events"]
+        if event["type"] == "alias_registered" and event["data"].get("alias") == alias
+    }
+    if len(owners) > 1:
+        raise ReviewLedgerError("ambiguous legacy alias in ledger")
+    return next(iter(owners), None)
+
+
+def register_alias(
+    repo: Path, feature_dir: Path, task_id: str, *, alias: str,
+    evidence_file: Path, expected_revision: int,
+) -> dict[str, Any]:
+    feature, _task, key = _load_bound_task(repo, feature_dir, task_id)
+    task = _normalize_task_id(task_id)
+    normalized_alias = _normalize_alias(alias)
+
+    def mutate(ledger: dict[str, Any], revision: int) -> dict[str, Any]:
+        record = ledger["tasks"].get(task)
+        if record is None:
+            raise ReviewLedgerError("initialize the canonical review task before mapping aliases")
+        if _alias_owner(ledger, normalized_alias) is not None:
+            raise ReviewLedgerError("legacy alias is already mapped; mappings cannot be reassigned")
+        evidence = _evidence_record(feature, evidence_file)
+        _append_event(record, revision, "alias_registered", {
+            "alias": normalized_alias, "task_key": key, "evidence": evidence,
+        })
+        return {"task": task, "task_key": key, "alias": normalized_alias,
+                "status": record["status"]}
+
+    return _transact(feature, expected_revision, mutate)
+
+
+def resolve_task(repo: Path, feature_dir: Path, task_id: str) -> dict[str, Any]:
+    feature = load_feature(repo, feature_dir)
+    normalized = str(task_id or "").strip().upper()
+    with _ledger_lock(feature):
+        ledger, _digest = _load_ledger(feature)
+        if _SAFE_TASK.fullmatch(normalized):
+            canonical = normalized
+        else:
+            canonical = _alias_owner(ledger, _normalize_alias(normalized))
+            if canonical is None:
+                raise ReviewLedgerError("legacy task is not mapped to a canonical review task")
+        if not any(task.task_id == canonical for task in feature.tasks):
+            raise ReviewLedgerError("canonical task is absent from tasks.md")
+        return {"task": canonical, "task_key": f"{_feature_key(feature)}:{canonical}",
+                "revision": ledger["revision"]}
 
 
 def review_check(
@@ -1072,6 +1148,12 @@ def _common(command: argparse.ArgumentParser, *, revision: bool = True) -> None:
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    mapped = sub.add_parser("map")
+    _common(mapped)
+    mapped.add_argument("--alias", required=True)
+    mapped.add_argument("--evidence-file", type=Path, required=True)
+    resolved = sub.add_parser("resolve")
+    _common(resolved, revision=False)
     status = sub.add_parser("status")
     status.add_argument("repo", type=Path)
     status.add_argument("feature_dir", type=Path)
@@ -1139,7 +1221,14 @@ def _render(output: dict[str, Any]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
-        if args.command == "status":
+        if args.command == "map":
+            output = register_alias(
+                args.repo, args.feature_dir, args.task, alias=args.alias,
+                evidence_file=args.evidence_file, expected_revision=args.expect_revision,
+            )
+        elif args.command == "resolve":
+            output = resolve_task(args.repo, args.feature_dir, args.task)
+        elif args.command == "status":
             output = review_status(args.repo, args.feature_dir, args.task)
         elif args.command == "check":
             output = review_check(

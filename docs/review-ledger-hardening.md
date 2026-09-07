@@ -15,9 +15,11 @@ The parser accepts canonical Tnnn IDs, not legacy subtask names such as T003x6-L
   task and previous cycle, preserve carried findings, retain event history, and
   expose cumulative correction counts. Test missing, stale, repeated and valid
   artifacts; unchanged source scope is legal when the plan changes.
-- [ ] R2 Define explicit canonical task mapping for legacy subtasks. Inspect
+- [x] R2 Define explicit canonical task mapping for legacy subtasks. Inspect
   GitHub binding and task parsing before migration; do not rename historical
   tasks or invent review results. Keep parent lineage across split tasks.
+  Implemented as append-only aliases sharing the canonical parent cycle, not
+  separate budgets. Actual 096 mapping/import remains R4.
 - [ ] R3 Bind planned correction dispatch and completion to ledger checks in
   the managed execution path. Specify retry semantics and test concurrent
   revisions, duplicate dispatch and interrupted delivery. Raw CLI access remains
