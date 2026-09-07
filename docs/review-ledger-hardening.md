@@ -126,5 +126,23 @@ without manual input. A narrow final Claude review confirmed the receipt fix and
 reported no concrete regression. Local validation: 108 perimeter tests and 16
 coordinator prompt tests passed; subsequent docs checks passed as well.
 
-R4/R5c are deferred: the bounded direct SSH probe to the Dell VPN address timed
-out during this work. No coordinator, worker, runtime or ledger on Dell was changed.
+## Dell staging
+
+After the operator reported Wi-Fi recovery, SSH worked through sam@10.0.0.2;
+sam@172.23.0.42 still timed out. The tested implementation was pushed via HTTPS.
+An immutable test-only worktree was prepared at
+`/data/sata/1TB/gobabygo-review-hardening-fdcdd66`, commit
+`fdcdd663cb826a575ade47cfd9bd8ce7e1a7cb61`. The same 108 perimeter tests passed
+using `/data/sata/1TB/gobabygo-runtime/.venv/bin/python`; the staging worktree is
+clean. Detached HEAD is intentional for this test checkout; do not develop or
+commit there.
+
+R4/R5c remain open because claude-coordinator is actively working on 096. The
+active runtime remains cb0e8878abf2fcf6baa8475df472335db8a16c33 and no production
+ledger/session was modified. The 096 directory still has no github-ledger.json
+or review-ledger.json. At an idle checkpoint, reconcile the current task and
+delegations, migrate its canonical index/binding with evidence, then activate
+the tested runtime and load its current coordinator contract. Attaching to an
+existing tmux process does not replace its system prompt; a fresh bootstrap or
+resume appends the newly generated contract. Verify the new dispatch/complete
+instructions before claiming production adoption.
