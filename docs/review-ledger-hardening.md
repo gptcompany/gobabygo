@@ -31,9 +31,10 @@ The parser accepts canonical Tnnn IDs, not legacy subtask names such as T003x6-L
 - [ ] R4 Reconcile the 096 ledger after active delegations finish. Record
   imported evidence and uncertainty explicitly, and verify coordinator resume
   consumes its actual state. No automatic conversion of checkboxes into PASS.
-- [ ] R5 Run an isolated real-worker E2E through rejection, documented replan,
-  correction, review and completion. Obtain independent review of the committed
-  implementation, fix findings, then deploy matching Mac/Dell revisions.
+- [x] R5a Run an isolated real-worker E2E through rejection, documented replan,
+  correction, review and completion.
+- [x] R5b Obtain independent implementation review and fix confirmed findings.
+- [ ] R5c Deploy matching Mac/Dell revisions after connectivity and reconciliation.
 
 ## Plan review
 
@@ -46,7 +47,7 @@ inferred from filenames, text similarity or a changed digest.
 
 R1 can ship independently. R2 is a prerequisite for adopting R3/R4 on legacy
 work. Do not claim that the coordinator is mechanically gated until R3 and the
-real-worker E2E have passed.
+real-worker E2E have passed. Production adoption additionally requires R4/R5c.
 
 ## R1 verification
 
@@ -69,3 +70,61 @@ Integration follow-up: the observed 096 directory also lacks github-ledger.json,
 which load_feature requires. The legacy task file must be reconciled with the
 binding/parser contract before enabling transactional enforcement. Do not silently
 fall back to manual counts and report the feature as ledger-backed.
+
+## R2/R3 independent review
+
+Claude reviewed the implementation read-only. The confirmed operational finding
+was that unexpected transport exceptions could leave an attempt without a readable
+receipt. Dispatch now catches ordinary exceptions after reservation, stores an
+unknown receipt, and still prohibits replay. Process death/signals remain visible
+through status.last_dispatch as unknown with receipt_recorded=false. Tests cover
+both paths, failed persistence before input, and competing ledger transactions.
+
+Two reported concerns do not change the design: completion belongs to tasks.md,
+not a second completion flag in the review ledger, so its revision deliberately
+does not advance for checkbox updates. Task status now projects completed from
+tasks.md. External editors do not participate in the ledger lock: the pre-replace
+content check reduces, but cannot eliminate, races with uncooperative writers.
+The existing ledger atomic writer has the same boundary. Managed Mesh operations
+share the lock; this is not an OS sandbox.
+
+## Local E2E evidence
+
+`tests/e2e_mesh_review_local.py --run --codex-executable <native-codex>` creates a
+temporary Git repo and a dedicated tmux server via TMUX_TMPDIR. It runs actual
+Codex with workspace-write sandboxing, then an independent read-only Claude
+review of the exact diff and observed tests. It never publishes GitHub issues.
+
+The first successful run retained artifacts under
+`/private/tmp/mesh-review-e2e-z1c0c_35/repo`. The final unattended rerun on the
+updated implementation passed at `/private/tmp/mesh-review-e2e-40y4wf3q/repo`.
+They proved:
+
+- The deliberately broken addition tests failed before correction.
+- Missing replan evidence was rejected without restarting the cycle.
+- Managed dispatch persisted its attempt before real worker input.
+- Submission initially returned unknown; observation established completion
+  without a second paste. Guarded recovery was not applicable and sent no input.
+- Repeating dispatch with the current revision was rejected.
+- Both unchanged tests passed; Claude returned REVIEW_VERDICT: PASS.
+- DELTA review, candidate update, RELEASE review and complete finished at ledger
+  revision 15 with only T001 checked.
+- The dedicated tmux worker was removed in cleanup; artifacts remain inspectable.
+
+The first attempt using the npm Node launcher stopped at startup without dispatch.
+The successful run used the installed native Codex binary. The harness confirms
+only the exact trust dialog of its own newly created scratch repository; it does
+not weaken runtime provider/composer guards. This is a local end-to-end test, not
+evidence that the disconnected Dell runtime has been upgraded.
+
+A repeat exposed a transient preflight refusal while Codex still held the paste;
+a later existing guarded recovery succeeded. The harness now continues bounded
+observation and only invokes recovery when the exact delegation is still in the
+composer. The helper itself recaptures and persists its one-shot Enter attempt;
+there is never a second paste or an unguarded submit. The final rerun completed
+without manual input. A narrow final Claude review confirmed the receipt fix and
+reported no concrete regression. Local validation: 108 perimeter tests and 16
+coordinator prompt tests passed; subsequent docs checks passed as well.
+
+R4/R5c are deferred: the bounded direct SSH probe to the Dell VPN address timed
+out during this work. No coordinator, worker, runtime or ledger on Dell was changed.
