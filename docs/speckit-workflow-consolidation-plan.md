@@ -43,7 +43,7 @@ an executable proof, not only current upstream documentation.
   unsupported, with executable evidence. A disconnected host stays unverified.
   No implicit installation of latest or community extensions.
   Evidence and external review disposition: speckit-workflow-inventory.md.
-- [ ] T002 Prove the execution boundary in an isolated local repository with no
+- [x] T002 Prove the execution boundary in an isolated local repository with no
   remote. Run a tiny upstream workflow with harmless steps, pause/resume and
   failure injection. Verify whether supported shell/extension steps can call
   existing Mesh commands without launching unmanaged AI CLIs. Inspect subprocess
@@ -52,6 +52,8 @@ an executable proof, not only current upstream documentation.
   demonstrable. Otherwise retain the existing executor and document the precise
   gap; do not build a replacement workflow engine. Review this decision before
   production-facing implementation.
+  Outcome: retain existing execution. See speckit-workflow-boundary-e2e.md;
+  eight characterization tests reproduce replay and ownership limitations.
 - [ ] T003 Implement only the selected integration adapter. Reuse
   mesh_speckit_cli.py inspect_project, inspect_orchestration_runtime and
   build_delegation_context, existing CLI routing and supported upstream extension
@@ -65,6 +67,10 @@ an executable proof, not only current upstream documentation.
   adapter wraps existing dispatch/receipts; it cannot create a second delivery
   path. Persist only allowlisted bounded receipt fields, never pane captures,
   prompts or arbitrary stdout; test these negative cases before activation.
+  T002 selection: no native dispatch adapter in this rollout. Limit T003 to
+  truthful capability reporting and coordinator contract alignment; preserve
+  existing managed delivery. The adapter-specific requirements above apply only
+  if a later evidence-backed decision reopens native execution adoption.
 - [ ] T004 Decouple local review loading from GitHub publication. Reuse the
   existing review FSM, atomic writer, lock and revision checks. Introduce only
   the minimum stable local identity needed, following the T001/T002 decision.
