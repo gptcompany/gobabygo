@@ -669,6 +669,12 @@ def build_status(
     required_tuple = _version_tuple(lock["version"])
     return {
         "schema": "mesh.speckit.status.v1",
+        "execution_policy": {
+            "kind": "policy_not_runtime_attestation",
+            "artifacts": "speckit",
+            "worker_dispatch": "mesh_live",
+            "native_worker_dispatch_supported": False,
+        },
         "required_version": lock["version"],
         "installed": installed,
         "latest_known_version": latest,
@@ -1791,6 +1797,8 @@ def _render_status(payload: dict[str, Any]) -> str:
             f"project={project['state']}",
             f"integrations={integrations}",
             f"capabilities={capabilities}",
+            "worker_dispatch=mesh_live (policy; not runtime attestation)",
+            "native_worker_dispatch_supported=no",
             f"aligned={'yes' if payload['aligned'] else 'no'}",
         ]
     )

@@ -489,6 +489,16 @@ Before each correction, persist its scope and next round in authoritative tasks
 or coordinator state. Resume and compaction reconstruct the count from that
 state and prior review evidence; they never reset it implicitly.
 
+Spec Kit skills and artifacts remain available when reported by `mesh speckit
+status`. Managed worker execution stays with Mesh, not `specify workflow run`
+or `specify workflow resume`: native resume can repeat side effects. Status
+reports this as execution policy, not proof of an active coordinator's contract
+or a sandbox. Version alignment does not establish review-ledger or GitHub-sync
+readiness. Missing review state must be reconciled, not replaced by manual counts.
+An existing attached coordinator retains its instructions; use a fresh managed
+bootstrap/resume to load the updated contract at an operational checkpoint.
+See [workflow boundary evidence](docs/speckit-workflow-boundary-e2e.md).
+
 For a bound Spec Kit task, `review-ledger.json` makes those transitions
 transactional. `tasks.md` remains authoritative for intent and completion;
 `review-ledger.json` is authoritative only for review scope, round, verdict,

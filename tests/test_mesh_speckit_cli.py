@@ -360,10 +360,36 @@ def test_status_rejects_outdated_project_manifest(monkeypatch, tmp_path) -> None
     result = module.build_status(repo, lock_file=lock, state_file=tmp_path / "none")
 
     assert result["runtime_aligned"] is True
+    assert result["execution_policy"] == {
+        "kind": "policy_not_runtime_attestation",
+        "artifacts": "speckit",
+        "worker_dispatch": "mesh_live",
+        "native_worker_dispatch_supported": False,
+    }
+    assert "native_worker_dispatch_supported=no" in module._render_status(result)
     assert result["project"]["state"] == "partial"
     assert result["project"]["manifest_version"] == "1.0.2"
     assert result["project"]["version_aligned"] is False
     assert result["aligned"] is False
+
+
+@pytest.mark.parametrize("version", [None, "1.0.2", "1.0.3"])
+def test_execution_policy_is_not_runtime_readiness(tmp_path, monkeypatch, version) -> None:
+    module = _load_module()
+    repo = _project(tmp_path / "repo")
+    monkeypatch.setattr(module, "installed_version", lambda: {
+        "available": version is not None, "version": version,
+        "executable": "/bin/specify" if version else None, "error": None,
+    })
+    monkeypatch.setattr(module, "inspect_orchestration_runtime", lambda: {"trusted": False})
+    result = module.build_status(repo, lock_file=_lock(tmp_path / "lock.json"),
+                                 state_file=tmp_path / "missing.json")
+    assert result["execution_policy"] == {
+        "kind": "policy_not_runtime_attestation", "artifacts": "speckit",
+        "worker_dispatch": "mesh_live", "native_worker_dispatch_supported": False,
+    }
+    assert result["aligned"] is (version == "1.0.3")
+    assert "worker_dispatch=mesh_live (policy; not runtime attestation)" in module._render_status(result).splitlines()
 
 
 def test_project_rejects_active_unsupported_integration(tmp_path) -> None:

@@ -2221,6 +2221,10 @@ def test_coordinator_system_prompt_enables_bounded_autonomy_and_delivery_checks(
     assert "standing authorization to invoke only the listed ensure-codex or ensure-antigravity commands" in prompt
     assert "create at most one deterministic provider tmux worker per repository" in prompt
     assert "create sessions or launch nested AI CLIs by any other mechanism" in prompt
+    assert "Spec Kit execution boundary (policy, not runtime attestation)" in prompt
+    assert "Do not run `specify workflow run` or `specify workflow resume`" in prompt
+    assert "never silently replace a missing ledger with manual review counts" in prompt
+    assert "Attaching to an existing session does not reload this contract" in prompt
     assert "does not prove the CLI accepted the task" in prompt
     assert "one literal line and at most 8192 characters" in prompt
     assert "non-secret brief file inside the target repository" in prompt

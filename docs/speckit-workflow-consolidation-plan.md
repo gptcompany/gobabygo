@@ -54,7 +54,7 @@ an executable proof, not only current upstream documentation.
   production-facing implementation.
   Outcome: retain existing execution. See speckit-workflow-boundary-e2e.md;
   eight characterization tests reproduce replay and ownership limitations.
-- [ ] T003 Implement only the selected integration adapter. Reuse
+- [x] T003 Implement only the selected integration adapter. Reuse
   mesh_speckit_cli.py inspect_project, inspect_orchestration_runtime and
   build_delegation_context, existing CLI routing and supported upstream extension
   points. Use overlays only if present in the verified release. Explicitly map
@@ -71,6 +71,8 @@ an executable proof, not only current upstream documentation.
   truthful capability reporting and coordinator contract alignment; preserve
   existing managed delivery. The adapter-specific requirements above apply only
   if a later evidence-backed decision reopens native execution adoption.
+  Implemented static execution_policy in status and explicit coordinator
+  instructions. No native adapter, executor or new runtime state was added.
 - [ ] T004 Decouple local review loading from GitHub publication. Reuse the
   existing review FSM, atomic writer, lock and revision checks. Introduce only
   the minimum stable local identity needed, following the T001/T002 decision.
@@ -180,3 +182,25 @@ Current upstream references, to be checked against the pinned tag in T001:
 Local antecedents: specs/speckit-runtime-awareness/tasks.md and
 docs/review-ledger-hardening.md. Their incomplete rollout/lifecycle tasks remain
 open; this plan neither marks them complete nor authorizes worker retirement.
+
+## T003 verification and review
+
+Status now distinguishes policy from runtime attestation. Its additive JSON
+field does not change installed-capability or alignment semantics. The current
+coordinator parser selects known fields and tolerates this addition; external
+strict consumers, if any, must accommodate it. The execution policy is fixed
+locally, not taken from arbitrary remote status text. Missing status does not
+remove the coordinator's execution-boundary instructions.
+
+Local tools-disabled Claude reviewed the implementation diff. Accepted test
+suggestions cover policy stability with absent, outdated and aligned runtimes,
+and the exact operator-facing policy line. Other findings were conditional:
+the evidence link already exists, no strict local status validator was found,
+and matching prose placement is not a behavior requirement. No shared prose
+abstraction or schema bump was introduced for these hypothetical concerns.
+
+Validation: 373 CLI/live/docs tests passed; py_compile and git diff --check
+passed. A real local status invocation shows the new policy lines alongside
+aligned Spec Kit 1.0.3. No active coordinator was reloaded or production runtime
+updated. T004 local identity, T005 readiness and T010 activation remain open;
+these prompt changes alone do not fix the 096 ledger binding.
