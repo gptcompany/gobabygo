@@ -247,3 +247,29 @@ E2E remains T008.
 No production ledger or session was changed. T005 readiness automation, T006
 publication integration and T007 migration remain open. Local review support
 alone does not resolve the oversized 096 task file or reconcile its history.
+
+## T005 implementation and review
+
+`mesh speckit readiness <repo> --feature-dir <dir> --json` is a read-only
+precondition check for managed delegation, correction and resumed lanes. It
+reuses the existing runtime status, bounded repository-path validation, review
+identity loader and task parser; it creates no ledger, state file, GitHub issue,
+worker or tmux session. A feature needs regular bounded `spec.md`, `plan.md`
+and `tasks.md`, plus an explicit valid local or GitHub review identity. Runtime
+drift is reported separately so it cannot conceal an unsafe or missing identity.
+
+The coordinator contract now invokes readiness before managed work and fails
+closed on a negative result. A missing identity requires the recorded choice
+between `review init --local` and the explicit GitHub binding path. Local review
+does not silently publish to GitHub; GitHub publication remains a later explicit
+migration. Feature-directory symlinks, unsafe artifacts, invalid task input and
+oversized input are rejected without repair or parser-limit changes.
+
+An independent local Claude review found no blocking defect. Its three concrete
+hardening suggestions were implemented before this record: reject a symlinked
+feature directory before canonicalisation, give local identity errors stable
+codes rather than classify their prose, and avoid a brittle exact-list readiness
+test. Final validation: 503 focused Speckit/live/review/GitHub/docs tests
+passed, plus Python compilation, Bash/Zsh syntax checks and `git diff --check`.
+No Dell runtime, coordinator, ledger, GitHub issue or worker was changed. T006
+through T010 remain explicitly gated.

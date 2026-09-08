@@ -2490,6 +2490,11 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "one independent RELEASE review per frozen release candidate" in prompt
     assert "RELEASE PASS is evidence of review completion, never authorization to deploy" in prompt
     assert "transactionally gated by the feature's `review-ledger.json`" in prompt
+    assert "speckit readiness <repo-root> --feature-dir <feature-dir> --json" in prompt
+    assert "Do not send managed work when `ready=false`" in prompt
+    assert "Readiness is read-only" in prompt
+    assert "`review_identity_missing` requires a recorded tracking decision" in prompt
+    assert "creating a fake binding, or using raw worker sends" in prompt
     assert "speckit review status <repo-root> <feature-dir> <Tnnn> --json" in prompt
     assert "Revision mismatch is a concurrency result" in prompt
     assert "speckit review record --evidence-file <report>" in prompt

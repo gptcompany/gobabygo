@@ -26,6 +26,11 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.mesh_speckit_github import LedgerError, load_review_feature  # noqa: E402
+
 DEFAULT_LOCK_FILE = ROOT / "config" / "speckit.lock.json"
 DEFAULT_STATE_FILE = Path(
     os.environ.get(
@@ -58,6 +63,7 @@ _IMMUTABLE_REVIEW_SCOPE = re.compile(
 _MAX_RELEASE_BYTES = 1024 * 1024
 _MAX_DELEGATION_ARTIFACT_BYTES = 1024 * 1024
 _MAX_TASKS_FILE_BYTES = 2 * 1024 * 1024
+_MAX_FEATURE_ARTIFACT_BYTES = 1024 * 1024
 _MAX_MIGRATION_FILES = 512
 _MAX_MIGRATION_FILE_BYTES = 8 * 1024 * 1024
 _MAX_MIGRATION_TOTAL_BYTES = 32 * 1024 * 1024
@@ -685,6 +691,116 @@ def build_status(
         "orchestration_runtime": inspect_orchestration_runtime(),
         "project": project,
         "aligned": installed["version"] == lock["version"] and project["state"] == "aligned",
+    }
+
+
+def _feature_artifact_state(feature: Path, name: str) -> str | None:
+    path = feature / name
+    prefix = name.removesuffix(".md")
+    if path.is_symlink():
+        return f"{prefix}_symlink"
+    try:
+        metadata = path.stat()
+    except FileNotFoundError:
+        return f"{prefix}_missing"
+    except OSError:
+        return f"{prefix}_unreadable"
+    if not stat.S_ISREG(metadata.st_mode):
+        return f"{prefix}_not_regular"
+    if metadata.st_size > _MAX_FEATURE_ARTIFACT_BYTES:
+        return f"{prefix}_oversized"
+    return None
+
+
+def _review_readiness_reason(error: LedgerError) -> str:
+    if error.code in {
+        "review_identity_missing", "review_identity_conflict", "review_identity_invalid",
+    }:
+        return error.code
+    message = str(error)
+    if "tasks file exceeds" in message:
+        return "tasks_oversized_for_review"
+    if "tasks.md contains no" in message or "malformed task" in message:
+        return "tasks_invalid_for_review"
+    return "review_identity_or_tasks_invalid"
+
+
+def build_feature_readiness(
+    repo: Path,
+    feature_dir: Path,
+    *,
+    lock_file: Path = DEFAULT_LOCK_FILE,
+    state_file: Path = DEFAULT_STATE_FILE,
+) -> dict[str, Any]:
+    """Return a read-only, bounded prerequisite report for managed Spec Kit work."""
+    status = build_status(repo, lock_file=lock_file, state_file=state_file)
+    reasons: list[str] = []
+    if not status["aligned"]:
+        reasons.append("runtime_or_project_not_aligned")
+    try:
+        root = _git_root(repo)
+    except SpeckitRuntimeError:
+        return {
+            "schema": "mesh.speckit.readiness.v1", "ready": False,
+            "reasons": sorted(set(reasons + ["feature_outside_or_missing_repository"])),
+            "feature_dir": None, "review_identity": "unavailable", "task_count": 0,
+            "github_publication": "unavailable", "status": status,
+        }
+    raw_feature = feature_dir if feature_dir.is_absolute() else root / feature_dir
+    if raw_feature.is_symlink():
+        return {
+            "schema": "mesh.speckit.readiness.v1", "ready": False,
+            "reasons": sorted(set(reasons + ["feature_symlink"])),
+            "feature_dir": None, "review_identity": "unavailable", "task_count": 0,
+            "github_publication": "unavailable", "status": status,
+        }
+    try:
+        feature, relative = _bounded_repo_path(root, feature_dir, label="feature directory")
+    except SpeckitRuntimeError:
+        return {
+            "schema": "mesh.speckit.readiness.v1", "ready": False,
+            "reasons": sorted(set(reasons + ["feature_outside_or_missing_repository"])),
+            "feature_dir": None, "review_identity": "unavailable", "task_count": 0,
+            "github_publication": "unavailable", "status": status,
+        }
+    if not feature.is_dir():
+        reasons.append("feature_missing")
+    else:
+        for artifact in ("spec.md", "plan.md", "tasks.md"):
+            reason = _feature_artifact_state(feature, artifact)
+            if reason is not None:
+                reasons.append(reason)
+
+    identity = "unavailable"
+    task_count = 0
+    github_publication = "unavailable"
+    artifacts_ready = all(reason == "runtime_or_project_not_aligned" for reason in reasons)
+    # Runtime drift is reported independently; it must not hide identity detail.
+    if artifacts_ready:
+        try:
+            loaded = load_review_feature(root, feature)
+        except LedgerError as exc:
+            reason = _review_readiness_reason(exc)
+            reasons.append(reason)
+            identity = "missing" if reason == "review_identity_missing" else "invalid"
+            github_publication = "blocked"
+        else:
+            task_count = len(loaded.tasks)
+            if loaded.binding.schema == "mesh.speckit.local-review.v1":
+                identity = "local"
+                github_publication = "requires_explicit_migration"
+            else:
+                identity = "github"
+                github_publication = "configured"
+    return {
+        "schema": "mesh.speckit.readiness.v1",
+        "ready": not reasons,
+        "reasons": sorted(set(reasons)),
+        "feature_dir": relative,
+        "review_identity": identity,
+        "task_count": task_count,
+        "github_publication": github_publication,
+        "status": status,
     }
 
 
@@ -1868,6 +1984,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     manual.add_argument("target", type=Path)
     manual.add_argument("--all", action="store_true", dest="scan_all")
     manual.add_argument("--json", action="store_true")
+    readiness = sub.add_parser("readiness")
+    readiness.add_argument("repo", type=Path)
+    readiness.add_argument("--feature-dir", type=Path, required=True)
+    readiness.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -1892,6 +2012,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "manual-actions":
             output = build_manual_actions(args.target, scan_all=args.scan_all)
             aligned = True
+        elif args.command == "readiness":
+            output = build_feature_readiness(
+                args.repo, args.feature_dir, lock_file=args.lock_file,
+                state_file=args.state_file,
+            )
+            aligned = output["ready"]
         elif args.command == "project":
             plan = build_project_plan(
                 args.project_action,

@@ -11,6 +11,9 @@ import tempfile
 import pytest
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def _load_module():
     script = Path(__file__).resolve().parents[1] / "scripts" / "mesh_speckit_cli.py"
     spec = importlib.util.spec_from_file_location("mesh_speckit_cli", script)
@@ -390,6 +393,146 @@ def test_execution_policy_is_not_runtime_readiness(tmp_path, monkeypatch, versio
     }
     assert result["aligned"] is (version == "1.0.3")
     assert "worker_dispatch=mesh_live (policy; not runtime attestation)" in module._render_status(result).splitlines()
+
+
+def _ready_feature(repo: Path, *, github: bool = True) -> Path:
+    feature = repo / "specs" / "001-ready"
+    feature.mkdir(parents=True)
+    (feature / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (feature / "plan.md").write_text("# Plan\n", encoding="utf-8")
+    (feature / "tasks.md").write_text("- [ ] T001 Ready task\n", encoding="utf-8")
+    if github:
+        (feature / "github-ledger.json").write_text(json.dumps({
+            "schema": "mesh.speckit.github-ledger.v1", "feature_id": "ready-001",
+            "repository": "example/repo", "enabled": True,
+        }), encoding="utf-8")
+    return feature
+
+
+def _aligned_readiness(module, repo: Path, feature: Path, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(module, "installed_version", lambda: {
+        "available": True, "executable": "/bin/specify", "version": "1.0.3", "error": None,
+    })
+    return module.build_feature_readiness(
+        repo, feature, lock_file=_lock(tmp_path / "lock.json"), state_file=tmp_path / "missing.json",
+    )
+
+
+def test_readiness_accepts_github_bound_feature(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(_project(tmp_path / "repo"))
+    feature = _ready_feature(repo)
+
+    result = _aligned_readiness(module, repo, feature, monkeypatch, tmp_path)
+
+    assert result["ready"] is True
+    assert result["reasons"] == []
+    assert result["feature_dir"] == "specs/001-ready"
+    assert result["review_identity"] == "github"
+    assert result["github_publication"] == "configured"
+    assert result["task_count"] == 1
+
+
+def test_readiness_reports_missing_identity_without_writing(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(_project(tmp_path / "repo"))
+    feature = _ready_feature(repo, github=False)
+
+    result = _aligned_readiness(module, repo, feature, monkeypatch, tmp_path)
+
+    assert result["ready"] is False
+    assert result["reasons"] == ["review_identity_missing"]
+    assert result["review_identity"] == "missing"
+    assert not (feature / "review-ledger.json").exists()
+
+
+def test_readiness_accepts_local_identity_without_remote(monkeypatch, tmp_path) -> None:
+    from scripts import mesh_speckit_review as review
+
+    module = _load_module()
+    repo = _git_repo(_project(tmp_path / "repo"))
+    feature = _ready_feature(repo, github=False)
+    review.initialize_task(
+        repo, feature, "T001", scope="commit:" + "a" * 40,
+        writer_session="codex-ready", invariants=["ready"], mutation_budget=1,
+        expected_revision=0, local=True,
+    )
+
+    result = _aligned_readiness(module, repo, feature, monkeypatch, tmp_path)
+
+    assert result["ready"] is True
+    assert result["review_identity"] == "local"
+    assert result["github_publication"] == "requires_explicit_migration"
+
+
+def test_readiness_fails_closed_for_missing_or_unsafe_artifacts(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(_project(tmp_path / "repo"))
+    feature = _ready_feature(repo)
+    (feature / "plan.md").unlink()
+    outside = tmp_path / "outside.md"
+    outside.write_text("# task\n", encoding="utf-8")
+    (feature / "tasks.md").unlink()
+    (feature / "tasks.md").symlink_to(outside)
+
+    result = _aligned_readiness(module, repo, feature, monkeypatch, tmp_path)
+
+    assert result["ready"] is False
+    assert result["reasons"] == ["plan_missing", "tasks_symlink"]
+    assert result["review_identity"] == "unavailable"
+    assert result["task_count"] == 0
+
+
+def test_readiness_rejects_symlinked_feature_directory(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(_project(tmp_path / "repo"))
+    feature = _ready_feature(repo)
+    alias = repo / "specs" / "001-alias"
+    alias.symlink_to(feature, target_is_directory=True)
+
+    result = _aligned_readiness(module, repo, alias, monkeypatch, tmp_path)
+
+    assert result["ready"] is False
+    assert result["reasons"] == ["feature_symlink"]
+    assert result["feature_dir"] is None
+
+
+def test_readiness_uses_structured_local_identity_error_codes(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(_project(tmp_path / "repo"))
+    feature = _ready_feature(repo, github=False)
+    original = module.load_review_feature
+
+    def missing(*args, **kwargs):
+        raise module.LedgerError("changed wording", code="review_identity_missing")
+
+    monkeypatch.setattr(module, "load_review_feature", missing)
+    result = _aligned_readiness(module, repo, feature, monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "load_review_feature", original)
+
+    assert result["reasons"] == ["review_identity_missing"]
+
+
+def test_readiness_real_cli_is_read_only(tmp_path) -> None:
+    repo = _git_repo(_project(tmp_path / "repo"))
+    feature = _ready_feature(repo, github=False)
+    lock = _lock(tmp_path / "lock.json")
+    script = ROOT / "scripts" / "mesh_speckit_cli.py"
+
+    proc = subprocess.run(
+        [sys.executable, str(script), "--lock-file", str(lock), "--state-file",
+         str(tmp_path / "state.json"), "readiness", str(repo), "--feature-dir",
+         str(feature), "--json"],
+        cwd=ROOT, check=False, capture_output=True, text=True,
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["schema"] == "mesh.speckit.readiness.v1"
+    assert payload["ready"] is False
+    assert payload["reasons"] == ["review_identity_missing"]
+    assert not (feature / "review-ledger.json").exists()
+    assert not (tmp_path / "state.json").exists()
 
 
 def test_project_rejects_active_unsupported_integration(tmp_path) -> None:

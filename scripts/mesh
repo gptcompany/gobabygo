@@ -757,6 +757,7 @@ speckit_usage() {
 Usage:
   ./scripts/mesh speckit status [repo-path] [--json]
   ./scripts/mesh speckit capabilities [repo-path] [--json]
+  ./scripts/mesh speckit readiness <repo-path> --feature-dir <dir> [--json]
   ./scripts/mesh speckit context <repo-path> --phase <phase> --feature-dir <dir> --artifact <path> --role <writer|reviewer> [--review-scope <scope>] [--json]
   ./scripts/mesh speckit manual-actions <feature-dir|tasks.md> [--json]
   ./scripts/mesh speckit manual-actions <repo-root> --all [--json]
@@ -775,7 +776,9 @@ Usage:
   ./scripts/mesh speckit smoke <repo-path> [--team name] [--print-command]
 
 Runtime management:
-  status, capabilities, context, and manual-actions are local, read-only, and do not require iTerm2.
+  status, capabilities, readiness, context, and manual-actions are local, read-only, and do not require iTerm2.
+  readiness checks Spec Kit alignment, spec/plan/tasks safety and existing review identity;
+  it never initializes or migrates a ledger.
   context emits one bounded provider-neutral delegation envelope from installed skills.
   manual-actions derives unresolved DEC-* operator decisions and blocked tasks from
   authoritative tasks.md files; it does not create a second ledger.

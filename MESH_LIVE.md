@@ -140,9 +140,12 @@ run before either process becomes visible. The lock is released if Claude exits
 back to the persistent shell. No database, daemon, tmux kill, or iTerm2 state is
 involved.
 
-Both options are used only when the tmux session is created; if the tmux already
-exists and is a valid coordinator, `mcoordinator` only attaches to it and ignores
-resume validation. New coordinators carry a tmux marker so a terminated
+If the named tmux session already exists and has a valid coordinator using the
+same exact UUID, `mcoordinator --resume <id>` attaches to it. It deliberately
+does not probe that process's held lock. A named coordinator with a different
+active UUID, or any other tmux session already using the UUID, fails closed.
+Without an active matching coordinator, normal resume-history and lock
+validation applies before creation. New coordinators carry a tmux marker so a terminated
 coordinator can be diagnosed distinctly, but attach still requires a running
 Claude process. For compatibility, an unmarked
 shell wrapper with a direct Claude child is also recognized without inspecting
@@ -519,6 +522,20 @@ Copies of a ledger retain its identity: only one checkout may own active work;
 the filesystem lock does not coordinate independent clones or hosts.
 This enables new local specs but does not migrate the oversized legacy 096.
 
+Before a managed Spec Kit delegation or correction, use the read-only gate:
+
+```bash
+mesh speckit readiness <repo> --feature-dir <feature-dir> --json
+```
+
+`ready=true` requires aligned runtime/project state, regular bounded `spec.md`,
+`plan.md` and `tasks.md`, plus an existing local or GitHub review identity.
+It does not create or repair anything. `review_identity_missing` requires an
+explicit recorded tracking choice: `review init --local` for local-only review,
+or the GitHub planning/binding flow. `ready=false` blocks managed dispatch;
+do not bypass it with manual counts, a fake binding, renamed artifacts or a raw
+send. A local identity is review-ready but not GitHub-publication-ready.
+
 For a bound Spec Kit task, `review-ledger.json` makes those transitions
 transactional. `tasks.md` remains authoritative for intent and completion;
 `review-ledger.json` is authoritative only for review scope, round, verdict,
@@ -573,7 +590,7 @@ canonical task and current revision. All mutations still take the canonical ID.
 Multiple aliases share the parent's cycle, budget and findings. Mappings are
 case-normalized, feature-local, append-only and cannot move between parents.
 Do not map independent parallel tasks to the same cycle. The canonical task must
-exist in tasks.md and the feature must have a valid github-ledger.json binding.
+exist in tasks.md and the feature must have a valid local or GitHub review identity.
 
 For planned corrections, run on the host holding the ledger and worker tmux:
 

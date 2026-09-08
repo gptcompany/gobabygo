@@ -66,6 +66,10 @@ _LEGACY_TITLE_RE = re.compile(r"^(?:\[[^\]]+\]\s+)?(?P<task>T\d{3,})\s*:")
 class LedgerError(ValueError):
     """Raised when local ledger input is unsafe or ambiguous."""
 
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
 
 @dataclass(frozen=True)
 class FeatureBinding:
@@ -372,7 +376,7 @@ def _local_review_identity(feature: Path) -> str | None:
     except ValueError:
         valid = False
     if payload.get("schema") != "mesh.speckit.review-ledger.v1" or not valid:
-        raise LedgerError("invalid local review identity")
+        raise LedgerError("invalid local review identity", code="review_identity_invalid")
     return identity
 
 
@@ -392,14 +396,23 @@ def load_review_feature(
     binding_path = feature / BINDING_FILE
     if binding_path.exists() or binding_path.is_symlink():
         if initialize_local or identity is not None:
-            raise LedgerError("conflicting local/GitHub review identity; reconcile before proceeding")
+            raise LedgerError(
+                "conflicting local/GitHub review identity; reconcile before proceeding",
+                code="review_identity_conflict",
+            )
         return load_feature(root, feature)
     if identity is None:
         ledger = feature / "review-ledger.json"
         if ledger.exists() or ledger.is_symlink():
-            raise LedgerError("existing review ledger has no local identity; restore its GitHub binding")
+            raise LedgerError(
+                "existing review ledger has no local identity; restore its GitHub binding",
+                code="review_identity_invalid",
+            )
         if not initialize_local:
-            raise LedgerError("review identity missing; initialize with review init --local or a GitHub binding")
+            raise LedgerError(
+                "review identity missing; initialize with review init --local or a GitHub binding",
+                code="review_identity_missing",
+            )
         identity = str(uuid.uuid4())
     # The local namespace is not an owner/repo and cannot pass load_binding.
     binding = FeatureBinding("mesh.speckit.local-review.v1", identity, "local", True)

@@ -4662,6 +4662,7 @@ def build_live_coordinator_system_prompt(
     speckit_context_command = f"{shlex.quote(mesh_script)} speckit context"
     speckit_ledger_command = f"{shlex.quote(mesh_script)} speckit github"
     speckit_review_command = f"{shlex.quote(mesh_script)} speckit review"
+    speckit_readiness_command = f"{shlex.quote(mesh_script)} speckit readiness"
     manual_actions_root = shlex.quote(repo_root) if repo_root else "."
     speckit_manual_actions_command = (
         f"{shlex.quote(mesh_script)} speckit manual-actions {manual_actions_root} --all --json"
@@ -4837,11 +4838,15 @@ def build_live_coordinator_system_prompt(
             *workflow_policy,
             "Development ledger policy for planned feature work:",
             "- `spec.md`, `plan.md`, and especially `tasks.md` in Git are authoritative. GitHub Issues are a one-way derived work ledger; router state and tmux output never rewrite Spec Kit artifacts.",
+            f"- Before a managed planned delegation, correction dispatch, or resumed feature lane, run `{speckit_readiness_command} <repo-root> --feature-dir <feature-dir> --json`. Do not send managed work when `ready=false`.",
+            "- Readiness is read-only. It checks runtime/project alignment, safe spec/plan/tasks artifacts and one existing review identity. It never creates a ledger, repairs artifacts, or makes GitHub ready.",
+            "- `review_identity_missing` requires a recorded tracking decision before work: either deliberately initialize `review init --local` for local-only review, or use the GitHub binding planning path. Never substitute manual round counts. A local identity preserves review history but reports GitHub publication as requiring explicit migration.",
+            "- If readiness reports an invalid, conflicting, unsafe, or oversized artifact, stop the managed lane and report the exact reason. Do not work around it by renaming files, raising limits, creating a fake binding, or using raw worker sends.",
             f"- At bootstrap or resume, on every tick before `TICK_IDLE`, and before closure, run `{speckit_manual_actions_command}`. This read-only projection is not a second ledger.",
             "- If it returns open actions, inspect each referenced `tasks.md` entry and report `MANUAL_REQUIRED count=N` with decision ID, exact question, bounded options, recommendation, and blocked task IDs. Never infer approval from silence, pane text, a prompt suggestion, or a worker.",
             "- After an explicit submitted operator answer, record it in the authoritative Spec Kit task/decision artifact, reconcile dependent tasks, rerun manual-actions, and continue. Do not remain idle behind an unreported manual decision.",
-            "- After tasks and `speckit.analyze` pass, require a committed `github-ledger.json` binding and a planning-only pull request before source implementation. "
-            f"For a missing binding, run `{speckit_ledger_command} init <feature-dir>` first, inspect the plan, then rerun it with `--apply`; use `{speckit_ledger_command} plan <feature-dir>` to validate publication.",
+            "- After tasks and `speckit.analyze` pass, follow the recorded tracking decision. GitHub publication requires a committed `github-ledger.json` binding and a planning-only pull request before source implementation. "
+            f"For a chosen GitHub binding, run `{speckit_ledger_command} init <feature-dir>` first, inspect the plan, then rerun it with `--apply`; use `{speckit_ledger_command} plan <feature-dir>` to validate publication. Local-only review does not imply issue publication.",
             "- Do not invoke interactive `speckit-taskstoissues` as the authoritative sync path: its bare Tnnn identity can collide across features. Do not mutate GitHub from a local hook or worker prompt.",
             "- Stop before implementation until the planning pull request is merged and the repository ledger Action has published the issues. "
             f"Require `{speckit_ledger_command} check <feature-dir>` to report aligned before delegating a published task.",
