@@ -35,13 +35,14 @@ an executable proof, not only current upstream documentation.
 
 ## Tasks and acceptance
 
-- [ ] T001 Inventory the exact runtime and reuse matrix, read-only. Inspect
+- [x] T001 Inventory the exact runtime and reuse matrix, read-only. Inspect
   installed binaries, integration manifests and workflow definitions on Mac and
   Dell, plus source at the pinned upstream tag. Compare sequencing, bounded
   loops, resume, gate enforcement, review evidence, issue reconciliation and
   worker invocation. Classify each as native, configurable, adapter required or
   unsupported, with executable evidence. A disconnected host stays unverified.
   No implicit installation of latest or community extensions.
+  Evidence and external review disposition: speckit-workflow-inventory.md.
 - [ ] T002 Prove the execution boundary in an isolated local repository with no
   remote. Run a tiny upstream workflow with harmless steps, pause/resume and
   failure injection. Verify whether supported shell/extension steps can call
@@ -58,6 +59,12 @@ an executable proof, not only current upstream documentation.
   workflow steps to ledger transitions. Review dispatch must persist intent
   before input; an unknown receipt requires reconciliation, never an automatic
   retry. Preserve exact repo/provider identity. Test interruption at each boundary.
+  Only reviewed, versioned workflow definitions are eligible for managed
+  dispatch; verify their approved digest at run/resume and reject unexpected
+  changes. Do not interpolate free-form task text into shell commands. The
+  adapter wraps existing dispatch/receipts; it cannot create a second delivery
+  path. Persist only allowlisted bounded receipt fields, never pane captures,
+  prompts or arbitrary stdout; test these negative cases before activation.
 - [ ] T004 Decouple local review loading from GitHub publication. Reuse the
   existing review FSM, atomic writer, lock and revision checks. Introduce only
   the minimum stable local identity needed, following the T001/T002 decision.
