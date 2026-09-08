@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import uuid
 
 import pytest
 
@@ -61,6 +62,125 @@ def _init(repo: Path, feature: Path, revision: int = 0) -> dict:
     )
 
 
+def _local_init(repo: Path, feature: Path, task="T001", revision=0):
+    return review.initialize_task(
+        repo, feature, task, scope=SCOPE_A, writer_session="codex-fixture",
+        invariants=["release evidence"], mutation_budget=1,
+        expected_revision=revision, local=True,
+    )
+
+
+def test_local_review_uses_existing_ledger_without_github(tmp_path):
+    repo, feature = _feature(tmp_path)
+    (feature / "github-ledger.json").unlink()
+    with pytest.raises(ValueError, match="identity missing"):
+        review.review_status(repo, feature)
+    assert not (feature / "review-ledger.json").exists()
+    _local_init(repo, feature)
+    status = review.review_status(repo, feature, "T001")
+    ledger = json.loads((feature / "review-ledger.json").read_text())
+    key = ledger["feature_key"]
+    assert key == "local:" + str(uuid.UUID(key.removeprefix("local:")))
+    assert ledger["tasks"]["T001"]["task_key"] == key + ":T001"
+    assert status["revision"] == 1
+    before = (feature / "review-ledger.json").read_bytes()
+    with pytest.raises(ValueError, match="already exists"):
+        _local_init(repo, feature, revision=1)
+    assert (feature / "review-ledger.json").read_bytes() == before
+    _local_init(repo, feature, "T002", 1)
+    assert review.review_status(repo, feature)["feature_key"] == key
+    assert not (feature / "github-ledger.json").exists()
+
+
+def test_local_identity_survives_move_and_remote_addition(tmp_path):
+    repo, feature = _feature(tmp_path)
+    (feature / "github-ledger.json").unlink()
+    _local_init(repo, feature)
+    before = (feature / "review-ledger.json").read_bytes()
+    relative = feature.relative_to(repo)
+    moved = tmp_path / "moved"
+    repo.rename(moved)
+    subprocess.run(["git", "-C", str(moved), "remote", "add", "origin",
+                    "https://github.com/example/project.git"], check=True)
+    assert review.review_status(moved, moved / relative)["revision"] == 1
+    assert (moved / relative / "review-ledger.json").read_bytes() == before
+
+
+def test_missing_github_binding_cannot_reset_existing_review_as_local(tmp_path):
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    before = (feature / "review-ledger.json").read_bytes()
+    (feature / "github-ledger.json").unlink()
+    with pytest.raises(ValueError, match="restore its GitHub binding"):
+        _local_init(repo, feature)
+    assert (feature / "review-ledger.json").read_bytes() == before
+
+
+def test_local_review_blocks_conflicting_publication_and_stale_plan(tmp_path):
+    from scripts import mesh_speckit_github as github
+    repo, feature = _feature(tmp_path)
+    binding = (feature / "github-ledger.json").read_bytes()
+    (feature / "github-ledger.json").unlink()
+    plan = github.build_binding_plan(repo, feature, repository="example/project")
+    _local_init(repo, feature)
+    with pytest.raises(ValueError, match="explicit GitHub migration"):
+        github.apply_binding_plan(plan)
+    with pytest.raises(ValueError, match="explicit GitHub migration"):
+        github.build_binding_plan(repo, feature, repository="example/project")
+    (feature / "github-ledger.json").write_bytes(binding)
+    with pytest.raises(ValueError, match="conflicting local/GitHub"):
+        review.review_status(repo, feature)
+    with pytest.raises(ValueError, match="explicit GitHub migration"):
+        github.load_feature(repo, feature)
+
+
+def test_local_initialization_never_replaces_a_github_binding(tmp_path):
+    repo, feature = _feature(tmp_path)
+    with pytest.raises(ValueError, match="conflicting local/GitHub"):
+        _local_init(repo, feature)
+    assert not (feature / "review-ledger.json").exists()
+
+
+def test_competing_local_identity_cannot_overwrite_first_commit(tmp_path):
+    repo, feature = _feature(tmp_path)
+    (feature / "github-ledger.json").unlink()
+    competing = review.load_feature(repo, feature, initialize_local=True)
+    _local_init(repo, feature)
+    before = (feature / "review-ledger.json").read_bytes()
+    with pytest.raises(ValueError, match="feature"):
+        review._transact(competing, 0, lambda ledger, revision: {})
+    assert (feature / "review-ledger.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("damage", ["bad-uuid", "symlink", "invalid-json"])
+def test_local_identity_damage_fails_closed(tmp_path, damage):
+    repo, feature = _feature(tmp_path)
+    (feature / "github-ledger.json").unlink()
+    _local_init(repo, feature)
+    path = feature / "review-ledger.json"
+    if damage == "symlink":
+        saved = repo / "saved.json"
+        path.rename(saved)
+        path.symlink_to(saved)
+    elif damage == "invalid-json":
+        path.write_text("{")
+    else:
+        payload = json.loads(path.read_text())
+        payload["feature_key"] = "local:not-a-uuid"
+        path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError):
+        review.review_status(repo, feature)
+
+
+def test_local_init_cli(tmp_path, capsys):
+    repo, feature = _feature(tmp_path)
+    (feature / "github-ledger.json").unlink()
+    assert review.main(["init", str(repo), str(feature), "T001", "--local",
+                        "--scope", SCOPE_A, "--writer-session", "codex-fixture",
+                        "--expect-revision", "0", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["revision"] == 1
+
+
 def _open(
     repo: Path,
     feature: Path,
@@ -109,9 +229,14 @@ def _record(
     )
 
 
-def test_release_pass_is_terminal_and_durable(tmp_path: Path) -> None:
+@pytest.mark.parametrize("local", [False, True])
+def test_release_pass_is_terminal_and_durable(tmp_path: Path, local: bool) -> None:
     repo, feature = _feature(tmp_path)
-    assert _init(repo, feature)["revision"] == 1
+    if local:
+        (feature / "github-ledger.json").unlink()
+        assert _local_init(repo, feature)["revision"] == 1
+    else:
+        assert _init(repo, feature)["revision"] == 1
     assert _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)["revision"] == 2
 
     result = _record(repo, feature, 2, "PASS")
@@ -126,6 +251,33 @@ def test_release_pass_is_terminal_and_durable(tmp_path: Path) -> None:
     assert len(evidence["sha256"]) == 64
     assert (feature / "review-ledger.json").is_file()
     assert review.review_check(repo, feature, "T001", scope=SCOPE_A)["release_passed"] is True
+    review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)
+    assert review.review_status(repo, feature, "T001")["completed"] is True
+
+
+def test_binding_and_local_initialization_share_lock(tmp_path):
+    from scripts import mesh_speckit_github as github
+    repo, feature = _feature(tmp_path)
+    (feature / "github-ledger.json").unlink()
+    plan = github.build_binding_plan(repo, feature, repository="example/project")
+    with github.review_feature_lock(repo, feature):
+        with pytest.raises(ValueError, match="another review ledger transaction"):
+            github.apply_binding_plan(plan)
+        with pytest.raises(ValueError, match="another review ledger transaction"):
+            _local_init(repo, feature)
+    assert not (feature / "review-ledger.json").exists()
+    assert not (feature / "github-ledger.json").exists()
+
+
+def test_binding_appearing_after_local_load_is_rejected(tmp_path):
+    from scripts import mesh_speckit_github as github
+    repo, feature = _feature(tmp_path)
+    (feature / "github-ledger.json").unlink()
+    pending = review.load_feature(repo, feature, initialize_local=True)
+    github.apply_binding_plan(github.build_binding_plan(repo, feature, repository="example/project"))
+    with pytest.raises(ValueError, match="conflicting local/GitHub"):
+        review._transact(pending, 0, lambda ledger, revision: {})
+    assert not (feature / "review-ledger.json").exists()
 
 
 def test_legacy_aliases_share_one_canonical_review_cycle(tmp_path: Path) -> None:
@@ -751,8 +903,11 @@ def test_evidence_rejects_symlinked_path_components(tmp_path: Path) -> None:
         )
 
 
-def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path) -> None:
+@pytest.mark.parametrize("local", [False, True])
+def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path, local: bool) -> None:
     repo, feature = _feature(tmp_path)
+    if local:
+        (feature / "github-ledger.json").unlink()
     report = feature / "release-review.md"
     report.write_text("No findings.\nREVIEW_VERDICT: PASS\n", encoding="utf-8")
     env = {**os.environ, "MESH_SPECKIT_PYTHON": sys.executable}
@@ -807,6 +962,8 @@ def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path) -
         ],
         ["status", str(repo), str(feature), "T001", "--json"],
     ]
+    if local:
+        commands[0].append("--local")
     outputs: list[dict] = []
     for command in commands:
         proc = subprocess.run(

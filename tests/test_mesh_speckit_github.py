@@ -809,6 +809,8 @@ def test_authoritative_apply_performs_no_mutation_when_plan_is_blocked(
 
 def test_binding_init_is_plan_first_atomic_and_idempotent(module, tmp_path: Path) -> None:
     repo, feature = make_feature(tmp_path, tasks="- [ ] T001 Current\n")
+    # Binding writes now participate in the real Git-internal review lock.
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
     binding_path = feature / "github-ledger.json"
     binding_path.unlink()
 

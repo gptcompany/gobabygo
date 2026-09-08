@@ -80,7 +80,8 @@ def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     assert "speckit github plan" in proc.stdout
     assert "speckit github check" in proc.stdout
     assert "speckit github install-caller" in proc.stdout
-    assert "speckit review <status|check|init|open|record|timeout|correction|candidate|budget|decide>" in proc.stdout
+    assert "speckit review <status|check|init|map|resolve|open|record|timeout|correction|dispatch|complete|candidate|budget|decide>" in proc.stdout
+    assert "review init --local: local identity without GitHub" in proc.stdout
     assert "writes are intentionally restricted" in proc.stdout
     assert "Legacy iTerm2 run options" in proc.stdout
 

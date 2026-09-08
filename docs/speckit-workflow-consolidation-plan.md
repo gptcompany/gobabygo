@@ -73,13 +73,17 @@ an executable proof, not only current upstream documentation.
   if a later evidence-backed decision reopens native execution adoption.
   Implemented static execution_policy in status and explicit coordinator
   instructions. No native adapter, executor or new runtime state was added.
-- [ ] T004 Decouple local review loading from GitHub publication. Reuse the
+- [x] T004 Decouple local review loading from GitHub publication. Reuse the
   existing review FSM, atomic writer, lock and revision checks. Introduce only
   the minimum stable local identity needed, following the T001/T002 decision.
   Existing GitHub-bound feature/task keys must remain unchanged. Adding a remote
   later must not reset history or create another logical task. Detect conflicting
   bindings explicitly. Test no remote, offline operation, relocation, collision,
   concurrent updates and unchanged GitHub-backed operation. No fake owner/repo.
+  Implemented opt-in init --local with local:UUID in the existing ledger.
+  Adding origin preserves keys; publishing a local identity is explicitly
+  refused until a reviewed migration exists, rather than generating a second
+  identity. Local-to-GitHub promotion remains a T006 decision, not supported here.
 - [ ] T005 Add deterministic readiness checks at managed spec start/resume.
   Report artifact, identity, ledger and execution capabilities separately from
   optional GitHub readiness. Initialize only missing, scoped state through the
@@ -204,3 +208,42 @@ passed. A real local status invocation shows the new policy lines alongside
 aligned Spec Kit 1.0.3. No active coordinator was reloaded or production runtime
 updated. T004 local identity, T005 readiness and T010 activation remain open;
 these prompt changes alone do not fix the 096 ledger binding.
+
+## T004 implementation and review
+
+No new persistence file or database: local identity is stored in the existing
+review-ledger.json feature_key. The existing FSM, revision checks, history and
+atomic writer are reused. Status cannot implicitly initialize local identity;
+init requires --local only for an unbound feature. A missing binding on an
+existing GitHub ledger cannot be converted into a new local cycle. The parser's
+canonical-task and 1 MiB limits remain unchanged.
+
+Review loading and GitHub publication share task parsing but use distinct
+identity-loading paths. Managed binding application now shares the existing
+Git-internal feature lock with review writes. Both stale binding plans and a
+binding appearing after a local task load are rejected. The lock is POSIX and
+checkout-local: independent clones or hosts still require a single active owner.
+Uncooperative direct filesystem edits are not sandboxed or made transactional.
+
+Independent local Claude reviewed the diff with tools disabled. Its proposed
+silent identity overwrite was refuted by the existing _load_ledger feature-key
+comparison under lock and the regression proving unchanged ledger bytes after
+a competing initialization. A targeted second review acknowledged that control
+and withdrew the finding. Symlink rejection is already in _read_bounded and is
+covered by a new regression. Neither review executed tests.
+
+Tests cover local CLI init/review/status, RELEASE PASS and completion, task
+restart refusal, stale competing identity, shared lock contention, relocation,
+origin addition, malformed identity, symlinks, conflicting publication and
+unchanged GitHub-backed behavior. The binding-application fixture now uses a
+real Git checkout for the real lock, rather than an empty .git directory. The
+shell-help test also had a stale pre-map/dispatch command list; it now checks
+the current list and the new local option. No guard was relaxed.
+Final validation: 137 review/GitHub/convergence/workflow/docs/shell tests passed;
+py_compile, bash syntax and git diff --check passed. CLI integration fixtures
+use authored review evidence, not a live independent worker verdict; real-worker
+E2E remains T008.
+
+No production ledger or session was changed. T005 readiness automation, T006
+publication integration and T007 migration remain open. Local review support
+alone does not resolve the oversized 096 task file or reconcile its history.

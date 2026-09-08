@@ -499,6 +499,26 @@ An existing attached coordinator retains its instructions; use a fresh managed
 bootstrap/resume to load the updated contract at an operational checkpoint.
 See [workflow boundary evidence](docs/speckit-workflow-boundary-e2e.md).
 
+Local-only review is available without GitHub or an origin remote:
+
+```sh
+mesh speckit review init /absolute/repo specs/001-feature T001 --local \
+  --scope commit:<exact-sha> --writer-session <worker-session> --expect-revision 0
+```
+
+The repository must still be a Git checkout with canonical tasks in `tasks.md`.
+`--local` stores a stable `local:<uuid>` feature identity inside the existing
+`review-ledger.json`, under the same transaction lock. Subsequent review
+commands need no local flag. It does not reset an existing task or replace a
+missing GitHub binding from an old ledger. Status alone never creates identity.
+Moving the checkout or adding an origin remote preserves that identity.
+GitHub publishing of a local ledger requires a future explicit migration and
+is currently refused, including conflicting hand-written bindings. Do not
+create a fake GitHub binding. Existing GitHub-bound reviews retain their keys.
+Copies of a ledger retain its identity: only one checkout may own active work;
+the filesystem lock does not coordinate independent clones or hosts.
+This enables new local specs but does not migrate the oversized legacy 096.
+
 For a bound Spec Kit task, `review-ledger.json` makes those transitions
 transactional. `tasks.md` remains authoritative for intent and completion;
 `review-ledger.json` is authoritative only for review scope, round, verdict,

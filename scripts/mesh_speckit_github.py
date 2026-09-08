@@ -9,6 +9,7 @@ fully testable.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -18,9 +19,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Protocol
+from typing import Callable, Iterator, Mapping, Protocol
 from urllib.parse import urlparse
 
 
@@ -346,7 +348,65 @@ def parse_tasks(text: str) -> tuple[SpecTask, ...]:
 
 def load_feature(repo_root: Path, feature_dir: Path) -> LoadedFeature:
     root, feature = _resolve_feature_dir(repo_root, feature_dir)
+    _reject_local_review_publication(feature)
     binding = load_binding(feature / BINDING_FILE)
+    return _load_feature_tasks(root, feature, binding)
+
+
+def _local_review_identity(feature: Path) -> str | None:
+    path = feature / "review-ledger.json"
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        payload = json.loads(_read_bounded(path, 1024 * 1024, "review ledger"))
+    except json.JSONDecodeError as exc:
+        raise LedgerError("invalid review ledger JSON") from exc
+    if not isinstance(payload, dict):
+        raise LedgerError("review ledger must be an object")
+    key = payload.get("feature_key")
+    if not isinstance(key, str) or not key.startswith("local:"):
+        return None
+    identity = key.removeprefix("local:")
+    try:
+        valid = str(uuid.UUID(identity)) == identity
+    except ValueError:
+        valid = False
+    if payload.get("schema") != "mesh.speckit.review-ledger.v1" or not valid:
+        raise LedgerError("invalid local review identity")
+    return identity
+
+
+def _reject_local_review_publication(feature: Path) -> None:
+    if _local_review_identity(feature) is not None:
+        raise LedgerError(
+            "local review identity requires explicit GitHub migration; "
+            "refusing a second task identity"
+        )
+
+
+def load_review_feature(
+    repo_root: Path, feature_dir: Path, *, initialize_local: bool = False,
+) -> LoadedFeature:
+    root, feature = _resolve_feature_dir(repo_root, feature_dir)
+    identity = _local_review_identity(feature)
+    binding_path = feature / BINDING_FILE
+    if binding_path.exists() or binding_path.is_symlink():
+        if initialize_local or identity is not None:
+            raise LedgerError("conflicting local/GitHub review identity; reconcile before proceeding")
+        return load_feature(root, feature)
+    if identity is None:
+        ledger = feature / "review-ledger.json"
+        if ledger.exists() or ledger.is_symlink():
+            raise LedgerError("existing review ledger has no local identity; restore its GitHub binding")
+        if not initialize_local:
+            raise LedgerError("review identity missing; initialize with review init --local or a GitHub binding")
+        identity = str(uuid.uuid4())
+    # The local namespace is not an owner/repo and cannot pass load_binding.
+    binding = FeatureBinding("mesh.speckit.local-review.v1", identity, "local", True)
+    return _load_feature_tasks(root, feature, binding)
+
+
+def _load_feature_tasks(root: Path, feature: Path, binding: FeatureBinding) -> LoadedFeature:
     tasks_path = feature / TASKS_FILE
     task_text = _read_bounded(tasks_path, MAX_TASKS_BYTES, "tasks file")
     try:
@@ -362,6 +422,40 @@ def load_feature(repo_root: Path, feature_dir: Path) -> LoadedFeature:
         binding=binding,
         tasks=parse_tasks(task_text),
     )
+
+
+@contextmanager
+def review_feature_lock(repo: Path, feature: Path) -> Iterator[None]:
+    """Serialize review writes and identity binding in the same Git checkout."""
+    import fcntl
+
+    digest = hashlib.sha256(feature.relative_to(repo).as_posix().encode()).hexdigest()[:24]
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-path",
+             f"mesh-speckit-review/{digest}.lock"],
+            check=False, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise LedgerError(f"cannot resolve Git lock path: {exc}") from exc
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise LedgerError("cannot resolve Git lock path")
+    path = Path(proc.stdout.strip())
+    if not path.is_absolute():
+        path = (repo / path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except OSError as exc:
+        raise LedgerError(f"cannot open review ledger lock: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise LedgerError("another review ledger transaction is active") from exc
+        yield
+    finally:
+        os.close(descriptor)
 
 
 def task_key(binding: FeatureBinding, task: SpecTask) -> str:
@@ -1078,6 +1172,7 @@ def build_binding_plan(
     feature_id: str | None = None,
 ) -> BindingPlan:
     root, feature = _resolve_feature_dir(repo_root, feature_dir)
+    _reject_local_review_publication(feature)
     if not _REPOSITORY_RE.fullmatch(repository) or repository.lower() != repository:
         raise LedgerError("repository must use canonical lowercase owner/repo")
     tasks_path = feature / TASKS_FILE
@@ -1113,6 +1208,12 @@ def binding_plan_to_dict(plan: BindingPlan, *, applied: bool) -> dict[str, objec
 
 
 def apply_binding_plan(plan: BindingPlan) -> bool:
+    with review_feature_lock(plan.repo_root, plan.feature_dir):
+        return _apply_binding_plan_locked(plan)
+
+
+def _apply_binding_plan_locked(plan: BindingPlan) -> bool:
+    _reject_local_review_publication(plan.feature_dir)
     if plan.operation == "noop":
         return False
     if plan.operation != "create":

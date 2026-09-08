@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-import fcntl
 import getpass
 import hashlib
 import json
@@ -30,7 +29,8 @@ from scripts.mesh_speckit_cli import (  # noqa: E402
 from scripts.mesh_speckit_github import (  # noqa: E402
     LedgerError,
     LoadedFeature,
-    load_feature,
+    load_review_feature as load_feature,
+    review_feature_lock,
     task_key,
 )
 from src.pipeline_templates import (  # noqa: E402
@@ -186,10 +186,10 @@ def _normalize_invariants(values: Sequence[str]) -> list[str]:
 
 
 def _load_bound_task(
-    repo: Path, feature_dir: Path, task_id: str
+    repo: Path, feature_dir: Path, task_id: str, *, initialize_local: bool = False,
 ) -> tuple[LoadedFeature, Any, str]:
     try:
-        feature = load_feature(repo, feature_dir)
+        feature = load_feature(repo, feature_dir, initialize_local=initialize_local)
     except LedgerError as exc:
         raise ReviewLedgerError(str(exc)) from exc
     normalized = _normalize_task_id(task_id)
@@ -209,51 +209,16 @@ def _ledger_path(feature: LoadedFeature) -> Path:
     return feature.feature_dir / LEDGER_FILE
 
 
-def _git_internal_path(repo: Path, name: str) -> Path:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--git-path", name],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ReviewLedgerError(f"cannot resolve Git lock path: {exc}") from exc
-    if proc.returncode != 0 or not proc.stdout.strip():
-        raise ReviewLedgerError("cannot resolve Git lock path")
-    path = Path(proc.stdout.strip())
-    return path if path.is_absolute() else (repo / path).resolve()
-
-
 @contextmanager
 def _ledger_lock(feature: LoadedFeature) -> Iterator[None]:
-    digest = hashlib.sha256(
-        feature.feature_dir.relative_to(feature.repo_root).as_posix().encode("utf-8")
-    ).hexdigest()[:24]
-    path = _git_internal_path(
-        feature.repo_root, f"mesh-speckit-review/{digest}.lock"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    flags = os.O_RDWR | os.O_CREAT
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
     try:
-        descriptor = os.open(path, flags, 0o600)
-    except OSError as exc:
-        raise ReviewLedgerError(f"cannot open review ledger lock: {exc}") from exc
-    locked = False
-    try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            locked = True
-        except BlockingIOError as exc:
-            raise ReviewLedgerError("another review ledger transaction is active") from exc
-        yield
-    finally:
-        if locked:
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+        with review_feature_lock(feature.repo_root, feature.feature_dir):
+            # A binding may have appeared after the initial task load.
+            if feature.binding.schema == "mesh.speckit.local-review.v1":
+                load_feature(feature.repo_root, feature.feature_dir, initialize_local=True)
+            yield
+    except LedgerError as exc:
+        raise ReviewLedgerError(str(exc)) from exc
 
 
 def _read_bytes(path: Path) -> bytes | None:
@@ -521,8 +486,9 @@ def initialize_task(
     mutation_budget: int,
     expected_revision: int,
     replan_file: Path | None = None,
+    local: bool = False,
 ) -> dict[str, Any]:
-    feature, _task, key = _load_bound_task(repo, feature_dir, task_id)
+    feature, _task, key = _load_bound_task(repo, feature_dir, task_id, initialize_local=local)
     normalized_task = _normalize_task_id(task_id)
     normalized_scope = normalize_immutable_review_scope(scope)
     writer = _normalize_session(writer_session, "writer session")
@@ -1344,6 +1310,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     init.add_argument("--invariant", action="append", default=[])
     init.add_argument("--mutation-budget", type=int, default=1)
     init.add_argument("--replan-file", type=Path)
+    init.add_argument("--local", action="store_true",
+                      help="Initialize local review identity without GitHub; does not reset existing history")
     opened = sub.add_parser("open")
     _common(opened)
     opened.add_argument("--level", required=True)
@@ -1426,6 +1394,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 mutation_budget=args.mutation_budget,
                 expected_revision=args.expect_revision,
                 replan_file=args.replan_file,
+                local=args.local,
             )
         elif args.command == "open":
             output = open_review(
