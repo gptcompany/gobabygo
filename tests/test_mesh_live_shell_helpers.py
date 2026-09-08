@@ -1068,7 +1068,8 @@ def test_mosh_preflight_rejects_legacy_coordinator_with_same_resume_id(
         "#!/bin/bash\n"
         "ps() {\n"
         "  case \"$*\" in\n"
-        "    *'--ppid 12345'*) echo 23456 ;;\n"
+        "    *'pid= --ppid 12345'*) echo 23456 ;;\n"
+        "    *'comm= --ppid 12345'*) echo claude ;;\n"
         "    *'-p 23456'*) echo claude ;;\n"
         "  esac\n"
         "}\n"
@@ -1104,6 +1105,81 @@ _ws_mosh_preflight_attach_or_start claude-second {shlex.quote(str(tmp_path))} \
     assert proc.returncode == 6
     assert "already active in tmux session: claude-coordinator" in proc.stderr
     assert resume_id not in proc.stderr
+
+
+@pytest.mark.parametrize("shell", _shells())
+@pytest.mark.parametrize(
+    ("requested_resume", "expected_rc"),
+    [
+        ("b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c", 0),
+        ("d2c3e4f5-86d0-47a4-aed2-f6a6925b5d2d", 6),
+    ],
+)
+def test_mosh_preflight_allows_only_the_matching_active_target_resume(
+    shell: str, tmp_path: Path, requested_resume: str, expected_rc: int
+) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    helper = shlex.quote(str(HELPERS))
+    active_resume = "b1a2f0f3-75cf-4693-9dc1-e5a5814a4c1c"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    proc_root = tmp_path / "proc" / "23456"
+    proc_root.mkdir(parents=True)
+    (proc_root / "cmdline").write_bytes(
+        b"claude\0--resume\0" + active_resume.encode("ascii") + b"\0"
+    )
+    flock_log = tmp_path / "flock-called"
+    ssh = fake_bin / "ssh"
+    ssh.write_text(
+        "#!/bin/bash\n"
+        "ps() {\n"
+        "  case \"$*\" in\n"
+        "    *'pid= --ppid 12345'*) echo 23456 ;;\n"
+        "    *'comm= --ppid 12345'*) echo claude ;;\n"
+        "    *'-p 23456'*) echo claude ;;\n"
+        "  esac\n"
+        "}\n"
+        "export -f ps\n"
+        "for remote; do :; done\nexec bash -c \"$remote\"\n",
+        encoding="utf-8",
+    )
+    ssh.chmod(0o755)
+    tmux = fake_bin / "tmux"
+    tmux.write_text(
+        "#!/bin/bash\nlast=''\nfor last; do :; done\n"
+        "case \"$1:$last\" in\n"
+        "  list-sessions:*) echo claude-coordinator ;;\n"
+        "  has-session:*) exit 0 ;;\n"
+        f"  display-message:'#{{pane_current_path}}') echo {shlex.quote(str(tmp_path.resolve()))} ;;\n"
+        "  display-message:'#{pane_current_command}') echo bash ;;\n"
+        "  display-message:'#{pane_pid}') echo 12345 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    tmux.chmod(0o755)
+    flock = fake_bin / "flock"
+    flock.write_text(
+        f"#!/bin/sh\nprintf called > {shlex.quote(str(flock_log))}\nexit 1\n",
+        encoding="utf-8",
+    )
+    flock.chmod(0o755)
+
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+export PATH={shlex.quote(str(fake_bin))}:$PATH
+export MESH_LIVE_PROC_ROOT={shlex.quote(str(tmp_path / 'proc'))}
+_ws_mosh_preflight_attach_or_start claude-coordinator {shlex.quote(str(tmp_path))} \\
+  {requested_resume} coordinator sam@172.23.0.42
+""",
+    )
+
+    assert proc.returncode == expected_rc, proc.stderr
+    assert not flock_log.exists(), "an active target must not probe its own held lock"
+    if expected_rc:
+        assert "different active Claude resume ID" in proc.stderr
+        assert requested_resume not in proc.stderr
 
 
 @pytest.mark.parametrize("shell", _shells())

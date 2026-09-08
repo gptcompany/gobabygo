@@ -275,25 +275,35 @@ _mesh_active_resume_id() {
 }
 
 if [[ "$SESSION_KIND" == "coordinator" && -n "$RESUME_ID" ]]; then
-  while IFS= read -r candidate; do
-    [[ -n "$candidate" && "$candidate" != "$SESSION" ]] || continue
-    active_resume="$(_mesh_active_resume_id "$candidate" || true)"
-    if [[ "$active_resume" == "$RESUME_ID" ]]; then
-      echo "[tmux] Claude resume session is already active in tmux session: $candidate" >&2
+  target_resume="$(_mesh_active_resume_id "$SESSION" || true)"
+  if [[ -n "$target_resume" ]]; then
+    if [[ "$target_resume" != "$RESUME_ID" ]]; then
+      echo "[tmux] existing coordinator session has a different active Claude resume ID" >&2
       exit 6
     fi
-  done < <(tmux list-sessions -F "#{session_name}" 2>/dev/null || true)
+    # The requested session already owns this UUID. Attach below without
+    # probing its advisory lock, which is intentionally held by that process.
+  else
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" && "$candidate" != "$SESSION" ]] || continue
+      active_resume="$(_mesh_active_resume_id "$candidate" || true)"
+      if [[ "$active_resume" == "$RESUME_ID" ]]; then
+        echo "[tmux] Claude resume session is already active in tmux session: $candidate" >&2
+        exit 6
+      fi
+    done < <(tmux list-sessions -F "#{session_name}" 2>/dev/null || true)
 
-  lock_base="${XDG_RUNTIME_DIR:-$HOME/.local/state/gobabygo}"
-  lock_file="$lock_base/mesh-live-resume-locks/$RESUME_ID.lock"
-  if [[ -e "$lock_file" ]]; then
-    if [[ -L "$lock_file" ]]; then
-      echo "[tmux] refusing symlinked Claude resume lock: $lock_file" >&2
-      exit 6
-    fi
-    if ! flock -n "$lock_file" true 2>/dev/null; then
-      echo "[tmux] Claude resume session is already locked by another coordinator" >&2
-      exit 6
+    lock_base="${XDG_RUNTIME_DIR:-$HOME/.local/state/gobabygo}"
+    lock_file="$lock_base/mesh-live-resume-locks/$RESUME_ID.lock"
+    if [[ -e "$lock_file" ]]; then
+      if [[ -L "$lock_file" ]]; then
+        echo "[tmux] refusing symlinked Claude resume lock: $lock_file" >&2
+        exit 6
+      fi
+      if ! flock -n "$lock_file" true 2>/dev/null; then
+        echo "[tmux] Claude resume session is already locked by another coordinator" >&2
+        exit 6
+      fi
     fi
   fi
 fi
