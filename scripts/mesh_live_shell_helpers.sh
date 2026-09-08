@@ -867,7 +867,33 @@ mcoordinator() {
   local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh state_repo scope
   local prompt claude_cmd startup usage speckit_status_json contract_marker review_capability
   local -a prompt_args=()
-  usage="Usage: mcoordinator [<repo>|--all] [--workflow direct|speckit|adaptive] [--worker <session>] [--session <name>] [--continue|--resume <id>]"
+  usage="Usage: mcoordinator [<repo>|--all] [options]
+
+Start or attach the persistent Claude coordinator. With no arguments it uses
+multi-repo scope and attaches the canonical claude-coordinator session when live.
+
+Scope:
+  <repo>                         Coordinate one repository.
+  --all                          Coordinate across live repositories (default).
+
+Workflow:
+  --workflow direct|speckit|adaptive
+                                  Select coordination policy (default: adaptive).
+  --worker <session>             Limit bootstrap/delegation to one worker.
+  --session <name>               Use a non-default tmux session name.
+
+Conversation recovery:
+  --continue                     Start only if absent; let Claude select latest history.
+  --resume <exact-UUID>          Start only if absent; verify and resume one history.
+                                  Never use /resume inside an already active coordinator.
+
+Operator controls:
+  wboard                         List live sessions and summarized state.
+  wpeek <session> [lines]        Inspect one session without sending input.
+  wsattach <session>             Attach directly to an existing session.
+  wsupervisor                    Show bounded coordinator supervision state.
+
+Run mcoordinator with no arguments for normal daily use."
   repo=""
   worker=""
   workflow="${MESH_COORDINATOR_WORKFLOW:-adaptive}"

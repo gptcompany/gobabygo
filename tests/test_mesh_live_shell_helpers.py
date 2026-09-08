@@ -1081,11 +1081,18 @@ def test_mosh_preflight_rejects_legacy_coordinator_with_same_resume_id(
     tmux = fake_bin / "tmux"
     tmux.write_text(
         "#!/bin/bash\n"
-        "last=''\nfor last; do :; done\n"
-        "case \"$1:$last\" in\n"
+        "last=''\ntarget=''\nprevious=''\n"
+        "for arg; do\n"
+        "  last=$arg\n"
+        "  if [[ $previous == -t ]]; then target=$arg; fi\n"
+        "  previous=$arg\n"
+        "done\n"
+        "case \"$1:$target:$last\" in\n"
         "  list-sessions:*) echo claude-coordinator ;;\n"
-        "  display-message:'#{pane_current_command}') echo bash ;;\n"
-        "  display-message:'#{pane_pid}') echo 12345 ;;\n"
+        "  has-session:claude-second:claude-second) exit 1 ;;\n"
+        "  has-session:*) exit 0 ;;\n"
+        "  display-message:claude-coordinator:'#{pane_current_command}') echo bash ;;\n"
+        "  display-message:claude-coordinator:'#{pane_pid}') echo 12345 ;;\n"
         "  show-environment:*) exit 1 ;;\n"
         "esac\n",
         encoding="utf-8",
@@ -1471,6 +1478,20 @@ def test_mcoordinator_rejects_conflicting_or_unsafe_resume(shell: str) -> None:
     assert "Usage: mcoordinator" in conflict.stderr
     assert unsafe.returncode == 2
     assert malformed.returncode == 2
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_help_describes_normal_attach_and_recovery(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+
+    proc = _run_shell(shell, f"source {helper}; mcoordinator --help")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "Usage: mcoordinator [<repo>|--all] [options]" in proc.stdout
+    assert "attaches the canonical claude-coordinator session when live" in proc.stdout
+    assert "--workflow direct|speckit|adaptive" in proc.stdout
+    assert "Never use /resume inside an already active coordinator." in proc.stdout
+    assert "wsattach <session>" in proc.stdout
 
 
 @pytest.mark.parametrize("shell", _shells())

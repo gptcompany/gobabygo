@@ -15,6 +15,7 @@ mcoordinator rektslug                           # intra-repo; worker bootstrap i
 mcoordinator --all                              # multi-repo; adaptive workflow across live repos
 mcoordinator rektslug --workflow speckit        # force the canonical Speckit phases
 mcoordinator rektslug --workflow direct         # bounded coordination without a formal pipeline
+mcoordinator --help                             # operator command reference
 ```
 
 You do not need to `cd` or `yazicd` into `rektslug` on the Mac. The helper
