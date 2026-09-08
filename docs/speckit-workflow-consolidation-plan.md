@@ -84,7 +84,7 @@ an executable proof, not only current upstream documentation.
   Adding origin preserves keys; publishing a local identity is explicitly
   refused until a reviewed migration exists, rather than generating a second
   identity. Local-to-GitHub promotion remains a T006 decision, not supported here.
-- [ ] T005 Add deterministic readiness checks at managed spec start/resume.
+- [x] T005 Add deterministic readiness checks at managed spec start/resume.
   Report artifact, identity, ledger and execution capabilities separately from
   optional GitHub readiness. Initialize only missing, scoped state through the
   approved path; never overwrite an existing spec or invent review results.
@@ -92,7 +92,7 @@ an executable proof, not only current upstream documentation.
   attached Claude process does not receive a new system prompt: document and
   verify the fresh-bootstrap/resume path. Raw CLI access remains outside this
   enforcement boundary. Test local-only and GitHub-enabled new specs.
-- [ ] T006 Reconcile issue publishing with upstream taskstoissues. Reuse it only
+- [x] T006 Reconcile issue publishing with upstream taskstoissues. Reuse it only
   where tests prove required behavior: repeated runs, stable task identity,
   partial failures, manual issue edits, closure and reopening, and wrong-target
   protection. Otherwise retain mesh_speckit_github.py as the reconciliation
@@ -100,6 +100,16 @@ an executable proof, not only current upstream documentation.
   must remain visible without blocking local reviews or falsely reporting sync.
   Remote E2E requires a designated disposable GitHub repository and separate
   authorization for mutations; mocks are not evidence of real GitHub sync.
+  Decision: retain `mesh_speckit_github.py` and its GitHub Actions workflow as
+  the sole publisher. The installed taskstoissues skill is a user-facing
+  conversion template only: it deduplicates bare task IDs in titles and cannot
+  represent feature-scoped immutable keys or the reconciliation contract. Local
+  review remains usable when offline; GitHub publication is visibly unavailable,
+  not inferred or retried by a worker. Existing tests cover task-key namespacing,
+  wrong repository rejection, legacy/duplicate/orphan blocking, replay,
+  reopen/closure reconciliation, human labels, partial visibility and no
+  mutation on a blocked plan. A real remote mutation test remains T008 and
+  needs its own disposable repository authorization.
 - [ ] T007 Migrate 096 at an agreed idle checkpoint. Snapshot and hash current
   artifacts, bindings and active delegation receipts first. Preserve the full
   historical tasks file as evidence, build a concise canonical active checklist
