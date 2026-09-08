@@ -110,6 +110,16 @@ an executable proof, not only current upstream documentation.
   reopen/closure reconciliation, human labels, partial visibility and no
   mutation on a blocked plan. A real remote mutation test remains T008 and
   needs its own disposable repository authorization.
+- [ ] T006a Make canonical coordinator recovery operator-safe. Keep the active
+  `claude-coordinator` name as the daily attach target, and add at most one
+  private, atomic, owner-only record for the exact resume UUID, coordinator Git
+  root and workflow when an exact resume is started or attached. `mcoordinator
+  --resume` without an ID may use only that verified record; it must never scan
+  Claude history and choose the newest conversation. A stale, symlinked,
+  malformed, cross-root or active-conflicting record fails closed and asks for
+  an explicit UUID. Test attach, reboot-style recovery, competing UUIDs and no
+  record. This is an operator ergonomics/safety task, not a worker-dispatch
+  mechanism or another scheduler.
 - [ ] T007 Migrate 096 at an agreed idle checkpoint. Snapshot and hash current
   artifacts, bindings and active delegation receipts first. Preserve the full
   historical tasks file as evidence, build a concise canonical active checklist
