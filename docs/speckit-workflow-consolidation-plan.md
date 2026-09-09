@@ -128,7 +128,7 @@ an executable proof, not only current upstream documentation.
   require a recorded budget decision, not a fresh zero budget. Check the current
   1 MiB parser limit and legacy IDs. Do not edit under an active writer, copy
   checkboxes into PASS verdicts, or replay pending/obsolete delegations.
-- [ ] T008 Run real isolated E2E: tiny intentional bug, worker correction,
+- [x] T008 Run real isolated E2E: tiny intentional bug, worker correction,
   independent review, release check and completion; include crash/unknown-delivery
   resume and a rejected excess correction. Cover a no-remote state repo and
   distinct worker repo, plus GitHub mode under T006 authorization. Reuse
@@ -136,6 +136,13 @@ an executable proof, not only current upstream documentation.
   actual Claude/Codex integration; test AGY delivery separately where touched.
   Use only dedicated scratch tmux sessions. Preserve evidence and clean up only
   resources created by the test.
+  Completed locally on 2026-09-09 with `tests/e2e_mesh_review_local.py --run`.
+  Codex corrected only the scratch arithmetic bug, one guarded Enter recovery
+  verified the initial unknown submission without a second paste, duplicate
+  dispatch was rejected, Claude returned an independent PASS, and the ledger
+  completed at RELEASE_PASSED revision 15. Current Codex launches as `node`;
+  tracked delivery accepts that launcher only before recapturing and validating
+  the visible Codex composer. No operator session or repository was used.
 - [ ] T009 Obtain independent local Claude review of the implementation and
   evidence, fix confirmed findings in separate commits, rerun affected tests.
   Allow at most two review rounds for this rollout. Remaining high/medium issues
