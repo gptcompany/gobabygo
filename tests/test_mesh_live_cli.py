@@ -4110,6 +4110,27 @@ def test_live_tick_reports_exact_current_manual_action_without_waking() -> None:
     assert signal.severity == "warning"
 
 
+def test_live_tick_accepts_claude_rendered_manual_action_marker_only() -> None:
+    module = _load_module()
+    coordinator = module.LiveSession(
+        owner="sam",
+        name="claude-coordinator",
+        pane_id="%1",
+        pane_command="claude",
+        output="● MANUAL_REQUIRED count=3\n\n❯ ",
+    )
+    operator_echo = module.replace(
+        coordinator,
+        output="❯ MANUAL_REQUIRED count=3\n\n❯ ",
+    )
+
+    rendered = module.build_live_tick_plan([coordinator], {coordinator.key})
+    echoed = module.build_live_tick_plan([operator_echo], {operator_echo.key})
+
+    assert rendered[0].reason == "coordinator reported 3 manual action(s) required"
+    assert echoed[0].proposed_action == "wake_coordinator"
+
+
 def test_live_tick_ignores_manual_action_prose_and_stale_marker() -> None:
     module = _load_module()
     prose = module.LiveSession(
