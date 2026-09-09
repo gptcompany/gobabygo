@@ -1,6 +1,9 @@
 # Spec Kit workflow consolidation
 
-Status: reviewed locally; implementation not started.
+Status: implementation complete through T008; T009 independent-review evidence
+and the managed-start/resume portion of T010 remain open. Mac and Dell runtime
+are aligned at `e3339b0` / `e3339b05` respectively; the Dell read-only runtime
+smoke passed on 2026-09-09.
 
 ## Objective and verified baseline
 
@@ -155,6 +158,12 @@ an executable proof, not only current upstream documentation.
   exact-version upgrade approval and capability checks; do not auto-update during
   active work. Record commits, test evidence, external review prompt and open
   risks. Retire superseded paths only after parity, never as part of first rollout.
+  Partial completion on 2026-09-09: Mac `master` was pushed through `e3339b0`;
+  Dell `/data/sata/1TB/gobabygo-runtime` was fast-forwarded to `e3339b05` and
+  passed Python compilation, Bash syntax, and the read-only negative readiness
+  smoke. A real managed start/resume is intentionally still unexecuted: it would
+  create or resume an operator Claude session and is outside rollout validation
+  without a scoped operator request.
 
 Dependency order: T001 -> T002 decision gate -> T003/T004 -> T005/T006 ->
 T007 checkpoint -> T008 -> T009 -> T010. T007 requires explicit reconciled
@@ -300,3 +309,28 @@ test. Final validation: 503 focused Speckit/live/review/GitHub/docs tests
 passed, plus Python compilation, Bash/Zsh syntax checks and `git diff --check`.
 No Dell runtime, coordinator, ledger, GitHub issue or worker was changed. T006
 through T010 remain explicitly gated.
+
+## T008/T010 rollout evidence
+
+The isolated real E2E passed on 2026-09-09: the scratch-only Codex worker
+corrected an intentional arithmetic defect, the persisted unknown receipt was
+reconciled with exactly one recovery Enter and no second paste, duplicate
+dispatch was rejected, an independent Claude review returned PASS, and the
+feature reached `RELEASE_PASSED` at revision 15. It did not read or modify an
+operator repository, session, worker, ledger or GitHub project.
+
+The later runtime smoke exposed and fixed a wrapper defect: `readiness` was
+listed in `mesh speckit --help` and implemented by `mesh_speckit_cli.py`, but
+was missing from the short-command dispatch whitelist. Commit `e3339b0`
+adds that dispatch entry and an exact-argument regression test. The final local
+validation passed 334 tests, Python compilation, Bash syntax and diff checks.
+The Dell runtime was then fast-forwarded to `e3339b05`; the same read-only
+negative readiness assertion passed there (`runtime_smoke=passed`) and the
+runtime worktree was clean.
+
+T009 remains open. A bounded tools-disabled local `claude -p` review attempt
+for `53b20da..e3339b0` exited successfully but emitted no output. That is a
+client/bootstrap failure, not an independent review verdict. Do not describe it
+as PASS or use it to authorize managed production work. A future reviewer must
+produce a retained findings-or-no-findings report; retain the two-review-round
+budget and record any confirmed fix separately.
