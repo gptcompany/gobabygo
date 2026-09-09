@@ -1191,10 +1191,17 @@ def dispatch_correction(
                 "text_sent": sent.get("text_sent") is True,
                 "enter_sent": sent.get("enter_sent") is True,
             }
-        except Exception:
+        except Exception as exc:
             # Input may already have happened, including when transport code itself fails.
             # Signals/process death still leave the durable attempt visible as unknown.
-            receipt = {"submission": "unknown", "text_sent": None, "enter_sent": None}
+            from scripts.mesh_live_cli import redact_capture
+
+            receipt = {
+                "submission": "unknown",
+                "text_sent": None,
+                "enter_sent": None,
+                "delivery_error": redact_capture(str(exc))[:240] or type(exc).__name__,
+            }
         revision += 1
         _append_event(record, revision, "correction_dispatch_result",
                       {"delegation_id": delegation, **receipt})

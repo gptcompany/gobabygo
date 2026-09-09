@@ -118,8 +118,7 @@ def main() -> None:
             if selected:
                 captured, _ = client.capture([selected], 50)
                 screen = captured[0].output
-                if (not trust_confirmed and selected.pane_command == "codex"
-                        and str(repo) in screen
+                if (not trust_confirmed and str(repo) in screen
                         and "Do you trust the contents of this directory?" in screen
                         and "1. Yes, continue" in screen and "2. No, quit" in screen):
                     # This repo was created above; this is never an operator's session.

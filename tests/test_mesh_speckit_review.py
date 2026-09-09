@@ -347,6 +347,7 @@ def test_dispatch_is_reserved_before_delivery_and_never_replayed(tmp_path: Path,
                 worker_repo=repo, expected_revision=4)
     result = review.dispatch_correction(repo, feature, "T001", **args)
     assert result["submission"] == "unknown"
+    assert result["delivery_error"] == "response lost after delivery"
     assert result["revision"] == 6
     with pytest.raises(review.ReviewLedgerError, match="already attempted"):
         review.dispatch_correction(repo, feature, "T001", **{**args, "expected_revision": 6})

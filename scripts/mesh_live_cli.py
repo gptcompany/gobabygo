@@ -849,7 +849,7 @@ def _send_target(
 def _capture_visible_target(
     target: dict[str, Any],
     *,
-    expected_commands: Sequence[str] = ("codex", "codex-cli"),
+    expected_commands: Sequence[str] = ("codex", "codex-cli", "node"),
 ) -> dict[str, str]:
     owner = str(target.get("owner") or "")
     name = str(target.get("name") or "")
@@ -1419,7 +1419,7 @@ def _recover_codex_submit(
             target,
             "",
             enter=True,
-            expected_commands=("codex", "codex-cli"),
+            expected_commands=("codex", "codex-cli", "node"),
         )
         if sent.get("error"):
             raise LiveReadError(str(sent["error"]))
@@ -1489,7 +1489,7 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("tracked delegation requires text and --enter")
             if not _codex_composer_contains_delegation(text, delegation_id):
                 raise ValueError("send text does not contain the exact delegation ID")
-            expected_commands = ("codex", "codex-cli", "agy")
+            expected_commands = ("codex", "codex-cli", "node", "agy")
 
         def tracked_send_transaction(
             validated: dict[str, str], deliver: SendFn
@@ -1524,7 +1524,9 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
                         "verified": verified,
                     }
                 return send_result
-            if validated["command"] not in {"codex", "codex-cli"}:
+            # Current native Codex launches through Node. The tracked path below
+            # immediately recaptures and requires the actual Codex composer.
+            if validated["command"] not in {"codex", "codex-cli", "node"}:
                 return deliver()
             with _codex_recovery_lock(DEFAULT_CODEX_RECOVERY_STATE_FILE):
                 state = _load_codex_recovery_state(
