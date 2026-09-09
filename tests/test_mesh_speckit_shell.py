@@ -57,6 +57,42 @@ def test_runtime_subcommands_forward_exact_arguments(tmp_path) -> None:
     assert args[1:] == ["capabilities", "/tmp/example repo", "--json"]
 
 
+def test_readiness_subcommand_forwards_exact_arguments(tmp_path) -> None:
+    capture = tmp_path / "args.json"
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_FILE\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    proc = subprocess.run(
+        [
+            "bash", str(MESH), "speckit", "readiness", "/tmp/example repo",
+            "--feature-dir", "specs/001-example", "--json",
+        ],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "CAPTURE_FILE": str(capture),
+            "MESH_SPECKIT_PYTHON": str(fake_python),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == [
+        str(ROOT / "scripts" / "mesh_speckit_cli.py"),
+        "readiness",
+        "/tmp/example repo",
+        "--feature-dir",
+        "specs/001-example",
+        "--json",
+    ]
+
+
 def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     proc = subprocess.run(
         ["bash", str(MESH), "speckit", "--help"],

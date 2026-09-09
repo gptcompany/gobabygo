@@ -906,7 +906,7 @@ run_speckit_short() {
     exit 0
   fi
   case "$subcmd" in
-    status|capabilities|context|manual-actions|update-check|install|project)
+    status|capabilities|readiness|context|manual-actions|update-check|install|project)
       run_speckit_runtime "$@"
       exit $?
       ;;
