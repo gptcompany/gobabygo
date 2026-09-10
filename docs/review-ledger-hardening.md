@@ -168,7 +168,7 @@ operation is reconciliation of that decision with the live session.
   operator's intent from a dirty diff.
   Never submit obsolete text. Unknown delivery requires reconciliation, not age
   based deletion. Test against isolated tmux sessions before production cleanup.
-- [ ] W3 Enforce reuse and duplicate-worker prevention in ensure paths using
+- [x] W3 Enforce reuse and duplicate-worker prevention in ensure paths using
   verified canonical repository/provider identity; explicitly exempt bounded
   independent review roles. Report why a new worker is needed. Do not infer
   ownership or terminate sessions from names alone.

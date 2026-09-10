@@ -780,6 +780,26 @@ bootstrap because a bare 1.1.x TUI may re-enter OAuth instead of loading the
 persisted headless token. If authentication or startup fails, the coordinator
 reports a blocker.
 
+Before creating a canonical worker, `ensure-*` scans current tmux panes using
+the exact resolved Git root and provider process, never only a session name. An
+equivalent live worker that is not the requested deterministic session blocks
+creation until it is reconciled or explicitly retired. This prevents a stale
+manual or canary worker from silently becoming a duplicate writer.
+
+One exception is a bounded independent reviewer:
+
+```bash
+MESH_LIVE_LOCAL=1 mesh live ensure-codex /data/sata/1TB/nautilus_dev --role reviewer
+```
+
+It creates or reuses only `codex-nautilus_dev-review`, persists an explicit
+tmux role marker, and reports `independent-reviewer-exemption` when it coexists
+with the canonical worker. It remains a separate session and must receive a
+read-only review delegation. A second reviewer role or an unmarked equivalent
+reviewer fails closed. Re-run canonical `ensure-*` once to mark a verified legacy
+canonical worker as `worker` before requesting a reviewer. `ensure-*` never
+terminates, adopts, or renames a worker.
+
 Gobabygo-created Codex workers launch with the documented
 `check_for_update_on_startup=false` override. This prevents an update menu from
 occupying a worker composer; it does not install or hide updates globally.

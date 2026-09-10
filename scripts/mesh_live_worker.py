@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -27,6 +30,7 @@ _CODEX_STARTUP_ATTEMPTS = 20
 _ANTIGRAVITY_STARTUP_ATTEMPTS = 300
 _ANTIGRAVITY_UI_ATTEMPTS = 160
 _ANTIGRAVITY_UI_INTERVAL = 0.25
+_WORKER_ROLES = frozenset({"worker", "reviewer"})
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _ANTIGRAVITY_IDLE_FOOTER = re.compile(
     r"(?m)^>[ \t]*\r?\n[^\n]*\r?\n\?[ \t]+for shortcuts[^\n]*\Z"
@@ -128,11 +132,14 @@ def resolve_repo(value: str) -> Path:
     return repo
 
 
-def session_name_for_repo(repo: Path, provider: str = "codex") -> str:
+def session_name_for_repo(repo: Path, provider: str = "codex", role: str = "worker") -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", repo.name).strip("-.").lower()
     if not slug:
         raise WorkerEnsureError(f"repository name cannot form a tmux session name: {repo.name}")
-    session = f"{provider}-{slug}"
+    if role not in _WORKER_ROLES:
+        raise WorkerEnsureError(f"unsupported worker role: {role}")
+    suffix = "" if role == "worker" else "-review"
+    session = f"{provider}-{slug}{suffix}"
     if len(session) > 80:
         raise WorkerEnsureError("repository name is too long for a deterministic tmux session")
     if not _SAFE_SESSION.fullmatch(session):
@@ -190,6 +197,75 @@ def _inspect_session(session: str) -> dict[str, str] | None:
         "dead": parts[3],
         "panes": parts[4],
     }
+
+
+def _tmux_session_role(session: str) -> str:
+    proc = _run_command(["tmux", "show-environment", "-t", f"={session}", "MESH_LIVE_WORKER_ROLE"])
+    marker = proc.stdout.strip()
+    prefix = "MESH_LIVE_WORKER_ROLE="
+    value = marker[len(prefix) :] if marker.startswith(prefix) else ""
+    return value if value in _WORKER_ROLES else "unmarked"
+
+
+def _find_equivalent_workers(repo: Path, provider: str, *, excluded_session: str) -> list[dict[str, str]]:
+    fields = _FIELD_SEPARATOR.join(
+        ["#{session_name}", "#{pane_current_path}", "#{pane_current_command}", "#{pane_dead}", "#{window_panes}"]
+    )
+    proc = _run_command(["tmux", "list-panes", "-a", "-F", fields])
+    if proc.returncode != 0:
+        detail = _tmux_error(proc, "cannot scan existing worker identities")
+        if "no server running" in detail.lower() or "failed to connect" in detail.lower():
+            return []
+        raise WorkerEnsureError(detail)
+    expected_commands = {"codex": {"codex", "codex-cli"}, "antigravity": {"agy"}}[provider]
+    matches: list[dict[str, str]] = []
+    for row in proc.stdout.splitlines():
+        parts = row.split(_FIELD_SEPARATOR) if _FIELD_SEPARATOR in row else row.split(r"\037")
+        if len(parts) != 5 or parts[0] == excluded_session:
+            continue
+        name, pane_path, command, dead, panes = parts
+        if Path(command).name.lower() not in expected_commands or dead != "0" or panes != "1":
+            continue
+        try:
+            same_repo = Path(pane_path).resolve() == repo
+        except (OSError, RuntimeError):
+            same_repo = False
+        if same_repo:
+            matches.append({"session": name, "role": _tmux_session_role(name)})
+    return matches
+
+
+def _persist_worker_role(session: str, role: str) -> None:
+    marker = _run_command(["tmux", "set-environment", "-t", f"={session}", "MESH_LIVE_WORKER_ROLE", role])
+    if marker.returncode != 0:
+        raise WorkerEnsureError("worker role marker could not be persisted; reconcile it before delegation")
+
+
+@contextmanager
+def _ensure_lock(repo: Path, provider: str, role: str):
+    state_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "").strip() or "~/.local/state/gobabygo").expanduser()
+    state_dir = state_dir / "mesh-live-worker-locks"
+    state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    digest = hashlib.sha256(f"{repo}\0{provider}\0{role}".encode()).hexdigest()
+    lock_path = state_dir / f"{digest}.lock"
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise WorkerEnsureError(f"cannot open worker ensure lock: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise WorkerEnsureError("another ensure is already running for this repository/provider/role") from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _validate_reusable(
@@ -311,15 +387,31 @@ def _ensure_worker(
     provider: str,
     executable_resolver: Callable[[], str],
     expected_session: str = "",
+    role: str = "worker",
 ) -> dict[str, object]:
     repo = resolve_repo(repo_value)
-    session = session_name_for_repo(repo, provider)
+    session = session_name_for_repo(repo, provider, role)
     if expected_session:
         if not _SAFE_SESSION.fullmatch(expected_session) or expected_session != session:
             raise WorkerEnsureError(
                 f"requested worker {expected_session} does not match deterministic session {session}"
             )
 
+    with _ensure_lock(repo, provider, role):
+        return _ensure_worker_locked(
+            repo, provider=provider, executable_resolver=executable_resolver,
+            session=session, role=role,
+        )
+
+
+def _ensure_worker_locked(
+    repo: Path,
+    *,
+    provider: str,
+    executable_resolver: Callable[[], str],
+    session: str,
+    role: str,
+) -> dict[str, object]:
     existing = _inspect_session(session)
     if existing is not None:
         if provider == "antigravity" and _startup_transition_pending(
@@ -333,7 +425,26 @@ def _ensure_worker(
             )
         else:
             _validate_reusable(existing, repo, provider=provider)
-        return {"session": session, "repo": str(repo), "created": False, "ready": True}
+        _persist_worker_role(session, role)
+        result: dict[str, object] = {"session": session, "repo": str(repo), "created": False, "ready": True}
+        if role == "reviewer":
+            result.update(role=role, reason="deterministic-reviewer-reused")
+        return result
+
+    equivalents = _find_equivalent_workers(repo, provider, excluded_session=session)
+    if role == "worker" and equivalents:
+        labels = ", ".join(f"{item['session']}({item['role']})" for item in equivalents)
+        raise WorkerEnsureError(
+            f"equivalent {provider.title()} worker already exists for this exact repository: {labels}; reconcile or retire it before creating another worker"
+        )
+    if role == "reviewer" and any(item["role"] in {"reviewer", "unmarked"} for item in equivalents):
+        labels = ", ".join(
+            f"{item['session']}({item['role']})"
+            for item in equivalents if item["role"] in {"reviewer", "unmarked"}
+        )
+        raise WorkerEnsureError(
+            f"equivalent reviewer identity is already present or unmarked for this exact repository: {labels}; reconcile its role before creating a reviewer"
+        )
 
     executable = executable_resolver()
     if provider == "codex":
@@ -380,7 +491,11 @@ def _ensure_worker(
             _validate_reusable(existing, repo, provider=provider)
         if provider == "antigravity":
             _wait_for_antigravity_bootstrap(session, repo)
-        return {"session": session, "repo": str(repo), "created": False, "ready": True}
+        _persist_worker_role(session, role)
+        result = {"session": session, "repo": str(repo), "created": False, "ready": True}
+        if role == "reviewer":
+            result.update(role=role, reason="atomic-reviewer-winner-reused")
+        return result
 
     attempts = (
         _ANTIGRAVITY_STARTUP_ATTEMPTS
@@ -388,17 +503,22 @@ def _ensure_worker(
         else _CODEX_STARTUP_ATTEMPTS
     )
     _wait_for_reusable_session(session, repo, provider=provider, attempts=attempts)
+    _persist_worker_role(session, role)
     if provider == "antigravity":
         _wait_for_antigravity_bootstrap(session, repo)
-    return {"session": session, "repo": str(repo), "created": True, "ready": True}
+    result = {"session": session, "repo": str(repo), "created": True, "ready": True}
+    if role == "reviewer":
+        result.update(role=role, reason="independent-reviewer-exemption" if equivalents else "no-equivalent-worker")
+    return result
 
 
-def ensure_codex_worker(repo_value: str, *, expected_session: str = "") -> dict[str, object]:
+def ensure_codex_worker(repo_value: str, *, expected_session: str = "", role: str = "worker") -> dict[str, object]:
     return _ensure_worker(
         repo_value,
         provider="codex",
         executable_resolver=_codex_executable,
         expected_session=expected_session,
+        role=role,
     )
 
 
@@ -406,12 +526,14 @@ def ensure_antigravity_worker(
     repo_value: str,
     *,
     expected_session: str = "",
+    role: str = "worker",
 ) -> dict[str, object]:
     return _ensure_worker(
         repo_value,
         provider="antigravity",
         executable_resolver=_antigravity_executable,
         expected_session=expected_session,
+        role=role,
     )
 
 
@@ -425,6 +547,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Worker CLI provider (default: codex).",
     )
     parser.add_argument("--expect-session", default="", help="Require this deterministic name.")
+    parser.add_argument("--role", choices=tuple(sorted(_WORKER_ROLES)), default="worker")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON.")
     return parser.parse_args(argv)
 
@@ -435,7 +558,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ensure = (
             ensure_antigravity_worker if args.provider == "antigravity" else ensure_codex_worker
         )
-        result = ensure(args.repo, expected_session=args.expect_session)
+        result = ensure(args.repo, expected_session=args.expect_session, role=args.role)
     except (OSError, subprocess.SubprocessError, WorkerEnsureError) as exc:
         print(f"Error: {exc}", file=os.sys.stderr)
         return 2
@@ -445,7 +568,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         action = "created" if result["created"] else "reused"
         print(
             f"[mesh live ensure-{args.provider}] session={result['session']} repo={result['repo']} "
-            f"action={action} ready=yes"
+            f"action={action} role={result.get('role', 'worker')} "
+            f"reason={result.get('reason', 'deterministic-worker')} ready=yes"
         )
     return 0
 

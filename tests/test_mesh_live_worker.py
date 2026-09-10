@@ -17,6 +17,11 @@ def _load_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    # Legacy unit fixtures model only one canonical tmux session. New duplicate
+    # scanning and marker persistence have dedicated tests below.
+    module._real_find_equivalent_workers = module._find_equivalent_workers
+    module._find_equivalent_workers = lambda *_args, **_kwargs: []
+    module._persist_worker_role = lambda *_args, **_kwargs: None
     return module
 
 
@@ -485,6 +490,103 @@ def test_ensure_codex_retries_transient_post_create_repo_path(monkeypatch, tmp_p
         "ready": True,
     }
     assert displays == 2
+
+
+def test_equivalent_worker_scan_uses_path_provider_and_explicit_role(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    separator = module._FIELD_SEPARATOR
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if args[:2] == ["tmux", "list-panes"]:
+            return _completed(
+                args,
+                stdout=(
+                    separator.join(["codex-other", str(repo), "codex", "0", "1"])
+                    + "\n"
+                    + separator.join(["codex-dead", str(repo), "codex", "1", "1"])
+                    + "\n"
+                    + separator.join(["agy-other", str(repo), "agy", "0", "1"])
+                    + "\n"
+                ),
+            )
+        if args[:2] == ["tmux", "show-environment"]:
+            return _completed(args, stdout="MESH_LIVE_WORKER_ROLE=reviewer\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    matches = module._real_find_equivalent_workers(
+        repo, "codex", excluded_session="codex-rektslug"
+    )
+
+    assert matches == [{"session": "codex-other", "role": "reviewer"}]
+
+
+def test_ensure_refuses_unreconciled_equivalent_worker(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_find_equivalent_workers", lambda *_args, **_kwargs: [{"session": "codex-old", "role": "unmarked"}])
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    with pytest.raises(module.WorkerEnsureError, match="reconcile or retire"):
+        module.ensure_codex_worker(str(repo))
+
+
+def test_ensure_allows_one_explicit_reviewer_alongside_worker(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_codex_executable", lambda: "/usr/local/bin/codex")
+    monkeypatch.setattr(module, "_find_equivalent_workers", lambda *_args, **_kwargs: [{"session": "codex-rektslug", "role": "worker"}])
+    created = False
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        nonlocal created
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=0 if created else 1)
+        if args[:2] == ["tmux", "new-session"]:
+            created = True
+            return _completed(args)
+        if args[:2] == ["tmux", "display-message"]:
+            fields = module._FIELD_SEPARATOR.join(["codex-rektslug-review", str(repo), "codex", "0", "1"])
+            return _completed(args, stdout=fields + "\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    result = module.ensure_codex_worker(str(repo), role="reviewer")
+
+    assert result["session"] == "codex-rektslug-review"
+    assert result["created"] is True
+    assert result["role"] == "reviewer"
+    assert result["reason"] == "independent-reviewer-exemption"
+
+
+def test_ensure_reviewer_refuses_unmarked_equivalent(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    repo = _git_repo(tmp_path / "rektslug")
+    monkeypatch.setenv("MESH_LIVE_REPO_ROOTS", str(tmp_path))
+    monkeypatch.setattr(module, "_find_equivalent_workers", lambda *_args, **_kwargs: [{"session": "codex-old", "role": "unmarked"}])
+
+    def fake_run(args: list[str], *, timeout: float = 10.0):
+        if args[:2] == ["git", "-C"]:
+            return subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        if args[:2] == ["tmux", "has-session"]:
+            return _completed(args, returncode=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(module, "_run_command", fake_run)
+    with pytest.raises(module.WorkerEnsureError, match="reconcile its role"):
+        module.ensure_codex_worker(str(repo), role="reviewer")
 
 
 @pytest.mark.parametrize(

@@ -5280,6 +5280,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="",
         help="Fail unless the deterministic worker has this exact session name.",
     )
+    ensure_codex.add_argument(
+        "--role", choices=("worker", "reviewer"), default="worker",
+        help="Use the bounded independent reviewer role when a separate review session is required.",
+    )
     ensure_codex.add_argument("--json", action="store_true", help="Emit structured JSON.")
 
     ensure_antigravity = sub.add_parser(
@@ -5293,6 +5297,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--expect-session",
         default="",
         help="Fail unless the deterministic worker has this exact session name.",
+    )
+    ensure_antigravity.add_argument(
+        "--role", choices=("worker", "reviewer"), default="worker",
+        help="Use the bounded independent reviewer role when a separate review session is required.",
     )
     ensure_antigravity.add_argument(
         "--json", action="store_true", help="Emit structured JSON."
@@ -5535,6 +5543,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 command.extend(["--provider", "antigravity"])
             if args.expect_session:
                 command.extend(["--expect-session", args.expect_session])
+            if args.role != "worker":
+                command.extend(["--role", args.role])
             if args.json:
                 command.append("--json")
             proc = _run_command(

@@ -478,7 +478,7 @@ Usage:
   ./scripts/mesh summary <role>
   ./scripts/mesh live board [query] [--lines N] [--json]
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
-  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--expect-session <name>]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--role worker|reviewer] [--expect-session <name>]
   ./scripts/mesh live send <session> [text] [--delegation-id <id>] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   MESH_LIVE_LOCAL=1 ./scripts/mesh live recover-coordinator <session> [--apply] [--state-file <path>]
@@ -603,8 +603,8 @@ live_usage() {
 Usage:
   ./scripts/mesh live board [query] [--lines N] [--json]
   ./scripts/mesh live peek <session> [lines] [--owner <user>] [--json]
-  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--expect-session <name>] [--json]
-  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-antigravity <repo> [--expect-session <name>] [--json]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--role worker|reviewer] [--expect-session <name>] [--json]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-antigravity <repo> [--role worker|reviewer] [--expect-session <name>] [--json]
   ./scripts/mesh live send <session> [text] [--delegation-id <id>] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
@@ -623,7 +623,9 @@ Behavior:
   ensure-codex and ensure-antigravity are the only worker-creation lifecycle operations: local-only,
   one deterministic native worker per exact configured Git root, with no delegated task
   or send-keys. retire is the separate explicit local-only worker-termination path and is
-  never automatic. Antigravity uses a fixed no-tools bootstrap prompt to reach its idle TUI.
+  never automatic. --role reviewer is the only explicit independent-reviewer exemption;
+  it creates at most one deterministic *-review worker per repository/provider and reports why.
+  Antigravity uses a fixed no-tools bootstrap prompt to reach its idle TUI.
   send accepts one literal line (max 8192 characters) and does not submit text unless
   --enter is explicit. Store long/multi-line briefs in the target repo and send one line
   containing the DELEGATION_ID, absolute brief path, and instruction to read it.
@@ -679,6 +681,7 @@ Examples:
   ./scripts/mesh live peek claude-rektslug 120
   MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex /data/sata/1TB/rektslug
   MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-antigravity /data/sata/1TB/rektslug
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex /data/sata/1TB/rektslug --role reviewer
   ./scripts/mesh live send claude-rektslug "status?" --enter
   ./scripts/mesh live send codex-rektslug "DELEGATION_ID=delegation-1234 read /repo/brief.md" --delegation-id delegation-1234 --enter
   ./scripts/mesh live recover-codex-submit codex-rektslug delegation-1234
