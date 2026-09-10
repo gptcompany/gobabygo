@@ -93,6 +93,29 @@ def test_readiness_subcommand_forwards_exact_arguments(tmp_path) -> None:
     ]
 
 
+def test_readiness_subcommand_runs_the_real_runtime_cli(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+    proc = subprocess.run(
+        [
+            "bash", str(MESH), "speckit", "readiness", str(repo),
+            "--feature-dir", "specs/missing", "--json",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["schema"] == "mesh.speckit.readiness.v1"
+    assert payload["ready"] is False
+    assert "feature_missing" in payload["reasons"]
+
+
 def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     proc = subprocess.run(
         ["bash", str(MESH), "speckit", "--help"],
@@ -105,6 +128,7 @@ def test_speckit_help_separates_runtime_and_legacy_commands() -> None:
     assert proc.returncode == 0
     assert "speckit status [repo-path]" in proc.stdout
     assert "speckit capabilities [repo-path]" in proc.stdout
+    assert "speckit readiness <repo-path> --feature-dir <dir> [--json]" in proc.stdout
     assert "speckit context <repo-path>" in proc.stdout
     assert "speckit manual-actions <feature-dir|tasks.md>" in proc.stdout
     assert "speckit update-check" in proc.stdout

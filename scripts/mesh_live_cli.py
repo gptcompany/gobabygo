@@ -2140,11 +2140,11 @@ def resolve_tick_candidates(
 def coordinator_manual_action_count(output: str) -> int | None:
     visible_lines = [line.strip() for line in output.splitlines()[-24:] if line.strip()]
     for line in reversed(visible_lines):
-        # Claude renders its own completed response with a leading bullet. Do
-        # not accept the operator composer prefix ("❯"), which may echo an
-        # unsubmitted suggestion or instruction.
+        # Only accept Claude's rendered response bullet. A naked marker is
+        # ambiguous: continuation lines in an operator's multi-line composer
+        # lose their prefix after capture and indentation normalization.
         match = re.fullmatch(
-            r"(?:●\s+)?MANUAL_REQUIRED count=([1-9][0-9]{0,3})", line
+            r"[●⏺]\s*MANUAL_REQUIRED count=([1-9][0-9]{0,3})", line
         )
         if match is not None:
             return int(match.group(1))

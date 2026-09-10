@@ -4093,7 +4093,7 @@ def test_live_tick_reports_exact_current_manual_action_without_waking() -> None:
         name="claude-coordinator",
         pane_id="%1",
         pane_command="claude",
-        output="summary\nMANUAL_REQUIRED count=2\n\n❯ ",
+        output="summary\n● MANUAL_REQUIRED count=2\n\n❯ ",
     )
 
     observations = module.build_live_tick_plan(
@@ -4117,18 +4117,35 @@ def test_live_tick_accepts_claude_rendered_manual_action_marker_only() -> None:
         name="claude-coordinator",
         pane_id="%1",
         pane_command="claude",
-        output="● MANUAL_REQUIRED count=3\n\n❯ ",
+        output="●MANUAL_REQUIRED count=3\n\n❯ ",
     )
     operator_echo = module.replace(
         coordinator,
         output="❯ MANUAL_REQUIRED count=3\n\n❯ ",
     )
+    operator_continuation = module.replace(
+        coordinator,
+        output="❯ write a report\n  MANUAL_REQUIRED count=3\n\n❯ ",
+    )
+    alternate_bullet = module.replace(
+        coordinator,
+        output="⏺ MANUAL_REQUIRED count=3\n\n❯ ",
+    )
 
-    rendered = module.build_live_tick_plan([coordinator], {coordinator.key})
-    echoed = module.build_live_tick_plan([operator_echo], {operator_echo.key})
+    rendered = module.build_live_tick_plan([coordinator], {coordinator.key}, now=100)
+    echoed = module.build_live_tick_plan([operator_echo], {operator_echo.key}, now=100)
+    continued = module.build_live_tick_plan(
+        [operator_continuation], {operator_continuation.key}, now=100
+    )
+    alternate = module.build_live_tick_plan(
+        [alternate_bullet], {alternate_bullet.key}, now=100
+    )
 
     assert rendered[0].reason == "coordinator reported 3 manual action(s) required"
+    assert rendered[0].proposed_action == "none"
     assert echoed[0].proposed_action == "wake_coordinator"
+    assert continued[0].proposed_action == "wake_coordinator"
+    assert alternate[0].proposed_action == "none"
 
 
 def test_live_tick_ignores_manual_action_prose_and_stale_marker() -> None:
