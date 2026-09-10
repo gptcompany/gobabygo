@@ -1,9 +1,9 @@
 # Spec Kit workflow consolidation
 
-Status: implementation complete through T008; T009 independent-review evidence
-and the managed-start/resume portion of T010 remain open. Mac and Dell runtime
-are aligned at `e3339b0` / `e3339b05` respectively; the Dell read-only runtime
-smoke passed on 2026-09-09.
+Status: implementation and independent review complete through T009; the
+managed-start/resume portion of T010 remains open. Mac and Dell runtime are
+aligned at `99c5bf7` / `99c5bf72`; the Dell read-only runtime smoke passed on
+2026-09-09.
 
 ## Objective and verified baseline
 
@@ -146,12 +146,18 @@ an executable proof, not only current upstream documentation.
   completed at RELEASE_PASSED revision 15. Current Codex launches as `node`;
   tracked delivery accepts that launcher only before recapturing and validating
   the visible Codex composer. No operator session or repository was used.
-- [ ] T009 Obtain independent local Claude review of the implementation and
+- [x] T009 Obtain independent local Claude review of the implementation and
   evidence, fix confirmed findings in separate commits, rerun affected tests.
   Allow at most two review rounds for this rollout. Remaining high/medium issues
   block rollout; record follow-up rather than resetting the review count. Review
   process/credentials failures are not PASS. No production action is authorized
   by a review verdict alone.
+  Completed on 2026-09-10 in two bounded local Claude rounds. Round one found a
+  high-severity operator-composer provenance bypass and related test gaps; round
+  two found that the first remediation was too narrow for multi-line responses.
+  Commits `7ea1495` and `99c5bf7` require a standalone rendered assistant marker,
+  reject naked/indented/composer markers, harden readiness shell tests, and align
+  the runbook. Final validation: 342 focused live/review/docs/shell tests passed.
 - [ ] T010 Roll out matching tested revisions on Mac and Dell at a checkpoint,
   verify a real managed start/resume and readiness status, then align README,
   MESH_LIVE.md, help and the runtime-awareness/hardening task documents. Keep
@@ -328,9 +334,11 @@ The Dell runtime was then fast-forwarded to `e3339b05`; the same read-only
 negative readiness assertion passed there (`runtime_smoke=passed`) and the
 runtime worktree was clean.
 
-T009 remains open. A bounded tools-disabled local `claude -p` review attempt
-for `53b20da..e3339b0` exited successfully but emitted no output. That is a
-client/bootstrap failure, not an independent review verdict. Do not describe it
-as PASS or use it to authorize managed production work. A future reviewer must
-produce a retained findings-or-no-findings report; retain the two-review-round
-budget and record any confirmed fix separately.
+T009 completed on 2026-09-10. The first usable tools-disabled local Claude review
+of `53b20da..9a7d970` found a high-severity composer provenance bypass plus
+coverage gaps. The second, bounded review of `9a7d970..7ea1495` found that the
+first remediation would miss a marker emitted as response continuation. Both
+sets of confirmed findings were fixed in separate commits (`7ea1495`,
+`99c5bf7`) and the full focused validation passed with 342 tests. The two-round
+budget is exhausted: do not reset it merely to obtain ceremonial PASS; a new
+review cycle requires a new concrete scope or evidence of a regression.
