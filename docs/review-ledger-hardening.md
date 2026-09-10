@@ -175,6 +175,14 @@ operation is reconciliation of that decision with the live session.
 - [ ] W4 Reconcile and retire the obsolete canary through the guarded path;
   validate lifecycle behavior end-to-end and deploy the updated tick contract.
 
+W4 observation, 2026-09-10: after the guarded retirement runtime was deployed,
+`codex-gobabygo-speckit-103-canary` was absent from the Dell tmux server
+(`tmux has-session` exit 1 and an exact live-board query returned no session).
+No Mesh Live retirement command was applied by this work, so the absence cannot
+be attributed to the guarded path and does not close W4. Preserve the existing
+supersession evidence; perform a new isolated lifecycle E2E or reconcile an
+identified replacement session before marking this task complete.
+
 W1 did not itself close workers or solve accumulation. W3-W4 remain required;
 no production session was closed or submitted while investigating this report.
 W1 validation: 286 live/supervisor/docs tests passed. Independent Claude review
