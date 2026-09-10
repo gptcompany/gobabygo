@@ -482,6 +482,7 @@ Usage:
   ./scripts/mesh live send <session> [text] [--delegation-id <id>] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
   MESH_LIVE_LOCAL=1 ./scripts/mesh live recover-coordinator <session> [--apply] [--state-file <path>]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live retire <session> --handoff <absolute-file> --reason <text> [--apply --confirm <session>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
   ./scripts/mesh live workflow show <name> [--scope repository|coordinator] [--json]
@@ -547,6 +548,7 @@ Examples:
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --observe --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply [--recover-coordinator]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live retire codex-old --handoff /data/sata/1TB/coordination/HANDOFF.md --reason "superseded by DLG-1234"
   ./scripts/mesh term list --repo /media/sam/1TB/snake-game
   ./scripts/mesh term focus /media/sam/1TB/snake-game boss
   ./scripts/mesh term send /media/sam/1TB/snake-game boss "status?"
@@ -612,14 +614,16 @@ Usage:
   ./scripts/mesh live tick [--coordinator <session>] [--json]
   ./scripts/mesh live tick [--coordinator <session>] --observe [--state-file <path>]
   ./scripts/mesh live tick [--coordinator <session>] --apply [--state-file <path>]
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live retire <session> --handoff <absolute-file> --reason <text> [--apply --confirm <session>] [--json]
 
 Behavior:
   mesh live reads tmux directly on the configured workstation.
   It does not require the router or iTerm2.
   Captured pane output is redacted before display and JSON output.
-  ensure-codex and ensure-antigravity are the only lifecycle operations: local-only,
+  ensure-codex and ensure-antigravity are the only worker-creation lifecycle operations: local-only,
   one deterministic native worker per exact configured Git root, with no delegated task
-  or send-keys. Antigravity uses a fixed no-tools bootstrap prompt to reach its idle TUI.
+  or send-keys. retire is the separate explicit local-only worker-termination path and is
+  never automatic. Antigravity uses a fixed no-tools bootstrap prompt to reach its idle TUI.
   send accepts one literal line (max 8192 characters) and does not submit text unless
   --enter is explicit. Store long/multi-line briefs in the target repo and send one line
   containing the DELEGATION_ID, absolute brief path, and instruction to read it.
@@ -650,6 +654,11 @@ Behavior:
   exact persisted coordinator wake token still in the current composer. It recaptures, persists
   attempts before I/O, verifies, and throttles.
   tick defaults to the invoking tmux owner; do not target router-managed owners.
+  retire is local-only and never automatic. It plans by default. --apply requires the exact
+  --confirm session name, a preserved absolute handoff, a detached single-pane Codex or
+  Antigravity worker at an exact clean Git root, no direct child process, an idle empty
+  provider UI, and two unchanged identity/capture preflights. It writes a durable retirement
+  attempt before termination. A refusal or failed attempt is never retried automatically.
 
 Env:
   MESH_WS_HOST       preferred SSH target hosting tmux
@@ -682,6 +691,7 @@ Examples:
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --observe --json
   MESH_LIVE_LOCAL=1 ./scripts/mesh live tick --apply
+  MESH_LIVE_LOCAL=1 ./scripts/mesh live retire codex-old --handoff /data/sata/1TB/coordination/HANDOFF.md --reason "superseded by DLG-1234"
   MESH_MOSH_HOST=sam@10.0.0.2 ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live --host dell-vpn board --lines 0
 EOF
@@ -1716,6 +1726,19 @@ PY
         ;;
     esac
     py_bin="$(detect_python)" || exit $?
+    if [[ "${1:-}" == "retire" ]]; then
+      if [[ "${MESH_LIVE_LOCAL:-}" != "1" ]]; then
+        echo "Error: mesh live retire must run on the tmux workstation with MESH_LIVE_LOCAL=1" >&2
+        exit 2
+      fi
+      retire_script="${REPO_ROOT}/scripts/mesh_live_retire.py"
+      if [[ ! -f "$retire_script" ]]; then
+        echo "Error: missing live retirement helper at $retire_script" >&2
+        exit 1
+      fi
+      shift
+      exec "$py_bin" "$retire_script" "$@"
+    fi
     live_script="${REPO_ROOT}/scripts/mesh_live_cli.py"
     if [[ ! -f "$live_script" ]]; then
       echo "Error: missing live CLI script at $live_script" >&2

@@ -1,9 +1,9 @@
 # Mesh Live Operator Runbook
 
 `mesh live` operates tmux sessions directly. It does not require the router,
-session workers, iTerm2, or the provider account manager. Its only lifecycle
-operations are the constrained, local-only `ensure-codex` and
-`ensure-antigravity` worker bootstraps.
+session workers, iTerm2, or the provider account manager. Its local-only worker
+lifecycle operations are constrained `ensure-codex`/`ensure-antigravity`
+bootstraps and explicit, guarded `retire`.
 
 ## Daily Flow
 
@@ -786,6 +786,32 @@ occupying a worker composer; it does not install or hide updates globally.
 Codex upgrades remain a centrally managed, explicit `codex update` operation
 outside active worker sessions. Existing workers retain their launch arguments
 until they are deliberately recycled under the normal lifecycle guardrails.
+
+### Guarded Worker Retirement
+
+`mesh live retire` is the only Mesh Live termination path. It is local-only,
+never invoked by `tick`, and plans by default. It exists to reconcile an already
+superseded or cancelled worker, not to infer obsolescence from `activity_age`.
+
+```bash
+MESH_LIVE_LOCAL=1 mesh live retire codex-old \
+  --handoff /data/sata/1TB/coordination/HANDOFF.md \
+  --reason "superseded by DLG-1234"
+
+# A separately reviewed plan can be applied only with a repeated exact name.
+MESH_LIVE_LOCAL=1 mesh live retire codex-old \
+  --handoff /data/sata/1TB/coordination/HANDOFF.md \
+  --reason "superseded by DLG-1234" \
+  --apply --confirm codex-old
+```
+
+The handoff must be an existing absolute regular file. Before `--apply`, Mesh
+requires a detached, live single-pane Codex or Antigravity worker at its exact
+Git root; a clean worktree; no direct child process; and a recognizable empty
+idle provider UI. It persists the handoff digest, reason, pane/process identity
+and redacted capture fingerprint before a second identical preflight and the
+termination. Refusal, changed state, or a failed attempt is durable and is never
+retried automatically. It never submits text from the composer.
 
 The active `MESH_COORDINATOR_MESH_SCRIPT` checkout is an immutable control-plane
 runtime even when Git reports detached HEAD. Both ensure commands reject that exact

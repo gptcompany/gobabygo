@@ -160,10 +160,12 @@ operation is reconciliation of that decision with the live session.
 - [x] W1 Expose visible pending Codex delegations in board and the existing
   debounced supervisor. Require reconciliation before TICK_IDLE, reuse or new
   scoped workers. This is an inspection signal, not proof of obsolescence.
-- [ ] W2 Add guarded retirement using existing state/identity helpers: a durable
+- [x] W2 Add guarded retirement using existing state/identity helpers: a durable
   cancellation/supersession record and preserved brief/handoff first; exact pane
   and process identity, detached state, no active work or background tools,
-  accounted Git changes, and a fresh unchanged capture before termination.
+  clean Git, and a fresh unchanged capture before termination. The first release
+  deliberately treats only a clean worktree as accounted; it does not infer an
+  operator's intent from a dirty diff.
   Never submit obsolete text. Unknown delivery requires reconciliation, not age
   based deletion. Test against isolated tmux sessions before production cleanup.
 - [ ] W3 Enforce reuse and duplicate-worker prevention in ensure paths using
@@ -173,7 +175,7 @@ operation is reconciliation of that decision with the live session.
 - [ ] W4 Reconcile and retire the obsolete canary through the guarded path;
   validate lifecycle behavior end-to-end and deploy the updated tick contract.
 
-W1 does not itself close workers or solve accumulation. W2-W4 remain required;
+W1 did not itself close workers or solve accumulation. W3-W4 remain required;
 no production session was closed or submitted while investigating this report.
 W1 validation: 286 live/supervisor/docs tests passed. Independent Claude review
 found no confirmed regression: its conditional split concern does not apply

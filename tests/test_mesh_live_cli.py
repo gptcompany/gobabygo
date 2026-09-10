@@ -7556,7 +7556,8 @@ def test_mesh_dispatcher_exposes_live_help() -> None:
     assert "MESH_LIVE_HOSTS" in proc.stdout
     assert "MESH_WS_CLOUDFLARE_HOST" in proc.stdout
     assert "does not require the router or iTerm2" in proc.stdout
-    assert "only lifecycle operation" in proc.stdout
+    assert "only worker-creation lifecycle operations" in proc.stdout
+    assert "separate explicit local-only worker-termination path" in proc.stdout
     assert "send accepts one literal line" in proc.stdout
     assert "submission remains unknown" in proc.stdout
 
