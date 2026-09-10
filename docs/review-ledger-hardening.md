@@ -137,10 +137,12 @@ using `/data/sata/1TB/gobabygo-runtime/.venv/bin/python`; the staging worktree i
 clean. Detached HEAD is intentional for this test checkout; do not develop or
 commit there.
 
-R4/R5c remain open because claude-coordinator is actively working on 096. The
-active runtime remains cb0e8878abf2fcf6baa8475df472335db8a16c33 and no production
-ledger/session was modified. The 096 directory still has no github-ledger.json
-or review-ledger.json. At an idle checkpoint, reconcile the current task and
+R4/R5c remain open because claude-coordinator is actively working on 096. After
+Cloudflare SSH connectivity was re-established, the clean Dell runtime was
+fast-forwarded to `fd1d3817`; Python compilation and shell syntax checks passed,
+matching the pushed Mac revision. This does not itself reconcile the active 096
+ledger or replace the contract of an already-running coordinator. At an idle
+checkpoint, reconcile the current task and
 delegations, migrate its canonical index/binding with evidence, then activate
 the tested runtime and load its current coordinator contract. Attaching to an
 existing tmux process does not replace its system prompt; a fresh bootstrap or
