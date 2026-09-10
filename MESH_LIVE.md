@@ -883,10 +883,10 @@ or shorten a schedule. The mode-0600 tick state survives cron invocations and
 workstation restarts; a changed pane, process, banner, timezone, or pending
 composer must pass fresh guards before any input.
 
-When an idle coordinator's current visible **Claude response** contains the
-exact standalone `MANUAL_REQUIRED count=N` marker, the supervisor reports
-`manual_action_required` as a warning and does not wake it again. The captured
-response bullet is accepted; text from the operator composer, similar prose,
+When an idle coordinator's current visible **Claude response** contains one
+standalone bullet line, `● MANUAL_REQUIRED count=N`, the supervisor reports
+`manual_action_required` as a warning and does not wake it again. The marker
+must not appear in prose, tool output, or the operator composer. Similar prose
 and stale markers outside the bounded visible tail do not match.
 
 Apply mode has eight actions; the eighth remains separately opt-in:

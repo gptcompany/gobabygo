@@ -4117,7 +4117,7 @@ def test_live_tick_accepts_claude_rendered_manual_action_marker_only() -> None:
         name="claude-coordinator",
         pane_id="%1",
         pane_command="claude",
-        output="●MANUAL_REQUIRED count=3\n\n❯ ",
+        output="● MANUAL_REQUIRED count=3\n\n❯ ",
     )
     operator_echo = module.replace(
         coordinator,
@@ -4131,6 +4131,10 @@ def test_live_tick_accepts_claude_rendered_manual_action_marker_only() -> None:
         coordinator,
         output="⏺ MANUAL_REQUIRED count=3\n\n❯ ",
     )
+    assistant_continuation = module.replace(
+        coordinator,
+        output="● Manual action summary\n  MANUAL_REQUIRED count=3\n\n❯ ",
+    )
 
     rendered = module.build_live_tick_plan([coordinator], {coordinator.key}, now=100)
     echoed = module.build_live_tick_plan([operator_echo], {operator_echo.key}, now=100)
@@ -4140,12 +4144,16 @@ def test_live_tick_accepts_claude_rendered_manual_action_marker_only() -> None:
     alternate = module.build_live_tick_plan(
         [alternate_bullet], {alternate_bullet.key}, now=100
     )
+    continued_assistant = module.build_live_tick_plan(
+        [assistant_continuation], {assistant_continuation.key}, now=100
+    )
 
     assert rendered[0].reason == "coordinator reported 3 manual action(s) required"
     assert rendered[0].proposed_action == "none"
     assert echoed[0].proposed_action == "wake_coordinator"
     assert continued[0].proposed_action == "wake_coordinator"
     assert alternate[0].proposed_action == "none"
+    assert continued_assistant[0].proposed_action == "wake_coordinator"
 
 
 def test_live_tick_ignores_manual_action_prose_and_stale_marker() -> None:
@@ -4159,7 +4167,7 @@ def test_live_tick_ignores_manual_action_prose_and_stale_marker() -> None:
     )
     stale = module.replace(
         prose,
-        output="MANUAL_REQUIRED count=2\n" + "\n".join(f"line {n}" for n in range(30)) + "\n❯ ",
+        output="● MANUAL_REQUIRED count=2\n" + "\n".join(f"line {n}" for n in range(30)) + "\n❯ ",
     )
 
     assert module.build_live_tick_plan([prose], {prose.key})[0].proposed_action == "wake_coordinator"

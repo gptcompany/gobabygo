@@ -17,6 +17,7 @@ def test_runtime_status_is_available_without_iterm(tmp_path) -> None:
     proc = subprocess.run(
         ["bash", str(MESH), "speckit", "status", str(repo), "--json"],
         cwd=ROOT,
+        env={**os.environ, "MESH_SPECKIT_PYTHON": ""},
         check=False,
         capture_output=True,
         text=True,
@@ -104,6 +105,7 @@ def test_readiness_subcommand_runs_the_real_runtime_cli(tmp_path) -> None:
             "--feature-dir", "specs/missing", "--json",
         ],
         cwd=ROOT,
+        env={**os.environ, "MESH_SPECKIT_PYTHON": ""},
         check=False,
         capture_output=True,
         text=True,

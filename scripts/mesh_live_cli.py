@@ -2140,11 +2140,11 @@ def resolve_tick_candidates(
 def coordinator_manual_action_count(output: str) -> int | None:
     visible_lines = [line.strip() for line in output.splitlines()[-24:] if line.strip()]
     for line in reversed(visible_lines):
-        # Only accept Claude's rendered response bullet. A naked marker is
-        # ambiguous: continuation lines in an operator's multi-line composer
-        # lose their prefix after capture and indentation normalization.
+        # The coordinator contract requires this as a standalone assistant
+        # response line. Naked or indented markers are ambiguous continuation
+        # lines from an operator composer or tool output after normalization.
         match = re.fullmatch(
-            r"[●⏺]\s*MANUAL_REQUIRED count=([1-9][0-9]{0,3})", line
+            r"[●⏺]\s+MANUAL_REQUIRED count=([1-9][0-9]{0,3})", line
         )
         if match is not None:
             return int(match.group(1))
@@ -4850,7 +4850,7 @@ def build_live_coordinator_system_prompt(
             "- `review_identity_missing` requires a recorded tracking decision before work: either deliberately initialize `review init --local` for local-only review, or use the GitHub binding planning path. Never substitute manual round counts. A local identity preserves review history but reports GitHub publication as requiring explicit migration.",
             "- If readiness reports an invalid, conflicting, unsafe, or oversized artifact, stop the managed lane and report the exact reason. Do not work around it by renaming files, raising limits, creating a fake binding, or using raw worker sends.",
             f"- At bootstrap or resume, on every tick before `TICK_IDLE`, and before closure, run `{speckit_manual_actions_command}`. This read-only projection is not a second ledger.",
-            "- If it returns open actions, inspect each referenced `tasks.md` entry and report `MANUAL_REQUIRED count=N` with decision ID, exact question, bounded options, recommendation, and blocked task IDs. Never infer approval from silence, pane text, a prompt suggestion, or a worker.",
+            "- If it returns open actions, inspect each referenced `tasks.md` entry and emit `MANUAL_REQUIRED count=N` as one standalone assistant response line, then report decision ID, exact question, bounded options, recommendation, and blocked task IDs. Never put the marker in prose, tool output, or the composer. Never infer approval from silence, pane text, a prompt suggestion, or a worker.",
             "- After an explicit submitted operator answer, record it in the authoritative Spec Kit task/decision artifact, reconcile dependent tasks, rerun manual-actions, and continue. Do not remain idle behind an unreported manual decision.",
             "- After tasks and `speckit.analyze` pass, follow the recorded tracking decision. GitHub publication requires a committed `github-ledger.json` binding and a planning-only pull request before source implementation. "
             f"For a chosen GitHub binding, run `{speckit_ledger_command} init <feature-dir>` first, inspect the plan, then rerun it with `--apply`; use `{speckit_ledger_command} plan <feature-dir>` to validate publication. Local-only review does not imply issue publication.",
