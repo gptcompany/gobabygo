@@ -181,13 +181,52 @@ wbrief() {
 }
 
 wsattach() {
-  local session direct_host
+  local session direct_host transport arg next_is_transport has_transport
   session="${1:-}"
   if [[ -z "$session" ]]; then
     echo "Usage: wsattach <session-name-or-prefix> [mesh-live-attach-options]" >&2
     return 2
   fi
   shift
+  transport="${MESH_WS_ATTACH_TRANSPORT:-auto}"
+  next_is_transport=0
+  has_transport=0
+  for arg in "$@"; do
+    if [[ "$next_is_transport" -eq 1 ]]; then
+      transport="$arg"
+      has_transport=1
+      next_is_transport=0
+      continue
+    fi
+    case "$arg" in
+      --transport)
+        next_is_transport=1
+        ;;
+      --transport=*)
+        transport="${arg#--transport=}"
+        has_transport=1
+        ;;
+    esac
+  done
+  if [[ "$next_is_transport" -eq 1 ]]; then
+    echo "wsattach: --transport requires auto, mosh, or ssh" >&2
+    return 2
+  fi
+  case "$transport" in
+    auto|mosh|ssh)
+      ;;
+    *)
+      echo "wsattach: unsupported transport: $transport" >&2
+      return 2
+      ;;
+  esac
+  if [[ "$has_transport" -eq 0 ]]; then
+    set -- --transport "$transport" "$@"
+  fi
+  if [[ "$transport" == "ssh" ]]; then
+    _mesh_live_control_run live attach "$session" "$@"
+    return $?
+  fi
   direct_host="$(_ws_mosh_host 2>/dev/null || true)"
   if [[ -n "$direct_host" && -n "$(command -v mosh 2>/dev/null)" ]]; then
     MESH_WS_HOST="$direct_host" MESH_MOSH_HOST="$direct_host" \

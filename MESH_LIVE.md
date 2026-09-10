@@ -1144,6 +1144,10 @@ pull through an unrelated dirty worktree.
 - Read-only and send controls use short SSH calls.
 - `MESH_LIVE_HOSTS` can set an explicit comma-separated fallback order for `mesh live`.
 - `MESH_WS_CONTROL_HOST` forces the shell-helper control host.
+- `MESH_WS_ATTACH_TRANSPORT=auto|mosh|ssh` selects the default transport for
+  `wsattach`; `auto` preserves direct-Mosh preference. On high-jitter mobile
+  links, set it to `ssh` together with `MESH_WS_CONTROL_HOST=dell7670` and use
+  `wsattach <session> --transport mosh` only when direct VPN/Mosh is wanted.
 - `MESH_MOSH_HOST` must be a trusted direct VPN/LAN endpoint and overrides the
   automatic LAN-first selection.
 

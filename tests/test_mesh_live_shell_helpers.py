@@ -104,6 +104,35 @@ wsattach claude-rektslug --owner sam
         "<live>",
         "<attach>",
         "<claude-rektslug>",
+        "<--transport>",
+        "<auto>",
+        "<--owner>",
+        "<sam>",
+    ]
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_wsattach_ssh_uses_control_host_without_mosh(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+mesh() {{ printf 'host=%s mosh=%s\\n' "${{MESH_WS_HOST:-}}" "${{MESH_MOSH_HOST:-}}"; printf '<%s>\\n' "$@"; }}
+source {helper}
+_ws_control_host() {{ printf '%s' 'dell7670'; }}
+_ws_mosh_host() {{ echo 'unexpected mosh probe' >&2; return 1; }}
+MESH_WS_ATTACH_TRANSPORT=ssh wsattach claude-rektslug --owner sam
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [
+        "host=dell7670 mosh=",
+        "<live>",
+        "<attach>",
+        "<claude-rektslug>",
+        "<--transport>",
+        "<ssh>",
         "<--owner>",
         "<sam>",
     ]
@@ -184,6 +213,8 @@ wsattach claude-rektslug
         "<live>",
         "<attach>",
         "<claude-rektslug>",
+        "<--transport>",
+        "<auto>",
     ]
 
 
