@@ -172,19 +172,26 @@ operation is reconciliation of that decision with the live session.
   verified canonical repository/provider identity; explicitly exempt bounded
   independent review roles. Report why a new worker is needed. Do not infer
   ownership or terminate sessions from names alone.
-- [ ] W4 Reconcile and retire the obsolete canary through the guarded path;
-  validate lifecycle behavior end-to-end and deploy the updated tick contract.
+- [x] W4 Reconcile the obsolete canary evidence, validate guarded retirement
+  end-to-end in an isolated tmux server, and deploy the updated tick contract.
 
 W4 observation, 2026-09-10: after the guarded retirement runtime was deployed,
 `codex-gobabygo-speckit-103-canary` was absent from the Dell tmux server
 (`tmux has-session` exit 1 and an exact live-board query returned no session).
 No Mesh Live retirement command was applied by this work, so the absence cannot
-be attributed to the guarded path and does not close W4. Preserve the existing
-supersession evidence; perform a new isolated lifecycle E2E or reconcile an
-identified replacement session before marking this task complete.
+be attributed to the guarded path. The existing supersession evidence is
+preserved; no production session was claimed as retired. On 2026-09-11,
+`tests/test_mesh_live_retire.py` and
+`tests/test_mesh_live_retire_e2e.py` passed as part of the 316-test Mesh Live
+perimeter suite. The E2E uses a temporary `TMUX_TMPDIR` and applies retirement
+only to its disposable fixture, proving durable record-before-kill, repeated
+preflight, and no mutation of real tmux sessions. The deployed Dell runtime is
+`939c447`; a real historical canary is intentionally not fabricated merely to
+repeat this test.
 
-W1 did not itself close workers or solve accumulation. W3-W4 remain required;
-no production session was closed or submitted while investigating this report.
+W1 did not itself close workers or solve accumulation. W3 and W4 provide the
+guarded reuse and lifecycle path; no production session was closed or submitted
+while investigating this report.
 W1 validation: 286 live/supervisor/docs tests passed. Independent Claude review
 found no confirmed regression: its conditional split concern does not apply
 because _CODEX_FOOTER is a compiled regex. A DLG reference quoted in the current
