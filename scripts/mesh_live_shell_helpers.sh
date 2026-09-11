@@ -903,7 +903,7 @@ raise SystemExit(result.returncode)
 }
 
 mcoordinator() {
-  local repo worker workflow session_override resume_id continue_mode session target_dir repo_base remote_mesh state_repo scope
+  local repo worker workflow transport session_override resume_id continue_mode session target_dir repo_base remote_mesh state_repo scope
   local prompt claude_cmd startup usage speckit_status_json contract_marker review_capability
   local -a prompt_args=()
   usage="Usage: mcoordinator [<repo>|--all] [options]
@@ -921,6 +921,10 @@ Workflow:
   --worker <session>             Limit bootstrap/delegation to one worker.
   --session <name>               Use a non-default tmux session name.
 
+Transport:
+  --transport auto|ssh|mosh      Override transport (default: MESH_WS_ATTACH_TRANSPORT or auto).
+                                  Use ssh for the Cloudflare control host on unstable mobile links.
+
 Conversation recovery:
   --continue                     Start only if absent; let Claude select latest history.
   --resume <exact-UUID>          Start only if absent; verify and resume one history.
@@ -936,6 +940,14 @@ Run mcoordinator with no arguments for normal daily use."
   repo=""
   worker=""
   workflow="${MESH_COORDINATOR_WORKFLOW:-adaptive}"
+  transport="${MESH_WS_ATTACH_TRANSPORT:-auto}"
+  case "$transport" in
+    auto|ssh|mosh) ;;
+    *)
+      echo "mcoordinator: MESH_WS_ATTACH_TRANSPORT must be auto, ssh, or mosh" >&2
+      return 2
+      ;;
+  esac
   session_override=""
   resume_id=""
   continue_mode=0
@@ -973,6 +985,20 @@ Run mcoordinator with no arguments for normal daily use."
           return 2
         fi
         session_override="$2"
+        shift 2
+        ;;
+      --transport)
+        if [[ $# -lt 2 ]]; then
+          echo "$usage" >&2
+          return 2
+        fi
+        case "$2" in
+          auto|ssh|mosh) transport="$2" ;;
+          *)
+            echo "$usage" >&2
+            return 2
+            ;;
+        esac
         shift 2
         ;;
       --continue)
@@ -1063,6 +1089,14 @@ Run mcoordinator with no arguments for normal daily use."
   fi
   startup="${startup} --name $(printf '%q' "$session") --append-system-prompt $(printf '%q' "$prompt")"
   startup="CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 ${startup}"
-  MESH_COORDINATOR_SCOPE="$scope" MESH_COORDINATOR_EFFECTIVE_WORKFLOW="$workflow" \
-    _ws_mosh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" coordinator
+  case "$transport" in
+    ssh)
+      MESH_COORDINATOR_SCOPE="$scope" MESH_COORDINATOR_EFFECTIVE_WORKFLOW="$workflow" \
+        _ws_ssh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" coordinator
+      ;;
+    auto|mosh)
+      MESH_COORDINATOR_SCOPE="$scope" MESH_COORDINATOR_EFFECTIVE_WORKFLOW="$workflow" \
+        _ws_mosh_attach_or_start "$session" "$target_dir" "$startup" "$resume_id" coordinator
+      ;;
+  esac
 }

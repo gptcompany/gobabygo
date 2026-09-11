@@ -481,6 +481,46 @@ mcoordinator --all --session claude-live-coordinator
 
 
 @pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_honors_ssh_transport_preference(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'PROMPT'; }}
+_ws_mosh_attach_or_start() {{ echo mosh-must-not-run >&2; return 98; }}
+_ws_ssh_attach_or_start() {{ printf 'ssh:%s:%s:%s\n' "$1" "$2" "$5"; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+MESH_WS_ATTACH_TRANSPORT=ssh
+mcoordinator --all
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ssh:claude-coordinator:/data/sata/1TB/coordination:coordinator"
+
+
+@pytest.mark.parametrize("shell", _shells())
+def test_mcoordinator_transport_flag_overrides_environment(shell: str) -> None:
+    helper = shlex.quote(str(HELPERS))
+    proc = _run_shell(
+        shell,
+        f"""
+source {helper}
+_mesh_live_run() {{ printf '%s\n' 'MESH_COORDINATOR_CONTRACT: mesh.live.coordinator.v1' 'MESH_COORDINATOR_CAPABILITY: speckit-review-ledger-v1' 'PROMPT'; }}
+_ws_mosh_attach_or_start() {{ printf 'mosh:%s:%s:%s\n' "$1" "$2" "$5"; }}
+_ws_ssh_attach_or_start() {{ echo ssh-must-not-run >&2; return 98; }}
+MESH_WS_REPO_BASE=/data/sata/1TB
+MESH_WS_ATTACH_TRANSPORT=ssh
+mcoordinator --all --transport mosh
+""",
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "mosh:claude-coordinator:/data/sata/1TB/coordination:coordinator"
+
+
+@pytest.mark.parametrize("shell", _shells())
 def test_mcoordinator_uses_explicit_multi_repo_state_repository(shell: str) -> None:
     helper = shlex.quote(str(HELPERS))
     proc = _run_shell(
@@ -1521,6 +1561,7 @@ def test_mcoordinator_help_describes_normal_attach_and_recovery(shell: str) -> N
     assert "Usage: mcoordinator [<repo>|--all] [options]" in proc.stdout
     assert "attaches the canonical claude-coordinator session when live" in proc.stdout
     assert "--workflow direct|speckit|adaptive" in proc.stdout
+    assert "--transport auto|ssh|mosh" in proc.stdout
     assert "Never use /resume inside an already active coordinator." in proc.stdout
     assert "wsattach <session>" in proc.stdout
 

@@ -20,7 +20,9 @@ mcoordinator --help                             # operator command reference
 
 You do not need to `cd` or `yazicd` into `rektslug` on the Mac. The helper
 resolves that name below the configured repository roots on the Dell, creates or
-attaches the Claude coordinator there, and uses mosh/SSH only as transport. The
+attaches the Claude coordinator there, and uses Mosh/SSH only as transport. Set
+`MESH_WS_ATTACH_TRANSPORT=ssh` (or pass `--transport ssh`) to use the configured
+SSH/Cloudflare control host instead of direct Mosh on an unstable mobile link. The
 same helper can run on the Dell; local `mesh live` operations use
 `MESH_LIVE_LOCAL=1` automatically inside the injected coordinator contract.
 
