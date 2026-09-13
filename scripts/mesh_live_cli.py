@@ -331,6 +331,27 @@ class LiveClient:
             raise LiveReadError(redact_capture(str(response["error"])))
         return response
 
+    def recover_antigravity_submit(
+        self,
+        session: LiveSession,
+        delegation_id: str,
+    ) -> dict[str, Any]:
+        response = self._request_fn(
+            self.endpoint,
+            {
+                "op": "recover_antigravity_submit",
+                "target": {
+                    "owner": session.owner,
+                    "name": session.name,
+                    "pane_id": session.pane_id,
+                },
+                "delegation_id": delegation_id,
+            },
+        )
+        if response.get("error"):
+            raise LiveReadError(redact_capture(str(response["error"])))
+        return response
+
 
 def _as_int(value: Any) -> int:
     try:
@@ -974,6 +995,7 @@ _ANTIGRAVITY_EXPERIENCE_SURVEY = re.compile(
     r"\s*\[1\] Good\s+\[2\] Fine\s+\[3\] Bad\s+\[0\] Skip\s*\n"
     r"\s*\? for shortcuts[^\n]*\Z"
 )
+_ANTIGRAVITY_SEPARATOR = re.compile(r"^\s*[─-]{20,}\s*$")
 
 
 def _codex_visible_regions(visible_screen: str) -> tuple[str, str]:
@@ -1070,6 +1092,34 @@ def antigravity_submit_verified(visible_screen: str, delegation_id: str) -> bool
         _ANTIGRAVITY_IDLE_FOOTER.search(body.rstrip())
         or _ANTIGRAVITY_CURRENT_ACTIVITY.search(body.rstrip())
     )
+
+
+def antigravity_composer_has_delegation(visible_screen: str, delegation_id: str) -> bool:
+    """Accept only the exact delegation in the current, framed AGY composer."""
+    body = _ANSI_ESCAPE.sub("", str(visible_screen or "")).replace("\xa0", " ").rstrip()
+    lines = body.splitlines()
+    if not lines or not any("? for shortcuts" in line for line in lines[-2:]):
+        return False
+    footer_separator = next(
+        (index for index in range(len(lines) - 1, -1, -1) if _ANTIGRAVITY_SEPARATOR.fullmatch(lines[index])),
+        None,
+    )
+    if footer_separator is None:
+        return False
+    composer_separator = next(
+        (
+            index
+            for index in range(footer_separator - 1, -1, -1)
+            if _ANTIGRAVITY_SEPARATOR.fullmatch(lines[index])
+        ),
+        None,
+    )
+    if composer_separator is None:
+        return False
+    composer = "\n".join(lines[composer_separator + 1 : footer_separator])
+    if not composer.lstrip().startswith(">") or _CODEX_UNSAFE_INPUT.search(composer):
+        return False
+    return _codex_composer_contains_delegation(composer, delegation_id)
 
 
 def _poll_antigravity_submit_verification(
@@ -1433,6 +1483,81 @@ def _recover_codex_submit(
         }
 
 
+def _delivery_matches_current_target(
+    state: dict[str, Any], target: dict[str, str], delegation_id: str, *, now: float
+) -> bool:
+    receipt = state["deliveries"].get(_codex_recovery_key(target, delegation_id))
+    if not isinstance(receipt, dict):
+        return False
+    expected = {**_pane_identity(target), "delegation_id": delegation_id}
+    if any(str(receipt.get(field) or "") != value for field, value in expected.items()):
+        return False
+    try:
+        delivered_at = float(receipt.get("delivered_at"))
+    except (TypeError, ValueError):
+        return False
+    pane_times: list[float] = []
+    for candidate in state["deliveries"].values():
+        if not isinstance(candidate, dict) or not all(
+            str(candidate.get(field) or "") == value
+            for field, value in _pane_identity(target).items()
+        ):
+            continue
+        try:
+            pane_times.append(float(candidate["delivered_at"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return (
+        bool(pane_times)
+        and delivered_at == max(pane_times)
+        and pane_times.count(delivered_at) == 1
+        and 0 <= now - delivered_at <= CODEX_DELIVERY_RECEIPT_MAX_AGE
+    )
+
+
+def _recover_antigravity_submit(
+    target: dict[str, Any], delegation_id: str, state_file: str
+) -> dict[str, Any]:
+    delegation_id = validate_delegation_id(delegation_id)
+    if not state_file:
+        raise ValueError("Antigravity recovery state file is required")
+    with _codex_recovery_lock(state_file):
+        fresh = _capture_visible_target(target, expected_commands=("agy",))
+        state = _load_codex_recovery_state(state_file)
+        if not antigravity_composer_has_delegation(fresh["output"], delegation_id):
+            raise LiveReadError(
+                "Antigravity recovery refused: the current framed composer does not hold the exact delegation or shows an unsafe prompt"
+            )
+        if not _delivery_matches_current_target(state, fresh, delegation_id, now=time.time()):
+            raise LiveReadError(
+                "Antigravity recovery refused: no recent matching tracked delivery is available for this pane"
+            )
+        key = _codex_recovery_key(fresh, delegation_id)
+        if key in state["attempts"]:
+            raise LiveReadError("Antigravity recovery refused: Enter was already attempted for this delegation")
+        state["attempts"][key] = {
+            **_pane_identity(fresh),
+            "delegation_id": delegation_id,
+            "provider": "antigravity",
+            "attempted_at": time.time(),
+            "screen_fingerprint": hashlib.sha256(
+                redact_capture(fresh["output"]).encode("utf-8", errors="replace")
+            ).hexdigest(),
+        }
+        _save_codex_recovery_state(state_file, state)
+        sent = _send_target(target, "", enter=True, expected_commands=("agy",))
+        if sent.get("error"):
+            raise LiveReadError(str(sent["error"]))
+        verified = _poll_antigravity_submit_verification(target, delegation_id)
+        return {
+            **sent,
+            "delegation_id": delegation_id,
+            "submission": "verified" if verified else "unknown",
+            "verified": verified,
+            "evidence": "exact-delegation-receipt",
+        }
+
+
 def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
     operation = str(payload.get("op") or "")
     if operation == "discover":
@@ -1495,35 +1620,50 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
             validated: dict[str, str], deliver: SendFn
         ) -> dict[str, Any]:
             if validated["command"] == "agy":
-                if delegation_id:
-                    fresh = _capture_visible_target(
-                        validated, expected_commands=("agy",)
-                    )
-                    if not antigravity_screen_is_ready_for_delegation(
-                        fresh["output"]
-                    ):
-                        raise LiveReadError(
-                            "tracked Antigravity delivery refused: the visible composer is not "
-                            "empty and idle; inspect it manually or select another authorized "
-                            "idle worker"
+                with _codex_recovery_lock(DEFAULT_CODEX_RECOVERY_STATE_FILE):
+                    state = _load_codex_recovery_state(DEFAULT_CODEX_RECOVERY_STATE_FILE)
+                    if delegation_id:
+                        fresh = _capture_visible_target(
+                            validated, expected_commands=("agy",)
                         )
-                send_result = deliver()
-                if (
-                    delegation_id
-                    and not send_result.get("error")
-                    and not send_result.get("delivery_error")
-                    and send_result.get("text_sent")
-                    and send_result.get("enter_sent")
-                ):
-                    verified = _poll_antigravity_submit_verification(
-                        validated, delegation_id
-                    )
-                    return {
-                        **send_result,
-                        "submission": "verified" if verified else "unknown",
-                        "verified": verified,
-                    }
-                return send_result
+                        if not antigravity_screen_is_ready_for_delegation(
+                            fresh["output"]
+                        ):
+                            raise LiveReadError(
+                                "tracked Antigravity delivery refused: the visible composer is not "
+                                "empty and idle; inspect it manually or select another authorized "
+                                "idle worker"
+                            )
+                    if _discard_codex_deliveries_in_state(state, validated):
+                        _save_codex_recovery_state(DEFAULT_CODEX_RECOVERY_STATE_FILE, state)
+                    send_result = deliver()
+                    if not send_result.get("error") and delegation_id and send_result.get("text_sent"):
+                        _record_codex_delivery_in_state(state, send_result, delegation_id, text)
+                        try:
+                            _save_codex_recovery_state(DEFAULT_CODEX_RECOVERY_STATE_FILE, state)
+                        except LiveReadError as exc:
+                            return {
+                                **send_result,
+                                "delegation_id": delegation_id,
+                                "delivery_tracked": False,
+                                "tracking_error": redact_capture(str(exc)),
+                            }
+                    if (
+                        delegation_id
+                        and not send_result.get("error")
+                        and not send_result.get("delivery_error")
+                        and send_result.get("text_sent")
+                        and send_result.get("enter_sent")
+                    ):
+                        verified = _poll_antigravity_submit_verification(
+                            validated, delegation_id
+                        )
+                        return {
+                            **send_result,
+                            "submission": "verified" if verified else "unknown",
+                            "verified": verified,
+                        }
+                    return send_result
             # Current native Codex launches through Node. The tracked path below
             # immediately recaptures and requires the actual Codex composer.
             if validated["command"] not in {"codex", "codex-cli", "node"}:
@@ -1586,6 +1726,16 @@ def handle_remote_request(payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(target, dict):
             raise ValueError("Codex recovery target must be an object")
         return _recover_codex_submit(
+            target,
+            str(payload.get("delegation_id") or ""),
+            DEFAULT_CODEX_RECOVERY_STATE_FILE,
+        )
+
+    if operation == "recover_antigravity_submit":
+        target = payload.get("target")
+        if not isinstance(target, dict):
+            raise ValueError("Antigravity recovery target must be an object")
+        return _recover_antigravity_submit(
             target,
             str(payload.get("delegation_id") or ""),
             DEFAULT_CODEX_RECOVERY_STATE_FILE,
@@ -5246,6 +5396,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--owner", default="", help="Disambiguate sessions owned by different users."
     )
 
+    recover_antigravity = sub.add_parser(
+        "recover-antigravity-submit",
+        help="Send one state-checked, idempotent recovery Enter to a stalled Antigravity composer.",
+    )
+    recover_antigravity.add_argument("session", help="Exact session name or unique prefix.")
+    recover_antigravity.add_argument("delegation_id", help="Exact current DELEGATION_ID.")
+    recover_antigravity.add_argument(
+        "--owner", default="", help="Disambiguate sessions owned by different users."
+    )
+
     recover_coordinator = sub.add_parser(
         "recover-coordinator",
         help="Plan or explicitly apply one guarded local resume of a stopped coordinator.",
@@ -5874,6 +6034,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(
                 f"[mesh live recover-codex-submit] target={result['owner']}/{result['name']} "
+                f"pane={result['pane_id']} delegation={result['delegation_id']} "
+                f"enter_delivered=yes submission={result['submission']}"
+            )
+            return 0 if result["submission"] == "verified" else 1
+
+        if args.cmd == "recover-antigravity-submit":
+            delegation_id = validate_delegation_id(args.delegation_id)
+            result = client.recover_antigravity_submit(selected, delegation_id)
+            print(
+                f"[mesh live recover-antigravity-submit] target={result['owner']}/{result['name']} "
                 f"pane={result['pane_id']} delegation={result['delegation_id']} "
                 f"enter_delivered=yes submission={result['submission']}"
             )

@@ -924,8 +924,11 @@ def test_tracked_codex_send_accepts_completed_reply_with_empty_composer(
     assert module.session_screen_state(worker) == "idle"
 
 
-def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> None:
+def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch, tmp_path) -> None:
     module = _load_module()
+    monkeypatch.setattr(
+        module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(tmp_path / "recovery.json")
+    )
     delegation_id = "delegation-agy-1234"
     message = f"DELEGATION_ID={delegation_id} read /repo/brief.md"
     idle = (
@@ -980,6 +983,9 @@ def test_remote_send_guards_and_verifies_antigravity_delivery(monkeypatch) -> No
     assert result["submission"] == "verified"
     assert result["verified"] is True
     assert sum("send-keys" in command for command in commands) == 2
+    state = json.loads((tmp_path / "recovery.json").read_text(encoding="utf-8"))
+    assert len(state["deliveries"]) == 1
+    assert next(iter(state["deliveries"].values()))["delegation_id"] == delegation_id
 
 
 def test_antigravity_submit_rejects_transient_positive_redraw(monkeypatch) -> None:
@@ -1015,6 +1021,89 @@ def test_antigravity_submit_rejects_transient_positive_redraw(monkeypatch) -> No
         )
         is False
     )
+
+
+def test_antigravity_recovery_requires_exact_current_composer_and_receipt(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    delegation_id = "delegation-agy-recovery"
+    target = {"owner": "sam", "name": "antigravity-worker", "pane_id": "%8"}
+    composer = (
+        "─" * 80
+        + f"\n> DELEGATION_ID={delegation_id} read /repo/brief.md\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    busy = (
+        f"> DELEGATION_ID={delegation_id} read /repo/brief.md\nGenerating...\n"
+        + "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\nesc to cancel                           Gemini 3.7 Flash · high\n"
+    )
+    module._save_codex_recovery_state(
+        str(state_path), {"version": 1, "attempts": {}, "deliveries": {}}
+    )
+    state = module._load_codex_recovery_state(str(state_path))
+    module._record_codex_delivery_in_state(
+        state, {**target, "command": "agy"}, delegation_id, f"DELEGATION_ID={delegation_id} read /repo/brief.md"
+    )
+    module._save_codex_recovery_state(str(state_path), state)
+    captures = iter([composer, busy, busy, composer])
+    sent: list[tuple[str, bool]] = []
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(module, "CODEX_RECOVERY_VERIFY_ATTEMPTS", 2)
+    monkeypatch.setattr(
+        module,
+        "_capture_visible_target",
+        lambda selected, **kwargs: {**selected, "command": "agy", "output": next(captures)},
+    )
+    monkeypatch.setattr(
+        module,
+        "_send_target",
+        lambda selected, text, *, enter, expected_commands: sent.append((text, enter))
+        or {**selected, "text_sent": False, "enter_sent": True},
+    )
+
+    result = module.handle_remote_request(
+        {"op": "recover_antigravity_submit", "target": target, "delegation_id": delegation_id}
+    )
+    with pytest.raises(module.LiveReadError, match="already attempted"):
+        module.handle_remote_request(
+            {"op": "recover_antigravity_submit", "target": target, "delegation_id": delegation_id}
+        )
+
+    assert result["submission"] == "verified"
+    assert sent == [("", True)]
+
+
+def test_antigravity_recovery_refuses_historical_id_or_missing_receipt(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    state_path = tmp_path / "recovery.json"
+    delegation_id = "delegation-agy-history"
+    target = {"owner": "sam", "name": "antigravity-worker", "pane_id": "%8"}
+    history_then_idle = (
+        f"WORKER_DONE DELEGATION_ID={delegation_id}\n"
+        + "─" * 80
+        + "\n>\n"
+        + "─" * 80
+        + "\n? for shortcuts                         Gemini 3.7 Flash · high\n"
+    )
+    monkeypatch.setattr(module, "DEFAULT_CODEX_RECOVERY_STATE_FILE", str(state_path))
+    monkeypatch.setattr(
+        module,
+        "_capture_visible_target",
+        lambda selected, **kwargs: {**selected, "command": "agy", "output": history_then_idle},
+    )
+    monkeypatch.setattr(module, "_send_target", lambda *_args, **_kwargs: pytest.fail("must not send"))
+
+    with pytest.raises(module.LiveReadError, match="current framed composer"):
+        module.handle_remote_request(
+            {"op": "recover_antigravity_submit", "target": target, "delegation_id": delegation_id}
+        )
 
 
 def test_tracked_antigravity_send_refuses_occupied_composer_without_input(

@@ -481,6 +481,7 @@ Usage:
   MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-codex <repo> [--role worker|reviewer] [--expect-session <name>]
   ./scripts/mesh live send <session> [text] [--delegation-id <id>] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
+  ./scripts/mesh live recover-antigravity-submit <session> <delegation-id> [--owner <user>]
   MESH_LIVE_LOCAL=1 ./scripts/mesh live recover-coordinator <session> [--apply] [--state-file <path>]
   MESH_LIVE_LOCAL=1 ./scripts/mesh live retire <session> --handoff <absolute-file> --reason <text> [--apply --confirm <session>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
@@ -607,6 +608,7 @@ Usage:
   MESH_LIVE_LOCAL=1 ./scripts/mesh live ensure-antigravity <repo> [--role worker|reviewer] [--expect-session <name>] [--json]
   ./scripts/mesh live send <session> [text] [--delegation-id <id>] [--enter] [--owner <user>]
   ./scripts/mesh live recover-codex-submit <session> <delegation-id> [--owner <user>]
+  ./scripts/mesh live recover-antigravity-submit <session> <delegation-id> [--owner <user>]
   ./scripts/mesh live attach <session> [--owner <user>] [--transport auto|mosh|ssh]
   ./scripts/mesh live brief [query|--repo <repo>|--all] [--coordinator <session>]
   ./scripts/mesh live workflow show <name> [--scope repository|coordinator] [--json]
@@ -631,13 +633,17 @@ Behavior:
   containing the DELEGATION_ID, absolute brief path, and instruction to read it.
   Codex and Antigravity delegations should pass --delegation-id with that exact ID.
   Codex stores metadata only so a matching collapsed paste can receive one guarded recovery
-  Enter. Antigravity requires an exact idle composer and verifies submission after Enter;
-  it has no automatic submit recovery.
+  Enter. Antigravity requires an exact idle composer and verifies submission after Enter.
+  Its recovery is available only for one recent matching tracked delivery whose exact ID
+  remains in the current framed composer; it never resends text or clears input.
   send output reports key delivery only; submission remains unknown until a fresh peek.
   send rechecks the discovered session/pane but still acts as remote keyboard input;
   verify pane state immediately beforehand because a residual race remains.
   recover-codex-submit is the guarded, stateful Enter-only path for one exact delegation
   or one recent, tracked [Pasted Content N chars] placeholder. It never clears a composer.
+  recover-antigravity-submit applies the same one-Enter rule only to an exact current
+  Antigravity composer with a recent matching delivery receipt; menus, activity, stale
+  receipts, absent IDs, and second attempts are refused.
   recover-coordinator is local-only and plans by default. --apply requires a confirmed
   stopped, detached coordinator with exact resume/root/scope/workflow metadata, then
   revalidates and replaces only its idle shell pane. Set the tmux recovery hold to refuse it.
@@ -685,6 +691,7 @@ Examples:
   ./scripts/mesh live send claude-rektslug "status?" --enter
   ./scripts/mesh live send codex-rektslug "DELEGATION_ID=delegation-1234 read /repo/brief.md" --delegation-id delegation-1234 --enter
   ./scripts/mesh live recover-codex-submit codex-rektslug delegation-1234
+  ./scripts/mesh live recover-antigravity-submit antigravity-rektslug delegation-1234
   ./scripts/mesh live attach claude-rektslug
   ./scripts/mesh live brief --repo rektslug
   ./scripts/mesh live brief --all --coordinator claude-coordinator

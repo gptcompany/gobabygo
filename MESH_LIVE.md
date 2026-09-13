@@ -234,8 +234,9 @@ iTerm2 layout. iTerm2 is never authoritative for live or durable state.
 | `wsend <session> <text>` | `mesh live send ...` | Type literal text into the selected pane |
 | `wsend <session> <text> --enter` | `mesh live send ... --enter` | Type text, then send Enter separately |
 | - | `mesh live send <codex-session> <text> --delegation-id <id> --enter` | Deliver and record a metadata-only recovery receipt |
-| - | `mesh live send <antigravity-session> <text> --delegation-id <id> --enter` | Require idle Antigravity composer and verify one submission; no recovery Enter |
+| - | `mesh live send <antigravity-session> <text> --delegation-id <id> --enter` | Require idle Antigravity composer, record a receipt, and verify one submission |
 | - | `mesh live recover-codex-submit <session> <id>` | Guarded, stateful single-Enter recovery for one exact Codex delegation |
+| - | `mesh live recover-antigravity-submit <session> <id>` | Guarded, stateful single-Enter recovery for one exact Antigravity delegation |
 | - | `mesh live recover-coordinator <session> [--apply]` | Plan by default; explicitly resume one confirmed stopped local coordinator |
 | `wsattach <session>` | `mesh live attach <session>` | Attach to an existing session; never creates or kills one |
 
@@ -706,10 +707,13 @@ errors, and ambiguous redraws are refused before input. After one Enter, Mesh
 polls for the submitted ID together with current activity or a new empty
 composer. `submission=verified` requires that positive evidence in two
 consecutive captures; a single transient redraw remains
-`submission=unknown` and requires bounded peeks. There is no Antigravity
-recovery command: never resend, clear the composer, or send another Enter
-automatically. In controlled E2E on `agy` 1.1.13, one Enter submitted correctly;
-this provider-specific policy must be revalidated when the TUI format changes.
+`submission=unknown` and requires bounded peeks. A single guarded recovery is
+available only when the exact ID remains in the current framed composer and a
+recent matching tracked-delivery receipt exists. It records the attempt before
+input, never resends text or clears input, and refuses menus, activity, stale
+receipts, missing IDs, and every second attempt. In controlled E2E on `agy`
+1.1.13, one Enter submitted correctly; this provider-specific policy must be
+revalidated when the TUI format changes.
 
 Completion is not a substring search over the pane. Delegation briefs and CLI
 composers can echo both `WORKER_DONE` and `WORKER_BLOCKED`. A status is a
