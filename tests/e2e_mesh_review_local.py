@@ -72,13 +72,19 @@ def main() -> None:
     review.open_review(repo, feature, "T001", level="RELEASE", scope=scope,
                        reviewer_session="mesh-e2e-observer", delegation_id="initial-review",
                        invariant="", expected_revision=1)
+    acknowledgement = feature / "review-ack.md"
+    acknowledgement.write_text("Reviewer received the immutable scope.\n")
+    review.acknowledge_review(repo, feature, "T001", reviewer_session="mesh-e2e-observer",
+                              delegation_id="initial-review", evidence_file=acknowledgement,
+                              expected_revision=2)
     review.record_review(repo, feature, "T001", verdict="CHANGES_REQUIRED",
-                         evidence_file=report, blocking_high=0, blocking_medium=1,
-                         invalidates_safety=False, mutations_run=0, expected_revision=2)
+                         evidence_file=report, reviewer_session="mesh-e2e-observer",
+                         delegation_id="initial-review", blocking_high=0, blocking_medium=1,
+                         invalidates_safety=False, mutations_run=0, expected_revision=3)
     review.decide_exhausted(repo, feature, "T001", decision="REPLAN",
-                           reason="Use arithmetic addition instead of subtraction", expected_revision=3)
+                           reason="Use arithmetic addition instead of subtraction", expected_revision=4)
     try:
-        review.initialize_task(repo, feature, "T001", **common, expected_revision=4)
+        review.initialize_task(repo, feature, "T001", **common, expected_revision=5)
     except review.ReviewLedgerError:
         print("MISSING_REPLAN_REJECTED", flush=True)
     else:
@@ -90,16 +96,20 @@ def main() -> None:
         "acceptance_criteria": "Both integer addition tests pass unchanged",
         "finding_disposition": "Carry incorrect addition into the correction and release review",
     }))
-    review.initialize_task(repo, feature, "T001", **common, replan_file=plan, expected_revision=4)
+    review.initialize_task(repo, feature, "T001", **common, replan_file=plan, expected_revision=5)
     # A new invariant review evaluates the revised plan without repeating the old RELEASE scope.
     review.open_review(repo, feature, "T001", level="INVARIANT", scope=scope,
                        reviewer_session="mesh-e2e-observer", delegation_id="plan-review",
-                       invariant="integer addition", expected_revision=5)
+                       invariant="integer addition", expected_revision=6)
+    review.acknowledge_review(repo, feature, "T001", reviewer_session="mesh-e2e-observer",
+                              delegation_id="plan-review", evidence_file=acknowledgement,
+                              expected_revision=7)
     review.record_review(repo, feature, "T001", verdict="CHANGES_REQUIRED",
-                         evidence_file=report, blocking_high=0, blocking_medium=1,
-                         invalidates_safety=False, mutations_run=0, expected_revision=6)
+                         evidence_file=report, reviewer_session="mesh-e2e-observer",
+                         delegation_id="plan-review", blocking_high=0, blocking_medium=1,
+                         invalidates_safety=False, mutations_run=0, expected_revision=8)
     delegation = "DLG-MESH-E2E-ADDITION"
-    review.open_correction(repo, feature, "T001", delegation_id=delegation, expected_revision=7)
+    review.open_correction(repo, feature, "T001", delegation_id=delegation, expected_revision=9)
     args = [options.codex_executable, "--cd", str(repo), "--sandbox", "workspace-write", "-a", "never",
             "--no-alt-screen", "-c", "check_for_update_on_startup=false",
             "-c", f'projects.{json.dumps(str(repo))}.trust_level="trusted"']
@@ -135,7 +145,7 @@ def main() -> None:
                    "Do not change tests or specs, commit, push, or start other agents. "
                    f"When done report WORKER_DONE {delegation}.")
         result = review.dispatch_correction(repo, feature, "T001", delegation_id=delegation,
-                                            message=message, worker_repo=repo, expected_revision=8)
+                                            message=message, worker_repo=repo, expected_revision=10)
         print("DISPATCH=" + json.dumps(result), flush=True)
         if result["submission"] == "unknown":
             time.sleep(2)
@@ -167,7 +177,7 @@ def main() -> None:
             raise RuntimeError("worker did not finish the bounded objective within 180 seconds")
         try:
             review.dispatch_correction(repo, feature, "T001", delegation_id=delegation,
-                                        message=message, worker_repo=repo, expected_revision=10)
+                                        message=message, worker_repo=repo, expected_revision=11)
         except review.ReviewLedgerError:
             print("DUPLICATE_DISPATCH_REJECTED", flush=True)
         else:
@@ -193,18 +203,26 @@ def main() -> None:
         assert run(["git", "diff", "--", "adder.py", "test_adder.py"], cwd=repo).stdout == diff
         review.open_review(repo, feature, "T001", level="DELTA", scope=corrected,
                            reviewer_session="mesh-e2e-claude", delegation_id="delta-review",
-                           invariant="", expected_revision=10)
+                           invariant="", expected_revision=12)
+        review.acknowledge_review(repo, feature, "T001", reviewer_session="mesh-e2e-claude",
+                                  delegation_id="delta-review", evidence_file=acknowledgement,
+                                  expected_revision=13)
         review.record_review(repo, feature, "T001", verdict="PASS", evidence_file=report,
-                             blocking_high=0, blocking_medium=0, invalidates_safety=False,
-                             mutations_run=0, expected_revision=11)
-        review.update_candidate(repo, feature, "T001", scope=corrected, expected_revision=12)
-        review.open_review(repo, feature, "T001", level="RELEASE", scope=corrected,
-                           reviewer_session="mesh-e2e-claude", delegation_id="release-review",
-                           invariant="", expected_revision=13)
-        review.record_review(repo, feature, "T001", verdict="PASS", evidence_file=report,
+                             reviewer_session="mesh-e2e-claude", delegation_id="delta-review",
                              blocking_high=0, blocking_medium=0, invalidates_safety=False,
                              mutations_run=0, expected_revision=14)
-        result = review.complete_task(repo, feature, "T001", scope=corrected, expected_revision=15)
+        review.update_candidate(repo, feature, "T001", scope=corrected, expected_revision=15)
+        review.open_review(repo, feature, "T001", level="RELEASE", scope=corrected,
+                           reviewer_session="mesh-e2e-claude", delegation_id="release-review",
+                           invariant="", expected_revision=16)
+        review.acknowledge_review(repo, feature, "T001", reviewer_session="mesh-e2e-claude",
+                                  delegation_id="release-review", evidence_file=acknowledgement,
+                                  expected_revision=17)
+        review.record_review(repo, feature, "T001", verdict="PASS", evidence_file=report,
+                             reviewer_session="mesh-e2e-claude", delegation_id="release-review",
+                             blocking_high=0, blocking_medium=0, invalidates_safety=False,
+                             mutations_run=0, expected_revision=18)
+        result = review.complete_task(repo, feature, "T001", scope=corrected, expected_revision=19)
         print("E2E_PASS=" + json.dumps(result), flush=True)
     finally:
         if started:
