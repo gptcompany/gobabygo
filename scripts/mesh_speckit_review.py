@@ -677,6 +677,8 @@ def record_review(
     *,
     verdict: str,
     evidence_file: Path,
+    reviewer_session: str,
+    delegation_id: str,
     blocking_high: int,
     blocking_medium: int,
     invalidates_safety: bool,
@@ -685,6 +687,8 @@ def record_review(
 ) -> dict[str, Any]:
     feature, _task, _key = _load_bound_task(repo, feature_dir, task_id)
     normalized_task = _normalize_task_id(task_id)
+    reviewer = _normalize_session(reviewer_session, "reviewer session")
+    delegation = _normalize_delegation(delegation_id)
     normalized_verdict = str(verdict or "").strip().upper()
     if normalized_verdict not in VERDICTS:
         raise ReviewLedgerError("review verdict must be PASS or CHANGES_REQUIRED")
@@ -705,6 +709,10 @@ def record_review(
         active = record["active_review"]
         if active is None:
             raise ReviewLedgerError("review state is missing active review metadata")
+        if active["reviewer"] != reviewer:
+            raise ReviewLedgerError("reviewer session does not match active review")
+        if active["delegation_id"] != delegation:
+            raise ReviewLedgerError("delegation ID does not match active review")
         if mutations_run > record["mutation_budget"]:
             raise ReviewLedgerError(
                 f"mutations run exceed frozen budget {record['mutation_budget']}"
@@ -1393,6 +1401,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     _common(record)
     record.add_argument("--verdict", required=True)
     record.add_argument("--evidence-file", type=Path, required=True)
+    record.add_argument("--reviewer-session", required=True)
+    record.add_argument("--delegation-id", required=True)
     record.add_argument("--blocking-high", type=int, default=0)
     record.add_argument("--blocking-medium", type=int, default=0)
     record.add_argument("--invalidates-safety", action="store_true")
@@ -1489,6 +1499,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.task,
                 verdict=args.verdict,
                 evidence_file=args.evidence_file,
+                reviewer_session=args.reviewer_session,
+                delegation_id=args.delegation_id,
                 blocking_high=args.blocking_high,
                 blocking_medium=args.blocking_medium,
                 invalidates_safety=args.invalidates_safety,

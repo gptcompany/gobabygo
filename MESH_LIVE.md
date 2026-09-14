@@ -563,11 +563,14 @@ mesh speckit review open <repo> <feature-dir> T001 \
 
 mesh speckit review record <repo> <feature-dir> T001 \
   --verdict PASS --evidence-file <feature-dir>/review-T001.md \
+  --reviewer-session codex-repo --delegation-id <id> \
   --mutations-run 1 --expect-revision <revision>
 ```
 
 `record` hashes a real non-symlink report inside the feature. It does not parse
-review prose. `PASS` with blocking high/medium or safety findings fails closed.
+review prose. Its reviewer session and delegation ID must exactly match the
+active review, fencing stale results from a timed-out or abandoned reviewer.
+`PASS` with blocking high/medium or safety findings fails closed.
 `open` records an event from which `status` derives the canonical review
 deadline. Once elapsed, `timeout --expect-revision <revision>` permits exactly
 one fallback using a different reviewer session for the same immutable scope;

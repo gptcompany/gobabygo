@@ -222,6 +222,8 @@ def _record(
         "T001",
         verdict=verdict,
         evidence_file=evidence,
+        reviewer_session="codex-project",
+        delegation_id=f"review-{revision - 1}",
         blocking_high=high,
         blocking_medium=medium,
         invalidates_safety=safety,
@@ -684,6 +686,80 @@ def test_abandon_fails_without_mutation(tmp_path, failure):
     assert (feature / "review-ledger.json").read_bytes() == before
 
 
+def test_stale_reviewer_cannot_record_against_fallback_lease(tmp_path: Path) -> None:
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    review.open_review(
+        repo,
+        feature,
+        "T001",
+        level="RELEASE",
+        scope=SCOPE_A,
+        reviewer_session="codex-original",
+        delegation_id="review-original",
+        invariant="",
+        expected_revision=1,
+    )
+    abandoned = feature / "abandoned.md"
+    abandoned.write_text("Credential rotation invalidated the original reviewer.\n")
+    review.abandon_review(
+        repo,
+        feature,
+        "T001",
+        reason="AUTH_SESSION_INVALID",
+        evidence_file=abandoned,
+        expected_revision=2,
+    )
+    review.open_review(
+        repo,
+        feature,
+        "T001",
+        level="RELEASE",
+        scope=SCOPE_A,
+        reviewer_session="codex-fallback",
+        delegation_id="review-fallback",
+        invariant="",
+        expected_revision=3,
+    )
+    report = feature / "late-original-report.md"
+    report.write_text("Late report from the invalidated reviewer.\n")
+    ledger = feature / "review-ledger.json"
+    before = ledger.read_bytes()
+
+    with pytest.raises(review.ReviewLedgerError, match="reviewer session does not match"):
+        review.record_review(
+            repo,
+            feature,
+            "T001",
+            verdict="PASS",
+            evidence_file=report,
+            reviewer_session="codex-original",
+            delegation_id="review-original",
+            blocking_high=0,
+            blocking_medium=0,
+            invalidates_safety=False,
+            mutations_run=1,
+            expected_revision=4,
+        )
+    assert ledger.read_bytes() == before
+
+    result = review.record_review(
+        repo,
+        feature,
+        "T001",
+        verdict="PASS",
+        evidence_file=report,
+        reviewer_session="codex-fallback",
+        delegation_id="review-fallback",
+        blocking_high=0,
+        blocking_medium=0,
+        invalidates_safety=False,
+        mutations_run=1,
+        expected_revision=4,
+    )
+    assert result["status"] == "RELEASE_PASSED"
+
+
 @pytest.mark.parametrize("reason", sorted(review.ABANDON_REASONS))
 def test_mesh_cli_abandon(tmp_path, reason):
     repo, feature = _feature(tmp_path)
@@ -800,6 +876,8 @@ def test_mutation_budget_requires_explicit_reasoned_expansion(tmp_path: Path) ->
         "T001",
         verdict="PASS",
         evidence_file=feature / "budget-review.md",
+        reviewer_session="codex-project",
+        delegation_id="review-2",
         blocking_high=0,
         blocking_medium=0,
         invalidates_safety=False,
@@ -835,6 +913,8 @@ def test_duplicate_review_and_mutation_overflow_preserve_revision(tmp_path: Path
             "T001",
             verdict="PASS",
             evidence_file=feature / "overflow-review.md",
+            reviewer_session="codex-project",
+            delegation_id="review-3",
             blocking_high=0,
             blocking_medium=0,
             invalidates_safety=False,
@@ -990,6 +1070,8 @@ def test_evidence_must_be_a_real_feature_report(tmp_path: Path) -> None:
             "T001",
             verdict="PASS",
             evidence_file=outside,
+            reviewer_session="codex-project",
+            delegation_id="review-1",
             blocking_high=0,
             blocking_medium=0,
             invalidates_safety=False,
@@ -1014,6 +1096,8 @@ def test_evidence_rejects_symlinked_path_components(tmp_path: Path) -> None:
             "T001",
             verdict="PASS",
             evidence_file=feature / "linked-reports" / "review.md",
+            reviewer_session="codex-project",
+            delegation_id="review-1",
             blocking_high=0,
             blocking_medium=0,
             invalidates_safety=False,
@@ -1073,6 +1157,10 @@ def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path, l
             "PASS",
             "--evidence-file",
             str(report),
+            "--reviewer-session",
+            "codex-project",
+            "--delegation-id",
+            "review-release-1",
             "--mutations-run",
             "1",
             "--expect-revision",
@@ -1219,6 +1307,10 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "CHANGES_REQUIRED",
         "--evidence-file",
         str(failed_report),
+        "--reviewer-session",
+        "codex-project",
+        "--delegation-id",
+        "release-1",
         "--blocking-medium",
         "1",
         "--expect-revision",
@@ -1253,6 +1345,10 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "PASS",
         "--evidence-file",
         str(delta_report),
+        "--reviewer-session",
+        "codex-project",
+        "--delegation-id",
+        "delta-1",
         "--expect-revision",
         "5",
     )["status"] == "CANDIDATE_UPDATE_REQUIRED"
@@ -1285,6 +1381,10 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "PASS",
         "--evidence-file",
         str(release_report),
+        "--reviewer-session",
+        "codex-project",
+        "--delegation-id",
+        "release-2",
         "--expect-revision",
         "8",
     )["status"] == "RELEASE_PASSED"
