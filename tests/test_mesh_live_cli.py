@@ -2106,6 +2106,8 @@ def test_redact_capture_handles_quoted_uri_and_truncated_secrets() -> None:
     assert "postgres://alice:[REDACTED]@db.internal;" in redacted
     assert 'escaped_password="[REDACTED]"' in redacted
     assert "'quoted_token': '[REDACTED]'" in redacted
+    assert module.redact_capture("API_KEY=[REDACTED]\n") == "API_KEY=[REDACTED]"
+    assert module.redact_capture("API_KEY=[REDACTED]suffix\n") == "API_KEY=[REDACTED]"
 
     key_tail = "\n".join(
         [

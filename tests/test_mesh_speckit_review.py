@@ -1644,6 +1644,23 @@ def test_pending_ack_timeout_and_stale_ack_share_terminal_budget(tmp_path, monke
     assert sum(e["type"] == "review_ack_timed_out" for e in state["events"]) == 2
 
 
+def test_ack_accepts_already_redacted_secret_assignment(tmp_path):
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    evidence = feature / "ack.md"
+    evidence.write_text("Checked API_KEY=[REDACTED] without exposing its value.\n")
+    assert review.acknowledge_review(
+        repo,
+        feature,
+        "T001",
+        reviewer_session="codex-project",
+        delegation_id="review-1",
+        evidence_file=evidence,
+        expected_revision=2,
+    )["status"] == "REVIEW_OPEN"
+
+
 def test_expired_ack_cannot_revive_delivery_lease(tmp_path, monkeypatch):
     repo, feature = _feature(tmp_path)
     monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:00:00+00:00")

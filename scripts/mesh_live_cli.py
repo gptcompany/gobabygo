@@ -4550,7 +4550,15 @@ def redact_capture(text: str) -> str:
         r"(?i)([\"']?[A-Z0-9_.-]*(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|"
         r"AUTH[_-]?TOKEN|CLIENT[_-]?SECRET|PRIVATE[_-]?KEY|PASSWORD|PASS|SECRET|TOKEN)"
         r"[A-Z0-9_.-]*[\"']?)"
-        r"(\s*[:=]\s*)(?![\"'])[^\s,}\]]+",
+        r"(\s*[:=]\s*)\[REDACTED\][^\s,}\]]+",
+        r"\1\2[REDACTED]",
+        value,
+    )
+    value = re.sub(
+        r"(?i)([\"']?[A-Z0-9_.-]*(?:API[_-]?(?:KEY|TOKEN)|ACCESS[_-]?TOKEN|"
+        r"AUTH[_-]?TOKEN|CLIENT[_-]?SECRET|PRIVATE[_-]?KEY|PASSWORD|PASS|SECRET|TOKEN)"
+        r"[A-Z0-9_.-]*[\"']?)"
+        r"(\s*[:=]\s*)(?![\"'])(?!\[REDACTED\](?=$|[\s,}\]]))[^\s,}\]]+",
         r"\1\2[REDACTED]",
         value,
     )
