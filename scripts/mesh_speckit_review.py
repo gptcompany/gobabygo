@@ -690,6 +690,9 @@ def acknowledge_review(
         active = record["active_review"]
         if active["reviewer"] != reviewer or active["delegation_id"] != delegation:
             raise ReviewLedgerError("acknowledgement identity does not match active review")
+        _opened_at, deadline_at, _fallback_attempt = _active_review_timing(record)
+        if _timestamp(_now(), "current timestamp") >= _timestamp(deadline_at, "review ACK deadline"):
+            raise ReviewLedgerError("review acknowledgement deadline has elapsed; run timeout")
         evidence = _evidence_record(feature, evidence_file)
         from scripts.mesh_live_cli import redact_capture
 

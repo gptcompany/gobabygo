@@ -1642,3 +1642,26 @@ def test_pending_ack_timeout_and_stale_ack_share_terminal_budget(tmp_path, monke
     assert review.timeout_review(repo, feature, "T001", expected_revision=4)["status"] == "ESCALATED"
     state = review.review_status(repo, feature, "T001")
     assert sum(e["type"] == "review_ack_timed_out" for e in state["events"]) == 2
+
+
+def test_expired_ack_cannot_revive_delivery_lease(tmp_path, monkeypatch):
+    repo, feature = _feature(tmp_path)
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:00:00+00:00")
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    evidence = feature / "ack.md"
+    evidence.write_text("Delivery received and scope accepted.\n")
+    before = (feature / "review-ledger.json").read_bytes()
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:05:00+00:00")
+    with pytest.raises(review.ReviewLedgerError, match="deadline has elapsed"):
+        review.acknowledge_review(
+            repo,
+            feature,
+            "T001",
+            reviewer_session="codex-project",
+            delegation_id="review-1",
+            evidence_file=evidence,
+            expected_revision=2,
+        )
+    assert (feature / "review-ledger.json").read_bytes() == before
+    assert review.timeout_review(repo, feature, "T001", expected_revision=2)["fallback_allowed"]
