@@ -185,6 +185,9 @@ def claude_terminal_outcome(captured: str) -> str:
 def claude_screen_state(captured: str) -> LiveScreenState:
     """Classify Claude from its current composer/status region, not transcript words."""
     body = str(captured or "")
+    # A visible selected WAIT menu is the current rate-limit UI, not history.
+    if claude_wait_option_selected(body):
+        return LiveScreenState.rate_limit
     if claude_session_limit_reset(body, allow_pending_prompt=True):
         return LiveScreenState.session_limit
     if detect_interactive_failure_screen("claude", body):

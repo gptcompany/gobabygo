@@ -84,6 +84,27 @@ def test_classifies_live_cli_states() -> None:
     )
 
 
+def test_selected_claude_wait_menu_takes_precedence_over_session_limit() -> None:
+    screen = """⎿  You've hit your session limit · resets 12am (Asia/Bangkok)
+   /upgrade to increase your usage limit.
+
+/rate-limit-options
+What do you want to do?
+❯ 1. Stop and wait for limit to reset
+  2. Upgrade your plan
+"""
+    unselected = screen.replace("❯ 1. Stop", "  1. Stop").replace(
+        "\n/rate-limit-options", "\n❯ /rate-limit-options"
+    )
+    upgrade_selected = screen.replace("❯ 1. Stop", "  1. Stop").replace(
+        "  2. Upgrade", "❯ 2. Upgrade"
+    )
+
+    assert classify_live_screen("claude", unselected) == LiveScreenState.session_limit
+    assert classify_live_screen("claude", upgrade_selected) == LiveScreenState.session_limit
+    assert classify_live_screen("claude", screen) == LiveScreenState.rate_limit
+
+
 def test_claude_state_ignores_monitor_transcript_before_current_status_bar() -> None:
     idle_with_historical_monitor = """● Monitor event: worker quiet check
   ⎿ Waiting for agents appeared in worker prose
