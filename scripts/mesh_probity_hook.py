@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Sequence
 
 
@@ -21,6 +24,60 @@ CONFIG_NAMES = (
 SUPPORTED_AGENTS = ("codex", "claude-code")
 MAX_PAYLOAD_BYTES = 10 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
+# Leave headroom below Probity's 100 MiB session limit.
+MAX_TRANSCRIPT_BYTES = 80 * 1024 * 1024
+MAX_TRANSCRIPT_TAIL_BYTES = 8 * 1024 * 1024
+
+
+def _open_transcript(path: str) -> int:
+    """Open without following symlinks in any component or blocking on FIFOs."""
+    parts = Path(path).parts
+    if not parts or parts[0] != "/" or ".." in parts:
+        raise ValueError("transcript_path must be an absolute regular non-symlink file")
+    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[1:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    finally:
+        os.close(directory)
+
+
+@contextmanager
+def _forward_payload(raw: bytes, payload: dict[str, Any]):
+    path = payload.get("transcript_path")
+    if path is None:
+        yield raw
+        return
+    if not isinstance(path, str) or not path:
+        raise ValueError("transcript_path must be an absolute regular non-symlink file")
+    with os.fdopen(_open_transcript(path), "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("transcript_path must be a regular non-symlink file")
+        if info.st_size <= MAX_TRANSCRIPT_BYTES:
+            yield raw
+            return
+        # Read one preceding byte to distinguish a line boundary from a partial line.
+        start = max(0, info.st_size - MAX_TRANSCRIPT_TAIL_BYTES)
+        source.seek(max(0, start - 1))
+        tail = source.read(min(info.st_size, MAX_TRANSCRIPT_TAIL_BYTES + 1))
+        if start:
+            tail = tail[tail.find(b"\n") + 1:] if b"\n" in tail else b""
+        tail = tail[:tail.rfind(b"\n") + 1]
+        if not tail:
+            raise ValueError("transcript tail has no complete JSONL records")
+        for line in tail.splitlines():
+            json.loads(line.decode("utf-8"))
+    # Both the directory (0700) and file (0600) are private; cleanup also runs
+    # on write errors, vendor failures, and timeouts.
+    with tempfile.TemporaryDirectory(prefix="mesh-probity-") as directory:
+        with tempfile.NamedTemporaryFile(dir=directory, suffix=".jsonl", delete=False) as target:
+            target.write(tail)
+        forwarded = {**payload, "transcript_path": target.name}
+        yield json.dumps(forwarded, separators=(",", ":")).encode("utf-8")
 
 
 def _allow() -> str:
@@ -154,18 +211,19 @@ def dispatch(raw: bytes, *, agent: str) -> str:
     if not _runtime_matches_expected(executable, expected):
         return _deny(agent, "installed Probity package does not match the pinned version")
     try:
-        proc = subprocess.run(
-            [executable, "--agent", agent, "--config", str(configs[0])],
-            cwd=root,
-            input=raw,
-            check=False,
-            capture_output=True,
-            timeout=120,
-        )
+        with _forward_payload(raw, payload) as forwarded:
+            proc = subprocess.run(
+                [executable, "--agent", agent, "--config", str(configs[0])],
+                cwd=root,
+                input=forwarded,
+                check=False,
+                capture_output=True,
+                timeout=120,
+            )
     except subprocess.TimeoutExpired:
         return _deny(agent, "Probity timed out after 120 seconds")
-    except OSError as exc:
-        return _deny(agent, f"cannot execute Probity: {exc}")
+    except (OSError, ValueError) as exc:
+        return _deny(agent, f"cannot prepare transcript or execute Probity: {exc}")
     if len(proc.stdout) > MAX_RESPONSE_BYTES:
         return _deny(agent, "Probity response exceeds 1 MiB")
     if proc.returncode == 0 and not proc.stdout.strip():
