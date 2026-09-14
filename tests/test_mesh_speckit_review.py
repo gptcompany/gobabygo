@@ -1561,6 +1561,23 @@ def test_ack_starts_review_deadline_at_ack_and_blocks_early_record(tmp_path, mon
     assert review.review_status(repo, feature, "T001")["events"][-1]["type"] == "review_timed_out"
 
 
+def test_existing_open_review_without_ack_remains_manageable(tmp_path, monkeypatch):
+    repo, feature = _feature(tmp_path)
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:00:00+00:00")
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    ledger_path = feature / "review-ledger.json"
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    payload["tasks"]["T001"]["status"] = "REVIEW_OPEN"
+    ledger_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    state = review.review_status(repo, feature, "T001")
+    assert state["review_opened_at"] == "2030-01-01T12:00:00+00:00"
+    assert state["review_deadline_at"] == "2030-01-01T13:00:00+00:00"
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T13:00:00+00:00")
+    assert review.timeout_review(repo, feature, "T001", expected_revision=2)["fallback_allowed"]
+
+
 @pytest.mark.parametrize("failure", ["reviewer", "delegation", "revision", "outside", "symlink", "parent-symlink", "directory", "missing", "secret", "binary"])
 def test_ack_failure_preserves_ledger_bytes(tmp_path, failure):
     repo, feature = _feature(tmp_path)

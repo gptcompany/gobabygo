@@ -137,12 +137,12 @@ def _active_review_timing(record: dict[str, Any]) -> tuple[str, str, int]:
     if not isinstance(active, dict):
         raise ReviewLedgerError("review state is missing active review metadata")
     pending = record["status"] == "REVIEW_PENDING_ACK"
-    event_type = "review_opened" if pending else "review_acknowledged"
+    event_types = ("review_opened",) if pending else ("review_acknowledged", "review_opened")
     opened = next(
         (
             event
             for event in reversed(record["events"])
-            if event["type"] == event_type
+            if event["type"] in event_types
             and all(event["data"].get(key) == value for key, value in active.items())
         ),
         None,
