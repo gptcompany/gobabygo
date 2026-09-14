@@ -2588,6 +2588,9 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "Revision mismatch is a concurrency result" in prompt
     assert "speckit review record --evidence-file <report>" in prompt
     assert "One timeout permits one fallback on a different reviewer session" in prompt
+    assert "speckit review abandon" in prompt
+    assert "AUTH_SESSION_INVALID" in prompt
+    assert "Never infer abandonment from pane prose or capture output" in prompt
     assert "Never send a planned correction unless the transaction returns `CORRECTION_OPEN`" in prompt
     assert "exit 0 with `RELEASE_PASSED`" in prompt
     assert (
