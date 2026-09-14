@@ -5,6 +5,9 @@ review_convergence:
   verdicts: [PASS, CHANGES_REQUIRED]
   max_correction_rounds: 2
   round_tracking: durable_per_frozen_task_scope
+  reviewer_ack:
+    minutes: 5
+    timeout_consumes_fallback: true
   reviewer_timeout:
     minutes: 60
     max_fallbacks: 1

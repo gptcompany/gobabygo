@@ -561,11 +561,22 @@ mesh speckit review open <repo> <feature-dir> T001 \
   --reviewer-session codex-repo --delegation-id <id> \
   --expect-revision <revision>
 
+mesh speckit review ack <repo> <feature-dir> T001 \
+  --reviewer-session codex-repo --delegation-id <id> \
+  --evidence-file <feature-dir>/review-ack-T001.md \
+  --expect-revision <revision>
+
 mesh speckit review record <repo> <feature-dir> T001 \
   --verdict PASS --evidence-file <feature-dir>/review-T001.md \
   --reviewer-session codex-repo --delegation-id <id> \
   --mutations-run 1 --expect-revision <revision>
 ```
+
+`open` first creates `REVIEW_PENDING_ACK` with a five-minute delivery lease.
+The reviewer must `ack` with the exact active session/delegation identity and a
+redacted, non-symlink feature-local report before `record` is accepted. The
+normal review deadline starts only from this acknowledgement. An expired ACK
+lease consumes the same single fallback budget as a review timeout.
 
 `record` hashes a real non-symlink report inside the feature. It does not parse
 review prose. Its reviewer session and delegation ID must exactly match the

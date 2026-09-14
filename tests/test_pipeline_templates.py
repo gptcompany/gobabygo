@@ -133,3 +133,19 @@ def test_meshctl_supports_direct_script_execution_from_external_directory(
 
     assert proc.returncode == 0, proc.stderr
     assert "pipeline" in proc.stdout
+
+
+@pytest.mark.parametrize("ack", [None, {}, [], {"minutes": 5},
+    {"minutes": True, "timeout_consumes_fallback": True},
+    {"minutes": 5.0, "timeout_consumes_fallback": True},
+    {"minutes": "5", "timeout_consumes_fallback": True},
+    {"minutes": 6, "timeout_consumes_fallback": True},
+    {"minutes": 5, "timeout_consumes_fallback": False},
+    {"minutes": 5, "timeout_consumes_fallback": 1},
+    {"minutes": 5, "timeout_consumes_fallback": True, "extra": 1},
+])
+def test_reviewer_ack_policy_is_strict(ack):
+    loaded = load_pipeline_templates(default_pipeline_template_file())
+    loaded["review_convergence"]["reviewer_ack"] = ack
+    with pytest.raises(ValueError, match="reviewer_ack"):
+        normalized_review_convergence(loaded)

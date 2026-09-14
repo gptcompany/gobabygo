@@ -204,6 +204,17 @@ def _open(
     )
 
 
+def _ack(repo: Path, feature: Path, revision: int) -> dict:
+    active = review.review_status(repo, feature, "T001")["active_review"]
+    evidence = feature / "ack.md"
+    evidence.write_text("Reviewer accepted the immutable review scope.\n")
+    return review.acknowledge_review(
+        repo, feature, "T001", reviewer_session=active["reviewer"],
+        delegation_id=active["delegation_id"], evidence_file=evidence,
+        expected_revision=revision,
+    )
+
+
 def _record(
     repo: Path,
     feature: Path,
@@ -223,7 +234,7 @@ def _record(
         verdict=verdict,
         evidence_file=evidence,
         reviewer_session="codex-project",
-        delegation_id=f"review-{revision - 1}",
+        delegation_id=review.review_status(repo, feature, "T001")["active_review"]["delegation_id"],
         blocking_high=high,
         blocking_medium=medium,
         invalidates_safety=safety,
@@ -242,19 +253,20 @@ def test_release_pass_is_terminal_and_durable(tmp_path: Path, local: bool) -> No
         assert _init(repo, feature)["revision"] == 1
     assert _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)["revision"] == 2
 
-    result = _record(repo, feature, 2, "PASS")
+    _ack(repo, feature, 2)
+    result = _record(repo, feature, 3, "PASS")
 
     assert result["status"] == "RELEASE_PASSED"
     state = review.review_status(repo, feature, "T001")
-    assert state["revision"] == 3
+    assert state["revision"] == 4
     assert state["status"] == "RELEASE_PASSED"
     assert state["correction_round"] == 0
     evidence = state["events"][-1]["data"]["evidence"]
-    assert evidence["path"] == "review-2.md"
+    assert evidence["path"] == "review-3.md"
     assert len(evidence["sha256"]) == 64
     assert (feature / "review-ledger.json").is_file()
     assert review.review_check(repo, feature, "T001", scope=SCOPE_A)["release_passed"] is True
-    review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)
+    review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=4)
     assert review.review_status(repo, feature, "T001")["completed"] is True
 
 
@@ -330,8 +342,9 @@ def test_dispatch_is_reserved_before_delivery_and_never_replayed(tmp_path: Path,
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
-    review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=3)
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
+    review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=4)
     calls = []
 
     def deliver(message, delegation):
@@ -340,24 +353,24 @@ def test_dispatch_is_reserved_before_delivery_and_never_replayed(tmp_path: Path,
         with pytest.raises(review.ReviewLedgerError, match="transaction is active"):
             review.open_review(repo, feature, "T001", level="DELTA", scope=DELTA_1,
                                reviewer_session="codex-project", delegation_id="review-new",
-                               invariant="", expected_revision=5)
+                               invariant="", expected_revision=6)
         calls.append((message, delegation))
         raise TimeoutError("response lost after delivery")
 
     monkeypatch.setattr(review, "_prepare_local_delivery", lambda *_: (
         {"owner": "test", "name": "agy-project", "pane_id": "%9", "pane_pid": 42}, deliver))
     args = dict(delegation_id="fix-1", message="fix-1 example/project:review-ledger-001:T001 fix it",
-                worker_repo=repo, expected_revision=4)
+                worker_repo=repo, expected_revision=5)
     result = review.dispatch_correction(repo, feature, "T001", **args)
     assert result["submission"] == "unknown"
     assert result["delivery_error"] == "response lost after delivery"
-    assert result["revision"] == 6
+    assert result["revision"] == 7
     with pytest.raises(review.ReviewLedgerError, match="already attempted"):
-        review.dispatch_correction(repo, feature, "T001", **{**args, "expected_revision": 6})
+        review.dispatch_correction(repo, feature, "T001", **{**args, "expected_revision": 7})
     assert len(calls) == 1
     with pytest.raises(review.ReviewLedgerError, match="delegation"):
         review.dispatch_correction(repo, feature, "T001", **{
-            **args, "delegation_id": "other", "expected_revision": 6})
+            **args, "delegation_id": "other", "expected_revision": 7})
 
 
 def test_completion_requires_exact_release_and_intact_evidence(tmp_path: Path) -> None:
@@ -368,20 +381,21 @@ def test_completion_requires_exact_release_and_intact_evidence(tmp_path: Path) -
         review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=1)
     assert (feature / "tasks.md").read_bytes() == before
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "PASS")
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "PASS")
     with pytest.raises(review.ReviewLedgerError, match="scope"):
-        review.complete_task(repo, feature, "T001", scope=SCOPE_B, expected_revision=3)
-    evidence = feature / "review-2.md"
+        review.complete_task(repo, feature, "T001", scope=SCOPE_B, expected_revision=4)
+    evidence = feature / "review-3.md"
     content = evidence.read_text()
     evidence.write_text("tampered report")
     with pytest.raises(review.ReviewLedgerError, match="evidence"):
-        review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)
+        review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=4)
     evidence.write_text(content)
-    result = review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)
+    result = review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=4)
     assert result["completed"] is True
     assert (feature / "tasks.md").read_text().startswith("- [x] T001")
     assert "- [ ] T002" in (feature / "tasks.md").read_text()
-    assert review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=3)["completed"] is True
+    assert review.complete_task(repo, feature, "T001", scope=SCOPE_A, expected_revision=4)["completed"] is True
     assert review.review_status(repo, feature, "T001")["completed"] is True
 
 
@@ -390,8 +404,9 @@ def test_dispatch_failure_boundaries(tmp_path: Path, monkeypatch, failure: str) 
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
-    review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=3)
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
+    review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=4)
     calls = []
 
     def deliver(*_):
@@ -405,7 +420,7 @@ def test_dispatch_failure_boundaries(tmp_path: Path, monkeypatch, failure: str) 
     monkeypatch.setattr(review, "_prepare_local_delivery", lambda *_: (
         {"owner": "test", "name": "agy-project", "pane_id": "%9", "pane_pid": 42}, deliver))
     args = dict(delegation_id="fix-1", message="fix-1 example/project:review-ledger-001:T001 fix it",
-                worker_repo=repo, expected_revision=4)
+                worker_repo=repo, expected_revision=5)
     if failure == "persist":
         def fail(*_):
             raise OSError("disk full")
@@ -413,7 +428,7 @@ def test_dispatch_failure_boundaries(tmp_path: Path, monkeypatch, failure: str) 
         with pytest.raises(OSError):
             review.dispatch_correction(repo, feature, "T001", **args)
         assert calls == []
-        assert review.review_status(repo, feature, "T001")["revision"] == 4
+        assert review.review_status(repo, feature, "T001")["revision"] == 5
     else:
         if failure == "crash":
             with pytest.raises(SystemExit):
@@ -435,35 +450,39 @@ def test_pass_rejects_blocking_findings_without_mutation(tmp_path: Path) -> None
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
 
+    _ack(repo, feature, 2)
     with pytest.raises(review.ReviewLedgerError, match="PASS is forbidden"):
-        _record(repo, feature, 2, "PASS", high=1)
+        _record(repo, feature, 3, "PASS", high=1)
 
-    assert review.review_status(repo, feature, "T001")["revision"] == 2
+    assert review.review_status(repo, feature, "T001")["revision"] == 3
 
 
 def test_two_corrections_then_escalation_and_no_third_round(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    assert _record(repo, feature, 2, "CHANGES_REQUIRED", high=1)["status"] == "CHANGES_REQUIRED"
+    _ack(repo, feature, 2)
+    assert _record(repo, feature, 3, "CHANGES_REQUIRED", high=1)["status"] == "CHANGES_REQUIRED"
 
     first = review.open_correction(
-        repo, feature, "T001", delegation_id="fix-1", expected_revision=3
+        repo, feature, "T001", delegation_id="fix-1", expected_revision=4
     )
     assert first["round"] == 1
-    _open(repo, feature, 4, level="DELTA", scope=DELTA_1)
-    _record(repo, feature, 5, "CHANGES_REQUIRED", medium=1)
+    _open(repo, feature, 5, level="DELTA", scope=DELTA_1)
+    _ack(repo, feature, 6)
+    _record(repo, feature, 7, "CHANGES_REQUIRED", medium=1)
     second = review.open_correction(
-        repo, feature, "T001", delegation_id="fix-2", expected_revision=6
+        repo, feature, "T001", delegation_id="fix-2", expected_revision=8
     )
     assert second["round"] == 2
-    _open(repo, feature, 7, level="DELTA", scope=DELTA_2)
-    exhausted = _record(repo, feature, 8, "CHANGES_REQUIRED", safety=True)
+    _open(repo, feature, 9, level="DELTA", scope=DELTA_2)
+    _ack(repo, feature, 10)
+    exhausted = _record(repo, feature, 11, "CHANGES_REQUIRED", safety=True)
     assert exhausted["status"] == "REVIEW_BUDGET_EXHAUSTED"
 
     with pytest.raises(review.ReviewLedgerError, match="cannot open correction"):
         review.open_correction(
-            repo, feature, "T001", delegation_id="fix-3", expected_revision=9
+            repo, feature, "T001", delegation_id="fix-3", expected_revision=12
         )
     with pytest.raises(review.ReviewLedgerError, match="BACKLOG is forbidden"):
         review.decide_exhausted(
@@ -472,7 +491,7 @@ def test_two_corrections_then_escalation_and_no_third_round(tmp_path: Path) -> N
             "T001",
             decision="BACKLOG",
             reason="defer it",
-            expected_revision=9,
+            expected_revision=12,
         )
     result = review.decide_exhausted(
         repo,
@@ -480,7 +499,7 @@ def test_two_corrections_then_escalation_and_no_third_round(tmp_path: Path) -> N
         "T001",
         decision="ESCALATE",
         reason="money safety remains unresolved",
-        expected_revision=9,
+        expected_revision=12,
     )
     assert result["status"] == "ESCALATED"
 
@@ -489,23 +508,26 @@ def test_delta_pass_requires_new_candidate_before_release(tmp_path: Path) -> Non
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
     review.open_correction(
-        repo, feature, "T001", delegation_id="fix-1", expected_revision=3
+        repo, feature, "T001", delegation_id="fix-1", expected_revision=4
     )
-    _open(repo, feature, 4, level="DELTA", scope=DELTA_1)
-    accepted = _record(repo, feature, 5, "PASS")
+    _open(repo, feature, 5, level="DELTA", scope=DELTA_1)
+    _ack(repo, feature, 6)
+    accepted = _record(repo, feature, 7, "PASS")
     assert accepted["status"] == "CANDIDATE_UPDATE_REQUIRED"
 
     with pytest.raises(review.ReviewLedgerError, match="cannot open review"):
-        _open(repo, feature, 6, level="RELEASE", scope=SCOPE_A)
+        _open(repo, feature, 8, level="RELEASE", scope=SCOPE_A)
     with pytest.raises(review.ReviewLedgerError, match="must differ"):
         review.update_candidate(
-            repo, feature, "T001", scope=SCOPE_A, expected_revision=6
+            repo, feature, "T001", scope=SCOPE_A, expected_revision=8
         )
-    review.update_candidate(repo, feature, "T001", scope=SCOPE_B, expected_revision=6)
-    _open(repo, feature, 7, level="RELEASE", scope=SCOPE_B)
-    assert _record(repo, feature, 8, "PASS")["status"] == "RELEASE_PASSED"
+    review.update_candidate(repo, feature, "T001", scope=SCOPE_B, expected_revision=8)
+    _open(repo, feature, 9, level="RELEASE", scope=SCOPE_B)
+    _ack(repo, feature, 10)
+    assert _record(repo, feature, 11, "PASS")["status"] == "RELEASE_PASSED"
 
 
 def test_invariant_and_reviewer_identity_are_enforced(tmp_path: Path) -> None:
@@ -553,7 +575,7 @@ def test_review_timeout_allows_one_different_fallback_then_escalates(
     assert opened["fallback_attempt"] == 0
     assert opened["deadline_at"] > opened["opened_at"]
     status = review.review_status(repo, feature, "T001")
-    assert status["review_deadline_at"] == opened["deadline_at"]
+    assert status["review_ack_deadline_at"] == opened["deadline_at"]
 
     with pytest.raises(review.ReviewLedgerError, match="deadline has not elapsed"):
         review.timeout_review(repo, feature, "T001", expected_revision=2)
@@ -596,9 +618,10 @@ def test_abandon_shares_timeout_budget(monkeypatch, tmp_path, first, second, lev
     scope = SCOPE_A
     if level == "DELTA":
         _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-        _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
-        review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=3)
-        revision, scope = 4, DELTA_1
+        _ack(repo, feature, 2)
+        _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
+        review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=4)
+        revision, scope = 5, DELTA_1
     opened = _open(repo, feature, revision, level=level, scope=scope)
     report = feature / "abandon.md"
     payload = "Redacted diagnostic: reviewer unavailable; credentials [REDACTED]."
@@ -672,8 +695,9 @@ def test_abandon_fails_without_mutation(tmp_path, failure):
     elif failure == "directory":
         evidence = feature
     elif failure == "status":
-        _record(repo, feature, 2, "PASS")
-        revision = 3
+        _ack(repo, feature, 2)
+        _record(repo, feature, 3, "PASS")
+        revision = 4
     elif failure == "active":
         path = feature / "review-ledger.json"
         ledger = json.loads(path.read_text())
@@ -724,8 +748,8 @@ def test_stale_reviewer_cannot_record_against_fallback_lease(tmp_path: Path) -> 
     report = feature / "late-original-report.md"
     report.write_text("Late report from the invalidated reviewer.\n")
     ledger = feature / "review-ledger.json"
+    _ack(repo, feature, 4)
     before = ledger.read_bytes()
-
     with pytest.raises(review.ReviewLedgerError, match="reviewer session does not match"):
         review.record_review(
             repo,
@@ -739,7 +763,7 @@ def test_stale_reviewer_cannot_record_against_fallback_lease(tmp_path: Path) -> 
             blocking_medium=0,
             invalidates_safety=False,
             mutations_run=1,
-            expected_revision=4,
+            expected_revision=5,
         )
     assert ledger.read_bytes() == before
 
@@ -755,7 +779,7 @@ def test_stale_reviewer_cannot_record_against_fallback_lease(tmp_path: Path) -> 
         blocking_medium=0,
         invalidates_safety=False,
         mutations_run=1,
-        expected_revision=4,
+        expected_revision=5,
     )
     assert result["status"] == "RELEASE_PASSED"
 
@@ -784,14 +808,15 @@ def test_delta_timeout_preserves_open_correction(
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
     review.open_correction(
-        repo, feature, "T001", delegation_id="fix-1", expected_revision=3
+        repo, feature, "T001", delegation_id="fix-1", expected_revision=4
     )
-    _open(repo, feature, 4, level="DELTA", scope=DELTA_1)
+    _open(repo, feature, 5, level="DELTA", scope=DELTA_1)
 
     monkeypatch.setattr(review, "_now", lambda: "2100-01-01T00:00:00+00:00")
-    timed_out = review.timeout_review(repo, feature, "T001", expected_revision=5)
+    timed_out = review.timeout_review(repo, feature, "T001", expected_revision=6)
 
     assert timed_out["status"] == "CORRECTION_OPEN"
     assert timed_out["fallback_allowed"] is True
@@ -870,6 +895,7 @@ def test_mutation_budget_requires_explicit_reasoned_expansion(tmp_path: Path) ->
     assert expanded["mutation_budget"] == 2
     _open(repo, feature, 2, level="RELEASE", scope=SCOPE_A)
     (feature / "budget-review.md").write_text("bounded review\n", encoding="utf-8")
+    _ack(repo, feature, 3)
     result = review.record_review(
         repo,
         feature,
@@ -882,7 +908,7 @@ def test_mutation_budget_requires_explicit_reasoned_expansion(tmp_path: Path) ->
         blocking_medium=0,
         invalidates_safety=False,
         mutations_run=2,
-        expected_revision=3,
+        expected_revision=4,
     )
     assert result["status"] == "RELEASE_PASSED"
 
@@ -891,21 +917,23 @@ def test_duplicate_review_and_mutation_overflow_preserve_revision(tmp_path: Path
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="INVARIANT", scope=SCOPE_A, invariant="at most two corrections")
-    _record(repo, feature, 2, "PASS")
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "PASS")
 
     with pytest.raises(review.ReviewLedgerError, match="already recorded"):
         _open(
             repo,
             feature,
-            3,
+            4,
             level="INVARIANT",
             scope=SCOPE_A,
             invariant="at most two corrections",
         )
-    assert review.review_status(repo, feature, "T001")["revision"] == 3
+    assert review.review_status(repo, feature, "T001")["revision"] == 4
 
-    _open(repo, feature, 3, level="RELEASE", scope=SCOPE_A)
+    _open(repo, feature, 4, level="RELEASE", scope=SCOPE_A)
     (feature / "overflow-review.md").write_text("review\n", encoding="utf-8")
+    _ack(repo, feature, 5)
     with pytest.raises(review.ReviewLedgerError, match="exceed frozen budget"):
         review.record_review(
             repo,
@@ -914,45 +942,48 @@ def test_duplicate_review_and_mutation_overflow_preserve_revision(tmp_path: Path
             verdict="PASS",
             evidence_file=feature / "overflow-review.md",
             reviewer_session="codex-project",
-            delegation_id="review-3",
+            delegation_id="review-4",
             blocking_high=0,
             blocking_medium=0,
             invalidates_safety=False,
             mutations_run=2,
-            expected_revision=4,
+            expected_revision=6,
         )
-    assert review.review_status(repo, feature, "T001")["revision"] == 4
+    assert review.review_status(repo, feature, "T001")["revision"] == 6
 
 
 def test_replan_starts_new_cycle_without_losing_event_history(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
     review.open_correction(
-        repo, feature, "T001", delegation_id="fix-1", expected_revision=3
+        repo, feature, "T001", delegation_id="fix-1", expected_revision=4
     )
-    _open(repo, feature, 4, level="DELTA", scope=DELTA_1)
-    _record(repo, feature, 5, "CHANGES_REQUIRED", medium=1)
+    _open(repo, feature, 5, level="DELTA", scope=DELTA_1)
+    _ack(repo, feature, 6)
+    _record(repo, feature, 7, "CHANGES_REQUIRED", medium=1)
     review.open_correction(
-        repo, feature, "T001", delegation_id="fix-2", expected_revision=6
+        repo, feature, "T001", delegation_id="fix-2", expected_revision=8
     )
-    _open(repo, feature, 7, level="DELTA", scope=DELTA_2)
-    _record(repo, feature, 8, "CHANGES_REQUIRED", medium=1)
+    _open(repo, feature, 9, level="DELTA", scope=DELTA_2)
+    _ack(repo, feature, 10)
+    _record(repo, feature, 11, "CHANGES_REQUIRED", medium=1)
     review.decide_exhausted(
         repo,
         feature,
         "T001",
         decision="REPLAN",
         reason="task boundary is wrong",
-        expected_revision=9,
+        expected_revision=12,
     )
     before = review.review_status(repo, feature, "T001")
 
     plan = feature / "replan.json"
     plan.write_text(json.dumps({
         "task_key": before["task_key"], "previous_cycle": 1,
-        "failure_evidence": "review-8.md: blocking medium remains",
+        "failure_evidence": "review-11.md: blocking medium remains",
         "approach_change": "Replace static inference with runtime observation",
         "acceptance_criteria": "Same-run evidence required",
         "finding_disposition": "Carry the blocking medium into cycle 2",
@@ -966,7 +997,7 @@ def test_replan_starts_new_cycle_without_losing_event_history(tmp_path: Path) ->
         writer_session="agy-project",
         invariants=["new bounded invariant"],
         mutation_budget=1,
-        expected_revision=10,
+        expected_revision=13,
         replan_file=plan,
     )
 
@@ -983,12 +1014,13 @@ def test_replan_requires_bound_evidence_without_mutating_on_failure(tmp_path: Pa
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
     review.decide_exhausted(repo, feature, "T001", decision="REPLAN",
-                          reason="runtime observation needed", expected_revision=3)
+                          reason="runtime observation needed", expected_revision=4)
     before = (feature / "review-ledger.json").read_bytes()
     kwargs = dict(scope=SCOPE_A, writer_session="agy-project", invariants=[],
-                  mutation_budget=1, expected_revision=4)
+                  mutation_budget=1, expected_revision=5)
     with pytest.raises(review.ReviewLedgerError, match="replan artifact"):
         review.initialize_task(repo, feature, "T001", **kwargs)
     assert (feature / "review-ledger.json").read_bytes() == before
@@ -1017,7 +1049,7 @@ def test_replan_requires_bound_evidence_without_mutating_on_failure(tmp_path: Pa
         [str(MESH), "speckit", "review", "init", str(repo), str(feature), "T001",
          "--scope", SCOPE_A, "--writer-session", "agy-project",
          "--invariant", "runtime evidence",
-         "--replan-file", "replan.json", "--expect-revision", "4", "--json"],
+         "--replan-file", "replan.json", "--expect-revision", "5", "--json"],
         env={**os.environ, "MESH_SPECKIT_PYTHON": sys.executable},
         capture_output=True, text=True, check=False,
     )
@@ -1028,20 +1060,22 @@ def test_replan_requires_bound_evidence_without_mutating_on_failure(tmp_path: Pa
     assert state["events"][-1]["data"]["replan"]["plan"] == payload
     with pytest.raises(review.ReviewLedgerError, match="revision mismatch"):
         review.initialize_task(repo, feature, "T001", replan_file=plan, **kwargs)
-    _open(repo, feature, 5, level="INVARIANT", scope=SCOPE_A, invariant="runtime evidence")
-    _record(repo, feature, 6, "CHANGES_REQUIRED", medium=1)
+    _open(repo, feature, 6, level="INVARIANT", scope=SCOPE_A, invariant="runtime evidence")
+    _ack(repo, feature, 7)
+    _record(repo, feature, 8, "CHANGES_REQUIRED", medium=1)
     review.decide_exhausted(repo, feature, "T001", decision="REPLAN",
-                          reason="new evidence requires another decision", expected_revision=7)
+                          reason="new evidence requires another decision", expected_revision=9)
     with pytest.raises(review.ReviewLedgerError, match="previous cycle"):
         review.initialize_task(repo, feature, "T001", replan_file=plan,
-                               **{**kwargs, "expected_revision": 8})
+                               **{**kwargs, "expected_revision": 10})
 
 
 def test_replan_can_stop_after_initial_failed_review(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "CHANGES_REQUIRED", medium=1)
 
     result = review.decide_exhausted(
         repo,
@@ -1049,7 +1083,7 @@ def test_replan_can_stop_after_initial_failed_review(tmp_path: Path) -> None:
         "T001",
         decision="REPLAN",
         reason="the task boundary invalidates the acceptance model",
-        expected_revision=3,
+        expected_revision=4,
     )
 
     assert result["status"] == "REPLAN_REQUIRED"
@@ -1169,6 +1203,12 @@ def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path, l
         ],
         ["status", str(repo), str(feature), "T001", "--json"],
     ]
+    commands[2][commands[2].index("--expect-revision") + 1] = "3"
+    commands.insert(2, ["ack", str(repo), str(feature), "T001",
+                        "--reviewer-session", "codex-project",
+                        "--delegation-id", "review-release-1",
+                        "--evidence-file", "ack.md", "--expect-revision", "2", "--json"])
+    (feature / "ack.md").write_text("Reviewer accepted the scope.\n")
     if local:
         commands[0].append("--local")
     outputs: list[dict] = []
@@ -1185,7 +1225,7 @@ def test_mesh_cli_executes_release_pass_transaction_end_to_end(tmp_path: Path, l
         assert proc.returncode == 0, proc.stderr
         outputs.append(json.loads(proc.stdout))
 
-    assert [item["revision"] for item in outputs] == [1, 2, 3, 3]
+    assert [item["revision"] for item in outputs] == [1, 2, 3, 4, 4]
     assert outputs[-1]["status"] == "RELEASE_PASSED"
     assert outputs[-1]["events"][-1]["data"]["evidence"]["path"] == (
         "release-review.md"
@@ -1241,12 +1281,13 @@ def test_check_rejects_stale_candidate_scope(tmp_path: Path) -> None:
     repo, feature = _feature(tmp_path)
     _init(repo, feature)
     _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
-    _record(repo, feature, 2, "PASS")
+    _ack(repo, feature, 2)
+    _record(repo, feature, 3, "PASS")
 
     with pytest.raises(review.ReviewLedgerError, match="scope mismatch"):
         review.review_check(repo, feature, "T001", scope=SCOPE_B)
 
-    assert review.review_status(repo, feature, "T001")["revision"] == 3
+    assert review.review_status(repo, feature, "T001")["revision"] == 4
 
 
 def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
@@ -1257,6 +1298,8 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
     delta_report.write_text("Correction verified.\n", encoding="utf-8")
     release_report = feature / "release-pass.md"
     release_report.write_text("Release scope verified.\n", encoding="utf-8")
+    ack_report = feature / "ack.md"
+    ack_report.write_text("Reviewer accepted the immutable review scope.\n", encoding="utf-8")
     env = {**os.environ, "MESH_SPECKIT_PYTHON": sys.executable}
 
     def run(*arguments: str, expected: int = 0) -> dict:
@@ -1300,6 +1343,13 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--expect-revision",
         "1",
     )
+    run(
+        "ack", *common,
+        "--reviewer-session", "codex-project",
+        "--delegation-id", "release-1",
+        "--evidence-file", str(ack_report),
+        "--expect-revision", "2",
+    )
     assert run(
         "record",
         *common,
@@ -1314,7 +1364,7 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--blocking-medium",
         "1",
         "--expect-revision",
-        "2",
+        "3",
     )["status"] == "CHANGES_REQUIRED"
     assert run(
         "correction",
@@ -1322,7 +1372,7 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--delegation-id",
         "fix-1",
         "--expect-revision",
-        "3",
+        "4",
     )["round"] == 1
     run(
         "open",
@@ -1336,7 +1386,14 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--delegation-id",
         "delta-1",
         "--expect-revision",
-        "4",
+        "5",
+    )
+    run(
+        "ack", *common,
+        "--reviewer-session", "codex-project",
+        "--delegation-id", "delta-1",
+        "--evidence-file", str(ack_report),
+        "--expect-revision", "6",
     )
     assert run(
         "record",
@@ -1350,7 +1407,7 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--delegation-id",
         "delta-1",
         "--expect-revision",
-        "5",
+        "7",
     )["status"] == "CANDIDATE_UPDATE_REQUIRED"
     assert run(
         "candidate",
@@ -1358,7 +1415,7 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--scope",
         SCOPE_B,
         "--expect-revision",
-        "6",
+        "8",
     )["status"] == "READY_FOR_REVIEW"
     run(
         "open",
@@ -1372,7 +1429,14 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--delegation-id",
         "release-2",
         "--expect-revision",
-        "7",
+        "9",
+    )
+    run(
+        "ack", *common,
+        "--reviewer-session", "codex-project",
+        "--delegation-id", "release-2",
+        "--evidence-file", str(ack_report),
+        "--expect-revision", "10",
     )
     assert run(
         "record",
@@ -1386,11 +1450,11 @@ def test_mesh_cli_executes_correction_cycle_end_to_end(tmp_path: Path) -> None:
         "--delegation-id",
         "release-2",
         "--expect-revision",
-        "8",
+        "11",
     )["status"] == "RELEASE_PASSED"
     checked = run("check", *common, "--scope", SCOPE_B)
     assert checked["release_passed"] is True
-    assert checked["revision"] == 9
+    assert checked["revision"] == 12
 
 
 def test_mesh_cli_executes_bounded_reviewer_timeout_end_to_end(tmp_path: Path) -> None:
@@ -1465,3 +1529,99 @@ def test_mesh_cli_executes_bounded_reviewer_timeout_end_to_end(tmp_path: Path) -
     assert second["status"] == "ESCALATED"
     assert second["fallback_allowed"] is False
     assert run("status", *common)["revision"] == 5
+
+
+def test_ack_starts_review_deadline_at_ack_and_blocks_early_record(tmp_path, monkeypatch):
+    repo, feature = _feature(tmp_path)
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:00:00+00:00")
+    _init(repo, feature)
+    opened = _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    assert opened["status"] == "REVIEW_PENDING_ACK"
+    state = review.review_status(repo, feature, "T001")
+    assert state["review_ack_opened_at"] == "2030-01-01T12:00:00+00:00"
+    assert state["review_ack_deadline_at"] == "2030-01-01T12:05:00+00:00"
+    assert "review_deadline_at" not in state
+    before = (feature / "review-ledger.json").read_bytes()
+    with pytest.raises(review.ReviewLedgerError, match="REVIEW_PENDING_ACK"):
+        _record(repo, feature, 2, "PASS")
+    assert (feature / "review-ledger.json").read_bytes() == before
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:04:00+00:00")
+    ack = _ack(repo, feature, 2)
+    assert ack["status"] == "REVIEW_OPEN"
+    state = review.review_status(repo, feature, "T001")
+    assert state["review_opened_at"] == "2030-01-01T12:04:00+00:00"
+    assert state["review_deadline_at"] == "2030-01-01T13:04:00+00:00"
+    assert "review_ack_deadline_at" not in state
+    assert [e["type"] for e in state["events"]][-2:] == ["review_opened", "review_acknowledged"]
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T13:00:00+00:00")
+    with pytest.raises(review.ReviewLedgerError, match="deadline has not elapsed"):
+        review.timeout_review(repo, feature, "T001", expected_revision=3)
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T13:04:00+00:00")
+    review.timeout_review(repo, feature, "T001", expected_revision=3)
+    assert review.review_status(repo, feature, "T001")["events"][-1]["type"] == "review_timed_out"
+
+
+@pytest.mark.parametrize("failure", ["reviewer", "delegation", "revision", "outside", "symlink", "parent-symlink", "directory", "missing", "secret", "binary"])
+def test_ack_failure_preserves_ledger_bytes(tmp_path, failure):
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    evidence = feature / "ack.md"
+    evidence.write_text("Reviewer accepted the scope.\n")
+    kwargs = dict(reviewer_session="codex-project", delegation_id="review-1",
+                  evidence_file=evidence, expected_revision=2)
+    if failure == "reviewer":
+        kwargs["reviewer_session"] = "different"
+    elif failure == "delegation":
+        kwargs["delegation_id"] = "different"
+    elif failure == "revision":
+        kwargs["expected_revision"] = 1
+    elif failure == "outside":
+        kwargs["evidence_file"] = repo / "outside.md"
+        kwargs["evidence_file"].write_text("Accepted")
+    elif failure == "symlink":
+        link = feature / "link.md"
+        link.symlink_to(evidence)
+        kwargs["evidence_file"] = link
+    elif failure == "parent-symlink":
+        link = feature / "linked"
+        link.symlink_to(feature, target_is_directory=True)
+        kwargs["evidence_file"] = link / "ack.md"
+    elif failure == "directory":
+        kwargs["evidence_file"] = feature
+    elif failure == "missing":
+        evidence.unlink()
+    elif failure == "secret":
+        evidence.write_text("API_KEY=do-not-persist-this\n")
+    elif failure == "binary":
+        evidence.write_bytes(b"\xff")
+    before = (feature / "review-ledger.json").read_bytes()
+    with pytest.raises(review.ReviewLedgerError):
+        review.acknowledge_review(repo, feature, "T001", **kwargs)
+    assert (feature / "review-ledger.json").read_bytes() == before
+
+
+def test_pending_ack_timeout_and_stale_ack_share_terminal_budget(tmp_path, monkeypatch):
+    repo, feature = _feature(tmp_path)
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:00:00+00:00")
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:04:59+00:00")
+    with pytest.raises(review.ReviewLedgerError, match="deadline has not elapsed"):
+        review.timeout_review(repo, feature, "T001", expected_revision=2)
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:05:00+00:00")
+    assert review.timeout_review(repo, feature, "T001", expected_revision=2)["fallback_allowed"]
+    review.open_review(repo, feature, "T001", level="RELEASE", scope=SCOPE_A,
+                       reviewer_session="fallback", delegation_id="fallback-id",
+                       invariant="", expected_revision=3)
+    report = feature / "ack.md"
+    report.write_text("Accepted")
+    before = (feature / "review-ledger.json").read_bytes()
+    with pytest.raises(review.ReviewLedgerError, match="identity"):
+        review.acknowledge_review(repo, feature, "T001", reviewer_session="codex-project",
+                                  delegation_id="review-1", evidence_file=report, expected_revision=4)
+    assert (feature / "review-ledger.json").read_bytes() == before
+    monkeypatch.setattr(review, "_now", lambda: "2030-01-01T12:10:00+00:00")
+    assert review.timeout_review(repo, feature, "T001", expected_revision=4)["status"] == "ESCALATED"
+    state = review.review_status(repo, feature, "T001")
+    assert sum(e["type"] == "review_ack_timed_out" for e in state["events"]) == 2

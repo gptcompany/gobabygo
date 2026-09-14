@@ -2587,7 +2587,10 @@ def test_coordinator_system_prompt_loads_canonical_speckit_policy() -> None:
     assert "speckit review status <repo-root> <feature-dir> <Tnnn> --json" in prompt
     assert "Revision mismatch is a concurrency result" in prompt
     assert "speckit review record --evidence-file <report>" in prompt
-    assert "One timeout permits one fallback on a different reviewer session" in prompt
+    assert "speckit review ack" in prompt
+    assert "REVIEW_PENDING_ACK" in prompt
+    assert "only ACK starts the normal review deadline" in prompt
+    assert "ACK timeout and a review timeout share one fallback" in prompt
     assert "speckit review abandon" in prompt
     assert "AUTH_SESSION_INVALID" in prompt
     assert "Never infer abandonment from pane prose or capture output" in prompt
@@ -3779,12 +3782,16 @@ def test_workflow_projection_reuses_canonical_speckit_template() -> None:
         "verdicts": ["PASS", "CHANGES_REQUIRED"],
         "max_correction_rounds": 2,
         "round_tracking": "durable_per_frozen_task_scope",
-        "reviewer_timeout": {
-            "minutes": 60,
-            "max_fallbacks": 1,
-            "timeout_is_consent": False,
-            "exhausted_action": "ESCALATE",
-        },
+            "reviewer_timeout": {
+                "minutes": 60,
+                "max_fallbacks": 1,
+                "timeout_is_consent": False,
+                "exhausted_action": "ESCALATE",
+            },
+            "reviewer_ack": {
+                "minutes": 5,
+                "timeout_consumes_fallback": True,
+            },
         "loop_exits": ["REPLAN", "ESCALATE", "BACKLOG"],
         "triage": {
             "in_scope_high_medium": "block",

@@ -64,6 +64,16 @@ def normalized_review_convergence(document: dict[str, Any]) -> dict[str, Any]:
             "'durable_per_frozen_task_scope'"
         )
 
+    reviewer_ack = policy.get("reviewer_ack")
+    if not isinstance(reviewer_ack, dict) or set(reviewer_ack) != {
+        "minutes", "timeout_consumes_fallback"
+    }:
+        raise ValueError("review_convergence.reviewer_ack must contain minutes and timeout_consumes_fallback")
+    if type(reviewer_ack["minutes"]) is not int or reviewer_ack["minutes"] != 5:
+        raise ValueError("review_convergence.reviewer_ack.minutes must be the integer 5")
+    if reviewer_ack["timeout_consumes_fallback"] is not True:
+        raise ValueError("review_convergence.reviewer_ack.timeout_consumes_fallback must be true")
+
     reviewer_timeout = policy.get("reviewer_timeout")
     if not isinstance(reviewer_timeout, dict):
         raise ValueError("review_convergence.reviewer_timeout must be a mapping")
