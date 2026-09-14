@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -582,6 +583,123 @@ def test_review_timeout_allows_one_different_fallback_then_escalates(
     assert exhausted["status"] == "ESCALATED"
     assert exhausted["fallback_allowed"] is False
     assert review.review_check(repo, feature, "T001", scope=SCOPE_A)["release_passed"] is False
+
+
+@pytest.mark.parametrize("first,second", [("abandon", "abandon"), ("abandon", "timeout"), ("timeout", "abandon")])
+@pytest.mark.parametrize("level", ["RELEASE", "DELTA"])
+def test_abandon_shares_timeout_budget(monkeypatch, tmp_path, first, second, level):
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    revision = 1
+    scope = SCOPE_A
+    if level == "DELTA":
+        _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+        _record(repo, feature, 2, "CHANGES_REQUIRED", medium=1)
+        review.open_correction(repo, feature, "T001", delegation_id="fix-1", expected_revision=3)
+        revision, scope = 4, DELTA_1
+    opened = _open(repo, feature, revision, level=level, scope=scope)
+    report = feature / "abandon.md"
+    payload = "Redacted diagnostic: reviewer unavailable; credentials [REDACTED]."
+    report.write_text(payload)
+
+    def fail(kind, expected):
+        if kind == "timeout":
+            return review.timeout_review(repo, feature, "T001", expected_revision=expected)
+        return review.abandon_review(
+            repo, feature, "T001", reason="AUTH_SESSION_INVALID",
+            evidence_file=report, expected_revision=expected,
+        )
+
+    monkeypatch.setattr(review, "_now", lambda: "2100-01-01T00:00:00+00:00")
+    result = fail(first, revision + 1)
+    assert result["status"] == ("CORRECTION_OPEN" if level == "DELTA" else "READY_FOR_REVIEW")
+    assert result["fallback_allowed"] is True
+    assert result["fallback_attempt"] == 0
+    ledger = json.loads((feature / "review-ledger.json").read_text())
+    assert ledger["tasks"]["T001"]["active_review"] is None
+    if first == "abandon":
+        event = ledger["tasks"]["T001"]["events"][-1]
+        assert event["type"] == "review_abandoned"
+        assert event["data"] == {
+            **{key: opened[key] for key in review._ACTIVE_REVIEW_FIELDS},
+            "reason": "AUTH_SESSION_INVALID",
+            "evidence": {"path": "abandon.md", "sha256": hashlib.sha256(payload.encode()).hexdigest()},
+            "opened_at": opened["opened_at"], "fallback_attempt": 0,
+        }
+        assert payload not in json.dumps(ledger)
+    before = (feature / "review-ledger.json").read_bytes()
+    with pytest.raises(review.ReviewLedgerError, match="different session"):
+        _open(repo, feature, revision + 2, level=level, scope=scope)
+    assert (feature / "review-ledger.json").read_bytes() == before
+    fallback = review.open_review(
+        repo, feature, "T001", level=level, scope=scope,
+        reviewer_session="codex-project-alt", delegation_id="fallback",
+        invariant="", expected_revision=revision + 2,
+    )
+    assert fallback["fallback_attempt"] == 1
+    monkeypatch.setattr(review, "_now", lambda: "2200-01-01T00:00:00+00:00")
+    result = fail(second, revision + 3)
+    assert result["status"] == "ESCALATED"
+    assert result["fallback_allowed"] is False
+    assert result["fallback_attempt"] == 1
+
+
+@pytest.mark.parametrize("failure", ["invalid", "lowercase", "revision", "missing", "symlink", "outside", "directory", "status", "active"])
+def test_abandon_fails_without_mutation(tmp_path, failure):
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    evidence = feature / "abandon.md"
+    evidence.write_text("Redacted evidence")
+    reason, revision = "DELIVERY_UNVERIFIED", 2
+    if failure == "invalid":
+        reason = "arbitrary secret text"
+    elif failure == "lowercase":
+        reason = "delivery_unverified"
+    elif failure == "revision":
+        revision = 1
+    elif failure == "missing":
+        evidence = feature / "missing.md"
+    elif failure == "symlink":
+        link = feature / "link.md"
+        link.symlink_to(evidence)
+        evidence = link
+    elif failure == "outside":
+        evidence = repo / "outside.md"
+        evidence.write_text("Evidence")
+    elif failure == "directory":
+        evidence = feature
+    elif failure == "status":
+        _record(repo, feature, 2, "PASS")
+        revision = 3
+    elif failure == "active":
+        path = feature / "review-ledger.json"
+        ledger = json.loads(path.read_text())
+        ledger["tasks"]["T001"]["active_review"] = None
+        path.write_text(json.dumps(ledger))
+    before = (feature / "review-ledger.json").read_bytes()
+    with pytest.raises(review.ReviewLedgerError):
+        review.abandon_review(repo, feature, "T001", reason=reason,
+                              evidence_file=evidence, expected_revision=revision)
+    assert (feature / "review-ledger.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("reason", sorted(review.ABANDON_REASONS))
+def test_mesh_cli_abandon(tmp_path, reason):
+    repo, feature = _feature(tmp_path)
+    _init(repo, feature)
+    _open(repo, feature, 1, level="RELEASE", scope=SCOPE_A)
+    (feature / "abandon.md").write_text("Redacted evidence")
+    result = subprocess.run(
+        [str(MESH), "speckit", "review", "abandon", str(repo), str(feature), "T001",
+         "--reason", reason, "--evidence-file", "abandon.md", "--expect-revision", "2", "--json"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output["revision"] == 3
+    assert output["reason"] == reason
+    assert output["status"] == "READY_FOR_REVIEW"
 
 
 def test_delta_timeout_preserves_open_correction(

@@ -574,6 +574,18 @@ one fallback using a different reviewer session for the same immutable scope;
 a second timeout moves the task to `ESCALATED`. Timeout is never consent or a
 review verdict. Tick only wakes the coordinator; it does not infer or write the
 review transition from pane output.
+To explicitly abandon an active `REVIEW_OPEN` before its deadline, use
+`mesh speckit review abandon <repo> <feature_dir> <task> --reason <reason> --evidence-file <path> --expect-revision N [--json]`.
+Allowed reasons are exactly `DELIVERY_UNVERIFIED`, `AUTH_SESSION_INVALID`,
+`REVIEWER_UNAVAILABLE`, and `HEARTBEAT_EXPIRED`. The revision must match and
+evidence must be a regular non-symlink file inside the feature directory.
+Use a redacted, non-secret report: `review_abandoned` stores the active review
+fields, reason, evidence path and hash, opening time, and fallback attempt,
+never pane captures or raw secrets. Abandonment clears the active review and
+consumes the same fallback budget as timeout: the first returns to
+`CORRECTION_OPEN` for DELTA or `READY_FOR_REVIEW` otherwise, and permits only a
+different reviewer for the matching review. A second abandonment or timeout
+in any combination moves the task to `ESCALATED`. Abandonment is not a verdict.
 A restarted cycle after `decide --decision REPLAN` requires
 `init --replan-file <feature-relative-json>`. Its JSON contains `task_key`,
 `previous_cycle` (integer), and nonempty text fields `failure_evidence`,

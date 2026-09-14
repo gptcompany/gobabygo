@@ -49,6 +49,12 @@ MAX_MUTATION_BUDGET = 32
 LEVELS = {"DELTA", "INVARIANT", "RELEASE"}
 VERDICTS = {"PASS", "CHANGES_REQUIRED"}
 DECISIONS = {"REPLAN", "ESCALATE", "BACKLOG"}
+ABANDON_REASONS = {
+    "DELIVERY_UNVERIFIED",
+    "AUTH_SESSION_INVALID",
+    "REVIEWER_UNAVAILABLE",
+    "HEARTBEAT_EXPIRED",
+}
 TERMINAL_STATUSES = {"RELEASE_PASSED", "ESCALATED", "BACKLOGGED"}
 STATUSES = {
     "READY_FOR_REVIEW",
@@ -110,13 +116,13 @@ def _timestamp(value: str, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _matching_review_timeouts(
+def _matching_review_failures(
     record: dict[str, Any], active: dict[str, Any]
 ) -> list[dict[str, Any]]:
     return [
         event
         for event in record["events"]
-        if event["type"] == "review_timed_out"
+        if event["type"] in {"review_timed_out", "review_abandoned"}
         and all(
             event["data"].get(key) == active[key]
             for key in ("level", "scope", "round", "invariant")
@@ -141,7 +147,7 @@ def _active_review_timing(record: dict[str, Any]) -> tuple[str, str, int]:
         raise ReviewLedgerError("review state is missing its opening event")
     opened_at = _timestamp(opened["at"], "review opening timestamp")
     deadline = opened_at + timedelta(minutes=REVIEW_TIMEOUT_MINUTES)
-    fallback_attempt = len(_matching_review_timeouts(record, active))
+    fallback_attempt = len(_matching_review_failures(record, active))
     return opened_at.isoformat(), deadline.isoformat(), fallback_attempt
 
 
@@ -643,10 +649,10 @@ def open_review(
             "delegation_id": delegation,
             "invariant": normalized_invariant,
         }
-        prior_timeouts = _matching_review_timeouts(record, active)
-        if len(prior_timeouts) > MAX_REVIEWER_FALLBACKS:
+        prior_failures = _matching_review_failures(record, active)
+        if len(prior_failures) > MAX_REVIEWER_FALLBACKS:
             raise ReviewLedgerError("reviewer fallback budget is exhausted")
-        if prior_timeouts and prior_timeouts[-1]["data"].get("reviewer") == reviewer:
+        if prior_failures and prior_failures[-1]["data"].get("reviewer") == reviewer:
             raise ReviewLedgerError("reviewer fallback must use a different session")
         record["active_review"] = active
         record["status"] = "REVIEW_OPEN"
@@ -826,6 +832,63 @@ def timeout_review(
             "scope": active["scope"],
             "round": active["round"],
             "timed_out_reviewer": active["reviewer"],
+            "fallback_allowed": fallback_allowed,
+            "fallback_attempt": fallback_attempt,
+        }
+
+    return _transact(feature, expected_revision, mutate)
+
+
+def abandon_review(
+    repo: Path,
+    feature_dir: Path,
+    task_id: str,
+    *,
+    reason: str,
+    evidence_file: Path,
+    expected_revision: int,
+) -> dict[str, Any]:
+    if reason not in ABANDON_REASONS:
+        raise ReviewLedgerError("abandon reason must be one of: " + ", ".join(sorted(ABANDON_REASONS)))
+    feature, _task, _key = _load_bound_task(repo, feature_dir, task_id)
+    normalized_task = _normalize_task_id(task_id)
+
+    def mutate(ledger: dict[str, Any], revision: int) -> dict[str, Any]:
+        record = ledger["tasks"].get(normalized_task)
+        if record is None or record["status"] != "REVIEW_OPEN":
+            status = "missing" if record is None else record["status"]
+            raise ReviewLedgerError(f"cannot abandon review while task status is {status}")
+        active = record["active_review"]
+        if active is None:
+            raise ReviewLedgerError("review state is missing active review metadata")
+        evidence = _evidence_record(feature, evidence_file)
+        opened_at, _deadline_at, fallback_attempt = _active_review_timing(record)
+        fallback_allowed = fallback_attempt < MAX_REVIEWER_FALLBACKS
+        _append_event(
+            record,
+            revision,
+            "review_abandoned",
+            {
+                **active,
+                "reason": reason,
+                "evidence": evidence,
+                "opened_at": opened_at,
+                "fallback_attempt": fallback_attempt,
+            },
+        )
+        record["active_review"] = None
+        if fallback_allowed:
+            record["status"] = (
+                "CORRECTION_OPEN" if active["level"] == "DELTA" else "READY_FOR_REVIEW"
+            )
+        else:
+            record["status"] = "ESCALATED"
+        return {
+            "task": normalized_task,
+            "status": record["status"],
+            "abandoned_reviewer": active["reviewer"],
+            "reason": reason,
+            "evidence": evidence,
             "fallback_allowed": fallback_allowed,
             "fallback_attempt": fallback_attempt,
         }
@@ -1339,6 +1402,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     correction.add_argument("--delegation-id", required=True)
     timeout = sub.add_parser("timeout")
     _common(timeout)
+    abandon = sub.add_parser("abandon")
+    _common(abandon)
+    abandon.add_argument("--reason", choices=sorted(ABANDON_REASONS), required=True)
+    abandon.add_argument("--evidence-file", type=Path, required=True)
     candidate = sub.add_parser("candidate")
     _common(candidate)
     candidate.add_argument("--scope", required=True)
@@ -1441,6 +1508,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.repo,
                 args.feature_dir,
                 args.task,
+                expected_revision=args.expect_revision,
+            )
+        elif args.command == "abandon":
+            output = abandon_review(
+                args.repo,
+                args.feature_dir,
+                args.task,
+                reason=args.reason,
+                evidence_file=args.evidence_file,
                 expected_revision=args.expect_revision,
             )
         elif args.command == "candidate":
