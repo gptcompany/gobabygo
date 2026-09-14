@@ -177,8 +177,9 @@ def main() -> None:
             raise RuntimeError("worker did not finish the bounded objective within 180 seconds")
         try:
             review.dispatch_correction(repo, feature, "T001", delegation_id=delegation,
-                                        message=message, worker_repo=repo, expected_revision=11)
-        except review.ReviewLedgerError:
+                                        message=message, worker_repo=repo, expected_revision=12)
+        except review.ReviewLedgerError as exc:
+            assert "already attempted" in str(exc)
             print("DUPLICATE_DISPATCH_REJECTED", flush=True)
         else:
             raise AssertionError("duplicate dispatch accepted")
